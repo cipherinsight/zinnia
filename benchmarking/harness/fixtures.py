@@ -25,8 +25,8 @@ import numpy as np
 SETUP_INPUT = "A"
 PROVE_INPUT = "B"
 
-_NUMPY_DTYPES = {"float": np.float64, "int": np.int64, "bool": np.bool_}
-_SCALAR_TYPES = {"float": float, "int": int, "bool": bool}
+_NUMPY_DTYPES = {"float": np.float64, "int": np.int64, "bool": np.bool_, "complex": np.complex128}
+_SCALAR_TYPES = {"float": float, "int": int, "bool": bool, "complex": complex}
 
 
 class FixtureError(ValueError):
@@ -37,7 +37,7 @@ class FixtureError(ValueError):
 class Parameter:
     name: str
     kind: str  # "array" | "scalar"
-    dtype: str  # "float" | "int" | "bool"
+    dtype: str  # "float" | "int" | "bool" | "complex" (values as [real, imag] pairs)
     shape: tuple[int, ...]
 
 
@@ -68,6 +68,8 @@ class Fixture:
 
 
 def _argument(param: Parameter, value: Any) -> Any:
+    if param.dtype == "complex":
+        value = _complex_values(value)
     if param.kind == "scalar":
         return _SCALAR_TYPES[param.dtype](value)
     array = np.array(value, dtype=_NUMPY_DTYPES[param.dtype])
@@ -77,13 +79,25 @@ def _argument(param: Parameter, value: Any) -> Any:
     return array
 
 
+def _complex_values(value: Any) -> Any:
+    """A complex fixture value: each number is the pair `[real, imag]` (JSON
+    has no complex numbers), nested like the array it belongs to."""
+    if isinstance(value, list) and len(value) == 2 \
+            and all(isinstance(part, (int, float)) for part in value):
+        return complex(value[0], value[1])
+    if isinstance(value, list):
+        return [_complex_values(item) for item in value]
+    raise FixtureError(f"complex value {value!r} is not a [real, imag] pair")
+
+
 def _parameter(raw: Mapping[str, Any]) -> Parameter:
     kind = raw.get("kind")
     dtype = raw.get("dtype")
     if kind not in ("array", "scalar"):
         raise FixtureError(f"parameter {raw.get('name')!r}: kind must be array or scalar")
     if dtype not in _NUMPY_DTYPES:
-        raise FixtureError(f"parameter {raw.get('name')!r}: dtype must be float, int or bool")
+        raise FixtureError(f"parameter {raw.get('name')!r}: dtype must be float, int, bool "
+                           "or complex")
     shape = tuple(int(d) for d in raw.get("shape", ())) if kind == "array" else ()
     return Parameter(name=str(raw["name"]), kind=kind, dtype=dtype, shape=shape)
 
@@ -111,5 +125,6 @@ def _validate(fixture: Fixture) -> None:
         if missing:
             raise FixtureError(f"{fixture.path}: input {name} lacks {missing}")
         fixture.arguments(name)  # checks shapes and dtypes
-    if fixture.values(SETUP_INPUT) == fixture.values(PROVE_INPUT):
+    # A kernel without parameters has one possible input, used for both.
+    if fixture.parameters and fixture.values(SETUP_INPUT) == fixture.values(PROVE_INPUT):
         raise FixtureError(f"{fixture.path}: inputs A and B must differ")

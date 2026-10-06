@@ -54,6 +54,29 @@ def test_fixture_inputs_must_differ_and_match_shapes(tmp_path):
         load_fixture(write_fixture(tmp_path / "shape.json", [1, 2, 3], [1, 2, 3]))
 
 
+def test_complex_fixture_values_are_real_imaginary_pairs(tmp_path):
+    path = tmp_path / "complex.json"
+    path.write_text(json.dumps({
+        "case": "c", "function": "kernel",
+        "parameters": [{"name": "z", "kind": "array", "dtype": "complex", "shape": [2]},
+                       {"name": "c", "kind": "scalar", "dtype": "complex"}],
+        "inputs": {"A": {"z": [[1.0, 2.0], [0.0, -1.0]], "c": [0.5, 0.0]},
+                   "B": {"z": [[3.0, 0.0], [1.5, 2.5]], "c": [0.0, 1.0]}}}))
+    z, c = load_fixture(path).arguments("B")
+    assert z.dtype == np.complex128 and z.tolist() == [3 + 0j, 1.5 + 2.5j]
+    assert c == 1j
+    path.write_text(path.read_text().replace("[3.0, 0.0]", "[3.0, 0.0, 1.0]"))
+    with pytest.raises(FixtureError, match=r"not a \[real, imag\] pair"):
+        load_fixture(path)
+
+
+def test_a_kernel_without_parameters_has_one_input(tmp_path):
+    path = tmp_path / "none.json"
+    path.write_text(json.dumps({"case": "c", "function": "kernel", "parameters": [],
+                                "inputs": {"A": {}, "B": {}}}))
+    assert load_fixture(path).arguments("B") == []
+
+
 def test_scope_rule(tmp_path):
     kernel = tmp_path / "kernel.py"
     kernel.write_text("from zinnia import *\nimport numpy as np\nimport numpy.linalg\n"
