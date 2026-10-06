@@ -259,6 +259,9 @@ pub fn subscript_with_index_array(b: &mut IRBuilder, val: &Value, idx: &Value) -
     let idx_list = super::static_array::base::to_value_list(b, idx);
     if let Value::List(data) | Value::Tuple(data) = &val_list {
         if let Some(out) = constant_index_read(data, &idx_list, kind) {
+            // The selection is an ndarray: as the nested list it is built
+            // as, `2 * v[[0, 2]]` repeated it instead of doubling.
+            let out = super::static_array::base::to_static_array(b, &out).unwrap_or(out);
             if let (Some(input), Some(output)) = (val.value_id(), out.value_id()) {
                 crate::optim::resolver::relay_forall_eq_const_from_input(b, input, output);
             }

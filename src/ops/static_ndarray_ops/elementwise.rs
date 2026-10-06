@@ -488,31 +488,53 @@ pub fn np_trunc(b: &mut IRBuilder, args: &[Value]) -> Value {
     })
 }
 
-/// `np.round(x)` — half-away-from-zero (NumPy uses banker's rounding which
-/// requires extra primitives we don't have; half-away-from-zero is a
-/// reasonable common-case substitute). Implemented as `floor(x + 0.5)` for
-/// non-negative x and `-floor(-x + 0.5)` for negative x.
-pub fn np_round(b: &mut IRBuilder, args: &[Value]) -> Value {
-    let val = args.first().expect("round: requires an argument");
-    vectorize_unary(b, val, &mut |b, x| match x {
+/// `np.round(x, decimals)` (also `np.around`), elementwise: NumPy rounds
+/// `x * 10**decimals` to the nearest integer, halves to even, and divides
+/// back (for negative `decimals` it divides by `10**-decimals` first and
+/// multiplies back). The decimals used to be ignored (`np.round(x, 2)`
+/// rounded to integers, pythran goodexpomeasure) and halves rounded away
+/// from zero (`np.round(2.5)` proved 3; NumPy gives 2). Integers are
+/// returned as they are for `decimals >= 0`.
+pub fn np_round(b: &mut IRBuilder, x: &Value, decimals: i64) -> Value {
+    vectorize_unary(b, x, &mut |b, x| match x {
+        Value::Float(_) if decimals == 0 => round_half_to_even(b, x),
         Value::Float(_) => {
-            let zero = b.ir_constant_float(0.0);
-            let half = b.ir_constant_float(0.5);
-            let one = b.ir_constant_float(1.0);
-            // pos branch: floor(x + 0.5)
-            let pos_in = b.ir_add_f(x, &half);
-            let pos_out = b.ir_floor_div_f(&pos_in, &one);
-            // neg branch: -floor(-x + 0.5)
-            let neg = b.ir_sub_f(&zero, x);
-            let neg_in = b.ir_add_f(&neg, &half);
-            let neg_floor = b.ir_floor_div_f(&neg_in, &one);
-            let neg_out = b.ir_sub_f(&zero, &neg_floor);
-            let nonneg = b.ir_greater_than_or_equal_f(x, &zero);
-            b.ir_select_f(&nonneg, &pos_out, &neg_out)
+            let scale = b.ir_constant_float(10f64.powi(decimals.unsigned_abs() as i32));
+            if decimals > 0 {
+                let scaled = b.ir_mul_f(x, &scale);
+                let rounded = round_half_to_even(b, &scaled);
+                b.ir_div_f(&rounded, &scale)
+            } else {
+                let scaled = b.ir_div_f(x, &scale);
+                let rounded = round_half_to_even(b, &scaled);
+                b.ir_mul_f(&rounded, &scale)
+            }
         }
-        Value::Integer(_) | Value::Boolean(_) => x.clone(),
+        Value::Integer(_) | Value::Boolean(_) if decimals >= 0 => x.clone(),
+        Value::Integer(_) | Value::Boolean(_) => {
+            panic!("np.round of integers with negative decimals is not supported")
+        }
         _ => panic!("round: unsupported type {:?}", x.zinnia_type()),
     })
+}
+
+/// The integer nearest to the float `x`, halves to even (NumPy's `rint`):
+/// `r = floor(x + 0.5)`, minus one when `x + 0.5` is exactly `r` (a half)
+/// and `r` is odd.
+fn round_half_to_even(b: &mut IRBuilder, x: &Value) -> Value {
+    let half = b.ir_constant_float(0.5);
+    let one = b.ir_constant_float(1.0);
+    let two = b.ir_constant_float(2.0);
+    let shifted = b.ir_add_f(x, &half);
+    let r = b.ir_floor_div_f(&shifted, &one);
+    let is_half = b.ir_equal_f(&shifted, &r);
+    let half_r = b.ir_floor_div_f(&r, &two);
+    let even_part = b.ir_mul_f(&half_r, &two);
+    let r_is_even = b.ir_equal_f(&even_part, &r);
+    let r_is_odd = b.ir_logical_not(&r_is_even);
+    let down = b.ir_logical_and(&is_half, &r_is_odd);
+    let r_minus_one = b.ir_sub_f(&r, &one);
+    b.ir_select_f(&down, &r_minus_one, &r)
 }
 
 /// `np.reciprocal(x)` — `1 / x`. Result is always a float.

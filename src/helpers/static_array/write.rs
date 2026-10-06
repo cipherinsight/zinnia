@@ -856,6 +856,24 @@ fn assigned_value_as_region_list(b: &mut IRBuilder, value: &Value, region: &[usi
 // Fancy-index setitem
 // ────────────────────────────────────────────────────────────────────────
 
+/// Cells in row-major order as the value of that shape: the number itself
+/// for shape `()`, else a nested list.
+fn nested_cells(cells: Vec<Value>, shape: &[usize]) -> Value {
+    if shape.is_empty() {
+        return cells.into_iter().next().expect("a 0-d value has one cell");
+    }
+    let types = cells.iter().map(|v| v.zinnia_type()).collect();
+    super::super::composite::build_nested_value(cells, types, shape)
+}
+
+/// The rows (first-axis items) of a value of `shape` given its cells.
+fn cells_as_rows(cells: Vec<Value>, shape: &[usize]) -> Vec<Value> {
+    let row_len: usize = shape[1..].iter().product();
+    (0..shape[0])
+        .map(|k| nested_cells(cells[k * row_len..(k + 1) * row_len].to_vec(), &shape[1..]))
+        .collect()
+}
+
 /// Extract the per-element Values of an integer index source. Accepts a
 /// StaticArray (segment-backed) or a List/Tuple (composite-backed).
 fn read_index_array_elements(b: &mut IRBuilder, src: &Value) -> Vec<Value> {
@@ -882,7 +900,7 @@ fn static_array_fancy_setitem(
     b: &mut IRBuilder,
     val: &Value,
     _dtype: NumberType,
-    _shape: &[usize],
+    shape: &[usize],
     _segment_id: u32,
     _strides: &[usize],
     _offset: usize,
@@ -924,16 +942,36 @@ fn static_array_fancy_setitem(
     }
     let l = fancy_len.expect("static_array_fancy_setitem called without a fancy axis");
 
-    // Materialize an array-shaped RHS to per-element Values. Scalar RHS is
-    // broadcast (used `l` times). A length-L 1-D RHS feeds element k per
-    // iteration. Multi-dim RHS (e.g. row-shaped) falls through as the whole
-    // value — downstream setitem dispatches the slice / element write.
-    let value_per_k: Option<Vec<Value>> = match value {
-        Value::StaticArray { shape: vs, .. } if !vs.is_empty() && vs[0] == l && vs.len() == 1 => {
-            Some(read_index_array_elements(b, value))
+    // NumPy writes `value`, broadcast to the shape `(l, *region)`, where
+    // `region` is what each index `k` selects: a value with one axis more
+    // than `region` and `l` rows gives row `k` to index `k`; a value of the
+    // region's rank or less is broadcast to every `k` (the per-`k` write
+    // checks it). (A value of rank 2 used to be handed whole to every `k`
+    // and rejected, `M[[i, j]] = M[[j, i]]` (pythran lu); a 1-D value
+    // with `l` elements fed element `k` to row `k`, where NumPy broadcasts
+    // it to every row.)
+    let region_rank = indices.iter().filter(|i| matches!(i, SliceIndex::Range(..))).count()
+        + shape.len().saturating_sub(indices.len());
+    let value_shape = match value {
+        Value::StaticArray { shape, .. } => shape.clone(),
+        Value::List(_) | Value::Tuple(_) => super::super::composite::get_composite_shape(value),
+        _ => Vec::new(),
+    };
+    // The value's cells are read once, before any write: NumPy evaluates
+    // the right-hand side first, so `M[[1, 2]] = M[0:2]` writes the old rows.
+    let value_cells = match value {
+        Value::StaticArray { .. } => Some(super::elementwise::payload_cells(b, value)),
+        Value::List(_) | Value::Tuple(_) => {
+            Some(super::super::composite::flatten_composite_with_builder(b, value))
         }
-        Value::List(d) | Value::Tuple(d) if d.values.len() == l => Some(d.values.clone()),
         _ => None,
+    };
+    let value_per_k: Vec<Value> = match value_cells {
+        Some(cells) if value_shape.len() == region_rank + 1 && value_shape[0] == l => {
+            cells_as_rows(cells, &value_shape)
+        }
+        Some(cells) => vec![nested_cells(cells, &value_shape); l],
+        None => vec![value.clone(); l],
     };
 
     for k in 0..l {
@@ -944,11 +982,7 @@ fn static_array_fancy_setitem(
                 None => k_indices.push(idx.clone()),
             }
         }
-        let v_k = match &value_per_k {
-            Some(vs) => vs[k].clone(),
-            None => value.clone(),
-        };
-        let _ = static_array_setitem(b, val, &k_indices, &v_k);
+        let _ = static_array_setitem(b, val, &k_indices, &value_per_k[k]);
     }
 
     val.clone()

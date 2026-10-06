@@ -1474,13 +1474,20 @@ impl IRGenerator {
                     _ => crate::ops::static_ndarray_ops::np_trunc(&mut self.builder, visited_args),
                 }
             }
-            ("np", "round") => {
-                match visited_args.first() {
-                    Some(Value::DynamicNDArray(_)) => panic!(
+            ("np", "round" | "around") => {
+                let x = visited_args.first().expect("np.round: requires an argument");
+                if matches!(x, Value::DynamicNDArray(_)) {
+                    panic!(
                         "np.round is not yet supported for bounded-dynamic arrays; dynamic Float rounding needs active-lane-aware fixed-point rounding constraints"
-                    ),
-                    _ => crate::ops::static_ndarray_ops::np_round(&mut self.builder, visited_args),
+                    );
                 }
+                let decimals = match visited_args.get(1).or_else(|| _visited_kwargs.get("decimals")) {
+                    None => 0,
+                    Some(d) => d.int_val().unwrap_or_else(|| {
+                        panic!("np.round: decimals must be a compile-time constant integer")
+                    }),
+                };
+                crate::ops::static_ndarray_ops::np_round(&mut self.builder, x, decimals)
             }
             ("np", "reciprocal") => {
                 match visited_args.first() {
