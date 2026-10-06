@@ -22,12 +22,14 @@
 //! Every plan yields NumPy's stable sort exactly; each hint's soundness
 //! argument is next to its pins in `emit`.
 
+mod argmax;
 mod cost;
 mod counts;
 mod emit;
 mod packed;
 mod payload;
 pub(crate) mod search;
+mod table;
 mod semantics;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -36,7 +38,9 @@ mod tests;
 
 pub(crate) use emit::masked_order_statistic;
 pub use search::SearchSortedSemantics;
+pub use argmax::ArgmaxQueries;
 pub use counts::SortCountQueries;
+pub use table::ConstantTableReads;
 pub use payload::payload_at_argsort_lane;
 pub use semantics::{SortSemantics, COUNT_AT_MOST, COUNT_BELOW, INDICES, PAYLOAD, VALUES};
 

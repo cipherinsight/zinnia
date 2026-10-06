@@ -235,6 +235,21 @@ impl AffineForm {
         (fits && bounded).then(|| AffineForm { a: a as i64, b: b as i64, c: c as i64 })
     }
 
+    /// `floor((a x + b) / c) + adjust` at the runtime integer `x` (one
+    /// multiplication and one constant division; the caller keeps `x` where
+    /// the numerator stays in the window, see `with`).
+    pub(super) fn emit_at(&self, b: &mut IRBuilder, x: &Value, adjust: i64) -> Value {
+        let scale = b.ir_constant_int(self.a);
+        let offset = b.ir_constant_int(self.b + adjust * self.c);
+        let scaled = b.ir_mul_i(x, &scale);
+        let numerator = b.ir_add_i(&scaled, &offset);
+        if self.c == 1 {
+            return numerator;
+        }
+        let c = b.ir_constant_int(self.c);
+        b.ir_floor_div_i(&numerator, &c)
+    }
+
     /// The code at integer `k` (compile time).
     #[cfg(test)]
     pub(super) fn at(&self, k: i64) -> i64 {
@@ -322,18 +337,10 @@ impl PositionEmitter {
     fn entry(&mut self, b: &mut IRBuilder, u: &Value, offset: i64, adjust: i64) -> Value {
         let code = match &mut self.evaluator {
             Evaluator::Affine(form) => {
-                // floor((a (u + offset) + b) / c) + adjust
-                //   = floor((a u + a offset + b + adjust c) / c)
-                let scale = b.ir_constant_int(form.a);
-                let shift = b.ir_constant_int(form.a * offset + form.b + adjust * form.c);
-                let scaled = b.ir_mul_i(u, &scale);
-                let numerator = b.ir_add_i(&scaled, &shift);
-                if form.c == 1 {
-                    numerator
-                } else {
-                    let c = b.ir_constant_int(form.c);
-                    b.ir_floor_div_i(&numerator, &c)
-                }
+                // Y_{u + offset} + adjust, with `u` in [0, n]: the form
+                // shifted by `offset` entries, at `u`.
+                let shifted = AffineForm { b: form.b + form.a * offset, ..*form };
+                shifted.emit_at(b, u, adjust)
             }
             Evaluator::Read { segments } => {
                 let segment = match segments.iter().find(|(a, _)| *a == adjust) {

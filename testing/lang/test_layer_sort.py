@@ -99,8 +99,10 @@ def test_ecdf_lookups_answered_by_counts_match_numpy(target):
         env = {"np": np}
         exec(ECDF_LOOKUP.replace('Float[Array, "12"]', "object").replace('Integer[Array, "4"]', "object"), env)
         np.testing.assert_allclose(outputs, env["kernel"](grades, ev), atol=1e-9, rtol=0)
-    # The extremes are not pinned: no product over the elements.
-    assert "MulIIR" not in ir_classes(program)
+    # The extremes are not pinned (no hint); ys is evaluated in closed form
+    # (one division per lookup) instead of read.
+    classes = ir_classes(program)
+    assert "HintIR" not in classes and classes.count("FloorDivIIR") == 4
 
 
 @pytest.mark.parametrize("target", TARGETS)
@@ -156,3 +158,46 @@ def test_payload_is_carried_not_read_on_halo2():
     classes = ir_classes(compile_for(PAYLOAD_KERNELS[1], "halo2"))
     assert "ReadMemoryIR" not in classes
     assert "HintIR" not in classes
+
+
+# ── the first-True index and reads of constant affine tables ────────────
+
+FIRST_MATCH = ('def kernel(x: Integer[Array, "8"], y: Integer[Array, "8"], a: Integer, b: Integer):\n'
+               '    result = ((x == a) & (y == b)).argmax()\n'
+               '    if x[result] != a or y[result] != b:\n'
+               '        result = -1\n'
+               '    return result\n')
+TABLE_READ = ('def kernel(i: Integer):\n'
+              '    ys = np.arange(1, 41) / 40.0\n'
+              '    return ys[i]\n')
+
+
+@pytest.mark.parametrize("target", TARGETS)
+def test_first_match_matches_numpy(target):
+    program = compile_for(FIRST_MATCH, target)
+    x = np.array([3, 1, 4, 1, 5, 9, 2, 6])
+    y = np.array([2, 7, 1, 8, 2, 8, 1, 8])
+    for a, b in [(1, 8), (3, 2), (6, 8), (1, 7), (5, 5), (9, 1), (4, 4), (3, 7)]:
+        satisfied, outputs = run_mock(program, x, y, a, b)
+        assert satisfied
+        hits = np.flatnonzero((x == a) & (y == b))
+        assert outputs[0] == (hits[0] if len(hits) else -1), (a, b)
+    # The test of x[r], y[r] is answered by any(h): no read at r.
+    assert "ReadMemoryIR" not in ir_classes(program)
+
+
+@pytest.mark.parametrize("target", TARGETS)
+def test_affine_table_reads_match_numpy(target):
+    program = compile_for(TABLE_READ, target)
+    ys = np.arange(1, 41) / 40.0
+    for i in [0, 1, 17, 39, -1, -40]:
+        satisfied, outputs = run_mock(program, i)
+        assert satisfied and outputs[0] == pytest.approx(ys[i], abs=1e-9), i
+    for i in [40, -41]:
+        assert not run_mock(program, i)[0], i
+
+
+def test_first_match_and_table_read_prove_on_halo2_base():
+    assert_halo2_base_agrees(FIRST_MATCH, "halo2", np.array([3, 1, 4, 1, 5, 9, 2, 6]),
+                             np.array([2, 7, 1, 8, 2, 8, 1, 8]), 1, 8)
+    assert_halo2_base_agrees(TABLE_READ, "halo2", 17)
