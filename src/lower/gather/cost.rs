@@ -155,6 +155,17 @@ pub(super) fn element_by_indicators(n: u64, index_reads: u64, target: Target) ->
     (n * u.eq_const).div_ceil(index_reads.max(1)) + n * u.mul_add
 }
 
+/// Asserting that the `n` indicators of one index sum to 1: the sum's
+/// additions and the asserted equality (on Noir, about one gate per three
+/// terms: measured on 0345, the sum of 6 replaced a 5-gate range check for
+/// 2 gates less).
+pub(super) fn one_hot_check(n: u64, target: Target) -> u64 {
+    match target {
+        Target::Halo2Base => n * units(target).add + 1,
+        Target::Noir => n.div_ceil(3),
+    }
+}
+
 /// A permutation scatter of `n` values: the hits (shared with the
 /// permutation precondition, which emits the same tests) and one
 /// multiply-add per hit.
