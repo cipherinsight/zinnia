@@ -121,7 +121,7 @@ impl IRGenerator {
                             let results: Vec<Value> = data
                                 .values
                                 .iter()
-                                .map(|v| self.builder.ir_abs_i(v))
+                                .map(|v| scalar_abs(&mut self.builder, v))
                                 .collect();
                             let types = results.iter().map(|v| v.zinnia_type()).collect();
                             Value::List(CompositeData {
@@ -139,7 +139,7 @@ impl IRGenerator {
                             let sum = self.builder.ir_add_f(&rr, &ii);
                             self.builder.ir_sqrt_f(&sum)
                         }
-                        v => self.builder.ir_abs_i(v),
+                        v => scalar_abs(&mut self.builder, v),
                     }
                 } else {
                     Value::None
@@ -327,5 +327,14 @@ impl IRGenerator {
 fn reject_complex_conversion(function: &str, value: &Value) {
     if matches!(value, Value::Complex { .. }) {
         panic!("TypeError: {function}() argument must be a real number, not 'complex' (use .real)");
+    }
+}
+
+/// Python's `abs` of a scalar: a float stays a float (`AbsF`), an int or a
+/// bool is an int (`AbsI`).
+fn scalar_abs(b: &mut crate::builder::IRBuilder, v: &Value) -> Value {
+    match v {
+        Value::Float(_) => b.ir_abs_f(v),
+        _ => b.ir_abs_i(v),
     }
 }

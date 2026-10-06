@@ -125,3 +125,40 @@ def test_insert_rows_at_negative_positions_match_numpy():
         assert_matches_numpy(runtime, a, pos, row)
     literal = 'def kernel(a: Integer[Array, "5"], e: Integer):\n    return np.insert(a, -2, e)\n'
     assert_matches_numpy(literal, A5, 7)
+
+
+# ── |i64::MIN| ───────────────────────────────────────────────────────────
+
+ABS_INT = 'def kernel(x: Integer[Array, "3"], expected: Integer[Array, "3"]):\n    assert np.all(np.abs(x) == expected)\n'
+ABS_FLOAT = 'def kernel(x: Float, expected: Float):\n    assert abs(x) == expected\n'
+
+
+def test_abs_proves_numpys_result_up_to_the_largest_int64():
+    program = compile_kernel(ABS_INT)
+    x = np.array([I64_MIN + 1, -3, I64_MAX], dtype=np.int64)
+    assert accepted_everywhere(program, x, np.abs(x))
+    assert rejected_everywhere(program, x, np.array([I64_MAX, 3, I64_MAX - 1]))
+
+
+def test_abs_of_i64_min_has_no_proof():
+    """NumPy returns i64::MIN (the wrapped 2^63); no claim is accepted."""
+    program = compile_kernel(ABS_INT)
+    x = np.array([5, I64_MIN, 0], dtype=np.int64)
+    assert np.abs(x)[1] == I64_MIN
+    for claim in (np.abs(x), np.array([5, I64_MAX, 0]), np.array([5, 0, 0])):
+        assert rejected_everywhere(program, x, claim)
+    # `|x| - 1` brings the overflowing 2^63 back into the window (and is
+    # NumPy's wrapped result too): the mock used to accept it.
+    shifted = compile_kernel(ABS_INT.replace("np.abs(x) ==", "np.abs(x) - 1 =="))
+    assert rejected_everywhere(shifted, x, np.array([4, I64_MAX, -1]))
+
+
+def test_abs_of_the_most_negative_q32_float_has_no_proof():
+    """-2^31 is the Q32 code i64::MIN; its magnitude 2^31 leaves the window."""
+    program = compile_kernel(ABS_FLOAT)
+    # Python's abs of a float is a float (it used to come out as the int
+    # code of the Q32 value).
+    assert accepted_everywhere(program, -3.5, 3.5)
+    assert accepted_everywhere(program, -2.0**31 + 1, 2.0**31 - 1)
+    for claim in (2.0**31 - 2.0**-32, -2.0**31, 0.0):
+        assert rejected_everywhere(program, -2.0**31, claim)

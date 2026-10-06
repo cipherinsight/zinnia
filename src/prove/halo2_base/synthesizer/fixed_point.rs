@@ -107,7 +107,8 @@ impl Halo2BaseSynthesizer<'_> {
         let known_sign = self.sign_abs_cache.contains_key(&x.id) || self.sign_bits.contains_key(&x.id);
         let window = self.proven_range(x).filter(|r| r.within(&Interval::SIGNED64));
         let (Some(range), false, false) = (window, known_sign, self.is_const_cell(x)) else {
-            return Ok(self.sign_and_abs(x)?.1);
+            let magnitude = self.sign_and_abs(x)?.1;
+            return Ok(self.below_two_pow_63(magnitude));
         };
         // `|i64::MIN| = 2^63` overflows int64 (NumPy wraps it to i64::MIN):
         // like every int64 overflow here it has no proof, so a 63-bit check
@@ -124,6 +125,20 @@ impl Halo2BaseSynthesizer<'_> {
         self.range_check(&magnitude, width);
         self.prove_range(&magnitude, Interval { lo: 0, hi: max_abs as i128 });
         Ok(magnitude)
+    }
+
+    /// `|x|` from `sign_and_abs`, which allows `2^63` (`x = i64::MIN`),
+    /// restricted to `[0, 2^63)`: `|i64::MIN|` overflows int64 and, like
+    /// every int64 overflow, has no proof. One 63-bit range check unless the
+    /// magnitude's proven range already excludes `2^63`.
+    fn below_two_pow_63(&mut self, magnitude: Halo2BaseCell) -> Halo2BaseCell {
+        let limit = (1i128 << 63) - 1;
+        if self.proven_range(&magnitude).is_some_and(|r| r.lo >= 0 && r.hi <= limit) {
+            return magnitude;
+        }
+        self.range_check(&magnitude, 63);
+        self.prove_range(&magnitude, Interval { lo: 0, hi: limit });
+        magnitude
     }
 
     /// Constrain `0 <= x < n` for a cell `n`. Both `x` and `n - 1 - x` are

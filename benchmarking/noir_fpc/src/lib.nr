@@ -147,6 +147,22 @@ pub fn sign_abs(v: Field) -> (bool, Field) {
     (negative, constrain_sign_abs(v, negative))
 }
 
+/// |v| for v in (-2^63, 2^63), the int64 values whose magnitude is itself
+/// an int64; the proof fails for any other v (|i64::MIN| = 2^63 overflows
+/// int64 and, like every int64 overflow, has no proof). One 63-bit range
+/// check of m = (negative ? -v : v). Uniqueness: an accepted m is in
+/// [0, 2^63) and equals v or -v, so v is in (-2^63, 2^63); for v != 0 the
+/// wrong sign gives m = p - |v|, far above 2^63. At v = 0 both signs give
+/// m = 0, so the result is a function of v even where the sign hint is not
+/// (which is why the sign is not returned).
+pub fn abs_int64(v: Field) -> Field {
+    // Safety: the range check pins m (see above).
+    let negative = unsafe { hint_is_negative(v) };
+    let mag = if negative { -v } else { v };
+    mag.assert_max_bit_size::<63>();
+    mag
+}
+
 pub fn is_negative(v: Field) -> bool {
     sign_abs(v).0
 }
@@ -1834,4 +1850,17 @@ fn test_masked_sorted_hint_sorts_the_active_elements() {
     assert(masked_sorted_hint_at(a, active, 3) == 0);
     let none: [Field; 5] = [0; 5];
     assert(masked_sorted_hint(a, none) == [0; 5]);
+}
+
+#[test]
+fn test_abs_int64() {
+    assert(abs_int64(-5) == 5);
+    assert(abs_int64(7) == 7);
+    assert(abs_int64(0) == 0);
+    assert(abs_int64(-9223372036854775807) == 9223372036854775807);
+}
+
+#[test(should_fail)]
+fn test_abs_int64_rejects_i64_min() {
+    let _ = abs_int64(-9223372036854775808);
 }

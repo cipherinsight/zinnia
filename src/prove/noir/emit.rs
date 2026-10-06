@@ -1319,6 +1319,15 @@ impl<'a> NoirEmitter<'a> {
         (negative, mag)
     }
 
+    /// `|x|` (library `abs_int64`, one 63-bit range check): no proof for
+    /// `x = i64::MIN`, whose magnitude overflows int64 (the raw Q32 value of
+    /// a float lives in the same window). `sign_abs`'s magnitude is not used
+    /// here because it admits `2^63`.
+    fn abs_int64(&mut self, x: &str) -> String {
+        self.use_lib("abs_int64");
+        self.bind(&format!("abs_int64({x})"))
+    }
+
     /// `x != 0` (`nonzero`) or `x == 0` as a 0/1 cell; for a scaled bit
     /// `2^k * bit` it is the bit (or its negation).
     fn nonzero_flag(&mut self, x: &str, nonzero: bool) -> String {
@@ -2175,8 +2184,7 @@ impl Synthesizer for NoirEmitter<'_> {
         noop_unsupported!(self, "pow_i")
     }
     fn abs_i(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
-        let (_negative, mag) = self.sign_abs(a);
-        Ok(mag)
+        Ok(self.abs_int64(a))
     }
     fn sign_i(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         let (negative, mag) = self.sign_abs(a);
@@ -2316,7 +2324,7 @@ impl Synthesizer for NoirEmitter<'_> {
         Ok(self.bind(&format!("qpow_int_q32({}, {} as u64)", af, e)))
     }
     fn abs_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
-        let (_negative, v) = self.sign_abs(a);
+        let v = self.abs_int64(a);
         // Literal propagation: |literal| is itself a compile-time
         // constant. Fold the structural value and carry `literal_vals`
         // membership so downstream fast paths (e.g. the select
