@@ -376,8 +376,8 @@ pub fn require_static_or_bounded_int(
 /// `Unknown` as `Proved` would be a circuit-correctness bug.
 ///
 /// The probe is budget-bounded: outward window `[-(1<<32), 1<<32)`
-/// with ≤ 64 prove() calls per side. Z3 timeouts inside `prove` honour
-/// `ZINNIA_SMT_PROVE_TIMEOUT_MS`.
+/// with ≤ 64 prove() calls per side. Each Z3 check inside `prove` is
+/// bounded by `ZINNIA_SMT_PROVE_RLIMIT` steps (`optim::z3_budget`).
 pub fn resolve_int_or_bounded(
     b: &mut crate::builder::IRBuilder,
     val: &Value,

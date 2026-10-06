@@ -405,10 +405,10 @@ fn full_resolver_chain_proves_k_bound_via_smt() {
     // `Value` for the k wire that the chokepoint queries against.
     let k_value = Value::Integer(ScalarValue::new(None, Some(k_id)));
 
-    // Build the full resolver pipeline (range → SMT). SMT timeout/size
-    // matches IRGenConfig defaults; the test runs in well under the
-    // budget for the synthetic IR.
-    let mut resolver = LayeredResolver::range_then_smt_with_budget(500, 4096);
+    // Build the full resolver pipeline (range → SMT) with the optimizer's
+    // step budget; the synthetic IR needs far less.
+    let mut resolver =
+        LayeredResolver::range_then_smt_with_budget(crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096);
 
     // The chokepoint would call `resolve_max_with_stmts`.
     let upper = resolver.resolve_max_with_stmts(&k_value, &stmts);

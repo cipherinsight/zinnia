@@ -293,7 +293,7 @@ fn compile_circuit_impl(
     // aggregate, 1.05× worst case (within run-to-run noise). The earlier
     // P3 readings of 25× aggregate / 66× worst case (a52fe45) were a
     // process-pool contention artifact, not real SMT cost. The defensive
-    // mitigations (100 ms query timeout, 4096-statement formula cap from
+    // mitigations (a per-query Z3 step budget, 4096-statement formula cap from
     // c75f3fb) bound the future worst case if a consumer reaches the SMT
     // layer with a hard formula. `ZINNIA_SMT_ENABLE=0` (or `smt_enable: false`
     // in config JSON) flips back to `StaticOnlyResolver` byte-for-byte —
@@ -308,14 +308,17 @@ fn compile_circuit_impl(
             .and_then(|v| v.as_bool())
             .unwrap_or(true)
     });
-    let smt_query_timeout_ms = std::env::var("ZINNIA_SMT_QUERY_TIMEOUT_MS")
+    // Z3 steps per resolver query (`optim::z3_budget`: a step budget, not a
+    // wall-clock timeout, so the compiled circuit does not depend on load).
+    let smt_query_rlimit = std::env::var("ZINNIA_SMT_QUERY_RLIMIT")
         .ok()
-        .and_then(|s| s.trim().parse::<u64>().ok())
+        .and_then(|s| s.trim().parse::<u32>().ok())
         .unwrap_or_else(|| {
             config
-                .get("smt_query_timeout_ms")
+                .get("smt_query_rlimit")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(100)
+                .map(|v| v.min(u32::MAX as u64) as u32)
+                .unwrap_or(optim::z3_budget::RESOLVER_RLIMIT)
         });
     let smt_max_formula_size = std::env::var("ZINNIA_SMT_MAX_FORMULA_SIZE")
         .ok()
@@ -381,7 +384,7 @@ fn compile_circuit_impl(
         loop_limit,
         recursion_limit,
         smt_enable,
-        smt_query_timeout_ms,
+        smt_query_rlimit,
         smt_max_formula_size,
         smt_log_telemetry,
     };
@@ -504,8 +507,8 @@ fn compile_circuit_impl(
     // `IRGraph::astgen_telemetry`.
     if smt_log_telemetry {
         eprintln!(
-            "[zinnia-smt] log_enabled=true smt_enable={} timeout_ms={}",
-            smt_enable, smt_query_timeout_ms
+            "[zinnia-smt] log_enabled=true smt_enable={} rlimit={}",
+            smt_enable, smt_query_rlimit
         );
         match optimized_graph.astgen_telemetry() {
             Some(t) => eprintln!("[zinnia-smt] AST→IR phase {}", t.summary()),

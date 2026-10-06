@@ -22,7 +22,7 @@ impl IRContext {
     pub fn new() -> Self {
         Self {
             scopes: vec![Scope::Master(MasterScopeData {
-                var_table: HashMap::new(),
+                var_table: VarTable::new(),
             })],
             recursion_depth: 0,
             unreachable_loop_bindings: HashMap::new(),
@@ -135,7 +135,7 @@ impl IRContext {
     /// call does not happen.
     pub fn chip_enter(&mut self, return_dtype: ZinniaType, entry_condition: Option<Value>) {
         self.scopes.push(Scope::Chip(ChipScopeData {
-            var_table: HashMap::new(),
+            var_table: VarTable::new(),
             return_guaranteed: false,
             return_dtype,
             returns_with_conditions: Vec::new(),
@@ -148,7 +148,7 @@ impl IRContext {
 
     pub fn circuit_enter(&mut self, return_dtype: ZinniaType) {
         self.scopes.push(Scope::Circuit(CircuitScopeData {
-            var_table: HashMap::new(),
+            var_table: VarTable::new(),
             return_guaranteed: false,
             return_dtype,
             returns_with_conditions: Vec::new(),
@@ -172,7 +172,7 @@ impl IRContext {
         // Capture the parent's looping condition at construction time
         let super_looping = self.find_condition(|s| s.get_looping_condition());
         self.scopes.push(Scope::Loop(Box::new(LoopScopeData {
-            var_table: HashMap::new(),
+            var_table: VarTable::new(),
             continue_condition: None,
             break_condition: None,
             return_guaranteed: false,
@@ -216,7 +216,7 @@ impl IRContext {
         };
 
         self.scopes.push(Scope::Conditional(ConditionalScopeData {
-            var_table: HashMap::new(),
+            var_table: VarTable::new(),
             return_guaranteed: false,
             loop_terminated_guaranteed: false,
             calculated_branching_condition: calc,
@@ -230,7 +230,7 @@ impl IRContext {
 
     pub fn generator_enter(&mut self) {
         self.scopes.push(Scope::Generator(GeneratorScopeData {
-            var_table: HashMap::new(),
+            var_table: VarTable::new(),
         }));
     }
 

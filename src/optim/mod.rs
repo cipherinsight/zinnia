@@ -21,6 +21,7 @@ pub mod resolver;
 pub mod smt_encoding;
 pub mod strategy;
 pub mod telemetry;
+pub mod z3_budget;
 mod unread_memory_elimination;
 
 #[cfg(test)]

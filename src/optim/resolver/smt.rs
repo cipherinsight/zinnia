@@ -13,9 +13,12 @@
 //!   those statements as Z3 constraints — never the whole graph. Reference:
 //!   the old Python `_build_smt_constraints_for(ptr)`.
 //!
-//! * Time budget. Each Z3 query sets the solver's `timeout` parameter
-//!   (default 500 ms; configurable via `SmtResolver::with_timeout`). On Z3
-//!   `unknown` we cache `Unknown` and return `None`.
+//! * Step budget. Each Z3 query is bounded by a resource limit (`rlimit`,
+//!   Z3's count of internal steps; see `optim::z3_budget`), never by wall
+//!   time, so its answer does not depend on machine load (default
+//!   `z3_budget::RESOLVER_RLIMIT`; configurable via
+//!   `SmtResolver::with_rlimit`). On Z3 `unknown` we cache `Unknown` and
+//!   return `None`.
 //!
 //! * Disable flag. `with_disabled(true)` makes every query return `None`
 //!   after the static_val fast path. Lets users diagnose whether SMT is the
@@ -44,7 +47,7 @@
 //!   Per-query setup cost is minimal (Z3 reuses the context's symbol pool
 //!   etc.).
 //!
-//! * Only the cache and the per-resolver knobs (timeout, disabled, counter)
+//! * Only the cache and the per-resolver knobs (rlimit, disabled, counter)
 //!   live in the resolver across calls. All `Send + Sync`.
 //!
 //! ## IRBuilder/IRGraph handoff (option (b))
@@ -58,13 +61,14 @@
 //! trait definition above). `IRBuilder::split_resolver_and_stmts(&mut)`
 //! and `IRGraph::split_resolver_and_stmts(&mut)` are the chokepoints.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::ir::IRStatement;
 use crate::optim::telemetry::SmtTelemetry;
+use crate::optim::z3_budget;
 use crate::types::{StmtId, Value};
 
 use super::Resolver;
@@ -74,8 +78,8 @@ use super::Resolver;
 pub(super) enum ResolvedValue {
     Int(i64),
     Bool(bool),
-    /// Proved unresolvable (timeout, non-unique model, or off-the-int-path
-    /// IR op). Cached so we don't re-query Z3 on the same ptr.
+    /// Proved unresolvable (step budget exhausted, non-unique model, or
+    /// off-the-int-path IR op). Cached so we don't re-query Z3 on the same ptr.
     Unknown,
 }
 
@@ -91,7 +95,8 @@ struct SmtResolverInner {
 #[derive(Debug)]
 pub struct SmtResolver {
     inner: Mutex<SmtResolverInner>,
-    timeout_ms: u64,
+    /// Z3 steps per query (`optim::z3_budget`).
+    rlimit: u32,
     disabled: bool,
     /// P5 commit 3: cap on the number of IR statements the reverse-
     /// reachability walk visits per query. `usize::MAX` = unbounded
@@ -113,24 +118,22 @@ impl Default for SmtResolver {
 }
 
 impl SmtResolver {
-    /// Build a resolver with default knobs (P5: 100 ms timeout, no
-    /// formula-size cap, enabled). Note: the IRGenConfig default for
-    /// `smt_query_timeout_ms` matches; tests that construct an
-    /// `SmtResolver` directly inherit this. If you need the legacy
-    /// 500 ms budget for a test, call `.with_timeout(500)`.
+    /// Build a resolver with default knobs (`z3_budget::RESOLVER_RLIMIT`
+    /// steps per query, no formula-size cap, enabled). The IRGenConfig
+    /// default for `smt_query_rlimit` matches.
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(SmtResolverInner::default()),
-            timeout_ms: 100,
+            rlimit: z3_budget::RESOLVER_RLIMIT,
             disabled: false,
             max_formula_size: usize::MAX,
             telemetry: SmtTelemetry::new(),
         }
     }
 
-    /// Override the per-query Z3 timeout.
-    pub fn with_timeout(mut self, ms: u64) -> Self {
-        self.timeout_ms = ms;
+    /// Override the per-query Z3 step budget.
+    pub fn with_rlimit(mut self, rlimit: u32) -> Self {
+        self.rlimit = rlimit;
         self
     }
 
@@ -220,7 +223,7 @@ impl SmtResolver {
             ptr,
             stmts,
             &self.inner.lock().unwrap().cache,
-            self.timeout_ms,
+            self.rlimit,
             want_bool,
             max_size,
         );
@@ -243,17 +246,6 @@ impl SmtResolver {
                     self.telemetry
                         .queries_smt_unknown
                         .fetch_add(1, Ordering::Relaxed);
-                    // Heuristic: if the wall time is ≥ 90 % of the configured
-                    // budget, treat it as a timeout for the dedicated counter.
-                    // Z3's `unknown` doesn't distinguish timeout vs other
-                    // give-ups via the public API, but the duration is a
-                    // strong signal in practice.
-                    let budget_ns = (self.timeout_ms as u128) * 1_000_000;
-                    if budget_ns > 0 && dur.as_nanos() * 10 >= budget_ns * 9 {
-                        self.telemetry
-                            .queries_smt_timeout
-                            .fetch_add(1, Ordering::Relaxed);
-                    }
                 }
             }
         }
@@ -347,7 +339,7 @@ impl Resolver for SmtResolver {
             ptr,
             stmts,
             &self.inner.lock().unwrap().cache,
-            self.timeout_ms,
+            self.rlimit,
             /*max=*/ true,
             max_size,
         );
@@ -400,7 +392,7 @@ impl Resolver for SmtResolver {
             ptr,
             stmts,
             &self.inner.lock().unwrap().cache,
-            self.timeout_ms,
+            self.rlimit,
             /*max=*/ false,
             max_size,
         );
@@ -455,8 +447,8 @@ struct SmtQueryOut {
 
 /// Build a Z3 formula constraining the wire at `root` and check whether it
 /// has a unique value, with an optional cap on formula size. Returns
-/// `Some(ResolvedValue::Int|Bool)` if Z3 proves uniqueness within the time
-/// budget; `None` on timeout / non-unique. When the reverse-reachability
+/// `Some(ResolvedValue::Int|Bool)` if Z3 proves uniqueness within the step
+/// budget; `None` when the budget runs out or the value is not unique. When the reverse-reachability
 /// walk exceeds `max_formula_size` IR statements, the walker aborts and the
 /// resolver returns `None` — paying only the walk cost, not Z3 time, on the
 /// heaviest queries.
@@ -467,7 +459,7 @@ fn smt_query_with_budget(
     root: StmtId,
     stmts: &[IRStatement],
     cache: &HashMap<StmtId, ResolvedValue>,
-    timeout_ms: u64,
+    rlimit: u32,
     want_bool: bool,
     max_formula_size: Option<usize>,
 ) -> SmtQueryOut {
@@ -492,13 +484,7 @@ fn smt_query_with_budget(
         };
     }
 
-    let solver = z3::Solver::new();
-    {
-        let mut params = z3::Params::new();
-        // Z3's standard "timeout" parameter, in milliseconds.
-        params.set_u32("timeout", timeout_ms.min(u32::MAX as u64) as u32);
-        solver.set_params(&params);
-    }
+    let solver = z3_budget::solver(rlimit);
     for c in walker.constraints.drain(..) {
         solver.assert(&c);
     }
@@ -519,9 +505,9 @@ fn smt_query_with_budget(
         let input_lengths = build_input_array_lengths(stmts);
 
         // Pre-resolve each scalar input's Z3 Int via the walker so we can
-        // close over a plain HashMap (Discharger's closure can't hold
+        // close over a plain map (Discharger's closure can't hold
         // the walker mutably — borrow-check).
-        let mut name_to_int: HashMap<String, Int> = HashMap::new();
+        let mut name_to_int: BTreeMap<String, Int> = BTreeMap::new();
         for (name, producer_id) in &input_idx {
             if let Some(term) = walker.encode(*producer_id) {
                 name_to_int.insert(name.clone(), term.as_int());
@@ -574,7 +560,7 @@ fn smt_query_with_budget(
         }
     }
 
-    let resolved = match solver.check() {
+    let resolved = match z3_budget::check("resolver.value", &solver) {
         z3::SatResult::Sat => {
             // Got a model; ask if `root != model_value` is satisfiable. If
             // unsat, the value is unique → return it.
@@ -584,7 +570,7 @@ fn smt_query_with_budget(
                         let v = model.eval(int, true)?;
                         let n = v.as_i64()?;
                         solver.assert(&int.eq(&z3::ast::Int::from_i64(n)).not());
-                        if solver.check() == z3::SatResult::Unsat {
+                        if z3_budget::check("resolver.unique", &solver) == z3::SatResult::Unsat {
                             Some(ResolvedValue::Int(n))
                         } else {
                             None
@@ -598,7 +584,7 @@ fn smt_query_with_budget(
                         let v = model.eval(&bool_proj, true)?;
                         let b = v.as_bool()?;
                         solver.assert(&bool_proj.eq(&z3::ast::Bool::from_bool(b)).not());
-                        if solver.check() == z3::SatResult::Unsat {
+                        if z3_budget::check("resolver.unique", &solver) == z3::SatResult::Unsat {
                             Some(ResolvedValue::Bool(b))
                         } else {
                             None
@@ -608,7 +594,7 @@ fn smt_query_with_budget(
                         let v = model.eval(b_ast, true)?;
                         let b = v.as_bool()?;
                         solver.assert(&b_ast.eq(&z3::ast::Bool::from_bool(b)).not());
-                        if solver.check() == z3::SatResult::Unsat {
+                        if z3_budget::check("resolver.unique", &solver) == z3::SatResult::Unsat {
                             if want_bool {
                                 Some(ResolvedValue::Bool(b))
                             } else {
@@ -643,7 +629,7 @@ fn smt_extreme(
     root: StmtId,
     stmts: &[IRStatement],
     cache: &HashMap<StmtId, ResolvedValue>,
-    timeout_ms: u64,
+    rlimit: u32,
     maximise: bool,
     max_formula_size: Option<usize>,
 ) -> (Option<i64>, usize, bool) {
@@ -658,12 +644,7 @@ fn smt_extreme(
         return (None, formula_size, true);
     }
 
-    let opt = z3::Optimize::new();
-    {
-        let mut params = z3::Params::new();
-        params.set_u32("timeout", timeout_ms.min(u32::MAX as u64) as u32);
-        opt.set_params(&params);
-    }
+    let opt = z3_budget::optimize(rlimit);
     for c in walker.constraints.drain(..) {
         opt.assert(&c);
     }
@@ -682,7 +663,7 @@ fn smt_extreme(
         let input_idx = build_input_name_index(stmts);
         let input_lengths = build_input_array_lengths(stmts);
 
-        let mut name_to_int: HashMap<String, Int> = HashMap::new();
+        let mut name_to_int: BTreeMap<String, Int> = BTreeMap::new();
         for (name, producer_id) in &input_idx {
             if let Some(term) = walker.encode(*producer_id) {
                 name_to_int.insert(name.clone(), term.as_int());
@@ -746,7 +727,7 @@ fn smt_extreme(
     } else {
         opt.minimize(&int);
     }
-    let candidate = match opt.check(&[]) {
+    let candidate = match z3_budget::check_optimize("resolver.extreme", &opt) {
         z3::SatResult::Sat => opt
             .get_model()
             .and_then(|model| model.eval(&int, true))
@@ -771,10 +752,7 @@ fn smt_extreme(
     // (or fall below) `candidate` while satisfying all constraints —
     // so return `None` rather than the bogus bound.
     if let Some(c) = candidate {
-        let verifier = z3::Solver::new();
-        let mut vparams = z3::Params::new();
-        vparams.set_u32("timeout", timeout_ms.min(u32::MAX as u64) as u32);
-        verifier.set_params(&vparams);
+        let verifier = z3_budget::solver(rlimit);
         // Replay all the formula's structural and predicate constraints.
         // walker.constraints was already drained into `opt`; rebuild a
         // fresh walker to get them again. (Cheap — the cache hits
@@ -796,7 +774,7 @@ fn smt_extreme(
 
             let input_idx = build_input_name_index(stmts);
             let input_lengths = build_input_array_lengths(stmts);
-            let mut name_to_int: HashMap<String, Int> = HashMap::new();
+            let mut name_to_int: BTreeMap<String, Int> = BTreeMap::new();
             for (name, producer_id) in &input_idx {
                 if let Some(term) = walker2.encode(*producer_id) {
                     name_to_int.insert(name.clone(), term.as_int());
@@ -852,7 +830,7 @@ fn smt_extreme(
                 int2.lt(&z3::ast::Int::from_i64(c))
             };
             verifier.assert(&probe);
-            match verifier.check() {
+            match z3_budget::check("resolver.extreme_verify", &verifier) {
                 z3::SatResult::Sat => {
                     // The objective can exceed (or fall below) the
                     // candidate while still satisfying all constraints,
@@ -863,7 +841,7 @@ fn smt_extreme(
                     // Confirmed: `c` is a sound bound.
                 }
                 z3::SatResult::Unknown => {
-                    // Verifier timed out; can't confirm bound is real.
+                    // Verifier ran out of steps; can't confirm bound is real.
                     // Default-deny rather than trust the optimize result.
                     return (None, formula_size, false);
                 }
@@ -879,7 +857,7 @@ fn smt_extreme(
 struct Walker<'a> {
     stmts: &'a [IRStatement],
     cache: &'a HashMap<StmtId, ResolvedValue>,
-    encoded: HashMap<StmtId, crate::optim::smt_encoding::Z3Term>,
+    encoded: BTreeMap<StmtId, crate::optim::smt_encoding::Z3Term>,
     constraints: Vec<z3::ast::Bool>,
     enc_ctx: crate::optim::smt_encoding::SmtEncodingCtx,
     /// P5 commit 3: optional cap on the number of distinct IR statements
@@ -901,7 +879,7 @@ impl<'a> Walker<'a> {
         Self {
             stmts,
             cache,
-            encoded: HashMap::new(),
+            encoded: BTreeMap::new(),
             constraints: Vec::new(),
             enc_ctx: crate::optim::smt_encoding::SmtEncodingCtx::new(),
             max_size: None,

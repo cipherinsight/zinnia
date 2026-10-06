@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::builder::IRBuilder;
 use crate::types::{Value, ZinniaType};
@@ -22,6 +22,12 @@ impl ValueStore {
     }
 }
 
+/// A scope's variable bindings, ordered by name: the compiler walks them
+/// when it merges the arms of a branch (one `select` per name) and when a
+/// loop's names leave its scope, and that order must be the same on every
+/// run, or the same program compiles to differently ordered circuits.
+pub type VarTable = BTreeMap<String, ValueStore>;
+
 // ---------------------------------------------------------------------------
 // Scope enum — replaces the Python AbstractScope hierarchy
 // ---------------------------------------------------------------------------
@@ -44,7 +50,7 @@ pub enum Scope {
 
 #[derive(Debug)]
 pub struct MasterScopeData {
-    pub var_table: HashMap<String, ValueStore>,
+    pub var_table: VarTable,
 }
 
 // ---------------------------------------------------------------------------
@@ -53,7 +59,7 @@ pub struct MasterScopeData {
 
 #[derive(Debug)]
 pub struct ChipScopeData {
-    pub var_table: HashMap<String, ValueStore>,
+    pub var_table: VarTable,
     pub return_guaranteed: bool,
     pub return_dtype: ZinniaType,
     pub returns_with_conditions: Vec<(Value, Value)>, // (return_value, condition)
@@ -73,7 +79,7 @@ pub struct ChipScopeData {
 
 #[derive(Debug)]
 pub struct CircuitScopeData {
-    pub var_table: HashMap<String, ValueStore>,
+    pub var_table: VarTable,
     pub return_guaranteed: bool,
     pub return_dtype: ZinniaType,
     pub returns_with_conditions: Vec<(Value, Value)>,
@@ -88,7 +94,7 @@ pub struct CircuitScopeData {
 
 #[derive(Debug)]
 pub struct ConditionalScopeData {
-    pub var_table: HashMap<String, ValueStore>,
+    pub var_table: VarTable,
     pub return_guaranteed: bool,
     pub loop_terminated_guaranteed: bool,
     pub calculated_branching_condition: Option<Value>, // BooleanValue
@@ -100,7 +106,7 @@ pub struct ConditionalScopeData {
 
 #[derive(Debug)]
 pub struct LoopScopeData {
-    pub var_table: HashMap<String, ValueStore>,
+    pub var_table: VarTable,
     pub continue_condition: Option<Value>, // BooleanValue
     pub break_condition: Option<Value>,    // BooleanValue
     pub return_guaranteed: bool,
@@ -115,7 +121,7 @@ pub struct LoopScopeData {
 
 #[derive(Debug)]
 pub struct GeneratorScopeData {
-    pub var_table: HashMap<String, ValueStore>,
+    pub var_table: VarTable,
 }
 
 // ---------------------------------------------------------------------------
@@ -152,7 +158,7 @@ impl Scope {
     }
 
     /// This scope's variable table.
-    pub fn var_table(&self) -> &HashMap<String, ValueStore> {
+    pub fn var_table(&self) -> &VarTable {
         match self {
             Scope::Master(d) => &d.var_table,
             Scope::Chip(d) => &d.var_table,
@@ -399,7 +405,7 @@ impl Scope {
     }
 
     /// Get the local variable table (for conditional scope merging).
-    pub fn get_local_var_table(&self) -> Option<&HashMap<String, ValueStore>> {
+    pub fn get_local_var_table(&self) -> Option<&VarTable> {
         match self {
             Scope::Conditional(d) => Some(&d.var_table),
             _ => None,
@@ -419,7 +425,7 @@ mod tests {
     #[test]
     fn test_master_scope_basics() {
         let mut scope = Scope::Master(MasterScopeData {
-            var_table: HashMap::new(),
+            var_table: VarTable::new(),
         });
 
         let val = Value::Integer(ScalarValue::known(42, 0));
@@ -438,7 +444,7 @@ mod tests {
         let cond = builder.ir_constant_bool(true);
 
         let mut scope = Scope::Chip(ChipScopeData {
-            var_table: HashMap::new(),
+            var_table: VarTable::new(),
             return_guaranteed: false,
             return_dtype: ZinniaType::Integer,
             returns_with_conditions: Vec::new(),
@@ -458,13 +464,13 @@ mod tests {
     #[test]
     fn test_scope_type_queries() {
         let master = Scope::Master(MasterScopeData {
-            var_table: HashMap::new(),
+            var_table: VarTable::new(),
         });
         assert!(!master.is_in_chip());
         assert!(!master.is_in_loop());
 
         let chip = Scope::Chip(ChipScopeData {
-            var_table: HashMap::new(),
+            var_table: VarTable::new(),
             return_guaranteed: false,
             return_dtype: ZinniaType::None,
             returns_with_conditions: Vec::new(),
@@ -477,7 +483,7 @@ mod tests {
         assert!(!chip.is_in_loop());
 
         let loop_scope = Scope::Loop(Box::new(LoopScopeData {
-            var_table: HashMap::new(),
+            var_table: VarTable::new(),
             continue_condition: None,
             break_condition: None,
             return_guaranteed: false,

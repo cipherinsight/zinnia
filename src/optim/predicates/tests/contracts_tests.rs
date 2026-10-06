@@ -1299,7 +1299,7 @@ fn dyn_arange_bounded_emits_length_eq_fact() {
 
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
 
     let n = b.ir_read_integer(InputPath::new("n", vec![]), false);
@@ -1393,7 +1393,7 @@ fn dyn_tile_bounded_emits_length_eq_fact() {
 
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
 
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
@@ -1488,7 +1488,7 @@ fn dyn_repeat_bounded_emits_length_eq_fact() {
 
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
 
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
@@ -1583,7 +1583,7 @@ fn dyn_linspace_bounded_emits_length_eq_fact() {
 
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
 
     // num ∈ [2, 10] — bounded admission requires num >= 2 for endpoint.
@@ -1648,7 +1648,7 @@ fn dyn_identity_bounded_emits_length_eq_fact() {
 
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
 
     let n = b.ir_read_integer(InputPath::new("n", vec![]), false);
@@ -2968,7 +2968,7 @@ fn np_fill_call_site_fires_zeros_for_zero_fill_value() {
 
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
 
     let n = b.ir_read_integer(InputPath::new("n", vec![]), false);
@@ -3020,7 +3020,7 @@ fn np_fill_call_site_fires_zeros_for_zero_fill_value() {
     // Sanity: ones-fill at the same site should fire ones_content, not zeros.
     let mut b2 = crate::builder::IRBuilder::new();
     b2.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
     let n2 = b2.ir_read_integer(InputPath::new("n", vec![]), false);
     let n2_vid = n2.value_id().unwrap();
@@ -3124,7 +3124,7 @@ fn np_arange_bounded_call_site_fires_is_sorted_on_output() {
 
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
 
     let n = b.ir_read_integer(InputPath::new("n", vec![]), false);
@@ -3183,7 +3183,7 @@ fn np_linspace_bounded_call_site_fires_is_sorted_when_ascending() {
 
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
 
     let num = b.ir_read_integer(InputPath::new("num", vec![]), false);
