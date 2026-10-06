@@ -114,6 +114,9 @@ pub struct Halo2BaseSynthesizer<'a> {
     /// Deferred products by placeholder id: the factors of a `MulI` that the
     /// plan fuses into its one consumer (see `mul_i`).
     deferred: HashMap<u64, (Halo2BaseCell, Halo2BaseCell)>,
+    /// Address values the plan keeps without a cell (`Plan::address_only`),
+    /// by placeholder id; the cell an access computed for one, once it did.
+    address_placeholders: HashMap<u64, Option<Halo2BaseCell>>,
     /// `(cell id, advice length)` right after `gate_from` emitted the cell:
     /// while the length is unchanged, that cell is the context's last one.
     last_output: Option<(u64, usize)>,
@@ -176,6 +179,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             plan: Plan::default(),
             current_stmt: 0,
             deferred: HashMap::new(),
+            address_placeholders: HashMap::new(),
             last_output: None,
             profile: None,
             #[cfg(test)]
@@ -433,6 +437,98 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         cell
     }
 
+    /// A stand-in for an address value of `Plan::address_only`: no cell is
+    /// assigned. Memory accesses read it through its affine view; one that
+    /// needs the address as a cell calls [`Self::materialize_address`]. The
+    /// plan admits only values whose every use is an address or another such
+    /// value, so no gate reads the stand-in; if one did, key generation would
+    /// stop on the missing cell instead of building a circuit.
+    fn address_placeholder(&mut self, value: Fp, constant: bool) -> Halo2BaseCell {
+        let placeholder = AssignedValue { value: halo2_base::halo2_proofs::plonk::Assigned::Trivial(value), cell: None };
+        let cell = self.wrap(placeholder, value);
+        if constant {
+            self.const_cell_ids.insert(cell.id);
+        }
+        self.address_placeholders.insert(cell.id, None);
+        cell
+    }
+
+    pub(super) fn is_address_placeholder(&self, cell: &Halo2BaseCell) -> bool {
+        self.address_placeholders.contains_key(&cell.id)
+    }
+
+    /// `cell`, or for an address placeholder the address as a cell: the
+    /// shared constant, or `Σ root·scale + offset` from its affine view
+    /// (computed once per placeholder). The view is the provenance table's
+    /// record of how the IR computed the value, so the cell equals it.
+    pub(super) fn materialize_address(&mut self, cell: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        match self.address_placeholders.get(&cell.id) {
+            None => return Ok(*cell),
+            Some(Some(done)) => return Ok(*done),
+            Some(None) => {}
+        }
+        let out = if self.is_const_cell(cell) {
+            let c = self.const_cell(cell.value);
+            c
+        } else {
+            let view = self
+                .vid_of_cell
+                .get(&cell.id)
+                .and_then(|vid| self.prov.affine_of(*vid))
+                .cloned()
+                .ok_or_else(|| ProvingError::synthesis("address placeholder without an affine view"))?;
+            let mut acc: Option<Halo2BaseCell> = None;
+            for (root, scale) in &view.terms {
+                let root = *self.cell_of_vid.get(root).ok_or_else(|| ProvingError::synthesis("address root without a cell"))?;
+                let scale_fp = kernel::i64_to_fp(*scale);
+                let (base_q, base_v) = match &acc {
+                    Some(a) => (QuantumCell::Existing(a.assigned), a.value),
+                    None => (QuantumCell::Constant(kernel::i64_to_fp(view.offset)), kernel::i64_to_fp(view.offset)),
+                };
+                let value = base_v + root.value * scale_fp;
+                let next = self.gate_cell(value, |gate, ctx| gate.mul_add(ctx, root.assigned, QuantumCell::Constant(scale_fp), base_q));
+                acc = Some(next);
+            }
+            let out = acc.ok_or_else(|| ProvingError::synthesis("address placeholder without roots"))?;
+            if let Some(r) = self.proven.get(&cell.id).copied() {
+                self.proven.insert(out.id, r);
+            }
+            out
+        };
+        self.address_placeholders.insert(cell.id, Some(out));
+        Ok(out)
+    }
+
+    /// The last select of a one-hot chain (plan.rs `OneHotChain`): the inner
+    /// product of the equality bits with the link values, the missing value's
+    /// bit standing for the innermost default. Sound because the planned
+    /// bound `AssertU128Lt(root, n)` (emitted wherever it appears) leaves the
+    /// root one of `0..n`, so exactly one bit is 1 and the product equals the
+    /// select chain's value. The range is the hull of the values' ranges.
+    fn onehot_chain(
+        &mut self,
+        chain: &plan::OneHotChain,
+        last_cond: &Halo2BaseCell,
+        last_value: &Halo2BaseCell,
+    ) -> Result<Halo2BaseCell, ProvingError> {
+        let cell = |s: &Self, vid: &crate::types::ValueId| {
+            s.cell_of_vid.get(vid).copied().ok_or_else(|| ProvingError::synthesis("one-hot chain operand without a cell"))
+        };
+        let root = cell(self, &chain.root)?;
+        let default = cell(self, &chain.default)?;
+        let mut choices = vec![(self.root_indicator(&root, chain.missing)?, default)];
+        for (cond, value) in &chain.terms[..chain.terms.len() - 1] {
+            choices.push((cell(self, cond)?, cell(self, value)?));
+        }
+        choices.push((*last_cond, *last_value));
+        let ranges: Option<Vec<Interval>> = choices.iter().map(|(_, v)| self.proven_range(v)).collect();
+        let out = self.one_hot_combination(&choices);
+        if let Some(hull) = ranges.and_then(|rs| rs.into_iter().reduce(|a, b| a.hull(&b))) {
+            self.prove_range(&out, hull);
+        }
+        Ok(out)
+    }
+
     /// `cell` itself, or for a deferred product its product as a cell (when
     /// both operands of a sum are deferred products, one is emitted).
     fn materialize(&mut self, cell: &Halo2BaseCell) -> Halo2BaseCell {
@@ -656,6 +752,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     type CellRef = Halo2BaseCell;
 
     fn constant_int(&mut self, value: i64) -> Result<Self::CellRef, ProvingError> {
+        if self.plan.address_only.contains(&self.current_stmt) {
+            return Ok(self.address_placeholder(kernel::i64_to_fp(value), true));
+        }
         Ok(self.const_cell(kernel::i64_to_fp(value)))
     }
 
@@ -673,6 +772,11 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn add_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.plan.address_only.contains(&self.current_stmt) {
+            let out = self.address_placeholder(a.value + b.value, false);
+            self.propagate_range(&out, a, b, Interval::add);
+            return Ok(out);
+        }
         if let Some((x, y)) = self.deferred.get(&b.id).copied() {
             let acc = self.materialize(a);
             return Ok(self.multiply_add(&acc, &x, &y));
@@ -692,6 +796,11 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn sub_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.plan.address_only.contains(&self.current_stmt) {
+            let out = self.address_placeholder(a.value - b.value, false);
+            self.propagate_range(&out, a, b, Interval::sub);
+            return Ok(out);
+        }
         if let Some((x, y)) = self.deferred.get(&b.id).copied() {
             // `a - x·y` as halo2-base's `[a - x·y, x, y, a]` gate.
             let a = &self.materialize(a);
@@ -715,6 +824,11 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn mul_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.plan.address_only.contains(&self.current_stmt) {
+            let out = self.address_placeholder(a.value * b.value, false);
+            self.propagate_range(&out, a, b, Interval::mul);
+            return Ok(out);
+        }
         if self.plan.deferred_products.contains(&self.current_stmt) {
             return Ok(self.defer_product(a, b));
         }
@@ -1109,6 +1223,16 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn select(&mut self, cond: &Self::CellRef, if_true: &Self::CellRef, if_false: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.plan.onehot_links.contains(&self.current_stmt) {
+            // A link of a one-hot chain (plan.rs): only the chain's last select
+            // reads it, through the chain's terms, so it needs no cell.
+            let value = cond.value * if_true.value + (Fp::one() - cond.value) * if_false.value;
+            let placeholder = AssignedValue { value: halo2_base::halo2_proofs::plonk::Assigned::Trivial(value), cell: None };
+            return Ok(self.wrap(placeholder, value));
+        }
+        if let Some(chain) = self.plan.onehot_chains.get(&self.current_stmt).cloned() {
+            return self.onehot_chain(&chain, cond, if_true);
+        }
         let cond = self.truthy_bit(cond);
         self.select_bit(&cond, if_true, if_false)
     }
