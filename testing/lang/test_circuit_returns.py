@@ -173,3 +173,32 @@ def test_circuit_dynamic_ndarray_return_exposes_runtime_metadata_and_bounded_pay
     assert proof.proof_bytes_hex == "mock_satisfied"
     assert len(proof.public_values) == 6
     assert any(v.endswith("=2") for v in proof.public_values)
+
+
+def test_boolean_returned_as_integer_is_zero_or_one():
+    """`bool` is an `int` subtype: a chip or circuit annotated `-> Integer`
+    may return a comparison, and the result is the integer 0 or 1 (it used
+    to fail with "return type mismatch: expected Integer, got Boolean")."""
+
+    @zk_chip
+    def is_thirteen(x) -> Integer:
+        return x == 13
+
+    @zk_circuit
+    def count_thirteens(x: Integer, y: Integer, expected: Integer):
+        assert is_thirteen(x + y) + is_thirteen(x) == expected
+
+    for x, y in [(1, 12), (13, 0), (13, 5), (2, 2)]:
+        truth = int(x + y == 13) + int(x == 13)
+        circuit = ZKCircuit.from_method(count_thirteens, chips=[is_thirteen])
+        assert circuit.prove(x, y, truth, backend="mock").proof_bytes_hex == "mock_satisfied"
+        assert circuit.prove(x, y, truth + 1, backend="mock").proof_bytes_hex != "mock_satisfied"
+
+    @zk_circuit
+    def is_three(x: Integer) -> Integer:
+        return x == 3
+
+    for x in (3, 4):
+        proof = ZKCircuit.from_method(is_three).prove(x, backend="mock")
+        assert proof.proof_bytes_hex == "mock_satisfied"
+        assert proof.public_values[-1].endswith(f"={int(x == 3)}")
