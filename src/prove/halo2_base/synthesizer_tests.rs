@@ -1636,3 +1636,36 @@ fn packed_key_comparison_is_lexicographic_and_pinned() {
     // An index outside [0, 2^7) has no witness (the range check fails).
     assert!(!synthesize(&*op, &[int(1), int(128), int(1), int(0)], &[]).accepted);
 }
+
+/// `assert x >= 0` before `sqrt(x)` (the frontend's precondition) is
+/// proven by the root itself: no check of its own, while a negative `x`
+/// still has no witness and the root stays pinned. `assert x >= 1` (not a
+/// root guard) keeps its check.
+#[test]
+fn root_preconditions_are_proven_by_the_root() {
+    use crate::ir_defs::IR;
+    use graphs::*;
+    let build = |bound: i64| {
+        let mut g = Graph::default();
+        let x = g.read("x");
+        g.domain_check(x);
+        let lo = g.int(bound);
+        let holds = g.push(IR::GteI, &[x, lo]);
+        g.push(IR::Assert, &[holds]);
+        let root = g.push(IR::SqrtF, &[x]);
+        g.push(IR::ExposePublicF, &[root]);
+        g.finish()
+    };
+    let guarded = build(0);
+    for x in [0i64, 1, 5, 1 << 40, i64::MAX] {
+        let expected = kernel::fp_sqrt(int(x), PRECISION_BITS);
+        let honest = run(&guarded, &[("x", x)], None);
+        assert!(honest.accepted && honest.outputs == vec![expected], "sqrt({x})");
+        assert!(!run(&guarded, &[("x", x)], Some(vec![expected + Fp::one()])).accepted, "sqrt({x}) + 1 accepted");
+    }
+    for x in [-1i64, -(1 << 40), i64::MIN] {
+        assert!(!run(&guarded, &[("x", x)], None).accepted, "assert {x} >= 0 accepted");
+    }
+    let checked = build(1);
+    assert!(run(&guarded, &[("x", 5)], None).advice + 20 < run(&checked, &[("x", 5)], None).advice, "the root's guard paid a check");
+}

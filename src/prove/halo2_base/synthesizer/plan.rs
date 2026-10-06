@@ -39,6 +39,12 @@ pub(super) struct Plan {
     /// whose every use is a comparison with a constant: such a comparison
     /// is the bit (two-valued facts), so `x & 2^j = 2^j·bit` needs no cell.
     pub cellless_bit_masks: HashSet<u32>,
+    /// Statement ids of asserted comparisons `x >= 0` whose `x` is the
+    /// argument of a later `SqrtF`: the root's own constraints
+    /// (`n = y^2 + d` with `y`, `d` range-checked) admit no negative
+    /// radicand of a value inside the window, so the assertion needs no
+    /// check of its own (see `Halo2BaseSynthesizer::assert_nonneg_by_root`).
+    pub root_guards: HashSet<u32>,
 }
 
 impl Plan {
@@ -49,6 +55,7 @@ impl Plan {
             deferred_products: deferred_products(ir, &uses),
             asserted_comparisons: asserted_comparisons(ir, &uses),
             cellless_bit_masks: cellless_bit_masks(ir, &uses),
+            root_guards: root_guards(ir, &uses),
         }
     }
 }
@@ -174,5 +181,32 @@ fn cellless_bit_masks(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<u3
             })
         })
         .map(|stmt| stmt.stmt_id)
+        .collect()
+}
+
+/// An asserted `x >= 0` (`GteI`/`GteF(x, 0)` or `LteI`/`LteF(0, x)`, only
+/// used by `Assert`) where a later statement is `SqrtF(x)`.
+fn root_guards(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<u32> {
+    let is_zero = |stmt: u32| match ir.stmts.get(stmt as usize).map(|s| &s.ir) {
+        Some(IR::ConstantInt { value }) => *value == 0,
+        Some(IR::ConstantFloat { value }) => *value == 0.0,
+        _ => false,
+    };
+    let root_after = |x: u32, after: u32| {
+        uses.get(&x).is_some_and(|users| {
+            users.iter().any(|u| *u > after && ir.stmts.get(*u as usize).is_some_and(|s| matches!(s.ir, IR::SqrtF)))
+        })
+    };
+    ir.stmts
+        .iter()
+        .filter(|stmt| only_user(ir, uses, stmt.stmt_id).is_some_and(|user| matches!(user.ir, IR::Assert)))
+        .filter_map(|stmt| {
+            let x = match (&stmt.ir, stmt.arguments.as_slice()) {
+                (IR::GteI | IR::GteF, [x, zero]) if is_zero(*zero) => *x,
+                (IR::LteI | IR::LteF, [zero, x]) if is_zero(*zero) => *x,
+                _ => return None,
+            };
+            root_after(x, stmt.stmt_id).then_some(stmt.stmt_id)
+        })
         .collect()
 }
