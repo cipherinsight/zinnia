@@ -1217,6 +1217,27 @@ pub fn np_take_along_axis(
     crate::helpers::static_array::base::build_static_array_from_flat(b, out, out_shape, dtype)
 }
 
+/// The insertion point of `np.insert(arr, obj, values, axis)` for a scalar
+/// `obj` on an axis of length `n`: NumPy accepts `-n <= obj <= n` (a
+/// negative `obj` counts from the end, `obj + n`) and raises `IndexError`
+/// otherwise. A literal is checked now; a runtime `obj` is checked in-circuit
+/// unless the facts prove it (under the execution predicate, see
+/// `discharge_index_in_range`), then wrapped. The result is in `[0, n]`.
+fn insert_position(b: &mut IRBuilder, obj: &Value, n: usize, axis: usize) -> Value {
+    let n_i = n as i64;
+    if let Some(raw) = obj.int_val() {
+        if raw < -n_i || raw > n_i {
+            panic!("np.insert: index {raw} is out of bounds for axis {axis} with size {n}");
+        }
+        return b.ir_constant_int(if raw < 0 { raw + n_i } else { raw });
+    }
+    let non_negative = b.ask_bounds(obj).is_some_and(|(min, _)| min >= 0);
+    let lo = if non_negative { 0 } else { -n_i };
+    let checked = crate::optim::resolver::discharge_index_in_range(b, obj, lo, n_i + 1, "np.insert");
+    // `obj + n` for a negative `obj`: `[-n, -1]` maps to `[0, n - 1]`.
+    crate::helpers::static_array::base::normalize_dynamic_index(b, &checked, n)
+}
+
 pub fn np_insert(
     b: &mut IRBuilder,
     args: &[Value],
@@ -1255,23 +1276,7 @@ pub fn np_insert(
     if !matches!(obj, Value::Integer(_)) {
         panic!("np.insert: this bounded slice supports one scalar obj");
     }
-    if let Some(raw_pos) = obj.int_val() {
-        if raw_pos < 0 || raw_pos > shape[axis] as i64 {
-            panic!(
-                "np.insert: obj {} is out of bounds for this bounded slice; expected 0 <= obj <= {}",
-                raw_pos, shape[axis]
-            );
-        }
-    } else {
-        crate::optim::resolver::discharge_index_in_range(
-            b,
-            obj,
-            0,
-            shape[axis] as i64 + 1,
-            "np.insert",
-        );
-    }
-
+    let pos = insert_position(b, obj, shape[axis], axis);
     let insert_count = 1usize;
     let mut out_shape = shape.clone();
     out_shape[axis] += insert_count;
@@ -1321,21 +1326,21 @@ pub fn np_insert(
             }
         };
 
-    if obj.int_val().is_none() {
+    if pos.int_val().is_none() {
         let n_axis = shape[axis];
         let lane_total = expected_value_cells;
         let mut out_slots: Vec<Option<Value>> = vec![None; out_total];
         // Output slot `i` takes the source element `i` before the insertion
         // point, the inserted value at it and the source element `i - 1`
-        // after it. `[obj <= i]` is the running OR of the equality tests
-        // `[obj == k]`, k <= i: `obj` is bounds-checked to `0..=n_axis`
-        // above, so exactly one of those tests holds, and the prefix OR is
-        // set from `k = obj` on. That replaces a comparison per slot with
+        // after it. `[pos <= i]` is the running OR of the equality tests
+        // `[pos == k]`, k <= i: `pos` is in `0..=n_axis` (see
+        // `insert_position`), so exactly one of those tests holds, and the prefix OR is
+        // set from `k = pos` on. That replaces a comparison per slot with
         // one gate.
         let mut reached: Option<Value> = None;
         for i in 0..=n_axis {
             let i_const = b.ir_constant_int(i as i64);
-            let is_eq = b.ir_equal_i(&i_const, obj);
+            let is_eq = b.ir_equal_i(&i_const, &pos);
             let at_or_after = match &reached {
                 Some(prev) => b.ir_logical_or(prev, &is_eq),
                 None => is_eq.clone(),
@@ -1433,7 +1438,7 @@ pub fn np_insert(
             };
             cast_cell_to_dtype(b, &value_cells[value_idx], dtype)
         };
-        if let Some(raw_pos) = obj.int_val() {
+        if let Some(raw_pos) = pos.int_val() {
             let pos = raw_pos as usize;
             if coords[axis] == pos {
                 out.push(inserted_value);

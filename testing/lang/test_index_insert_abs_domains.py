@@ -83,3 +83,45 @@ def test_slice_assignment_returns_numpys_array():
     source = 'def kernel(a: Float[Array, "3 5"], i: Integer):\n    a[:, i] = 2.5\n    return a\n'
     for i in (-5, -1, 0, 4):
         assert_matches_numpy(source, np.linspace(-1, 1, 15).reshape(3, 5), i)
+
+
+# ── np.insert at a runtime position ──────────────────────────────────────
+
+INSERT = (
+    'def kernel(a: Integer[Array, "5"], pos: Integer, e: Integer, expected: Integer[Array, "6"]):\n'
+    '    assert np.all(np.insert(a, pos, e) == expected)\n'
+)
+A5 = np.array([10, 20, 30, 40, 50], dtype=np.int64)
+
+
+@pytest.fixture(scope="module")
+def insert_program():
+    return compile_kernel(INSERT)
+
+
+@pytest.mark.parametrize("pos", [-5, -3, -1, 0, 2, 5])
+def test_insert_at_a_runtime_position_proves_numpys_result(insert_program, pos):
+    good = np.insert(A5, pos, 99)
+    assert accepted_everywhere(insert_program, A5, pos, 99, good)
+    # The other reading of a negative position: counted from the start.
+    wrong = np.insert(A5, abs(pos) if pos < 0 else (pos + 1) % 6, 99)
+    assert rejected_everywhere(insert_program, A5, pos, 99, wrong)
+
+
+@pytest.mark.parametrize("pos", [-6, 6, -100])
+def test_insert_out_of_range_has_no_proof(insert_program, pos):
+    with pytest.raises(IndexError):
+        np.insert(A5, pos, 99)
+    for claim in (np.insert(A5, 0, 99), np.insert(A5, 5, 99)):
+        assert rejected_everywhere(insert_program, A5, pos, 99, claim)
+
+
+def test_insert_rows_at_negative_positions_match_numpy():
+    runtime = ('def kernel(a: Float[Array, "4 3"], pos: Integer, r: Float[Array, "3"]):\n'
+               '    return np.insert(a, pos, r, axis=0)\n')
+    a = np.linspace(-2, 2, 12).reshape(4, 3)
+    row = np.array([0.5, -0.25, 7.0])
+    for pos in (-4, -1, 0, 4):
+        assert_matches_numpy(runtime, a, pos, row)
+    literal = 'def kernel(a: Integer[Array, "5"], e: Integer):\n    return np.insert(a, -2, e)\n'
+    assert_matches_numpy(literal, A5, 7)
