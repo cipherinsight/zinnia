@@ -82,7 +82,10 @@ pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction
             .as_deref()
             .is_some_and(|name| offered.iter().any(|(c, cands)| c.name() == name && !cands.is_empty()));
         for (construction, candidates) in offered {
-            if only_forced && Some(construction.name()) != forced.as_deref() {
+            // Producers of shared values only (no lane) stay: the forced
+            // construction may need them.
+            let produces_lanes = candidates.iter().any(|c| c.post.iter().any(|r| matches!(r, Requirement::Lane(_))));
+            if only_forced && Some(construction.name()) != forced.as_deref() && produces_lanes {
                 continue;
             }
             for candidate in candidates {
@@ -114,8 +117,8 @@ pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction
 
 /// Measurement only: the environment variable `ZINNIA_FORCE_CONSTRUCTION`
 /// set to a construction's [`Construction::name`] makes it the only
-/// construction offered for every group it applies to (other groups are
-/// lowered as usual), so cost curves and scaling demonstrations can compile
+/// construction offering lanes for every group it applies to (other groups
+/// are lowered as usual; producers of shared values only stay available), so cost curves and scaling demonstrations can compile
 /// one program with each alternative. The benchmark harness never sets it;
 /// a forced construction is sound like any other, it may only cost more.
 fn forced_construction() -> Option<String> {

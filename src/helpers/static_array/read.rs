@@ -160,6 +160,12 @@ fn read_line(
             .map(|(ax, v)| v.int_val().expect("static") as usize * strides[ax])
             .sum::<usize>();
     let line: Vec<Value> = (0..shape[axis]).map(|k| cells.get(fixed + k * strides[axis]).cloned()).collect::<Option<_>>()?;
+    // A table of constants stays a memory read: `lower::sort::table` reads
+    // an affine one in closed form, and backends read constant segments
+    // without per-cell witnesses.
+    if line.iter().all(|c| c.int_val().is_some() || c.float_val().is_some() || c.bool_val().is_some()) {
+        return None;
+    }
     let out = match line.as_slice() {
         [only] => only.clone(),
         _ => crate::lower::gather::checked_element_lane(b, &line, index),
