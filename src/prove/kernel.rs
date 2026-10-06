@@ -203,6 +203,13 @@ pub fn fp_is_negative(v: Fp) -> bool {
 /// 2^126 (the window every fixed-point intermediate of the kernel lives in).
 /// `None` for anything larger, so callers never silently truncate.
 pub fn fp_to_i128(v: Fp) -> Option<i128> {
+    fp_to_i128_wide(v).filter(|m| m.unsigned_abs() < 1u128 << 126)
+}
+
+/// [`fp_to_i128`] for every magnitude below 2^127, for a gadget whose
+/// operands can reach 2^126 (a hint computed from such a value; the
+/// constraints, not this reading, bound it).
+pub fn fp_to_i128_wide(v: Fp) -> Option<i128> {
     let negative = fp_is_negative(v);
     let magnitude = if negative { -v } else { v };
     let bytes = magnitude.to_repr();
@@ -211,7 +218,7 @@ pub fn fp_to_i128(v: Fp) -> Option<i128> {
         return None;
     }
     let m = u128::from_le_bytes(bytes[..16].try_into().unwrap());
-    if m >= 1u128 << 126 {
+    if m >= 1u128 << 127 {
         return None;
     }
     Some(if negative { -(m as i128) } else { m as i128 })
@@ -477,6 +484,53 @@ pub fn fp_int_cast(v: Fp, precision_bits: u32) -> (Fp, Fp) {
 pub fn fp_floor_div(a: Fp, b: Fp) -> (Fp, Fp) {
     let (q, r) = div_rem_or_zero(fp_to_i64(a) as i128, fp_to_i64(b) as i128, Rounding::Floor);
     (i128_to_fp(q), i128_to_fp(r))
+}
+
+// ---------------------------------------------------------------------------
+// int64 shifts (NumPy's `>>` and `<<`)
+// ---------------------------------------------------------------------------
+
+/// The shift count NumPy uses for an int64 shift by `b`: NumPy's
+/// `npy_rshift`/`npy_lshift` (numpy/_core/src/npymath/npy_math_internal.h.src)
+/// compare the count, cast to the unsigned type, with the bit width. So
+/// `Some(b)` for `0 <= b < 64` and `None` for every other `b`, negative counts
+/// included. This is defined behaviour in NumPy, not C's undefined shift.
+pub fn int64_shift_count(b: i64) -> Option<u32> {
+    u32::try_from(b).ok().filter(|c| *c < 64)
+}
+
+/// NumPy's int64 `a >> b`: an arithmetic shift (`floor(a / 2^b)`), and the
+/// sign fill (`0` or `-1`, i.e. a shift by 63) for a count outside `[0, 64)`.
+pub fn int64_shr(a: i64, b: i64) -> i64 {
+    a >> int64_shift_count(b).unwrap_or(63)
+}
+
+/// NumPy's int64 `a << b`: `a * 2^b` wrapped to int64, and `0` for a count
+/// outside `[0, 64)`.
+pub fn int64_shl(a: i64, b: i64) -> i64 {
+    int64_shift_count(b).map_or(0, |c| a.wrapping_shl(c))
+}
+
+/// The int64 a field element holds, if it lies in the signed 64-bit window.
+fn fp_int64(v: Fp) -> Option<i64> {
+    fp_to_i128(v).and_then(|v| i64::try_from(v).ok())
+}
+
+/// `a >> b` and `a << b` ([`int64_shr`], [`int64_shl`]) on field elements,
+/// as the circuits constrain them: `None` (no proof) unless both operands lie
+/// in the signed 64-bit window. The IR's integer `+ - *` are exact in the
+/// field and agree with NumPy's wrapping int64 arithmetic only modulo 2^64;
+/// a shift of a value that left the window is not determined by its residue
+/// (`>>`) or would leave the field's exact range (`<<` by up to 63 bits), so it
+/// has no proof, as for division and the bitwise operators. The result of
+/// `<<` is wrapped into the window exactly as NumPy's.
+pub fn fp_shr(a: Fp, b: Fp) -> Option<Fp> {
+    Some(i64_to_fp(int64_shr(fp_int64(a)?, fp_int64(b)?)))
+}
+
+/// See [`fp_shr`].
+pub fn fp_shl(a: Fp, b: Fp) -> Option<Fp> {
+    Some(i64_to_fp(int64_shl(fp_int64(a)?, fp_int64(b)?)))
 }
 
 /// Float floor division `a // b` on Q-encoded values: `floor(a / b)`,

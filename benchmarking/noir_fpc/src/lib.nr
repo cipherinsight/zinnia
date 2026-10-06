@@ -317,6 +317,50 @@ pub fn bitxor(a: Field, b: Field) -> Field {
 }
 
 // ---------------------------------------------------------------------------
+// int64 shifts (NumPy's >> and <<; kernel::fp_shr, kernel::fp_shl)
+// ---------------------------------------------------------------------------
+
+/// The count of an int64 shift by b (kernel::int64_shift_count): (true, b)
+/// for 0 <= b < 64, else (false, fallback). b must lie in the signed 64-bit
+/// window (no proof otherwise). [b < 0] and [b < 64] are pinned comparisons
+/// (qlt: the differences lie in [-2^64, 2^64) for b in the window).
+fn shift_count(b: Field, fallback: Field) -> (bool, Field) {
+    assert_in_window(b);
+    let in_range = !qlt(b, 0) & qlt(b, 64);
+    (in_range, if in_range { b } else { fallback })
+}
+
+/// NumPy's int64 a >> b: floor(a / 2^c) with c = b for 0 <= b < 64 and
+/// c = 63 (the sign fill) otherwise. a and b must lie in the signed 64-bit
+/// window (no proof otherwise: the shift does not commute with int64
+/// wrap-around). c < 64, so pow2(c) recomposes c from its bits; the floor
+/// division by the positive 2^c pins the quotient (divmod_by_positive).
+pub fn shr_int64(a: Field, b: Field) -> Field {
+    assert_in_window(a);
+    let (_in_range, c) = shift_count(b, 63);
+    let (q, _r) = divmod_by_positive::<64>(a, pow2(c));
+    q
+}
+
+/// NumPy's int64 a << b: a * 2^b wrapped into the int64 window for
+/// 0 <= b < 64, 0 otherwise. a and b must lie in the signed 64-bit window (no
+/// proof otherwise), so |a * 2^c| <= 2^126 for wrap_int64.
+pub fn shl_int64(a: Field, b: Field) -> Field {
+    assert_in_window(a);
+    let (in_range, c) = shift_count(b, 0);
+    wrap_int64(if in_range { a * pow2(c) } else { 0 })
+}
+
+/// x wrapped into the signed 64-bit window as int64 arithmetic wraps:
+/// (x + 2^63) mod 2^64 - 2^63, for |x| <= 2^126. divmod_by_pow2::<64> pins
+/// the remainder (64 bits) and the window-checked quotient: |q 2^64 + r| <
+/// 2^127 + 2^64 < p / 2, so the identity holds over the integers.
+pub fn wrap_int64(x: Field) -> Field {
+    let (_q, r) = divmod_by_pow2::<64>(x + WINDOW_OFFSET);
+    r - WINDOW_OFFSET
+}
+
+// ---------------------------------------------------------------------------
 // Integer division
 // ---------------------------------------------------------------------------
 //
@@ -1757,6 +1801,46 @@ fn test_qarctan2_against_libm_all_quadrants() {
         assert_close(qarctan2(y, x), want, 32);
     }
     assert(qarctan2(0, 0) == 0);
+}
+
+#[test]
+fn test_int64_shifts_match_numpy() {
+    // (a, b, a >> b, a << b) as NumPy's int64 (kernel::int64_shr, int64_shl).
+    let cases: [(Field, Field, Field, Field); 13] = [
+        (5, 0, 5, 5),
+        (5, 1, 2, 10),
+        (-5, 1, -3, -10),
+        (-5, 63, -1, -9223372036854775808),
+        (5, 63, 0, -9223372036854775808),
+        (6, 63, 0, 0),
+        (5, 64, 0, 0),
+        (-5, 64, -1, 0),
+        (5, -1, 0, 0),
+        (-5, -1, -1, 0),
+        (-9223372036854775808, 1, -4611686018427387904, 0),
+        (4611686018427387904, 1, 2305843009213693952, -9223372036854775808),
+        (9223372036854775807, 63, 0, -9223372036854775808),
+    ];
+    for i in 0..13 {
+        let (a, b, shr, shl) = cases[i];
+        assert(shr_int64(a, b) == shr);
+        assert(shl_int64(a, b) == shl);
+    }
+}
+
+#[test(should_fail)]
+fn test_shr_int64_outside_the_window_has_no_proof() {
+    let _ = shr_int64(9223372036854775808, 1);
+}
+
+#[test(should_fail)]
+fn test_shl_int64_outside_the_window_has_no_proof() {
+    let _ = shl_int64(9223372036854775808, 1);
+}
+
+#[test(should_fail)]
+fn test_shift_count_outside_the_window_has_no_proof() {
+    let _ = shl_int64(1, 9223372036854775808);
 }
 
 #[test]

@@ -404,7 +404,8 @@ impl Halo2BaseSynthesizer<'_> {
         raw: &Halo2BaseCell,
         shift: u32,
     ) -> Result<(Halo2BaseCell, Halo2BaseCell), ProvingError> {
-        let q_value = kernel::fp_to_i128(raw.value).map_or(0, |v| v >> shift);
+        // `raw` may reach 2^126 in magnitude (`wrap_int64`).
+        let q_value = kernel::fp_to_i128_wide(raw.value).map_or(0, |v| v >> shift);
         let scale = kernel::i128_to_fp(1i128 << shift);
         let (q, rem) = self.quotient_gate(raw, QuantumCell::Constant(scale), scale, kernel::i128_to_fp(q_value));
         self.range_check(&rem, shift as usize);

@@ -30,7 +30,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 
-use crate::circuit_input::{InputNode, InputPath, PathSegment, ResolvedWitness};
+use crate::circuit_input::{InputNode, InputPath, ResolvedWitness};
 use crate::ir::IRGraph;
 use crate::prove::error::ProvingError;
 use crate::prove::interpreter::interpret_ir;
@@ -1767,8 +1767,8 @@ impl<'a> NoirEmitter<'a> {
         self.divmod_call(call)
     }
 
-    /// An integer divisor must be an int64: `b` in `[-2^63, 2^63)`, with no
-    /// proof otherwise (`assert_in_window`, one 64-bit check of `b + 2^63`;
+    /// An integer divisor (or the operand of `>>`) must be an int64: `b` in
+    /// `[-2^63, 2^63)`, with no proof otherwise (`assert_in_window`, one 64-bit check of `b + 2^63`;
     /// nothing when a constant or an earlier check already proves the range,
     /// e.g. an input's domain check).
     ///
@@ -1790,7 +1790,7 @@ impl<'a> NoirEmitter<'a> {
         self.materialize_sum(b);
     }
 
-    fn ensure_int64_divisor(&mut self, b: &str) {
+    fn ensure_int64(&mut self, b: &str) {
         self.witness_divisor(b);
         let window = (-(1i128 << 63), (1i128 << 63) - 1);
         if self.known_range(b).is_some_and(|(lo, hi)| lo >= window.0 && hi <= window.1) {
@@ -2484,7 +2484,7 @@ impl Synthesizer for NoirEmitter<'_> {
         if let Some((q, _r)) = self.constant_floor_divmod(a, b) {
             return Ok(self.literal_int(q));
         }
-        self.ensure_int64_divisor(b);
+        self.ensure_int64(b);
         let (q, _r) = self.floor_divmod_cells(a, b);
         Ok(q)
     }
@@ -2512,7 +2512,7 @@ impl Synthesizer for NoirEmitter<'_> {
         if let Some((_q, r)) = self.constant_floor_divmod(a, b) {
             return Ok(self.literal_int(r));
         }
-        self.ensure_int64_divisor(b);
+        self.ensure_int64(b);
         let (_q, r) = self.floor_divmod_cells(a, b);
         Ok(r)
     }
@@ -2560,11 +2560,56 @@ impl Synthesizer for NoirEmitter<'_> {
         let and = self.bit_and_i(a, b)?;
         Ok(self.or_xor_from_and(a, b, &and, 2))
     }
-    fn shl_i(&mut self, _a: &CellRef, _b: &CellRef) -> Result<CellRef, ProvingError> {
-        noop_unsupported!(self, "shl_i")
+    /// NumPy's int64 `a << b` (`kernel::fp_shl`): `a * 2^b` wrapped into the
+    /// int64 window for `0 <= b < 64`, 0 for any other `b`; `a` must be an
+    /// int64 (`ensure_int64`). A constant count is resolved here (the wrap,
+    /// `wrap_int64`, is skipped when the product's known range lies in the
+    /// window); a dynamic one is `shl_int64` (noir_fpc).
+    fn shl_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some((x, y)) = self.constant_pair(a, b) {
+            return Ok(self.literal_int(crate::prove::kernel::int64_shl(x, y)));
+        }
+        if let Some(count) = self.s_int_of(b).and_then(|c| i64::try_from(c).ok()) {
+            let c = match crate::prove::kernel::int64_shift_count(count) {
+                None => return Ok(self.literal_int(0)),
+                Some(0) => return Ok(a.clone()),
+                Some(c) => c,
+            };
+            self.ensure_int64(a);
+            let power = 1i128 << c;
+            let fits = self.known_range(a).is_some_and(|(lo, hi)| {
+                let window = -(1i128 << 63)..(1i128 << 63);
+                window.contains(&(lo << c)) && window.contains(&(hi << c))
+            });
+            let power = self.bind_val(&power.to_string(), ConcreteValue::Int(power));
+            let product = self.integer_arith(a, &power, '*');
+            if fits {
+                return Ok(product);
+            }
+            self.use_lib("wrap_int64");
+            return Ok(self.bind(&format!("wrap_int64({product})")));
+        }
+        self.use_lib("shl_int64");
+        Ok(self.bind(&format!("shl_int64({a}, {b})")))
     }
-    fn shr_i(&mut self, _a: &CellRef, _b: &CellRef) -> Result<CellRef, ProvingError> {
-        noop_unsupported!(self, "shr_i")
+    /// NumPy's int64 `a >> b` (`kernel::fp_shr`): `floor(a / 2^c)` with
+    /// `c = b` for `0 <= b < 64`, else 63 (the sign fill); `a` must be an
+    /// int64 (`ensure_int64`). A constant count is the floor division by the
+    /// constant `2^c` (`divmod_by_pow2`: a c-bit remainder check, the quotient
+    /// window-checked); a dynamic one is `shr_int64` (noir_fpc).
+    fn shr_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some((x, y)) = self.constant_pair(a, b) {
+            return Ok(self.literal_int(crate::prove::kernel::int64_shr(x, y)));
+        }
+        if let Some(count) = self.s_int_of(b).and_then(|c| i64::try_from(c).ok()) {
+            self.ensure_int64(a);
+            return Ok(match crate::prove::kernel::int64_shift_count(count).unwrap_or(63) {
+                0 => a.clone(),
+                c => self.divide_by_positive_constant(a, 1i128 << c).0,
+            });
+        }
+        self.use_lib("shr_int64");
+        Ok(self.bind(&format!("shr_int64({a}, {b})")))
     }
     fn bit_not_i(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         // Two's complement: !a = -a - 1.
@@ -2642,7 +2687,7 @@ impl Synthesizer for NoirEmitter<'_> {
             // that of `a * 2^32` by `b`.
             let (numerator, divisor) = match self.integral_float.get(b.as_str()).cloned() {
                 Some(n) => {
-                    self.ensure_int64_divisor(&n);
+                    self.ensure_int64(&n);
                     (a.to_string(), n)
                 }
                 None => (format!("{a} * {Q_U64}"), b.clone()),

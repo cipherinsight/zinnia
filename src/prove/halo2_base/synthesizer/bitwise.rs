@@ -1,4 +1,4 @@
-//! Bitwise `&`, `|`, `^` and `~` on int64 values, with NumPy's two's
+//! Bitwise `&`, `|`, `^`, `~`, `>>` and `<<` on int64 values, with NumPy's two's
 //! complement semantics (the mock computes them natively on `i64`).
 //!
 //! Everything reduces to `&` through two integer identities of two's
@@ -8,14 +8,19 @@
 //! the result can have: a constant mask `c >= 0` needs `bit_length(c)` bits
 //! of the other operand, an operand with a proven range `[0, 2^w)` limits
 //! the result to `w` bits, otherwise all 64.
+//!
+//! The shifts `>>` and `<<` follow `kernel::fp_shr` / `fp_shl` (NumPy's int64
+//! shifts): a floor division by `2^c`, and a multiplication by `2^c` wrapped
+//! into the int64 window.
 
 use halo2_base::gates::GateInstructions;
 use halo2_base::QuantumCell;
 
-use super::ranges::{Interval, TwoValued};
+use super::fixed_point::Divisor;
+use super::ranges::{Interval, Operand, TwoValued};
 use super::{Fp, Halo2BaseCell, Halo2BaseSynthesizer};
 use crate::prove::error::ProvingError;
-use crate::prove::kernel;
+use crate::prove::kernel::{self, Rounding};
 use crate::prove::traits::Synthesizer;
 
 /// Bit width of int64 values.
@@ -151,6 +156,103 @@ impl Halo2BaseSynthesizer<'_> {
     pub(super) fn bit_not(&mut self, a: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
         let minus_one = self.constant_int(-1)?;
         self.sub_i(&minus_one, a)
+    }
+
+    /// NumPy's int64 `a >> b` (`kernel::fp_shr`): `floor(a / 2^c)`, with the
+    /// count `c = b` for `0 <= b < 64` and `c = 63` (the sign fill) for any
+    /// other `b`.
+    ///
+    /// Soundness. `a` is constrained into the signed 64-bit window (no
+    /// witness outside it, as `kernel::fp_shr`: the shift does not commute
+    /// with int64 wrap-around). A constant count is resolved here, and the
+    /// floor is [`Self::rescale_with_remainder`] (pinned quotient, remainder
+    /// in `[0, 2^c)`). A dynamic count is [`Self::shift_count`], and the
+    /// floor the division by the positive divisor `2^c` (`div_rem_nonzero`:
+    /// pinned quotient in the window, remainder in `[0, 2^c)`). So the result
+    /// is a function of `(a, b)`.
+    pub(super) fn shift_right(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        if let (Some(x), Some(y)) = (self.int_constant(a), self.int_constant(b)) {
+            return self.constant_int(kernel::int64_shr(x, y));
+        }
+        self.ensure_signed64(a)?;
+        if let Some(count) = self.int_constant(b) {
+            return match kernel::int64_shift_count(count).unwrap_or(63) {
+                0 => Ok(*a),
+                c => Ok(self.rescale_with_remainder(a, c)?.0),
+            };
+        }
+        let (_, power) = self.shift_count(b, 63)?;
+        Ok(self.div_rem_nonzero(a, Divisor::Positive(power), Rounding::Floor)?.0)
+    }
+
+    /// NumPy's int64 `a << b` (`kernel::fp_shl`): `a * 2^b` wrapped into the
+    /// int64 window for `0 <= b < 64`, and `0` for any other `b`.
+    ///
+    /// Soundness. `a` is constrained into the signed 64-bit window (no
+    /// witness outside it, as `kernel::fp_shl`), so `|a * 2^c| <= 2^126`. A
+    /// constant count is resolved here; a dynamic one is
+    /// [`Self::shift_count`] (with `c = 0` outside the range) and the product
+    /// is multiplied by the in-range bit. Both are gates on pinned cells, and
+    /// [`Self::wrap_int64`] pins the wrapped value.
+    pub(super) fn shift_left(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        if let (Some(x), Some(y)) = (self.int_constant(a), self.int_constant(b)) {
+            return self.constant_int(kernel::int64_shl(x, y));
+        }
+        self.ensure_signed64(a)?;
+        let product = match self.int_constant(b) {
+            Some(count) => match kernel::int64_shift_count(count) {
+                None => return self.constant_int(0),
+                Some(0) => return Ok(*a),
+                Some(c) => {
+                    let power = self.const_cell(kernel::i128_to_fp(1i128 << c));
+                    self.mul_i(a, &power)?
+                }
+            },
+            None => {
+                let (in_range, power) = self.shift_count(b, 0)?;
+                let shifted = self.mul_i(a, &power)?;
+                self.mul_i(&in_range, &shifted)?
+            }
+        };
+        self.wrap_int64(&product)
+    }
+
+    /// `x` wrapped into the signed 64-bit window as int64 arithmetic wraps
+    /// (`(x + 2^63) mod 2^64 - 2^63`), for `|x| <= 2^126` (`x + 2^63` below
+    /// 2^127, which the hint reads); `x` itself when its
+    /// proven range already lies inside.
+    ///
+    /// Soundness: [`Self::rescale_with_remainder`] of `x + 2^63` by 64 bits
+    /// pins the floor quotient (window-checked) and the remainder in
+    /// `[0, 2^64)`; `|x + 2^63| < 2^127`, so the identity holds over the
+    /// integers and the remainder is `(x + 2^63) mod 2^64`.
+    fn wrap_int64(&mut self, x: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        if self.proven_range(x).is_some_and(|r| r.within(&Interval::SIGNED64)) {
+            return Ok(*x);
+        }
+        let shifted = self.add_constant(x, 1i128 << 63);
+        let (_, low) = self.rescale_with_remainder(&shifted, 64)?;
+        Ok(self.add_constant(&low, -(1i128 << 63)))
+    }
+
+    /// For a dynamic int64 shift count `b`: the bit `[0 <= b < 64]` and
+    /// `2^c` for `c = b` when it is set and `c = fallback` (in `[0, 64)`)
+    /// otherwise.
+    ///
+    /// Soundness. `b` is constrained into the signed 64-bit window (no
+    /// witness outside it); `neg = [b < 0]` and `below = [b < 64]` are pinned
+    /// comparisons, and since `neg` implies `below`, `below - neg` is the bit
+    /// `[0 <= b < 64]`. Then `c` (a select of pinned values) lies in
+    /// `[0, 64)`, and [`Self::power_of_two`] decomposes it into 6 bits that
+    /// recompose to `c`, so `2^c` is pinned.
+    fn shift_count(&mut self, b: &Halo2BaseCell, fallback: i64) -> Result<(Halo2BaseCell, Halo2BaseCell), ProvingError> {
+        let negative = self.less_than(Operand::Cell(*b), Operand::Constant(0), Some(Interval::SIGNED64))?;
+        let below = self.less_than(Operand::Cell(*b), Operand::Constant(64), Some(Interval::SIGNED64))?;
+        let in_range = self.sub_i(&below, &negative)?;
+        self.mark_bit(&in_range);
+        let fallback = self.constant_int(fallback)?;
+        let count = self.select(&in_range, b, &fallback)?;
+        Ok((in_range, self.power_of_two(&count, 6)))
     }
 
     fn int_constant(&self, x: &Halo2BaseCell) -> Option<i64> {

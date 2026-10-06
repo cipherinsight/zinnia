@@ -515,6 +515,43 @@ fn hyperbolic_functions_are_pinned_and_equal_the_kernel() {
     assert!(!synthesize(&*tanh, &[q(30.0)], &[]).accepted, "tanh(30) uses exp(30), beyond the window");
 }
 
+type BinaryGadget = fn(&mut Halo2BaseSynthesizer<'_>, &Halo2BaseCell, &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError>;
+type KernelBinary = fn(Fp, Fp) -> Option<Fp>;
+
+/// `>>` and `<<` prove NumPy's int64 shifts (`kernel::fp_shr`, `fp_shl`:
+/// arithmetic `>>`, a count outside `[0, 64)` gives the sign fill or 0) with
+/// every hint pinned, for a dynamic and a constant count; an operand of `>>`
+/// or a count outside the int64 window has no witness.
+#[test]
+fn shifts_follow_numpy_and_are_pinned() {
+    let shifts: [(&str, BinaryGadget, KernelBinary); 2] =
+        [(">>", |s, a, b| s.shr_i(a, b), kernel::fp_shr), ("<<", |s, a, b| s.shl_i(a, b), kernel::fp_shl)];
+    // Every hint is tampered on the first pairs (each tamper is a MockProver
+    // run); the others are checked honestly.
+    let tampered = [(-5i64, 1i64), (-5, 64), (i64::MIN, 63), (12345, -1)];
+    let honest = [(5i64, 0i64), (5, 1), (-5, 63), (5, 64), (-5, -1), (i64::MAX, 62), (i64::MAX, 63), (-12345, 7), (3, i64::MIN)];
+    for (name, gadget, f) in shifts {
+        for (a, b) in tampered.into_iter().chain(honest) {
+            let expected = [f(int(a), int(b)).unwrap()];
+            let (dynamic, constant) = (binary(gadget), with_constant_rhs(gadget, int(b)));
+            if tampered.contains(&(a, b)) {
+                assert_sound(&format!("{a} {name} {b}"), &*dynamic, &[int(a), int(b)], &expected, &[]);
+                assert_sound(&format!("{a} {name} const {b}"), &*constant, &[int(a)], &expected, &[]);
+            }
+            for (kind, outcome) in [("", synthesize(&*dynamic, &[int(a), int(b)], &[])), ("const ", synthesize(&*constant, &[int(a)], &[]))] {
+                assert!(outcome.accepted, "{a} {name} {kind}{b}: honest witness rejected");
+                assert_eq!(outcome.outputs, expected, "{a} {name} {kind}{b}");
+            }
+        }
+    }
+    let beyond = kernel::i128_to_fp(1i128 << 63);
+    let (shr, shl) = (binary(shifts[0].1), binary(shifts[1].1));
+    assert!(!synthesize(&*shr, &[beyond, int(1)], &[]).accepted, "2^63 >> 1 (outside the window) was accepted");
+    assert!(!synthesize(&*with_constant_rhs(shifts[0].1, int(1)), &[beyond], &[]).accepted, "2^63 >> const 1 was accepted");
+    assert!(!synthesize(&*shr, &[int(1), beyond], &[]).accepted, "1 >> 2^63 was accepted");
+    assert!(!synthesize(&*shl, &[int(1), beyond], &[]).accepted, "1 << 2^63 was accepted");
+}
+
 #[test]
 fn arcsin_is_pinned_to_the_principal_branch() {
     let arcsin = unary(|s, a| s.arcsin_f(a));
