@@ -383,7 +383,7 @@ impl<'a> Preprocessor<'a> {
             IR::LogF => Ok(Some(kernel::fp_log(args[0], prec).unwrap_or(Fp::zero()))),
             IR::ArcSinF => Ok(Some(kernel::fp_arcsin(args[0], prec))),
             IR::ArcCosF => Ok(Some(kernel::fp_arccos(args[0], prec))),
-            IR::ArcTan2F => Ok(Some(kernel::fp_atan2(args[0], args[1], prec))),
+            IR::ArcTan2F => Ok(Some(kernel::fp_atan2(args[0], args[1], prec).unwrap_or(Fp::zero()))),
 
             // Logic
             IR::LogicalAnd => Ok(Some(if args[0] != Fp::zero() && args[1] != Fp::zero() {

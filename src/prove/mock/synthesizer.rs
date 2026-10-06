@@ -429,7 +429,9 @@ impl Synthesizer for MockSynthesizer {
     }
 
     fn arctan2_f(&mut self, y: &MockCell, x: &MockCell) -> Result<MockCell, ProvingError> {
-        Ok(MockCell(kernel::fp_atan2(y.fp(), x.fp(), self.prec())))
+        // No witness on any circuit for an operand outside the window.
+        let value = kernel::fp_atan2(y.fp(), x.fp(), self.prec());
+        Ok(self.domain_result(value, || "arctan2 of an operand outside the signed 64-bit window".into()))
     }
 
     // ── Boolean logic ─────────────────────────────────────────────────

@@ -1462,7 +1462,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         self.add_i(&half, &half)
     }
     fn arccos_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("arccos_f") }
-    fn arctan2_f(&mut self, _: &Self::CellRef, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("arctan2_f") }
+    fn arctan2_f(&mut self, y: &Self::CellRef, x: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.fixed_atan2(y, x) }
 
     fn logical_and(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         // `x and true = [x]`, `x and false = false`.

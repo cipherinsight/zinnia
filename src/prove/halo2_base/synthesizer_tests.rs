@@ -515,6 +515,27 @@ fn hyperbolic_functions_are_pinned_and_equal_the_kernel() {
     assert!(!synthesize(&*tanh, &[q(30.0)], &[]).accepted, "tanh(30) uses exp(30), beyond the window");
 }
 
+/// `arctan2` proves `kernel::fp_atan2`'s value (the octant, half-plane and
+/// sign cases, the axes and `(0, 0)`) with every hint pinned; an operand
+/// outside the int64 window has no witness.
+#[test]
+fn arctan2_is_pinned_and_equals_the_kernel() {
+    let atan2 = binary(|s, y, x| s.arctan2_f(y, x));
+    let expected = |y: Fp, x: Fp| vec![kernel::fp_atan2(y, x, PRECISION_BITS).expect("inside the window")];
+    for (y, x) in [(1.0, 2.0), (-2.0, -1.0), (0.0, -1.0), (0.0, 0.0), (3.0, 3.0)] {
+        assert_sound(&format!("atan2({y}, {x})"), &*atan2, &[q(y), q(x)], &expected(q(y), q(x)), &[]);
+    }
+    let edge = kernel::i128_to_fp(-(1i128 << 63));
+    for (y, x) in [(q(2.0), q(-1.0)), (q(-1e-9), q(5e8)), (q(7.5), q(0.0)), (q(-7.5), q(0.0)), (edge, q(1.0)), (q(1.0), edge)] {
+        let honest = synthesize(&*atan2, &[y, x], &[]);
+        assert!(honest.accepted, "atan2: honest witness rejected");
+        assert_eq!(honest.outputs, expected(y, x));
+    }
+    let beyond = kernel::i128_to_fp(1i128 << 63);
+    assert!(!synthesize(&*atan2, &[beyond, q(1.0)], &[]).accepted, "atan2(2^63 raw, 1) was accepted");
+    assert!(!synthesize(&*atan2, &[q(1.0), beyond], &[]).accepted, "atan2(1, 2^63 raw) was accepted");
+}
+
 type BinaryGadget = fn(&mut Halo2BaseSynthesizer<'_>, &Halo2BaseCell, &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError>;
 type KernelBinary = fn(Fp, Fp) -> Option<Fp>;
 
@@ -1317,6 +1338,9 @@ fn new_lowerings_are_witness_independent() {
         ("pow_f", binary(|s, a, b| s.pow_f(a, b)), vec![q(-1.5), q(3.0)]),
         ("pow", binary(|s, a, b| s.pow_i(a, b)), vec![int(3), int(5)]),
         ("int_cast", unary(|s, a| s.int_cast(a)), vec![q(-2.5)]),
+        ("arctan2", binary(|s, y, x| s.arctan2_f(y, x)), vec![q(-1.5), q(0.25)]),
+        ("shr", binary(|s, a, b| s.shr_i(a, b)), vec![int(-12345), int(7)]),
+        ("shl", binary(|s, a, b| s.shl_i(a, b)), vec![int(-12345), int(70)]),
     ];
     for (name, op, inputs) in ops {
         let shape = |witness: Option<ResolvedWitness>| {

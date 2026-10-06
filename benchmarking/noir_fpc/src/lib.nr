@@ -1031,8 +1031,11 @@ pub fn qarccos(x: Field) -> Field {
     }
 }
 
-/// Q32 atan2(y, x): the polynomial on min(|x|,|y|) / max(|x|,|y|) in [0, 1],
-/// then the octant and quadrant adjustments. atan2(0, 0) = 0.
+/// Q32 atan2(y, x) by kernel::fp_atan2's algorithm (bit for bit the mock's
+/// and halo2-base's value): the polynomial on min(|x|,|y|) / max(|x|,|y|) in
+/// [0, 1] (rounded down), then the octant and quadrant adjustments.
+/// atan2(0, 0) = 0, atan2(0, x < 0) = pi. sign_abs admits |y|, |x| < 2^64;
+/// the emitter checks the int64 window first (kernel::fp_atan2's domain).
 pub fn qarctan2(y: Field, x: Field) -> Field {
     let (sy, my) = sign_abs(y);
     let (sx, mx) = sign_abs(x);
@@ -1841,6 +1844,32 @@ fn test_shl_int64_outside_the_window_has_no_proof() {
 #[test(should_fail)]
 fn test_shift_count_outside_the_window_has_no_proof() {
     let _ = shl_int64(1, 9223372036854775808);
+}
+
+#[test]
+fn test_qarctan2_matches_the_kernel() {
+    // (y, x, kernel::fp_atan2(y, x)) bit for bit, the values of the Rust test
+    // fixed_point_atan2_values_match_noir_qarctan2.
+    let cases: [(Field, Field, Field); 14] = [
+        (4294967296, 8589934592, 1991351319),
+        (8589934592, 4294967296, 4755167533),
+        (-4294967296, 8589934592, -1991351319),
+        (-8589934592, -4294967296, -8737870172),
+        (4294967296, -8589934592, 11501686386),
+        (8589934592, -4294967296, 8737870172),
+        (-4294967296, -8589934592, -11501686386),
+        (0, 4294967296, 0),
+        (4294967296, 0, 6746518852),
+        (0, -4294967296, 13493037705),
+        (-4294967296, 0, -6746518852),
+        (0, 0, 0),
+        (4294967296, 4294967296, 3373259418),
+        (-9223372036854775808, 9223372036854775807, -3373259439),
+    ];
+    for i in 0..14 {
+        let (y, x, want) = cases[i];
+        assert(qarctan2(y, x) == want);
+    }
 }
 
 #[test]

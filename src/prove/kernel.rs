@@ -869,11 +869,41 @@ pub fn fp_tanh(x: Fp, precision_bits: u32) -> Option<Fp> {
     Some(fp_div_prescale(s, c, precision_bits))
 }
 
-/// Compute atan2(y, x) using native f64 math on the dequantized values.
-pub fn fp_atan2(y: Fp, x: Fp, precision_bits: u32) -> Fp {
-    let yv = dequantize_from_fp(y, precision_bits);
-    let xv = dequantize_from_fp(x, precision_bits);
-    quantize_to_fp(yv.atan2(xv), precision_bits)
+/// `atan2(y, x)` on Q-encoded values, by the circuits' algorithm
+/// (halo2-base `arctan2_f`, Noir `qarctan2`), so every backend computes the
+/// same value:
+///
+/// 1. the magnitudes `|y|`, `|x|` and the signs;
+/// 2. the ratio `t = min(|x|, |y|) / max(|x|, |y|)` in `[0, 1]`, Q-encoded
+///    and rounded down (`floor(min * 2^P / max)`; 0 when both are 0);
+/// 3. `atan(t) = t * P(t^2)` with [`ATAN_ODD_U_COEFS`] by [`horner_eval`]
+///    (every product rounded down, as `mul_f`);
+/// 4. the octant (`π/2 - atan(t)` when `|y| > |x|`), the half plane
+///    (`π - a` when `x < 0`) and the sign of `y` (negated when `y < 0`).
+///
+/// So `atan2(0, 0) = 0` and `atan2(0, x) = π` for `x < 0` (NumPy's values for
+/// `+0`; fixed point has no `-0`). `None` (no proof on any backend) when an
+/// operand leaves the signed 64-bit window.
+///
+/// Measured maximum error against libm at `P = 32`: 3.2e-9 (about 14 Q
+/// units) over every octant and radii from 1e-6 to 1e9 (asserted below
+/// 3.5e-9 by `fixed_point_atan2_is_accurate`): the polynomial's 1.8e-9, the
+/// rounding of `t`, the floored products and the rounding of π and π/2.
+pub fn fp_atan2(y: Fp, x: Fp, precision_bits: u32) -> Option<Fp> {
+    let window = -(1i128 << 63)..(1i128 << 63);
+    let yv = fp_to_i128(y).filter(|v| window.contains(v))?;
+    let xv = fp_to_i128(x).filter(|v| window.contains(v))?;
+    let (my, mx) = (yv.abs(), xv.abs());
+    let swap = mx < my;
+    let (num, den) = if swap { (mx, my) } else { (my, mx) };
+    let t = if den == 0 { 0 } else { (num << precision_bits) / den };
+    let t = i128_to_fp(t);
+    let (u, _) = fp_mul_rescale(t, t, precision_bits);
+    let odd = horner_eval(u, &atan_odd_coefs_q(precision_bits), precision_bits);
+    let poly = fp_to_i128(fp_mul_rescale(t, odd, precision_bits).0)?;
+    let octant = if swap { half_pi_q(precision_bits) - poly } else { poly };
+    let half_plane = if xv < 0 { pi_q(precision_bits) - octant } else { octant };
+    Some(i128_to_fp(if yv < 0 { -half_plane } else { half_plane }))
 }
 
 /// Compute arccos(x) using native f64 math on the dequantized value.
@@ -1281,6 +1311,60 @@ mod tests {
         }
         assert!(worst_relative < 1e-9, "relative error {worst_relative}");
         assert!(worst_absolute < 5.0 / 4294967296.0, "absolute error {worst_absolute}");
+    }
+
+    #[test]
+    fn fixed_point_atan2_values_match_noir_qarctan2() {
+        // The same values are asserted for Noir's `qarctan2` in
+        // benchmarking/noir_fpc (test_qarctan2_matches_the_kernel); the
+        // constants are noir_fpc's PI_Q, HALF_PI_Q and ATAN_ODD_Q.
+        assert_eq!((pi_q(32), half_pi_q(32)), (13493037705, 6746518852));
+        let coefs: Vec<i128> = atan_odd_coefs_q(32).into_iter().map(|c| fp_to_i128(c).unwrap()).collect();
+        assert_eq!(coefs, vec![
+            -7489138, 45873335, -131930687, 246804093, -359577404, 469877966, -612529925, 858917466,
+            -1431653573, 4294967285,
+        ]);
+        let q = 1i128 << 32;
+        let atan2 = |y: i128, x: i128| fp_atan2(i128_to_fp(y), i128_to_fp(x), 32).map(|v| fp_to_i128(v).unwrap());
+        for (y, x, want) in [
+            (q, 2 * q, 1991351319),
+            (2 * q, q, 4755167533),
+            (-q, 2 * q, -1991351319),
+            (-2 * q, -q, -8737870172),
+            (q, -2 * q, 11501686386),
+            (2 * q, -q, 8737870172),
+            (-q, -2 * q, -11501686386),
+            (0, q, 0),
+            (q, 0, 6746518852),
+            (0, -q, 13493037705),
+            (-q, 0, -6746518852),
+            (0, 0, 0),
+            (q, q, 3373259418),
+            (-(1i128 << 63), (1i128 << 63) - 1, -3373259439),
+        ] {
+            assert_eq!(atan2(y, x), Some(want), "atan2({y}, {x})");
+        }
+        assert_eq!(atan2(1i128 << 63, q), None);
+        assert_eq!(atan2(q, -(1i128 << 63) - 1), None);
+    }
+
+    #[test]
+    fn fixed_point_atan2_is_accurate() {
+        let mut worst = 0f64;
+        // Every octant: angles on a fine grid, at radii from 2^-20 to 2^30.
+        for step in 0..20_000 {
+            let angle = -std::f64::consts::PI + step as f64 * (2.0 * std::f64::consts::PI / 20_000.0);
+            for radius in [1e-6, 0.37, 1.0, 13.5, 1e3, 1e9] {
+                let (yq, xq) = (quantize_to_fp(radius * angle.sin(), 32), quantize_to_fp(radius * angle.cos(), 32));
+                let (y, x) = (dequantize_from_fp(yq, 32), dequantize_from_fp(xq, 32));
+                let got = dequantize_from_fp(fp_atan2(yq, xq, 32).expect("inside the window"), 32);
+                let exact = y.atan2(x);
+                // y = 0 with x < 0: NumPy's +0 gives π; libm's -0 would give -π.
+                let exact = if y == 0.0 && x < 0.0 { std::f64::consts::PI } else { exact };
+                worst = worst.max((got - exact).abs());
+            }
+        }
+        assert!(worst < 3.5e-9, "absolute error {worst}");
     }
 
     #[test]

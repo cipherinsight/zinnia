@@ -2973,14 +2973,15 @@ impl Synthesizer for NoirEmitter<'_> {
         let v = self.bind(&format!("qarccos({})", a));
         Ok(v)
     }
+    /// `kernel::fp_atan2` (`qarctan2`, bit for bit); its domain, the int64
+    /// window of both operands, is checked first (`ensure_int64`: nothing
+    /// when a known range proves it). `qarctan2`'s own `sign_abs` admits
+    /// magnitudes up to 2^64.
     fn arctan2_f(&mut self, y: &CellRef, x: &CellRef) -> Result<CellRef, ProvingError> {
+        self.ensure_int64(y);
+        self.ensure_int64(x);
         self.use_lib("qarctan2");
-        let v = self.bind(&format!(
-            "qarctan2({}, {})",
-            y,
-            x
-        ));
-        Ok(v)
+        Ok(self.bind(&format!("qarctan2({y}, {x})")))
     }
 
     fn logical_and(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
