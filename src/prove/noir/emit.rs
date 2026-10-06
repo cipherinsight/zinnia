@@ -2022,9 +2022,9 @@ impl Synthesizer for NoirEmitter<'_> {
             return Ok(v);
         }
         // Normalized-index dual equality: for norm = select(lt(x,0), x+N, x),
-        // eq(norm, j) == (x == j) | (x == j - N) — two Field equalities
-        // instead of the signed-comparison machinery that the normalization
-        // otherwise drags in (~600 ACIR gates per index). The identity is
+        // eq(norm, j) == (x == j) | (x == j - N), one zero test of
+        // (x - j)(x - j + N), instead of the comparison the normalization
+        // otherwise drags in. The identity is
         // exact ONLY for slot constants in range, i.e. 0 <= j < N: norm lands
         // in [0, N), so the two pre-images of j under normalization are
         // exactly {j, j - N}. For j >= N the `x == j - N` disjunct fires
@@ -2050,11 +2050,12 @@ impl Synthesizer for NoirEmitter<'_> {
                 let j = j as i64;
                 if j >= 0 && j < n {
                     // In range: j - n < 0 always, so the second pre-image is
-                    // j - n, written branch-free as (x + (n - j) == 0).
-                    let xf = &x;
+                    // j - n. x is j or j - n exactly when
+                    // (x - j) * (x - j + n) is zero (a field has no zero
+                    // divisors): one product and one zero test.
                     let v = self.bind_flag(&format!(
-                        "if ({} == {}) | ({} + {} == 0) {{ 1 }} else {{ 0 }}",
-                        xf, j, xf, n - j
+                        "if ({x} - {j}) * ({x} + {}) == 0 {{ 1 }} else {{ 0 }}",
+                        n - j
                     ));
                     return Ok(v);
                 }
@@ -2847,9 +2848,9 @@ mod tests {
         norm_index(&mut em, "norm", "x", 5);
         lit_int(&mut em, "j", 3); // in [0, 5)
         let _ = em.eq_i(&"norm".to_string(), &"j".to_string()).unwrap();
-        // Expect the dual-disjunct peephole: (x == 3) | (x + 2 == 0).
+        // Expect the dual-equality peephole: (x - 3) * (x + 2) == 0.
         assert!(
-            em.body.contains("(x == 3) | (x + 2 == 0)"),
+            em.body.contains("(x - 3) * (x + 2) == 0"),
             "in-range j=3 should use the dual-equality peephole, body was:\n{}",
             em.body
         );
@@ -2862,10 +2863,10 @@ mod tests {
         norm_index(&mut em, "norm", "x", 5);
         lit_int(&mut em, "j", 5); // j == N, OUT of range
         let _ = em.eq_i(&"norm".to_string(), &"j".to_string()).unwrap();
-        // The spurious second disjunct would be (x + 0 == 0) / (x == 0); the
-        // first would be (x == 5). Neither dual form must appear.
+        // The spurious second factor would be (x + 0), the first (x - 5).
+        // The dual form must not appear.
         assert!(
-            !em.body.contains(" | "),
+            !em.body.contains(") * ("),
             "j==N must NOT emit the dual-equality peephole, body was:\n{}",
             em.body
         );
@@ -2879,7 +2880,7 @@ mod tests {
         lit_int(&mut em, "j", -1); // j < 0, OUT of range
         let _ = em.eq_i(&"norm".to_string(), &"j".to_string()).unwrap();
         assert!(
-            !em.body.contains(" | "),
+            !em.body.contains(") * ("),
             "j<0 must NOT emit the dual-equality peephole, body was:\n{}",
             em.body
         );

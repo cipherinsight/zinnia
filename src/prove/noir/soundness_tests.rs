@@ -265,6 +265,39 @@ fn wrapped_index_comparison_is_narrow_and_sound() {
     assert_rejected(execute(&graph, &witness(&[("x", 1 << 40)])));
 }
 
+/// Equality tests of a wrapped index y = x + 5 if x < 0 else x against
+/// each slot j are one zero test of (x - j)(x - j + 5); they equal the
+/// mock's for indices of both signs, and in-range slot tests stay exact for
+/// an out-of-range x (no slot fires for x = 5 or -6).
+#[test]
+fn wrapped_index_equalities_match_the_mock() {
+    if !toolchain_present(false) {
+        return;
+    }
+    let mut g = Graph::default();
+    let x = g.read_int("x");
+    let zero = g.int(0);
+    let n = g.int(5);
+    let negative = g.push(IR::LtI, &[x, zero]);
+    let shifted = g.push(IR::AddI, &[x, n]);
+    let wrapped = g.push(IR::SelectI, &[negative, shifted, x]);
+    for j in 0..5 {
+        let slot = g.int(j);
+        let hit = g.push(IR::EqI, &[wrapped, slot]);
+        g.expose(hit);
+    }
+    let graph = g.finish();
+    let emitted = emit_circuit(&graph, &witness(&[("x", 0)]), &ProvingParams::default()).unwrap();
+    assert!(emitted.main_nr.contains(") * ("), "{}", emitted.main_nr);
+    for value in [-5, -2, 0, 3, 4, 5, -6] {
+        let w = witness(&[("x", value)]);
+        let (satisfied, mock) = mock_outputs(&graph, &w);
+        assert!(satisfied);
+        let noir: Vec<i128> = execute(&graph, &w).unwrap();
+        assert_eq!(noir, mock, "x = {value}");
+    }
+}
+
 /// M5: a dynamic-address write outside the segment used to update no slot
 /// and succeed; the mock rejects it.
 #[test]
