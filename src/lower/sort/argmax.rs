@@ -13,9 +13,11 @@
 //!    True when there is one, so `h[r]` is `any(h)`: with a True `h[r] = 1`;
 //!    without one `r = 0` and `h[0] = 0`.
 //!
-//! The pass [`ArgmaxQueries`] finds `r` as the first-True select chain the
-//! frontend emits (`select(h_0, 0, select(h_1, 1, .. select(h_{n-1}, n-1,
-//! 0)))`), views a statement built from reads of known segments at `r` by
+//! The pass [`ArgmaxQueries`] finds `r` as the gather family's argmax lane
+//! (`OpKind::ArgmaxOfFlags` over `h`) or as a first-True select chain
+//! (`select(h_0, 0, select(h_1, 1, .. select(h_{n-1}, n-1, 0)))`), views a
+//! statement built from reads at `r` (`OpKind::Element` lanes, or reads of
+//! known segments) by
 //! equality tests, `and`, `or` and `not` as `B[r]` (or `not B[r]`) for a
 //! vector `B` of statements the program has, and replaces it by `any(h)`
 //! (or its negation) when `B` is `h`. Everything it relies on is a
@@ -32,6 +34,7 @@ use std::collections::HashMap;
 use crate::builder::IRBuilder;
 use crate::ir::IRGraph;
 use crate::ir_defs::IR;
+use crate::lower::OpKind;
 use crate::optim::IRPass;
 use crate::types::{StmtId, Value};
 
@@ -205,7 +208,10 @@ impl<'a> Facts<'a> {
         let st = self.stmt(stmt);
         match (&st.ir, &st.arguments[..]) {
             (IR::EqI | IR::NeI, &[x, y]) => {
-                let (slots, c) = self.read_at(x, index).map(|s| (s, y)).or_else(|| self.read_at(y, index).map(|s| (s, x)))?;
+                let (slots, c) = match self.read_at(x, index) {
+                    Some(slots) => (slots, y),
+                    None => (self.read_at(y, index)?, x),
+                };
                 let bits: Vec<StmtId> =
                     slots.iter().map(|&slot| self.symmetric(&IR::EqI, slot, c)).collect::<Option<_>>()?;
                 Some(Gathered { bits, negated: matches!(st.ir, IR::NeI) })
@@ -237,23 +243,34 @@ impl<'a> Facts<'a> {
         }
     }
 
-    /// The slots of the known segment `stmt` reads, when it reads at the
-    /// same runtime index as the rest of the view.
-    fn read_at(&self, stmt: StmtId, index: &mut Option<StmtId>) -> Option<&Vec<StmtId>> {
+    /// The cells `stmt` reads (an element lane's shared cells, or a known
+    /// segment's slots), when it reads at the same runtime index as the
+    /// rest of the view.
+    fn read_at(&self, stmt: StmtId, index: &mut Option<StmtId>) -> Option<Vec<StmtId>> {
         let st = self.stmt(stmt);
-        let IR::ReadMemory { segment_id } = st.ir else { return None };
-        let at = st.arguments[0];
+        let (cells, at) = match &st.ir {
+            IR::ReadMemory { segment_id } => (self.segments.get(segment_id)?.clone(), st.arguments[0]),
+            IR::ArrayOp(op) if op.kind == OpKind::Element => {
+                let n = op.shared as usize;
+                (st.arguments[..n].to_vec(), *st.arguments.get(n)?)
+            }
+            _ => return None,
+        };
         if index.is_some_and(|r| r != at) {
             return None;
         }
-        let slots = self.segments.get(&segment_id)?;
         *index = Some(at);
-        Some(slots)
+        Some(cells)
     }
 
-    /// The bits `h` when `r` is the first-True chain over them:
+    /// The bits `h` when `r` is NumPy's argmax of them: an argmax lane of
+    /// the gather family, or the first-True chain
     /// `select(h_0, 0, select(h_1, 1, ... select(h_{n-1}, n-1, 0)))`.
     fn first_true_bits(&self, r: StmtId) -> Option<Vec<StmtId>> {
+        if let IR::ArrayOp(op) = &self.stmt(r).ir {
+            let n = op.shared as usize;
+            return (op.kind == OpKind::ArgmaxOfFlags).then(|| self.stmt(r).arguments[..n].to_vec());
+        }
         let constant = |id: StmtId| match self.stmt(id).ir {
             IR::ConstantInt { value } => Some(value),
             _ => None,
@@ -283,6 +300,12 @@ mod tests {
     /// `r = argmax((x == a) & (y == b))`, then the test `x[r] != a or
     /// y[r] != b` (as the frontend emits them), exposed with `r`.
     fn first_match(rewrite: bool) -> IRGraph {
+        first_match_with(rewrite, false)
+    }
+
+    /// The same with the gather family's placeholders (`placeholders`): the
+    /// argmax lane and element lanes at it, lowered by the registry.
+    fn first_match_with(rewrite: bool, placeholders: bool) -> IRGraph {
         let mut b = IRBuilder::new();
         let n = 6;
         let read = |b: &mut IRBuilder, name: &str| b.ir_read_integer(InputPath::new(name, vec![]), false);
@@ -296,12 +319,20 @@ mod tests {
                 b.ir_logical_and(&ex, &ey)
             })
             .collect();
-        let mut r = b.ir_constant_int(0);
-        for k in (0..n).rev() {
-            let at = b.ir_constant_int(k as i64);
-            r = b.ir_select_i(&h[k], &at, &r);
-        }
+        let r = if placeholders {
+            crate::lower::gather::scan_lane(&mut b, crate::lower::gather::ScanKind::Argmax, &h)
+        } else {
+            let mut r = b.ir_constant_int(0);
+            for k in (0..n).rev() {
+                let at = b.ir_constant_int(k as i64);
+                r = b.ir_select_i(&h[k], &at, &r);
+            }
+            r
+        };
         let gathered = |b: &mut IRBuilder, cells: &[Value]| {
+            if placeholders {
+                return crate::lower::gather::element_lane(b, cells, &r).expect("an encoded index");
+            }
             let segment = crate::helpers::segment::alloc_and_write_values(b, cells, crate::types::NumberType::Integer);
             b.ir_read_memory(segment, &r)
         };
@@ -317,8 +348,12 @@ mod tests {
         b.ir_expose_public_i(&miss);
         b.ir_expose_public_i(&result);
         let graph = b.export_ir_graph();
-        if rewrite {
-            ArgmaxQueries.exec(graph)
+        let graph = if rewrite { ArgmaxQueries.exec(graph) } else { graph };
+        let elements = graph.stmts.iter().filter(|s| matches!(&s.ir, IR::ArrayOp(op) if op.kind == OpKind::Element)).count();
+        assert_eq!(elements == 0, rewrite || !placeholders, "element lanes die exactly when rewritten");
+        if placeholders {
+            let lowered = crate::lower::emit::lower(&graph, crate::lower::Target::Halo2Base, &crate::lower::registry());
+            lowered.unwrap_or(graph)
         } else {
             graph
         }
@@ -326,9 +361,18 @@ mod tests {
 
     #[test]
     fn a_test_at_the_first_true_index_is_any() {
-        let rewritten = first_match(true);
-        assert!(!rewritten.stmts.iter().any(|s| matches!(s.ir, IR::ReadMemory { .. })), "reads gone");
-        let original = first_match(false);
+        for placeholders in [false, true] {
+            let rewritten = first_match_with(true, placeholders);
+            let original = first_match_with(false, placeholders);
+            let reads = |g: &IRGraph| g.stmts.iter().filter(|s| matches!(s.ir, IR::ReadMemory { .. })).count();
+            if !placeholders {
+                assert_eq!(reads(&rewritten), 0, "reads gone");
+            }
+            assert_first_matches(&rewritten, &original);
+        }
+    }
+
+    fn assert_first_matches(rewritten: &IRGraph, original: &IRGraph) {
         let cases: [([i64; 6], [i64; 6]); 5] = [
             ([1, 2, 3, 2, 5, 2], [9, 9, 4, 4, 4, 7]),  // first match at 3
             ([2, 2, 3, 2, 5, 2], [4, 9, 4, 4, 4, 7]),  // at 0
@@ -341,9 +385,9 @@ mod tests {
             inputs.extend(x.iter().enumerate().map(|(k, &v)| (format!("x{k}"), v)));
             inputs.extend(y.iter().enumerate().map(|(k, &v)| (format!("y{k}"), v)));
             inputs.extend([("a".to_string(), 2), ("c".to_string(), 4)]);
-            let (ok, got) = mock_run(&rewritten, &inputs);
+            let (ok, got) = mock_run(rewritten, &inputs);
             assert!(ok);
-            assert_eq!(got, mock_run(&original, &inputs).1, "x {x:?} y {y:?}");
+            assert_eq!(got, mock_run(original, &inputs).1, "x {x:?} y {y:?}");
         }
     }
 }

@@ -127,7 +127,7 @@ fn asserted_comparisons(ir: &IRGraph) -> HashSet<u32> {
                 s.ir,
                 IR::LtI | IR::LteI | IR::GtI | IR::GteI | IR::LtF | IR::LteF | IR::GtF | IR::GteF
                     | IR::LtIBounded | IR::GtIBounded | IR::IndexInBox { .. } | IR::NeI | IR::NeF
-                    | IR::KeyLess { .. }
+                    | IR::EqI | IR::EqF | IR::KeyLess { .. }
                     | IR::PackedKeyLess { .. }
             )
         })
@@ -1230,6 +1230,18 @@ impl<'a> NoirEmitter<'a> {
                 self.nonzero.insert(x.to_string());
             }
         }
+        Some(self.literal_int(1))
+    }
+
+    /// `a == b` for an `==` whose only uses are asserts: the assertion
+    /// itself (`assert(a == b)`, one constraint) and the literal true for
+    /// the asserts, instead of an equality bit.
+    fn asserted_equal(&mut self, a: &str, b: &str) -> Option<String> {
+        let asserted = self.current_stmt.is_some_and(|id| self.asserted_comparisons.contains(&id));
+        if !asserted {
+            return None;
+        }
+        let _ = writeln!(self.body, "    assert({a} == {b});");
         Some(self.literal_int(1))
     }
 
@@ -2345,6 +2357,9 @@ impl Synthesizer for NoirEmitter<'_> {
     }
 
     fn eq_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some(v) = self.asserted_equal(a, b) {
+            return Ok(v);
+        }
         if let Some(v) = self.scaled_bit_zero_test(a, b, false) {
             return Ok(v);
         }

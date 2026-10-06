@@ -997,10 +997,10 @@ fn whole_array_argmax_argmin(b: &mut IRBuilder, arr: &Value, is_max: bool) -> Va
     let dtype = dtype_of(arr);
     let len = cells.len();
     // Boolean-aware fast path: argmax of `{0,1}` cells is the first index
-    // where the cell is True, 0 when none is. A select chain from the last
-    // index down to the first, starting at 0, computes it with one select per
-    // cell and no comparison: each True cell overrides the index chosen by
-    // the cells after it, so the earliest True wins.
+    // where the cell is True, 0 when none is: a `lower::gather` scan
+    // placeholder, lowered as a select chain from the last index down to the
+    // first (one select per cell, the earliest True wins) or by running
+    // products whose one-hot a later read at the result reuses.
     let best_idx = if is_max && cells.iter().all(|c| matches!(c, Value::Boolean(_))) {
         if let Some(first_true) = first_true_of_sorted_comparisons(b, &cells) {
             return first_true;
@@ -1008,12 +1008,9 @@ fn whole_array_argmax_argmin(b: &mut IRBuilder, arr: &Value, is_max: bool) -> Va
         if let Some(first_true) = first_true_of_table_comparisons(b, &cells) {
             return first_true;
         }
-        let mut idx = b.ir_constant_int(0);
-        for (i, elem) in cells.iter().enumerate().rev() {
-            let idx_val = b.ir_constant_int(i as i64);
-            idx = b.ir_select_i(elem, &idx_val, &idx);
-        }
-        idx
+        // The first set position (0 when none is set): a `lower::gather`
+        // scan placeholder, whose one-hot a later read at it may reuse.
+        crate::lower::gather::scan_lane(b, crate::lower::gather::ScanKind::Argmax, &cells)
     } else {
         let mut idx = b.ir_constant_int(0);
         let mut best_val = cells[0].clone();
