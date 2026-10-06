@@ -42,6 +42,15 @@ const Q_BITS: u32 = 32;
 /// and two arithmetic gates).
 const INDICATOR_GATES: usize = 3;
 const Q_U64: u64 = 1u64 << 32;
+/// Measured `bb gates` of a native array read whose address is checked on its
+/// own (`array_index`'s two range checks and the ROM read), and of one whose
+/// root is checked once for all its reads (the ROM read and the `u32`
+/// address arithmetic; the root's check is shared).
+const NATIVE_READ_GATES: usize = 10;
+const NATIVE_READ_AT_CHECKED_ROOT_GATES: usize = 3;
+/// Measured `bb gates` of checking one root (`array_index`), shared by the
+/// reads at it.
+const ROOT_CHECK_GATES: usize = 8;
 
 /// Output of [`emit_circuit`].
 pub struct EmitOutput {
@@ -1745,8 +1754,7 @@ impl<'a> NoirEmitter<'a> {
     /// epoch's array, which the epoch's dynamic reads share. Two-root reads
     /// always gather: their stage-1 planes are shared across reads, which
     /// measured cheaper than native reads on every case that has them.
-    fn prefer_native_read(&self, segment_id: u32, one_hot_gates: usize) -> bool {
-        const NATIVE_READ_GATES: usize = 10;
+    fn prefer_native_read(&self, segment_id: u32, one_hot_gates: usize, read_gates: usize) -> bool {
         const ARRAY_ELEMENT_GATES: usize = 3;
         let epoch = self.write_version.get(&segment_id).copied().unwrap_or(0);
         let len = self.memories.get(&segment_id).map_or(0, |m| m.len());
@@ -1755,7 +1763,33 @@ impl<'a> NoirEmitter<'a> {
         } else {
             (ARRAY_ELEMENT_GATES * len).div_ceil(self.epoch_dynamic_reads(segment_id))
         };
-        len > 0 && len < (1 << 27) && build + NATIVE_READ_GATES < one_hot_gates
+        len > 0 && len < (1 << 27) && build + read_gates < one_hot_gates
+    }
+
+    /// `root`'s largest value `last` when the address `root * scale + offset`
+    /// is a valid slot exactly for `root ∈ [0, last]`: `0 <= offset < scale`
+    /// and the feasible roots are `0..=last` (`vs`, from `feasible`). Then
+    /// checking `root` once covers every read at that root.
+    fn checked_root_bound(scale: i64, offset: i64, vs: &[i64]) -> Option<i64> {
+        let last = *vs.last()?;
+        let contiguous = vs.iter().enumerate().all(|(k, v)| *v == k as i64);
+        (scale > 0 && (0..scale).contains(&offset) && contiguous).then_some(last)
+    }
+
+    /// `mem[root * scale + offset]` through a native array, with `root`
+    /// checked into `[0, last]` once (`array_index`, shared by every read at
+    /// that root through the binding cache) and the address computed in
+    /// `u32` from it: `root <= last` keeps it inside the array
+    /// (`checked_root_bound`), so the read needs no check of its own. An
+    /// IR root is an integer, so a valid address implies `root ∈ [0, last]`
+    /// (`offset < scale`, and `last` is the largest root with a valid slot):
+    /// the check rejects exactly the reads the mock rejects.
+    fn native_read_at_root(&mut self, segment_id: u32, root: &str, last: i64, scale: i64, offset: i64) -> String {
+        let array = self.segment_array(segment_id);
+        let index = self.array_index(root, last as u64 + 1);
+        let out = self.bind(&format!("{array}[{index} * {scale} + {offset}]"));
+        self.apply_segment_iv(segment_id, &out);
+        out
     }
 
     /// Dynamic reads of the segment's current write epoch (at least 1).
@@ -3058,8 +3092,18 @@ impl Synthesizer for NoirEmitter<'_> {
                 .count();
             let indicator_share =
                 (INDICATOR_GATES * new_indicators).div_ceil(self.epoch_dynamic_reads(segment_id));
-            if self.prefer_native_read(segment_id, indicator_share + vs.len()) {
-                return Ok(self.native_read(segment_id, addr));
+            let checked_root = Self::checked_root_bound(scale, offset, &vs);
+            let native_gates = match checked_root {
+                Some(_) => {
+                    NATIVE_READ_AT_CHECKED_ROOT_GATES + ROOT_CHECK_GATES.div_ceil(self.epoch_dynamic_reads(segment_id))
+                }
+                None => NATIVE_READ_GATES,
+            };
+            if self.prefer_native_read(segment_id, indicator_share + vs.len(), native_gates) {
+                return Ok(match checked_root {
+                    Some(last) => self.native_read_at_root(segment_id, &root, last, scale, offset),
+                    None => self.native_read(segment_id, addr),
+                });
             }
             self.assert_one_hot(&root.clone(), &vs);
             let mut parts: Vec<String> = Vec::with_capacity(vs.len());

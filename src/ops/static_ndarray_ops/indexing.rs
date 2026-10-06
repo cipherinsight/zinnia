@@ -1651,7 +1651,10 @@ pub fn np_ravel_multi_index(
     let mut out_cells: Vec<Value> = Vec::with_capacity(n_out);
     for j in 0..n_out {
         let mut acc = b.ir_constant_int(0);
-        for axis in 0..rank {
+        // Accumulate from the unit-stride axis up (the last axis in C order),
+        // so the sum starts with a term that needs no product.
+        let axes: Vec<usize> = if order == "C" { (0..rank).rev().collect() } else { (0..rank).collect() };
+        for axis in axes {
             let idx = if vec_len.is_some() {
                 &idx_cells[axis * n_out + j]
             } else {

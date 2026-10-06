@@ -462,10 +462,26 @@ impl Construction for ElementByMemory {
         vec![Candidate {
             pre: Vec::new(),
             post: lanes(group).collect(),
-            cost: cost::element_by_memory(group.shared.len() as u64, reads, indices.len() as u64, cx.target),
+            cost: cost::element_by_memory(group.shared.len() as u64, reads, &index_reads(cx, &indices), cx.target),
             emitter: Box::new(MemoryReadEmitter { cells: group.shared.clone(), segment: None }),
         }]
     }
+}
+
+/// For each index, the number of element reads at it over every element
+/// group of the program (reads at one index share its check).
+fn index_reads(cx: &Context, indices: &[StmtId]) -> Vec<u64> {
+    indices
+        .iter()
+        .map(|index| {
+            cx.groups
+                .iter()
+                .filter(|g| g.kind == OpKind::Element)
+                .flat_map(|g| &g.lanes)
+                .filter(|lane| lane.own.first() == Some(index))
+                .count() as u64
+        })
+        .collect()
 }
 
 struct MemoryReadEmitter {

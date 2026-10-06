@@ -88,3 +88,38 @@ def test_unravel_index_without_the_last_modulus(order):
             np.unravel_index(k, (4, 3, 5), order=order)
         for claim in ((0, 0, 0), (3, 2, 4), (4, 0, 0), (0, 0, 5)):
             assert rejected_everywhere(program, k, *claim), (order, k, claim)
+
+
+# ── Noir native reads at a root checked once (0319's plane gather) ──────
+
+def plane_gather_kernel():
+    """0319's kernel: `c` the inverse permutation, `a[c, :, :]`, compiled for
+    the Noir target (whose cost rule picks the native reads)."""
+    from zinnia import ZKCircuit
+    from zinnia.config.zinnia_config import ZinniaConfig
+
+    return ZKCircuit.from_source("kernel", (
+        '@requires(lambda a, permutation, expected: is_permutation(permutation))\n'
+        'def kernel(a: Float[Array, "8 6 8"], permutation: Integer[Array, "8"], expected: Float[Array, "8 6 8"]):\n'
+        '    c = np.empty_like(permutation)\n'
+        '    c[permutation] = np.arange(len(permutation))\n'
+        '    assert np.all(a[c, :, :] == expected)\n'), config=ZinniaConfig(backend="noir")).compile()
+
+
+def test_plane_gather_by_a_checked_root():
+    """Each plane index is checked once on Noir and every read of the plane
+    uses it; NumPy's result is accepted, a wrong plane rejected, and a
+    non-permutation (whose `c` NumPy leaves uninitialized) has no proof."""
+    program = plane_gather_kernel()
+    a = np.linspace(-2, 2, 384).reshape(8, 6, 8)
+    perm = np.array([2, 0, 3, 1, 7, 5, 4, 6])
+    c = np.empty_like(perm)
+    c[perm] = np.arange(8)
+    noir = program.emit_structural(a, perm, a[c], backend="noir")
+    assert noir.count("array_index::<") == 8, "one check per plane index"
+    assert accepted_everywhere(program, a, perm, a[c])
+    wrong = a[c].copy()
+    wrong[[0, 1]] = wrong[[1, 0]]
+    assert rejected_everywhere(program, a, perm, wrong)
+    for bad in ([2, 0, 3, 1, 7, 5, 4, 4], [8, 0, 3, 1, 7, 5, 4, 6], [-1, 0, 3, 1, 7, 5, 4, 6]):
+        assert rejected_everywhere(program, a, np.array(bad), a[c])
