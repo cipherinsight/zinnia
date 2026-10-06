@@ -1,7 +1,6 @@
 use pyo3::prelude::*;
 
 pub mod ast;
-pub mod backend;
 pub mod builder;
 pub mod circuit_input;
 pub mod error;
