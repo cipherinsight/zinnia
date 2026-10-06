@@ -3451,7 +3451,8 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
             crate::ir_defs::HintKind::StableArgsort
             | crate::ir_defs::HintKind::PositionOneHot
             | crate::ir_defs::HintKind::Negative
-            | crate::ir_defs::HintKind::CountAtMost => {
+            | crate::ir_defs::HintKind::CountAtMost
+            | crate::ir_defs::HintKind::RoutingBits => {
                 Value::Integer(ScalarValue::new(None, Some(ir_id)))
             }
             crate::ir_defs::HintKind::SortedValues => {

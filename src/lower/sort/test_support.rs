@@ -38,6 +38,8 @@ pub(crate) enum Forced {
     Extremes,
     /// The same, membership by the program's equality bits.
     MaskedExtremes,
+    /// The routed Waksman network (`routed`).
+    Routed,
     /// The cost rule of a target.
     CostRule(Target),
 }
@@ -106,6 +108,7 @@ fn plan_for(forced: Forced, demand: &Demand) -> Plan {
             assert!(live.iter().all(|r| demand.masked_extremes.contains_key(r)), "no equality bits");
             Plan::Hinted { runs: live.iter().map(|&r| Run { first: r, last: r, pin: Pin::MaskedExtreme }).collect() }
         }
+        Forced::Routed => Plan::Routed,
         Forced::CostRule(target) => cost::choose_plan(demand, &cost::unit_costs(target)).0,
     }
 }

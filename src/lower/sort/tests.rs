@@ -112,7 +112,7 @@ fn assert_computes_numpy(values: &[i64], outputs: &[Output], forced: Forced) {
 #[test]
 fn every_plan_is_the_stable_sort_with_ties() {
     let n = TIED.len() as u32;
-    for forced in [Forced::Batcher, Forced::AdjacentSwap, Forced::Permutation, Forced::Runs] {
+    for forced in [Forced::Batcher, Forced::AdjacentSwap, Forced::Permutation, Forced::Runs, Forced::Routed] {
         assert_computes_numpy(&TIED, &every_output(n), forced);
         // Some outputs only: a prefix, a suffix, a middle run, isolated ranks.
         for ranks in [vec![0, 1], vec![7, 8], vec![3, 4, 5], vec![0, 4, 8]] {
@@ -144,7 +144,7 @@ fn payloads_are_gathered_in_stable_order() {
     let some: Vec<Output> = [0, 4, 8].map(Output::Payload).to_vec();
     let mixed = vec![Output::Payload(2), Output::Index(2), Output::Value(5), Output::Payload(7)];
     for outputs in [&every_payload, &some, &mixed] {
-        for forced in [Forced::Batcher, Forced::AdjacentSwap, Forced::Permutation, Forced::Runs] {
+        for forced in [Forced::Batcher, Forced::AdjacentSwap, Forced::Permutation, Forced::Runs, Forced::Routed] {
             assert_computes_numpy(&TIED, outputs, forced);
         }
         for target in [Target::Halo2Base, Target::Noir] {
@@ -187,12 +187,14 @@ fn packed_network_is_the_stable_argsort() {
             })
             .collect();
         assert_computes_numpy(&values, &indices(&(0..n as u32).collect::<Vec<_>>()), Forced::PackedBatcher);
+        assert_computes_numpy(&values, &every_output(n as u32), Forced::Routed);
     }
+    assert_computes_numpy(&extremes, &every_output(6), Forced::Routed);
 }
 
 #[test]
 fn runtime_ranks_are_the_stable_sort_and_out_of_range_has_no_proof() {
-    for forced in [Forced::Batcher, Forced::Permutation, Forced::Runs] {
+    for forced in [Forced::Batcher, Forced::Permutation, Forced::Runs, Forced::Routed] {
         for r in [0, 3, 4, 8] {
             assert_computes_numpy(&TIED, &[Output::ValueAt(r), Output::IndexAt(r)], forced);
         }
@@ -214,7 +216,7 @@ fn every_plan_agrees_on_pseudo_random_inputs() {
                     ((state >> 33) % 7) as i64 - 3 // many ties
                 })
                 .collect();
-            for forced in [Forced::Batcher, Forced::Permutation, Forced::Runs] {
+            for forced in [Forced::Batcher, Forced::Permutation, Forced::Runs, Forced::Routed] {
                 assert_computes_numpy(&values, &every_output(n as u32), forced);
             }
         }
@@ -240,13 +242,14 @@ fn cost_rule_picks_by_target_and_live_outputs() {
     let halo2 = unit_costs(Target::Halo2Base);
     let noir = unit_costs(Target::Noir);
     let every: Vec<usize> = (0..100).collect();
-    // A full argsort of 100: Batcher on packed keys on halo2-base (a read is
-    // a one-hot selection over 100 slots), the permutation check on Noir.
+    // A full argsort of 100: the routed Waksman network on halo2-base (a
+    // read is a one-hot selection over 100 slots, a comparator network has
+    // 1,077 comparisons), the permutation check on Noir.
     let full = demand(100, &[], &every, 0);
-    assert_eq!(choose_plan(&full, &halo2).0, Plan::Network { network: Network::PackedMergeExchange });
-    // With the sorted values live too: the (value, index) network.
+    assert_eq!(choose_plan(&full, &halo2).0, Plan::Routed);
+    // With the sorted values live too: the same, carrying the values.
     let both = demand(100, &every, &every, 0);
-    assert_eq!(choose_plan(&both, &halo2).0, Plan::Network { network: Network::MergeExchangeTieBreak });
+    assert_eq!(choose_plan(&both, &halo2).0, Plan::Routed);
     assert_eq!(
         choose_plan(&full, &noir).0,
         Plan::Hinted { runs: vec![Run { first: 0, last: 99, pin: Pin::Keys }] }
@@ -271,7 +274,7 @@ fn cost_rule_picks_by_target_and_live_outputs() {
     // An argsort of three: a network on halo2-base, three native reads and
     // two links on Noir.
     let three = demand(3, &[], &[0, 1, 2], 0);
-    assert!(matches!(choose_plan(&three, &halo2).0, Plan::Network { .. }));
+    assert!(matches!(choose_plan(&three, &halo2).0, Plan::Network { .. } | Plan::Routed));
     assert_eq!(
         choose_plan(&three, &noir).0,
         Plan::Hinted { runs: vec![Run { first: 0, last: 2, pin: Pin::Keys }] }
@@ -440,6 +443,52 @@ fn masked_order_statistics_reject_every_other_value() {
                 let inputs = tampered_inputs(&sort, &sites, 0, value);
                 assert!(!mock_run(&graph, &inputs).0, "rank {rank}: {value} accepted");
             }
+        }
+    }
+}
+
+// ── Calibration (temporary) ─────────────────────────────────────────────
+
+#[cfg(feature = "halo2-base-backend")]
+#[test]
+#[ignore]
+fn calibration_print() {
+    use super::cost::{full_permutation, network_plans, routed_plan};
+    let cells = |values: &[i64], outputs: &[Output], forced: Forced| {
+        let sort = sort_graph(values, outputs, forced);
+        let s = crate::prove::halo2_base::cell_stats(&sort.graph, 8, 32).expect("cells");
+        (s.advice + s.lookup) as i64
+    };
+    let costs = unit_costs(Target::Halo2Base);
+    for n in [2usize, 3, 4, 5, 8, 16, 32, 64, 100] {
+        let values: Vec<i64> = (0..n as i64).map(|j| (j * 37 + 11) % 13 - 6).collect();
+        for kind in ["idx", "val+idx", "payload", "val"] {
+            let (outputs, d): (Vec<Output>, Demand) = match kind {
+                "idx" => ((0..n as u32).map(Output::Index).collect(), demand(n, &[], &(0..n).collect::<Vec<_>>(), 0)),
+                "val+idx" => (every_output(n as u32), demand(n, &(0..n).collect::<Vec<_>>(), &(0..n).collect::<Vec<_>>(), 0)),
+                "val" => ((0..n as u32).map(Output::Value).collect(), demand(n, &(0..n).collect::<Vec<_>>(), &[], 0)),
+                _ => {
+                    let mut d = demand(n, &[], &[], 0);
+                    d.payloads = vec![(0..n).collect()];
+                    ((0..n as u32).map(Output::Payload).collect(), d)
+                }
+            };
+            let mut line = format!("n={n:3} {kind:8}");
+            let nets = network_plans(&d, &costs);
+            for (forced, plan) in [
+                (Forced::Batcher, nets.iter().find(|(p, _)| matches!(p, Plan::Network { network: Network::MergeExchangeTieBreak | Network::MergeExchange })).cloned()),
+                (Forced::PackedBatcher, nets.iter().find(|(p, _)| matches!(p, Plan::Network { network: Network::PackedMergeExchange })).cloned()),
+                (Forced::Permutation, full_permutation(&d, &costs)),
+                (Forced::Routed, routed_plan(&d, &costs)),
+            ] {
+                if matches!(forced, Forced::PackedBatcher) && kind != "idx" { continue; }
+                let Some((_, model)) = plan else { continue };
+                let measured = cells(&values, &outputs, forced);
+                line += &format!(" | {forced:?} meas {measured} model {model}");
+            }
+            let chosen = choose_plan(&d, &costs).0;
+            line += &format!(" | rule {chosen:?} meas {}", cells(&values, &outputs, Forced::CostRule(Target::Halo2Base)));
+            println!("{line}");
         }
     }
 }

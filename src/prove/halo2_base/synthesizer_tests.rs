@@ -1705,7 +1705,10 @@ fn sort_hints_are_pinned() {
     let cases: Vec<(Forced, Vec<Output>)> = vec![
         (Forced::Batcher, every.clone()),
         (Forced::PackedBatcher, (0..n).map(Output::Index).collect()),
-        (Forced::Permutation, every),
+        (Forced::Permutation, every.clone()),
+        (Forced::Routed, every),
+        (Forced::Routed, (0..n).map(Output::Index).collect()),
+        (Forced::Routed, vec![Output::Payload(0), Output::Payload(3), Output::ValueAt(2)]),
         (Forced::Runs, vec![Output::Index(3), Output::Index(4)]),
         (Forced::Runs, vec![Output::Index(1), Output::Index(2)]),
         (Forced::Counting, vec![Output::Value(2)]),
