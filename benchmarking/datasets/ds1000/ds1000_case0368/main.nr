@@ -11,6 +11,8 @@ global N: u32 = 3;
 global RTOL_Q: Field = 42950; // round(1e-5 * 2^32)
 
 fn main(a: [Field; 9]) -> pub bool {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
     let mut all_close = true;
     for j in 0..N {
         let y = a[j];

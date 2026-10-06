@@ -10,6 +10,11 @@
 // @outputs: int[1]
 
 fn main(x: [Field; 8], y: [Field; 8], a: Field, b: Field) -> pub Field {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(x);
+    noir_hw::check_inputs(y);
+    noir_hw::check_input(a);
+    noir_hw::check_input(b);
     let mut result: Field = -1;
     for k in 0..8 {
         let i = 7 - k;

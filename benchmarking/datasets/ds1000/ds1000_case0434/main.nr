@@ -9,6 +9,10 @@
 // @outputs: int[16]
 
 fn main(a: [Field; 16], zero_rows: [Field; 2], zero_cols: [Field; 2]) -> pub [Field; 16] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
+    noir_hw::check_inputs(zero_rows);
+    noir_hw::check_inputs(zero_cols);
     let row_hit = hits(zero_rows);
     let col_hit = hits(zero_cols);
     let mut out: [Field; 16] = [0; 16];

@@ -46,6 +46,18 @@ Terms:
    runtime.
 5. **Input-independent structure.** The circuit's gates and layout never depend on
    input values. The checker generates keys with input A and proves with input B.
+6. **Input domain.** Every input element the circuit reads is checked to lie in its
+   dtype's domain, so a proof means "some valid NumPy input gives these outputs"
+   (author's decision; Zinnia does the same since `frontend-2`): an integer is an
+   int64, a float's Q32 code lies in the same signed 64-bit window (that is,
+   -2^31 <= v < 2^31), a boolean is 0 or 1. One check per element, and none for
+   elements the kernel never reads. halo2: the `q.load_*` loaders do it (the
+   `*_bounded` variants return the window proof for comparisons to reuse; a mock
+   run reports `redundant_input_checks`, which must be 0); Noir:
+   `noir_hw::check_inputs` / `check_input` / `checked` (the window check, which
+   Noir shares with any later `window` of the same value). A check that the kernel's
+   own semantics already impose and that implies the domain replaces it (0402/0403:
+   NumPy's `0 <= index < dim`).
 
 ## 2. Numbers
 
@@ -90,7 +102,8 @@ gadgets. Concretely:
   where ties matter).
 - Gathers by a private index use the library's indexing: halo2-base
   `select_from_idx` behind `q.index`, Noir native array indexing after
-  `noir_hw::index_pos`. For short axes a one-hot over the valid index values
+  `noir_hw::index_pos` (a NumPy index) or `noir_hw::array_index` (a position,
+  e.g. one read from a hint). For short axes a one-hot over the valid index values
   `-len..len` is cheaper and needs no range check (`q.index` switches to it up to
   8 elements, measured by the `index_cost` test; in Noir use `noir_hw::pick` for
   rows of up to 8). Never scan the whole input per output when one index selects
@@ -108,7 +121,7 @@ gadgets. Concretely:
   `q = 2h + bit` with `h` range-checked.
 - Private inputs are whatever field elements the prover loads. A construction
   may rely on an input lying in its declared range (an int64, a Q32 value) only
-  where the circuit checks it, as the window bound does before a comparison.
+  where the circuit checks it (section 1.6 checks every read input).
   Field identities that hold for every field element need no range (equality,
   a product of differences being zero); identities that hold only for small
   integers do (a sum of squares being zero means all-zero only below 2^64:
@@ -119,6 +132,15 @@ gadgets. Concretely:
   cast `x as u64` truncates and proves nothing, so a cast only follows such a
   check. Every `unsafe { hint(..) }` is followed by the checks that pin it, with a
   `// Safety:` comment naming them.
+- A Noir array index that is not built from loop constants is proven in range
+  by the circuit itself, never left to Barretenberg's memory check: the
+  compiler can drop a range check of a value used as a memory index, and the
+  pinned bb (5.0.0-nightly.20260324) admits a read at index p - 1. Use
+  `noir_hw::array_index` (checks of `2 k` and `last - k`, which the compiler
+  keeps; the construction Zinnia's Noir library uses) or `index_pos`, which
+  calls it. An index that is a select of loop constants, or arithmetic on
+  positions already proven in range, is in range by construction and needs
+  none (say so in a comment).
 - The shared gadgets carry malicious-hint tests: `cargo test --lib` in
   `baselines/halo2_hw` (MockProver rejects neighbouring and non-integer quotients,
   flipped signs and parities) and `nargo test` in `baselines/noir_hw`
@@ -169,7 +191,8 @@ Noir (`noir_hw`, on top of the Noir standard library):
 | `x[mask]`, `nonzero`, `argwhere` | `select_kept`, `compact`, `compact_rows` |
 | comparisons | `let w = window(x)` once per value, then `u64` comparisons; `lt`, `gt`, ... for one-off tests |
 | `max`, `min`, `abs` | `max`, `min`, `abs` (or `window` and select); `max_of` for the maximum of a few values |
-| `a[i]` (private `i`) | `a[index_pos(i, len)]` (native indexing); `pick(row, i)` for rows of up to 8 |
+| `a[i]` (private `i`) | `a[index_pos::<8>(i, len)]` (native indexing; `::<28>` above 128 elements); `pick(row, i)` for rows of up to 8 |
+| `a[k]` (private position `k`, e.g. from a hint) | `a[array_index::<8>(k, len - 1)]` (`::<28>` above 128 elements) |
 | `u32` index arithmetic (`k // 6` on an index built from loop constants) | native `u32` operators |
 
 Noir specifics (toolchain, ZK target, driver) are in `NOIR_BASELINES.md`.
@@ -231,7 +254,10 @@ python -m hw_check.check 0309 0310                   # or --all
 
 `hw_check.check` runs, per case and system: halo2 `mock` with A and B, `setup`
 with A, `prove` with B, `verify`, and `verify` with public value 0 tampered;
-Noir `setup`, `prove` with A and B, `verify`, tampered `verify`. Every proved
+Noir `setup`, `prove` with A and B, `verify`, tampered `verify`. It also moves
+one input element the kernel reads out of its domain (halo2 `mock
+--tamper-input name:index`, Noir `prove --tamper-input name:index`) and requires
+both systems to reject it. Every proved
 output must equal the NumPy reference position by position (integers and booleans
 exactly, floats within `1e-6 + 1e-6 * |x|` unless the case set gives a tolerance),
 and the tampered public must be rejected. A baseline that fails is wrong.

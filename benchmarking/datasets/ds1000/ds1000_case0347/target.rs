@@ -22,10 +22,9 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
 
     let a = q.load_floats(ctx, &a);
     let row = q.load_int(ctx, row);
-    let divide_number = q.load_float(ctx, divide_number);
+    let divisor = q.load_float_bounded(ctx, divide_number);
 
     let hit = position_onehot(&q, ctx, row, 1, ROWS);
-    let divisor = q.bound(ctx, divide_number);
     let divisor_abs = q.abs(ctx, divisor);
     let rem_limit = q.gate.sub(ctx, divisor_abs, Constant(Fr::ONE)); // |b| - 1
     let quotients: Vec<Cell> = (0..COLS)

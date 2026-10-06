@@ -10,13 +10,12 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    let (s1, s2) = (q.load_floats(ctx, &s1), q.load_floats(ctx, &s2));
+    let (s1, s2) = (q.load_floats(ctx, &s1), q.load_floats_bounded(ctx, &s2));
     let mut not_close = Vec::with_capacity(6);
-    for (a, b) in s1.iter().zip(&s2) {
-        let diff = q.sub(ctx, *a, *b);
+    for (a, &b) in s1.iter().zip(&s2) {
+        let diff = q.sub(ctx, *a, b.cell);
         let diff = q.bound(ctx, diff);
         let abs_diff = q.abs(ctx, diff);
-        let b = q.bound(ctx, *b);
         let abs_b = q.abs(ctx, b);
         let tol = q.mul(ctx, abs_b, Constant(fe(quantize(1e-5))));
         let tol = q.add(ctx, tol.cell, Constant(fe(quantize(1e-8))));

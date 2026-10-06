@@ -9,6 +9,9 @@
 use noir_hw::rescale;
 
 fn main(a: [Field; 50], b: [Field; 50]) -> pub [Field; 50] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
+    noir_hw::check_inputs(b);
     let mut corr = [0; 50];
     for k in 0..50 {
         let mut acc: Field = 0;

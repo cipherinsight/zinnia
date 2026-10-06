@@ -8,5 +8,7 @@
 // @outputs: int[1]; const int[4] = [0, 0, 0, 0]; int[1]; const int[4] = [0, 0, 0, 0]; int[1]; const int[4] = [0, 0, 0, 0]; int[1]
 
 fn main(a: [Field; 16]) -> pub [Field; 4] {
-    [a[0], a[5], a[10], a[15]]
+    let diag = [a[0], a[5], a[10], a[15]];
+    noir_hw::check_inputs(diag);
+    diag
 }

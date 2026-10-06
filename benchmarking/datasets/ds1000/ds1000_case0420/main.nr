@@ -11,6 +11,10 @@
 use noir_hw::{from_int, mul, window};
 
 fn main(x: Field, x_min: Field, x_max: Field) -> pub Field {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_input(x);
+    noir_hw::check_input(x_min);
+    noir_hw::check_input(x_max);
     let lo = from_int(x_min);
     let hi = from_int(x_max);
     let wx = window(x);

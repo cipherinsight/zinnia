@@ -12,7 +12,7 @@
 // check each (9,067 gates against 4,305 for the full order).
 // @outputs: int[7]
 
-use noir_hw::window;
+use noir_hw::{array_index, window};
 
 global N: u32 = 100;
 global TOP: u32 = 7;
@@ -45,6 +45,8 @@ unconstrained fn argsort_hint(a: [Field; N]) -> [Field; N] {
 }
 
 fn main(a: [Field; N]) -> pub [Field; TOP] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
     // Safety: pinned by `check_order`.
     let order = unsafe { argsort_hint(a) };
     check_order(a, order);
@@ -55,17 +57,18 @@ fn main(a: [Field; N]) -> pub [Field; TOP] {
     top
 }
 
-// `order` is the stable ascending argsort of a: each index is below 100
-// (7-bit check, then the array read) and the keys window(a_i) * 128 + i read
-// through the order strictly increase (71-bit check of each step). A key is a
-// function of its index, so the indices are distinct, a permutation of
-// 0..100, and the one that sorts the keys.
+// `order` is the stable ascending argsort of a: each index is in [0, 99]
+// (noir_hw::array_index, whose checks the compiler keeps, then the array
+// read) and the keys window(a_i) * 128 + i read through the order strictly
+// increase (71-bit check of each step). A key is a function of its index, so
+// the indices are distinct, a permutation of 0..100, and the one that sorts
+// the keys.
 fn check_order(a: [Field; N], order: [Field; N]) {
     let mut prev: Field = 0;
     for k in 0..N {
         let i = order[k];
-        i.assert_max_bit_size::<7>();
-        let key = (window(a[i as u32]) as Field) * 128 + i;
+        let v = a[array_index::<8>(i, (N - 1) as Field)];
+        let key = (window(v) as Field) * 128 + i;
         if k > 0 {
             (key - prev - 1).assert_max_bit_size::<71>();
         }

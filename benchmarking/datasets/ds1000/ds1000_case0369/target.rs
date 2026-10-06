@@ -17,11 +17,12 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    let a = q.load_floats(ctx, &a);
+    let ab = q.load_floats_bounded(ctx, &a);
+    let a: Vec<Cell> = ab.iter().map(|x| x.cell).collect();
     let mut far = Vec::with_capacity(N * (N - 1));
     for i in 0..N {
         let y = a[i * N];
-        let tol = tolerance(&q, ctx, y);
+        let tol = tolerance(&q, ctx, ab[i * N]);
         for j in 1..N {
             far.push(is_far(&q, ctx, a[i * N + j], y, tol));
         }
@@ -34,8 +35,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
 
 /// `rtol * |y|` as a rescaled product; it lies in `[0, 2^63)` because `|y|`
 /// does and the rescale is the floor of a non-negative product.
-fn tolerance(q: &Q32, ctx: &mut Ctx, y: Cell) -> Cell {
-    let y = q.bound(ctx, y);
+fn tolerance(q: &Q32, ctx: &mut Ctx, y: I64) -> Cell {
     let abs_y = q.abs(ctx, y);
     q.mul(ctx, abs_y, Constant(fe(quantize(RTOL)))).cell
 }

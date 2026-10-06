@@ -41,6 +41,9 @@ unconstrained fn kth_hint(xs: [Field; 50], k: u32) -> Field {
 }
 
 fn main(grades: [Field; 50], threshold: Field) -> pub [Field; 2] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(grades);
+    noir_hw::check_input(threshold);
     let mut negated: [Field; 50] = [0; 50];
     for i in 0..50 {
         negated[i] = -grades[i];

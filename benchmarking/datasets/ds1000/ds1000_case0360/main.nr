@@ -5,10 +5,10 @@
 fn main(a: [Field; 16]) -> pub [Field; 12] {
     let mut out = [0; 12];
     for k in 0..8 {
-        out[k] = a[k];
+        out[k] = noir_hw::checked(a[k]);
     }
     for k in 0..4 {
-        out[8 + k] = a[12 + k];
+        out[8 + k] = noir_hw::checked(a[12 + k]);
     }
     out
 }

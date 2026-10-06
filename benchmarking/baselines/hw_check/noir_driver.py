@@ -220,7 +220,8 @@ def _load_setup(case_dir: Path, workdir: Path) -> dict:
     return info
 
 
-def prove(case_dir: Path, fixture: dict, input_name: str, workdir: Path, timings: dict) -> dict:
+def prove(case_dir: Path, fixture: dict, input_name: str, workdir: Path, timings: dict,
+          tamper: tuple[str, int] | None = None) -> dict:
     info = _load_setup(case_dir, workdir)
     target = info["target"]
     pkg = workdir / "pkg"
@@ -228,7 +229,7 @@ def prove(case_dir: Path, fixture: dict, input_name: str, workdir: Path, timings
     bytecode = pkg / "target" / f"{name}.json"
     abi = json.loads(bytecode.read_text())["abi"]
     _timed(timings, "write_inputs_s",
-           lambda: (pkg / "Prover.toml").write_text(render_prover_toml(abi, fixture, input_name)))
+           lambda: (pkg / "Prover.toml").write_text(render_prover_toml(abi, fixture, input_name, tamper)))
     _timed(timings, "execute_s", lambda: _run([NARGO, "execute", "--silence-warnings"], pkg))
     proof_dir = workdir / "proof"
     if proof_dir.exists():
@@ -278,6 +279,7 @@ def main() -> int:
     ap.add_argument("--input", default="B")
     ap.add_argument("--out", type=Path)
     ap.add_argument("--tamper-index", type=int)
+    ap.add_argument("--tamper-input", help="prove: NAME:INDEX, that input leaf + 2^64 (out of its domain)")
     ap.add_argument("--target", default=DEFAULT_TARGET)
     a = ap.parse_args()
 
@@ -291,7 +293,12 @@ def main() -> int:
         elif a.mode == "prove":
             report["input"] = a.input
             fixture = json.loads((a.fixture or a.case / "fixture.json").read_text())
-            report.update(prove(a.case, fixture, a.input, a.workdir, timings))
+            tamper = None
+            if a.tamper_input:
+                name, index = a.tamper_input.rsplit(":", 1)
+                tamper = (name, int(index))
+                report["tampered_input"] = a.tamper_input
+            report.update(prove(a.case, fixture, a.input, a.workdir, timings, tamper))
             ok = True
         else:
             result, ok = verify(a.case, a.workdir, a.tamper_index, timings)

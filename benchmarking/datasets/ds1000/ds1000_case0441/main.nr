@@ -6,6 +6,9 @@
 // @outputs: bool[1]
 
 fn main(a: [Field; 4], number: Field) -> pub bool {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
+    noir_hw::check_input(number);
     let mut product: Field = 1;
     for k in 0..4 {
         product *= number - a[k];

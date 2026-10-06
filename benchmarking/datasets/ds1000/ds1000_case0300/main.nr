@@ -7,10 +7,12 @@
 // exact value.
 // The sorted order is computed unconstrained and verified: element i has the
 // key window(a_i) * 64 + i, and the keys read through the claimed order must
-// strictly increase (`sorted`). s[lo] and s[hi] are native reads.
+// strictly increase (`sorted`). s[lo] and s[hi] are native reads, lo checked
+// by noir_hw::array_index (the compiler keeps its checks; it can drop a
+// range check of the index itself) and hi = min(lo + 1, 19) in range with it.
 // @outputs: float[1]
 
-use noir_hw::{divmod_pos, window};
+use noir_hw::{array_index, divmod_pos, window};
 
 global N: u32 = 20;
 
@@ -48,31 +50,33 @@ unconstrained fn rank_hint(p: Field) -> (Field, Field) {
 }
 
 fn main(a: [Field; N], p: Field) -> pub Field {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
+    noir_hw::check_input(p);
     // Safety: pinned by `sorted`.
     let order = unsafe { argsort_hint(a) };
     let s = sorted(a, order);
     // Safety: pinned by `check_rank`.
     let (lo, r) = unsafe { rank_hint(p) };
     check_rank(p, lo, r);
-    let lo = lo as u32;
+    let lo = array_index::<8>(lo, (N - 1) as Field);
     let hi = if lo == N - 1 { lo } else { lo + 1 };
     let s_lo = s[lo];
     s_lo + divmod_pos(r * (s[hi] - s_lo), 100).0
 }
 
-// a read through `order`, checked to be sorted: each index is below 20
-// (8-bit check, then the array read) and the keys window(a_i) * 64 + i read
-// through the order strictly increase (70-bit checks: a multiple of the
-// 14-bit limb, so no extra range table). A key is a function of its index, so
-// the indices are distinct, a permutation of 0..20, and the one that sorts
-// the values.
+// a read through `order`, checked to be sorted: each index is in [0, 19]
+// (noir_hw::array_index, then the array read) and the keys
+// window(a_i) * 64 + i read through the order strictly increase (70-bit
+// checks: a multiple of the 14-bit limb, so no extra range table). A key is a
+// function of its index, so the indices are distinct, a permutation of 0..20,
+// and the one that sorts the values.
 fn sorted(a: [Field; N], order: [Field; N]) -> [Field; N] {
     let mut s: [Field; N] = [0; N];
     let mut prev: Field = 0;
     for k in 0..N {
         let i = order[k];
-        i.assert_max_bit_size::<8>();
-        let v = a[i as u32];
+        let v = a[array_index::<8>(i, (N - 1) as Field)];
         let key = (window(v) as Field) * 64 + i;
         if k > 0 {
             (key - prev - 1).assert_max_bit_size::<70>();
@@ -84,12 +88,11 @@ fn sorted(a: [Field; N], order: [Field; N]) -> [Field; N] {
 }
 
 // p in [0, 100] (NumPy's range) and 19 p = 100 lo + r with r in [0, 100) and
-// lo in [0, 256): the unique Euclidean split.
+// lo in [0, 19] (`array_index` in main): the unique Euclidean split.
 fn check_rank(p: Field, lo: Field, r: Field) {
     p.assert_max_bit_size::<8>();
     (100 - p).assert_max_bit_size::<8>();
     r.assert_max_bit_size::<8>();
     (99 - r).assert_max_bit_size::<8>();
-    lo.assert_max_bit_size::<8>();
     assert(19 * p == 100 * lo + r);
 }

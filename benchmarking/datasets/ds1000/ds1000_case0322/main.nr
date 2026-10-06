@@ -10,6 +10,8 @@
 use noir_hw::{compact_rows, max_of};
 
 fn main(a: [Field; 4]) -> pub [Field; 9] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
     let min = -max_of([-a[0], -a[1], -a[2], -a[3]]);
     let mut hit: [Field; 4] = [0; 4];
     let mut w: [[Field; 2]; 4] = [[0; 2]; 4];

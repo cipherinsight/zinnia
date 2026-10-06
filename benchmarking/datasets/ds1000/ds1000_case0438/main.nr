@@ -16,6 +16,9 @@
 use noir_hw::{divmod_pos, from_int, sqrt, window, SCALE};
 
 fn main(post: [Field; 4], distance: [Field; 4]) -> pub Field {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(post);
+    noir_hw::check_inputs(distance);
     let mut sx: Field = 0;
     let mut sy: Field = 0;
     let mut sxy: Field = 0;

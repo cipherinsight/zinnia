@@ -7,6 +7,8 @@
 use noir_hw::{compact, is_neg};
 
 fn main(x: [Field; 10]) -> pub [Field; 11] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(x);
     let mut keep: [Field; 10] = [0; 10];
     let mut w: [Field; 10] = [0; 10];
     let mut count: Field = 0;

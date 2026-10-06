@@ -6,5 +6,7 @@
 // @outputs: const int[1] = [0]; int[3]; const int[5] = [0, 0, 0, 0, 0]; int[3]; const int[1] = [0]; int[3]
 
 fn main(a: [Field; 16]) -> pub [Field; 9] {
-    [a[1], a[2], a[3], a[9], a[10], a[11], a[13], a[14], a[15]]
+    let read = [a[1], a[2], a[3], a[9], a[10], a[11], a[13], a[14], a[15]];
+    noir_hw::check_inputs(read);
+    read
 }

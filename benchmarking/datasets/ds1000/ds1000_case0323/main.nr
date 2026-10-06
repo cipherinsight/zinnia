@@ -6,5 +6,7 @@
 global DEG_TO_RAD_Q: Field = 74961321; // round(pi / 180 * 2^32)
 
 fn main(degree: Field) -> pub Field {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_input(degree);
     noir_hw::sin(degree * DEG_TO_RAD_Q)
 }

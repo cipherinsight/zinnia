@@ -13,6 +13,9 @@
 use noir_hw::{divmod_pos, from_int, window, SCALE};
 
 fn main(grades: [Field; 50], eval: [Field; 5]) -> pub [Field; 5] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(grades);
+    noir_hw::check_inputs(eval);
     let mut w: [u64; 50] = [0; 50];
     for i in 0..50 {
         w[i] = window(grades[i]);

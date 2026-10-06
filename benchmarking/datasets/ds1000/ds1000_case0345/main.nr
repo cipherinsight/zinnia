@@ -6,7 +6,7 @@
 // proof), scaled (8 rescaled products) and summed (exact prefix sums). The
 // pick's zero tests are the same for every row, so the compiler builds them
 // once (the same gate count as a hand-shared one-hot; index_pos with native
-// reads costs 114 gates more).
+// reads costs 105 gates more).
 // @outputs: float[8]
 
 use noir_hw::{mul, pick};
@@ -15,6 +15,10 @@ global ROWS: u32 = 8;
 global COLS: u32 = 6;
 
 fn main(a: [Field; 48], col: Field, multiply_number: Field) -> pub [Field; 8] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
+    noir_hw::check_input(col);
+    noir_hw::check_input(multiply_number);
     let mut cumsum = [0; ROWS];
     let mut acc: Field = 0;
     for i in 0..ROWS {

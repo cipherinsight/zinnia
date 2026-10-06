@@ -15,11 +15,12 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    let x = q.load_float(ctx, x);
+    let xb = q.load_float_bounded(ctx, x);
+    let x = xb.cell;
     let (x_min, x_max) = (q.load_int(ctx, x_min), q.load_int(ctx, x_max));
     let lo = q.int_to_float(ctx, x_min);
     let hi = q.int_to_float(ctx, x_max);
-    let (xb, lo_b, hi_b) = (q.bound(ctx, x), q.bound(ctx, lo), q.bound(ctx, hi));
+    let (lo_b, hi_b) = (q.bound(ctx, lo), q.bound(ctx, hi));
     let below = q.lt(ctx, xb, lo_b);
     let above = q.gt(ctx, xb, hi_b);
 

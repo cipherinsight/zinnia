@@ -7,7 +7,7 @@ fn main(a: [Field; 36]) -> pub [Field; 24] {
     let mut out = [0; 24];
     for i in 0..6 {
         for j in 0..4 {
-            out[i * 4 + j] = a[i * 6 + cols[j]];
+            out[i * 4 + j] = noir_hw::checked(a[i * 6 + cols[j]]);
         }
     }
     out

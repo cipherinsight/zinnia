@@ -18,12 +18,12 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    let a = q.load_ints(ctx, &a_in);
-    let b = q.load_ints(ctx, &b_in);
-    let bb = q.bound_all(ctx, &b);
+    let ab = q.load_ints_bounded(ctx, &a_in);
+    let bb = q.load_ints_bounded(ctx, &b_in);
+    let a: Vec<Cell> = ab.iter().map(|x| x.cell).collect();
+    let b: Vec<Cell> = bb.iter().map(|x| x.cell).collect();
     let mut keep = Vec::with_capacity(N);
-    for x in &a {
-        let xb = q.bound(ctx, *x);
+    for (x, &xb) in a.iter().zip(&ab) {
         let above0 = q.lt(ctx, bb[0], xb);
         let below1 = q.lt(ctx, xb, bb[1]);
         let at1 = q.eq(ctx, *x, b[1]);

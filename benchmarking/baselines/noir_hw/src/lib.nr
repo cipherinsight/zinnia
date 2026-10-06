@@ -101,6 +101,31 @@ fn check_max<let N: u32>(xs: [Field; N], m: Field) {
     assert(prod == 0, "max: not one of the values");
 }
 
+// ------------------------------------------------------------ input domain
+
+// Every input element the circuit reads is checked to its dtype's domain, so a
+// proof means "some valid NumPy input gives these outputs": an int64, or a
+// float whose Q32 code lies in the same signed 64-bit window. The check is the
+// window check (one 64-bit range check of x + 2^63), which Noir shares with any
+// later `window(x)` of the same value, so inputs that are compared cost nothing
+// more. Inputs the circuit never reads are not checked.
+pub fn check_input(x: Field) {
+    let _ = window(x);
+}
+
+// `check_input` for every element.
+pub fn check_inputs<let N: u32>(xs: [Field; N]) {
+    for i in 0..N {
+        check_input(xs[i]);
+    }
+}
+
+// `x` after `check_input(x)`: for kernels that read only part of an input.
+pub fn checked(x: Field) -> Field {
+    check_input(x);
+    x
+}
+
 // --------------------------------------------------------------- arithmetic
 
 // (negative, magnitude) of a Field encoding a signed integer below 2^127.
@@ -385,23 +410,50 @@ pub fn compact_rows<let N: u32, let U: u32>(keep: [Field; N], w: [[Field; U]; N]
 
 // ---------------------------------------------------------------- indexing
 
-// Position of a NumPy index in [-len, len) (negative counts from the end);
-// any other index has no witness, as NumPy raises IndexError. Shifting by len
-// maps the valid indices onto [0, 2 len): one 32-bit range check of the
-// shifted Field (so the u32 cast is exact) and one u32 comparison prove it.
-pub fn index_pos(idx: Field, len: u32) -> u32 {
-    let shifted = idx + (len as Field);
-    shifted.assert_max_bit_size::<32>();
-    let s = shifted as u32;
-    assert(s < 2 * len, "index out of bounds");
-    if s >= len { s - len } else { s }
+// idx as the index of an array of last + 1 elements, after proving
+// 0 <= idx <= last (for last < 2^(W-1) and W <= 32); the construction of
+// Zinnia's Noir library, so both sides pay the same. The two range checks are
+// on 2 idx and last - idx, never on idx itself: the Noir compiler can drop a
+// range check of a value used as a memory index (it leaves the bound to the
+// backend's memory check), and the pinned bb (5.0.0-nightly.20260324) admits a
+// read at index p - 1. 2 idx in [0, 2^W) leaves idx in [0, 2^(W-1)) or a
+// field element (p + t) / 2 with t odd (about p / 2); last - idx in [0, 2^W)
+// rules out the latter and every idx > last. W = 8 (last < 128) or W = 28 use
+// range tables that 64-bit checks already build (64 = 4 x 14 + 8 bits). The
+// last check only lets the compiler drop the truncation of the u32 cast.
+pub fn array_index<let W: u32>(idx: Field, last: Field) -> u32 {
+    assert(W <= 32, "array_index: W must be <= 32");
+    assert(last.lt(2.pow_32((W - 1) as Field)), "array_index: array too long for W");
+    (2 * idx).assert_max_bit_size::<W>();
+    (last - idx).assert_max_bit_size::<W>();
+    idx.assert_max_bit_size::<32>();
+    idx as u32
+}
+
+// Hint: (position, negative) of a NumPy index into an axis of length len.
+unconstrained fn index_pos_hint(idx: Field, len: Field) -> (Field, bool) {
+    let neg = !idx.lt(OFFSET); // idx < 0
+    (if neg { idx + len } else { idx }, neg)
+}
+
+// Position in [0, len) of a NumPy index idx in [-len, len) (negative counts
+// from the end); any other idx has no witness, as NumPy raises IndexError.
+// The hint is pinned by idx = pos - len neg with pos in [0, len)
+// (`array_index`, W as there): neg = false gives idx in [0, len), neg = true
+// gives idx in [-len, 0), disjoint ranges, so a valid idx has one witness.
+pub fn index_pos<let W: u32>(idx: Field, len: u32) -> u32 {
+    // Safety: pinned by the identity and `array_index`.
+    let (pos, neg) = unsafe { index_pos_hint(idx, len as Field) };
+    assert(idx == pos - if neg { len as Field } else { 0 }, "index out of bounds");
+    array_index::<W>(pos, (len - 1) as Field)
 }
 
 // row[idx] with NumPy semantics by a one-hot over the 2K valid index values
 // -K..K: position p is hit when idx is p or p - K, i.e. when
 // (idx - p) (idx - p + K) is zero (no zero divisors in a field), one zero test
 // per position; the assertion that exactly one position is hit pins idx to a
-// valid index (no range check). Cheaper than `index_pos` for short rows.
+// valid index (no range check, no memory read). Cheaper than `index_pos` for
+// short rows.
 pub fn pick<let K: u32>(row: [Field; K], idx: Field) -> Field {
     let mut total: Field = 0;
     let mut value: Field = 0;
@@ -577,9 +629,37 @@ fn test_compact() {
 }
 
 #[test]
+fn test_array_index() {
+    let a = [10, 11, 12, 13, 14, 15];
+    assert(a[array_index::<8>(0, 5)] == 10);
+    assert(a[array_index::<8>(5, 5)] == 15);
+    assert(a[array_index::<28>(4, 5)] == 14);
+}
+
+#[test(should_fail)]
+fn test_array_index_above_last() {
+    let _ = array_index::<8>(6, 5);
+}
+
+#[test(should_fail)]
+fn test_array_index_minus_one() {
+    // p - 1, the index the pinned bb's memory check admits.
+    let _ = array_index::<28>(-1, 5);
+}
+
+#[test(should_fail)]
+fn test_array_index_half() {
+    // (p + 1) / 2 passes the check of 2 idx (= 1), not the one of last - idx.
+    let half: Field = 1 / 2;
+    let _ = array_index::<8>(half, 5);
+}
+
+#[test]
 fn test_index_pos() {
-    assert(index_pos(-1, 5) == 4);
-    assert(index_pos(2, 5) == 2);
+    assert(index_pos::<8>(-1, 5) == 4);
+    assert(index_pos::<8>(-5, 5) == 0);
+    assert(index_pos::<8>(2, 5) == 2);
+    assert(index_pos::<28>(4, 5) == 4);
 }
 
 #[test]
@@ -601,13 +681,28 @@ fn test_pick_too_negative() {
     let _ = pick([10, 11, 12], -4);
 }
 
+#[test]
+fn test_input_domain() {
+    check_inputs([-9223372036854775808, 9223372036854775807, 0]);
+}
+
+#[test(should_fail)]
+fn test_input_above_window() {
+    check_input(9223372036854775808);
+}
+
+#[test(should_fail)]
+fn test_input_below_window() {
+    check_input(-9223372036854775809);
+}
+
 #[test(should_fail)]
 fn test_index_out_of_bounds() {
-    let _ = index_pos(5, 5);
+    let _ = index_pos::<8>(5, 5);
 }
 
 #[test(should_fail)]
 fn test_index_too_negative() {
-    let _ = index_pos(-6, 5);
+    let _ = index_pos::<8>(-6, 5);
 }
 

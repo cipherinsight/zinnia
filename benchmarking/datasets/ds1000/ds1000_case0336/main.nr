@@ -5,7 +5,7 @@
 fn main(a: [Field; 64]) -> pub [Field; 8] {
     let mut anti_diag = [0; 8];
     for i in 0..8 {
-        anti_diag[i] = a[i * 8 + 7 - i];
+        anti_diag[i] = noir_hw::checked(a[i * 8 + 7 - i]);
     }
     anti_diag
 }

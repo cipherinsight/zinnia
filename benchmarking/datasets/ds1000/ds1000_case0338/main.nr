@@ -6,8 +6,8 @@
 fn main(a: [Field; 64]) -> pub [Field; 16] {
     let mut rows = [0; 16];
     for i in 0..8 {
-        rows[i] = a[i * 8 + i];
-        rows[8 + i] = a[i * 8 + 7 - i];
+        rows[i] = noir_hw::checked(a[i * 8 + i]);
+        rows[8 + i] = noir_hw::checked(a[i * 8 + 7 - i]);
     }
     rows
 }

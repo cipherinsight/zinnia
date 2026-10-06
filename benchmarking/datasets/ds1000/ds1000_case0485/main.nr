@@ -6,6 +6,9 @@
 use noir_hw::dot;
 
 fn main(A: [Field; 90], B: [Field; 9]) -> pub [Field; 90] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(A);
+    noir_hw::check_inputs(B);
     let mut r = [0; 90];
     for ij in 0..30 {
         for k in 0..3 {

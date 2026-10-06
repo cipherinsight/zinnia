@@ -8,5 +8,7 @@
 use noir_hw::max_of;
 
 fn main(data: [Field; 8]) -> pub [Field; 2] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(data);
     [max_of([data[0], data[1], data[2], data[3]]), max_of([data[4], data[5], data[6], data[7]])]
 }

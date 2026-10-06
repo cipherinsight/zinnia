@@ -11,8 +11,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    let a = q.load_floats(ctx, &a);
-    let a = q.bound_all(ctx, &a);
+    let a = q.load_floats_bounded(ctx, &a);
     let mut best = a[0];
     let mut best_idx = q.int_const(ctx, 0);
     for (i, x) in a.iter().enumerate().skip(1) {

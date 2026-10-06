@@ -8,6 +8,9 @@
 use noir_hw::pick;
 
 fn main(a: [Field; 845], b: [Field; 169]) -> pub Field {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
+    noir_hw::check_inputs(b);
     let mut all: Field = 0;
     for i in 0..845 {
         all += a[i];

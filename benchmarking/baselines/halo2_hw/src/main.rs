@@ -4,6 +4,7 @@
 //! halo2_hw <mode> --case <case dir or name> --input <A|B> --workdir <dir>
 //!          [--fixture <path>] [--out <json>] [--k <k>] [--lookup-bits <bits>]
 //!          [--instance <json>] [--tamper-index <i>] [--repeats <n>]
+//!          [--tamper-input <name>:<index>]   (mock: one input out of its domain)
 //! halo2_hw list
 //! ```
 //!
@@ -115,7 +116,15 @@ fn run(args: &Args, report: &mut serde_json::Map<String, Value>) -> Result<bool,
         }
         "mock" => {
             report.insert("input".into(), json!(args.require("input")?));
-            let inputs = load_inputs(&mut t)?;
+            let mut inputs = load_inputs(&mut t)?;
+            if let Some(spec) = args.get("tamper-input") {
+                let (name, index) = spec
+                    .rsplit_once(':')
+                    .and_then(|(n, i)| Some((n, i.parse::<usize>().ok()?)))
+                    .ok_or_else(|| Error::new(format!("--tamper-input expects name:index, got {spec:?}")))?;
+                inputs.tamper(name, index)?;
+                report.insert("tampered_input".into(), json!(spec));
+            }
             let out = scaffold::mock(circuit, &inputs, k, lookup_bits, &mut t)?;
             let satisfied = out["satisfied"].as_bool() == Some(true);
             (out, satisfied)

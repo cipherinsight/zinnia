@@ -7,6 +7,10 @@
 global N: u32 = 30;
 
 fn main(A: [Field; 30], a: Field, b: Field) -> pub [Field; 30] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(A);
+    noir_hw::check_input(a);
+    noir_hw::check_input(b);
     let mut B = [0; N];
     B[0] = a * A[0];
     for k in 1..N {

@@ -9,6 +9,8 @@
 use noir_hw::{divmod_pos, max_of, SCALE};
 
 fn main(X: [Field; 20]) -> pub [Field; 20] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(X);
     let mut result: [Field; 20] = [0; 20];
     for i in 0..5 {
         let mut signed: [Field; 8] = [0; 8];

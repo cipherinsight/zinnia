@@ -17,8 +17,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    let grades = q.load_floats(ctx, &grades);
-    let grades = q.bound_all(ctx, &grades);
+    let grades = q.load_floats_bounded(ctx, &grades);
     let eval = q.load_ints(ctx, &eval);
     let mut result = Vec::with_capacity(eval.len());
     for e in eval {

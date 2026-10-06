@@ -60,10 +60,11 @@ native integer or as `bool`; floats become `round(v * 2^32)`.
     `noir_fpc::qmul`'s 7,742, with the same rounding;
   - quotients: `div`, `divmod_pos`; casts `to_int`, `from_int`, `floor`;
     `sqrt`, `sin`, `cos`;
-  - indexing: `a[index_pos(i, len)]` (native dynamic indexing, NumPy wrap and
-    bounds), or `pick(row, i)` for rows of up to 8 values (a one-hot over the
-    valid index values, cheaper there: 2,400 vs 7,001 gates for 169 length-2
-    gathers);
+  - indexing: `a[index_pos::<8>(i, len)]` (native dynamic indexing, NumPy wrap
+    and bounds; `array_index::<8>(k, len - 1)` for a position read from a hint;
+    `::<28>` above 128 elements), or `pick(row, i)` for rows of up to 8 values
+    (a one-hot over the valid index values, cheaper there: 2,400 vs 7,001 gates
+    for 169 length-2 gathers);
   - masked selections (`x[mask]`, `nonzero`, `argwhere`): `select_kept`, or
     `compact` / `compact_rows` for other payloads (a running one-hot of the next
     free slot: 807 gates for 0442 against 7,346 with conditional native writes);
@@ -74,7 +75,7 @@ native integer or as `bool`; floats become `round(v * 2^32)`.
     the keys read through it strictly increase, as in 0381).
 - Range checks are `x.assert_max_bit_size::<N>()` on the original `Field`; an
   `as u64`/`as u32` cast truncates and proves nothing, so it only follows such a
-  check (as in `window` and `index_pos`). Every `unsafe` hint is followed by the
+  check (as in `window` and `array_index`). Every `unsafe` hint is followed by the
   checks that pin it, under a `// Safety:` comment.
 - `noir_hw` has `nargo test` coverage, including `should_fail` tests that load
   neighbouring or non-integer quotients, wrong square roots and parities, and
@@ -82,9 +83,16 @@ native integer or as `bool`; floats become `round(v * 2^32)`.
 
 Noir gotchas that matter here:
 
+- The compiler can drop a range check of a value used directly as a memory
+  index (it leaves the bound to Barretenberg's memory check), and the pinned bb
+  admits a read at index p - 1. Index checks therefore go on derived values:
+  `array_index` checks `2 k` and `last - k` (the 7- and 8-bit checks of the
+  sort indices in 0381/0383 and 0300 did not reach the circuit;
+  `nargo info --print-acir` shows which `RANGE` opcodes survive).
 - Barretenberg builds a range table for each bit width a circuit range-checks:
   the first check of any width adds about 2,780 gates, each further width a few
-  hundred more. Keep to 32- and 64-bit checks, and prefer one-hot selections
+  hundred more. Keep to 32- and 64-bit checks (and 8 or 28 bits: a 64-bit
+  check is 14-bit limbs and one 8-bit limb), and prefer one-hot selections
   over indices built from loop constants, which need none.
 - `Field` has no ordering; integer types do (after a range check, see above).
 - `i64` exists but `i64 as Field` is rejected; keep signed values in `Field` and

@@ -15,8 +15,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    let a = q.load_floats(ctx, &a);
-    let a = q.bound_all(ctx, &a);
+    let a = q.load_floats_bounded(ctx, &a);
     let b = q.load_ints(ctx, &b);
     let mut c = b.clone();
     for col in 0..9 {

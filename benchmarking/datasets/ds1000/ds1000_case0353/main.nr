@@ -14,6 +14,9 @@
 use noir_hw::max_of;
 
 fn main(A: [Field; 6], B: [Field; 21]) -> pub [Field; 7] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(A);
+    noir_hw::check_inputs(B);
     for x in A {
         x.assert_max_bit_size::<63>();
     }

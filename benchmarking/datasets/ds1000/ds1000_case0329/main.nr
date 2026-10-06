@@ -7,6 +7,8 @@
 use noir_hw::mul;
 
 fn main(a: [Field; 48]) -> pub [Field; 48] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
     let mut powered = [0; 48];
     for k in 0..48 {
         let x2 = mul(a[k], a[k]);

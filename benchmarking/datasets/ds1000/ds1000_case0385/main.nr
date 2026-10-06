@@ -4,6 +4,8 @@
 // @outputs: float[20000]
 
 fn main(a: [Field; 20000]) -> pub [Field; 20000] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
     let mut patches = [0; 20000];
     let mut p = 0;
     for j in 0..100 {

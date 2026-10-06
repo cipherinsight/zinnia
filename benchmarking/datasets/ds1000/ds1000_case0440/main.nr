@@ -11,7 +11,7 @@ fn main(Y: [Field; 250]) -> pub [Field; 50] {
     let mut X: [Field; 50] = [0; 50];
     for j in 0..5 {
         for i in 0..10 {
-            X[j * 10 + i] = sqrt(Y[i * 25 + j * 6]);
+            X[j * 10 + i] = sqrt(noir_hw::checked(Y[i * 25 + j * 6]));
         }
     }
     X
