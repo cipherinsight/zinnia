@@ -17,7 +17,9 @@
 //! * [`facts`] and [`checks`]: free facts, program checks as facts, and the
 //!   emission of checks through `builder/guard.rs`.
 //!
-//! Families: [`sort`], [`gather`], [`stats`], [`memory`]; scatter registers its own in [`registry`].
+//! Families: [`sort`], [`gather`], [`stats`], [`memory`], [`linear`]; scatter registers its own in [`registry`].
+//! [`challenge`]: the program-wide verifier challenge of the constructions that check
+//! identities at a random point (halo2-base only), and their probabilistic soundness.
 //! See `eval-redo/layer/core-api.md` for how to add a family.
 
 pub mod challenge;
@@ -27,6 +29,7 @@ pub mod emit;
 pub mod facts;
 pub mod gather;
 pub mod graph;
+pub mod linear;
 pub mod memory;
 pub mod op;
 pub mod scatter;
@@ -50,5 +53,6 @@ pub fn registry() -> Vec<&'static dyn Construction> {
     all.extend(scatter::constructions());
     all.extend(stats::constructions());
     all.extend(memory::constructions());
+    all.extend(linear::constructions());
     all
 }

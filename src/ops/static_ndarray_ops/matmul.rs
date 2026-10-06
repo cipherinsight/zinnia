@@ -395,6 +395,11 @@ fn matmul_generic(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
             let m = lhs_shape[0]; // rows of lhs
             let k = lhs_shape[1]; // cols of lhs = rows of rhs
             let n = rhs_shape[1]; // cols of rhs
+            if use_float && !use_complex {
+                if let Some(rows) = float_matmul_by_lanes(b, &lhs_flat, &rhs_flat, m, k, n) {
+                    return rows;
+                }
+            }
 
             let mut rows = Vec::new();
             for i in 0..m {
@@ -444,6 +449,37 @@ fn matmul_generic(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
 
     // Fallback: scalar multiply
     crate::helpers::value_ops::apply_binary_op(b, "mul", lhs, rhs)
+}
+
+/// A float 2-D by 2-D product as lanes of one `OpKind::MatMul` instance
+/// (`lower::linear` picks how to compute them), as nested rows; `None` when
+/// some entry is a sum of constant products (left to `ir_dot_f`'s folding).
+fn float_matmul_by_lanes(b: &mut IRBuilder, a: &[Value], m: &[Value], rows: usize, inner: usize, cols: usize) -> Option<Value> {
+    if a.len() != rows * inner || m.len() != inner * cols {
+        return None;
+    }
+    let constant = |v: &Value| v.float_val().is_some() || v.int_val().is_some();
+    let constant_row = (0..rows).any(|i| a[i * inner..(i + 1) * inner].iter().all(constant));
+    let constant_col = (0..cols).any(|j| (0..inner).all(|l| constant(&m[l * cols + j])));
+    if constant_row && constant_col {
+        return None;
+    }
+    let a: Vec<Value> = a.iter().map(|v| crate::helpers::value_ops::ensure_float(b, v)).collect();
+    let m: Vec<Value> = m.iter().map(|v| crate::helpers::value_ops::ensure_float(b, v)).collect();
+    let lanes = crate::lower::linear::matmul_lanes(b, &a, &m, rows, inner, cols);
+    let row_values: Vec<Value> = lanes
+        .chunks(cols)
+        .map(|row| Value::List(CompositeData {
+            elements_type: row.iter().map(|v| v.zinnia_type()).collect(),
+            values: row.to_vec(),
+            value_id: ValueId::next(),
+        }))
+        .collect();
+    Some(Value::List(CompositeData {
+        elements_type: row_values.iter().map(|v| v.zinnia_type()).collect(),
+        values: row_values,
+        value_id: ValueId::next(),
+    }))
 }
 
 /// Complex dot product: Σ aᵢ * bᵢ over Complex operands using
