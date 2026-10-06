@@ -7,7 +7,7 @@ from zinnia.compile.transformer import ZinniaExternalFuncASTTransformer, ZinniaC
 from zinnia.compile.transformer.chip import ZinniaChipASTTransformer
 from zinnia.compile.transformer.base import _eval_shape_expr, _parse_shape_expr_token
 from zinnia.compile._bridge import analyze_shapes, build_candidates, compile_circuit
-from zinnia.compile.function_lowering import lower_function_source
+from zinnia.compile.lowering import dedent_source, lower_circuit_source
 from zinnia.config.zinnia_config import ZinniaConfig
 from zinnia.api.zk_compiled_program import ZKCompiledProgram
 from zinnia.api.zk_program_input import ZKProgramInput
@@ -33,11 +33,9 @@ class ZinniaCompiler:
         :meth:`analyze_shapes` so the two always hand the core the same
         program.
         """
-        fixed_source = ZinniaCompiler.fix_source_indentation(source)
-        fixed_source, generated_helpers = lower_function_source(fixed_source, name)
-        python_ast = ast.parse(fixed_source)
-        transformer = ZinniaCircuitASTTransformer(fixed_source, name)
-        ast_dict = transformer.visit(python_ast.body[0])
+        lowered_source, generated_helpers = lower_circuit_source(dedent_source(source), name)
+        transformer = ZinniaCircuitASTTransformer(lowered_source, name)
+        ast_dict = transformer.visit(ast.parse(lowered_source).body[0])
 
         config_dict = {
             "backend": self.config.get_backend(),
@@ -184,36 +182,22 @@ class ZinniaCompiler:
     @staticmethod
     def chip_ast_parse(source: str, name: str):
         """Parse chip source code. Returns (ast_dict, return_dt_full)."""
-        fixed_source = ZinniaCompiler.fix_source_indentation(source)
-        python_ast = ast.parse(fixed_source)
-        transformer = ZinniaChipASTTransformer(fixed_source, name)
-        ast_dict = transformer.visit(python_ast.body[0])
+        source = dedent_source(source)
+        transformer = ZinniaChipASTTransformer(source, name)
+        ast_dict = transformer.visit(ast.parse(source).body[0])
         return ast_dict, transformer.return_dt_full
 
     @staticmethod
     def external_func_ast_parse(source: str, name: str):
         """Parse external function source code. Returns full type dict."""
-        fixed_source = ZinniaCompiler.fix_source_indentation(source)
-        python_ast = ast.parse(fixed_source)
-        return ZinniaExternalFuncASTTransformer(fixed_source, name).visit(python_ast.body[0])
+        source = dedent_source(source)
+        return ZinniaExternalFuncASTTransformer(source, name).visit(ast.parse(source).body[0])
 
     @staticmethod
     def circuit_ast_parse(source: str, name: str) -> dict:
-        """Parse circuit source code. Returns AST dict."""
-        fixed_source = ZinniaCompiler.fix_source_indentation(source)
-        fixed_source, _ = lower_function_source(fixed_source, name)
-        python_ast = ast.parse(fixed_source)
-        return ZinniaCircuitASTTransformer(fixed_source, name).visit(python_ast.body[0])
-
-    @staticmethod
-    def fix_source_indentation(code: str) -> str:
-        lines = code.split('\n')
-        min_indent = float('inf')
-        for line in lines:
-            if line.strip():
-                indent = len(line) - len(line.lstrip())
-                min_indent = min(min_indent, indent)
-        return '\n'.join([line[min_indent:] for line in lines])
+        """Lower and parse circuit source code (without its generated chips). Returns AST dict."""
+        lowered_source, _ = lower_circuit_source(dedent_source(source), name)
+        return ZinniaCircuitASTTransformer(lowered_source, name).visit(ast.parse(lowered_source).body[0])
 
 
 def _resolved_program_input_dtypes(ast_dict: dict) -> Dict[str, object]:

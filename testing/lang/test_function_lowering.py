@@ -7,14 +7,14 @@ import numpy as np
 import pytest
 
 from zinnia import ZKCircuit, ZKChip
-from zinnia.compile.function_lowering import FunctionLoweringError, lower_function_source
+from zinnia.compile.lowering import FunctionLoweringError, lower_circuit_source
 
 
 def run_python(source, args, lowered=False):
     source=textwrap.dedent(source)
     env={'np':np}
     if lowered:
-        entry,helpers=lower_function_source(source,'kernel')
+        entry,helpers=lower_circuit_source(source,'kernel')
         for _,helper in helpers:exec(helper,env)
         exec(entry,env)
     else:exec(source,env)
@@ -48,7 +48,7 @@ def check_circuit(source,args,expected):
         result=visitor.visit(statement);body.extend(result if isinstance(result,list) else [result])
     fn.body=body
     typed=ast.unparse(ast.fix_missing_locations(tree))
-    entry,helpers=lower_function_source(typed,'kernel')
+    entry,helpers=lower_circuit_source(typed,'kernel')
     chips=[ZKChip.from_source(name,source) for name,source in helpers]
     circuit=ZKCircuit.from_source('kernel',entry,chips=chips);circuit.compile()
     assert circuit.prove(*copy.deepcopy(args),expected,backend='mock').proof_bytes_hex=='mock_satisfied'
@@ -250,7 +250,7 @@ def test_comprehension_target_can_shadow_helper_name():
     ('def kernel(x):\n    f=lambda v:v\n    return f','escape|Function values'),
 ])
 def test_unsupported_function_semantics_are_explicit(source,match):
-    with pytest.raises(FunctionLoweringError,match=match):lower_function_source(source,'kernel')
+    with pytest.raises(FunctionLoweringError,match=match):lower_circuit_source(source,'kernel')
 
 
 def test_direct_vectorize_and_explicit_output_dtype():
@@ -290,7 +290,7 @@ def test_entry_requires_decorator_survives_normalization():
     def kernel(x: Integer[Array, "1"]):
         assert x[0] > 0
     '''
-    entry,_=lower_function_source(source,'kernel')
+    entry,_=lower_circuit_source(source,'kernel')
     assert ast.dump(ast.parse(entry).body[0].decorator_list[0])==ast.dump(ast.parse(textwrap.dedent(source)).body[0].decorator_list[0])
 
 
@@ -314,7 +314,7 @@ def test_local_capturing_helper_can_call_explicit_chip():
         assert add(x[0])==6
         assert add(x[1])==8
     '''
-    entry,helpers=lower_function_source(source,'kernel')
+    entry,helpers=lower_circuit_source(source,'kernel')
     chips=[ZKChip.from_source('double','def double(v):\n    return v*2')]
     chips.extend(ZKChip.from_source(name,body) for name,body in helpers)
     circuit=ZKCircuit.from_source('kernel',entry,chips=chips);circuit.compile()
@@ -356,7 +356,7 @@ def test_numpy_import_does_not_override_shadowing(body):
 ])
 def test_unsupported_imports_are_explicit(source):
     with pytest.raises(FunctionLoweringError,match='import'):
-        lower_function_source(source,'kernel')
+        lower_circuit_source(source,'kernel')
 
 @pytest.mark.parametrize('source',[
     'import random\ndef kernel(x):\n    return x',
@@ -364,9 +364,9 @@ def test_unsupported_imports_are_explicit(source):
     'def kernel(x):\n    if len(x)>0:\n        import random\n    return x',
 ])
 def test_out_of_scope_imports_are_rejected(source):
-    from zinnia.compile.import_scope import OutOfScopeImportError
+    from zinnia.compile.lowering import OutOfScopeImportError
     with pytest.raises(OutOfScopeImportError,match='out of scope: imports random'):
-        lower_function_source(source,'kernel')
+        lower_circuit_source(source,'kernel')
 
 @pytest.mark.parametrize('prefix,body',[
     ('from numpy.lib.stride_tricks import sliding_window_view as win','return win(x,3).sum(axis=1)'),

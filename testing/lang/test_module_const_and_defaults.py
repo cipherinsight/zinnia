@@ -12,7 +12,7 @@ Two related symptoms produced ``Variable X not found`` errors:
    ``Variable epsilon not found`` instead of substituting the default.
 
 Both are now handled in
-``zinnia.compile.module_constants`` (constants) and the chip transformer +
+``zinnia.compile.lowering.module_constants`` (constants) and the chip transformer +
 Rust ``visit_chip_call`` (defaults).
 """
 from zinnia import *

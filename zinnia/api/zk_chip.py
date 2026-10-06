@@ -1,6 +1,4 @@
-import inspect
-
-from zinnia.compile.import_scope import check_module_level_imports
+from zinnia.compile.lowering import read_decorated_function
 from zinnia.compile.zinnia_compiler import ZinniaCompiler
 from zinnia.debug.exception import InternalZinniaException, ZinniaException
 from zinnia.debug.prettifier import prettify_exception
@@ -25,20 +23,12 @@ class ZKChip:
     @staticmethod
     def from_method(method) -> 'ZKChip':
         from zinnia.api.zk_external_func import ZKExternalFunc
-        from zinnia.compile.module_constants import (
-            extract_module_constants, substitute_module_constants,
-        )
 
         if isinstance(method, ZKChip):
             return method
         if isinstance(method, ZKExternalFunc):
             raise ZinniaException('Cannot convert a ZKExternalFunc into ZKChip.')
-        raw_source = inspect.getsource(method)
-        check_module_level_imports(method, raw_source)
-        module_consts = extract_module_constants(method)
-        source_code = substitute_module_constants(raw_source, module_consts)
-        method_name = method.__name__
-        return ZKChip(method_name, source_code)
+        return ZKChip(method.__name__, read_decorated_function(method))
 
     def __call__(self, *args, **kwargs):
         raise ZinniaException('ZK Chip is not callable outside of a circuit.')
@@ -51,12 +41,4 @@ class ZKChip:
 
 
 def zk_chip(method):
-    from zinnia.compile.module_constants import (
-        extract_module_constants, substitute_module_constants,
-    )
-    raw_source = inspect.getsource(method)
-    check_module_level_imports(method, raw_source)
-    module_consts = extract_module_constants(method)
-    source_code = substitute_module_constants(raw_source, module_consts)
-    method_name = method.__name__
-    return ZKChip(method_name, source_code)
+    return ZKChip(method.__name__, read_decorated_function(method))
