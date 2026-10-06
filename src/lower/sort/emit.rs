@@ -135,6 +135,85 @@ pub(super) fn sort_by_network(
     (keys, indices)
 }
 
+// ── Rank selectors ──────────────────────────────────────────────────────
+
+/// The one-hot rank selectors of the stable sort, from one comparison per
+/// pair of elements: `selectors[r][k] = [element k has rank r]`.
+///
+/// Element `k`'s rank is the number of elements before it in the stable
+/// order: `j` precedes `k` when `a_j < a_k`, or `a_j == a_k` and `j < k`.
+/// For `j < k` that is `not (a_k < a_j)`, for `j > k` it is `a_j < a_k`, so
+/// one comparison `c_jk = [a_k < a_j]` per pair `j < k` gives every
+/// `prec(j, k)`. Then `rank_k = sum_j prec(j, k)`, and
+///
+/// ```text
+/// [rank_k == 0]     = prod_{j != k} (1 - prec(j, k))
+/// [rank_k == n - 1] = prod_{j != k} prec(j, k)
+/// [rank_k == 1]     = 1 - [rank_k == 0] - [rank_k == 2]      (n = 3)
+/// [rank_k == r]     = [sum_j prec(j, k) == r]                (n > 3)
+/// ```
+///
+/// (for `n = 3`, a product of two bits; for `n = 2`, the bit itself).
+///
+/// **Soundness.** No hint: each comparison is exact, and the stable order is
+/// a strict total order on the elements, so the ranks are a permutation of
+/// `0..n` and every formula above is exactly `[rank_k == r]` (rank 0 when no
+/// element precedes `k`, rank `n - 1` when all do, for `n = 3` rank 1 when
+/// neither). Each `selectors[r]` therefore has exactly one 1, at the element
+/// of rank `r` of NumPy's stable `argsort`.
+pub(super) fn rank_selectors(b: &mut IRBuilder, elements: &Elements) -> Vec<Vec<Value>> {
+    let n = elements.len();
+    let one = b.ir_constant_int(1);
+    // before[k][j] = prec(j, k) for j != k.
+    let mut before: Vec<Vec<Option<Value>>> = vec![vec![None; n]; n];
+    for k in 0..n {
+        for j in 0..k {
+            let k_first = elements.less(b, &elements.values[k], &elements.values[j]);
+            before[k][j] = Some(b.ir_sub_i(&one, &k_first));
+            before[j][k] = Some(k_first);
+        }
+    }
+    let precedes = |k: usize| -> Vec<Value> { before[k].iter().flatten().cloned().collect() };
+    let mut selectors: Vec<Vec<Value>> = vec![Vec::with_capacity(n); n];
+    for k in 0..n {
+        let bits = precedes(k);
+        let by_rank: Vec<Value> = match bits.as_slice() {
+            [] => vec![one.clone()],
+            [p] => vec![b.ir_sub_i(&one, p), p.clone()],
+            [p, q] => {
+                let (not_p, not_q) = (b.ir_sub_i(&one, p), b.ir_sub_i(&one, q));
+                let first = b.ir_mul_i(&not_p, &not_q);
+                let last = b.ir_mul_i(p, q);
+                let ends = b.ir_add_i(&first, &last);
+                vec![first, b.ir_sub_i(&one, &ends), last]
+            }
+            _ => {
+                let rank = bits[1..].iter().fold(bits[0].clone(), |acc, bit| b.ir_add_i(&acc, bit));
+                (0..n)
+                    .map(|r| {
+                        let r = b.ir_constant_int(r as i64);
+                        b.ir_equal_i(&rank, &r)
+                    })
+                    .collect()
+            }
+        };
+        for (r, selector) in by_rank.into_iter().enumerate() {
+            selectors[r].push(selector);
+        }
+    }
+    selectors
+}
+
+/// `sum_k selectors[k] * values[k]` (the entry of the selected element).
+pub(super) fn select_by(b: &mut IRBuilder, selectors: &[Value], values: &[Value], dtype: NumberType) -> Value {
+    let terms = selectors
+        .iter()
+        .zip(values)
+        .map(|(bit, value)| crate::lower::gather::window::scale_by_bit(b, bit, value, dtype))
+        .collect();
+    crate::lower::gather::window::sum_typed(b, terms, dtype)
+}
+
 // ── Hinted keys ─────────────────────────────────────────────────────────
 
 /// A key: a value and the index of an element.
