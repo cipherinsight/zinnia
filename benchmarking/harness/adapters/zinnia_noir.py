@@ -65,9 +65,16 @@ def _flat_leaves(elements: list[dict]) -> list[dict]:
 
 
 def _param_line(name: str, node: dict) -> str:
-    if "Array" in node:
-        values = ", ".join(f'"{_leaf_decimal(leaf)}"'
-                           for leaf in _flat_leaves(node["Array"]["elements"]))
+    # The backend renames a parameter that would clash with a name of its own
+    # (e.g. `v2`); the Prover.toml key is the renamed one.
+    from zinnia._zinnia_core import noir_param_identifier
+
+    name = noir_param_identifier(name)
+    # An array, a tuple or a complex number (the pair (real, imag)) is one flat
+    # array of its leaves.
+    composite = node["Array"]["elements"] if "Array" in node else node.get("Sequence")
+    if composite is not None:
+        values = ", ".join(f'"{_leaf_decimal(leaf)}"' for leaf in _flat_leaves(composite))
         return f"{name} = [{values}]"
     if "Hex" in node:
         return f'{name} = "{node["Hex"]}"'

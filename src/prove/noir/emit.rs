@@ -37,6 +37,8 @@ use crate::prove::interpreter::interpret_ir;
 use crate::prove::traits::Synthesizer;
 use crate::prove::types::ProvingParams;
 
+use super::inputs::{leaf_expr, noir_param_identifier, LeafLayout};
+
 const Q_BITS: u32 = 32;
 /// bb gates of one `if x == v { 1 } else { 0 }` indicator (an inverse hint
 /// and two arithmetic gates).
@@ -319,7 +321,7 @@ fn emit_prover_toml(witness: &ResolvedWitness) -> String {
         // safer default is to still write them — nargo errors out if a
         // declared `fn main` parameter has no Prover.toml entry, and the
         // function signature does declare every input. So we always emit.
-        write_param(&mut out, &p.name, &p.value);
+        write_param(&mut out, &noir_param_identifier(&p.name), &p.value);
     }
     out
 }
@@ -345,7 +347,9 @@ fn write_param(out: &mut String, name: &str, node: &InputNode) {
         InputNode::Hex(s) => {
             let _ = writeln!(out, "{} = \"{}\"", name, s);
         }
-        InputNode::Array { elements, .. } => {
+        // A tuple or a complex number is written like an array: its leaves in
+        // order (`inputs::LeafLayout`).
+        InputNode::Array { elements, .. } | InputNode::Sequence(elements) => {
             let _ = write!(out, "{} = [", name);
             let mut first = true;
             for e in flat_leaves(elements) {
@@ -356,17 +360,6 @@ fn write_param(out: &mut String, name: &str, node: &InputNode) {
                 let _ = write!(out, "\"{}\"", leaf_to_field_decimal(e));
             }
             let _ = writeln!(out, "]");
-        }
-        InputNode::Sequence(items) => {
-            // Heterogeneous tuples — emit as inline-table with positional keys.
-            // None of the 19 pilot kernels exercise this path; surface an
-            // explicit comment so the failure case is visible at runtime.
-            let _ = writeln!(
-                out,
-                "# {} = <Sequence — not yet supported in Prover.toml>",
-                name
-            );
-            let _ = items;
         }
         InputNode::Hashed { .. } => {
             let _ = writeln!(
@@ -461,8 +454,13 @@ fn sub_bigint_decimal(a: &str, b: &str) -> String {
 
 #[derive(Debug, Clone)]
 pub struct EmittedInput {
+    /// The kernel's parameter name (`InputPath::param`).
+    pub param: String,
+    /// The `fn main` parameter name ([`noir_param_identifier`]).
     pub name: String,
     pub kind: InputKind,
+    /// Where each scalar leaf sits in the flat parameter.
+    pub layout: LeafLayout,
     /// Declared `pub` on `fn main` (a `Public[...]` kernel parameter).
     pub is_public: bool,
 }
@@ -499,8 +497,10 @@ fn derive_input_params(witness: &ResolvedWitness) -> Vec<EmittedInput> {
             InputNode::Hashed { .. } => InputKind::ScalarField,
         };
         out.push(EmittedInput {
-            name: p.name.clone(),
+            param: p.name.clone(),
+            name: noir_param_identifier(&p.name),
             kind,
+            layout: LeafLayout::of(&p.value),
             is_public: p.is_public,
         });
     }
@@ -2370,38 +2370,12 @@ fn input_index_expr(
     path: &InputPath,
     inputs: &[EmittedInput],
 ) -> Result<String, ProvingError> {
-    let kind = inputs
-        .iter()
-        .find(|i| i.name == path.param)
-        .map(|i| &i.kind);
-    match kind {
-        Some(InputKind::ScalarField) | Some(InputKind::Bool) | None => Ok(path.param.clone()),
-        Some(InputKind::ArrayField { .. }) => {
-            // Zinnia's IR-gen flattens `path.segments` to a single Index
-            // for NDArray reads on every kernel we emit — the witness
-            // Array reaching us is already flat-leaves. The single-axis
-            // case is therefore the only sound one to index here.
-            if path.segments.len() == 1 {
-                if let Some(PathSegment::Index(i)) = path.segments.first() {
-                    return Ok(format!("{}[{}]", path.param, i));
-                }
-            }
-            // Multi-axis fallback removed: the previous code summed index
-            // segments (`flat += i`) which is wrong for any genuine
-            // multi-axis input (strides are unavailable in `EmittedInput`).
-            // Fail loud rather than emit a silently-wrong flat index. If a
-            // real kernel ever lands here, thread shape/stride info through
-            // `EmittedInput` and compute the true flat index.
-            Err(ProvingError::UnsupportedIR {
-                op_name: format!(
-                    "noir-emit:multi-axis input index ({} segments) on param `{}` — \
-                     IR-gen did not flatten; flat index unavailable without strides",
-                    path.segments.len(),
-                    path.param
-                ),
-            })
-        }
-    }
+    let input = inputs.iter().find(|i| i.param == path.param).ok_or_else(|| {
+        ProvingError::other(format!("noir-emit: read of `{}`, which is no circuit input", path.param))
+    })?;
+    leaf_expr(&input.name, &input.layout, path).ok_or_else(|| ProvingError::UnsupportedIR {
+        op_name: format!("noir-emit: input path `{path}` does not address a scalar of `{}`", path.param),
+    })
 }
 
 // ---------------------------------------------------------------------------

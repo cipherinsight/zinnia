@@ -27,6 +27,7 @@
 pub mod bound_analysis;
 pub mod driver;
 pub mod emit;
+pub mod inputs;
 #[cfg(test)]
 mod soundness_tests;
 

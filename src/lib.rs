@@ -687,6 +687,15 @@ fn emit_structural_circuit(
     }
 }
 
+/// The `fn main` parameter name (and `Prover.toml` key) the Noir backend
+/// gives the kernel parameter `name` (`prove::noir::inputs`). The harness
+/// writes `Prover.toml` itself and needs the same names.
+#[cfg(feature = "noir-backend")]
+#[pyfunction]
+fn noir_param_identifier(name: &str) -> String {
+    prove::noir::inputs::noir_param_identifier(name)
+}
+
 /// Emit the Noir circuit for this witness and `nargo execute` it without
 /// proving. Returns a JSON list of the values `main` returns (the exposed
 /// outputs in IR order) as `0x`-prefixed field elements; an unsatisfied
@@ -953,6 +962,8 @@ fn _zinnia_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(emit_structural_circuit, m)?)?;
     #[cfg(feature = "noir-backend")]
     m.add_function(wrap_pyfunction!(execute_noir_circuit, m)?)?;
+    #[cfg(feature = "noir-backend")]
+    m.add_function(wrap_pyfunction!(noir_param_identifier, m)?)?;
     m.add_function(wrap_pyfunction!(get_elided_publics, m)?)?;
     m.add_function(wrap_pyfunction!(get_output_layout, m)?)?;
     m.add_function(wrap_pyfunction!(get_public_inputs, m)?)?;
