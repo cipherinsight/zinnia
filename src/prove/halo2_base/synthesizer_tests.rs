@@ -497,6 +497,24 @@ fn pow_is_pinned_and_follows_numpy_domains() {
     }
 }
 
+/// `sinh`, `cosh`, `tanh` prove the kernel's values (built from `exp`) with
+/// every hint pinned; beyond `exp`'s window there is no witness.
+#[test]
+fn hyperbolic_functions_are_pinned_and_equal_the_kernel() {
+    let sinh = unary(|s, a| s.sinh_f(a));
+    let cosh = unary(|s, a| s.cosh_f(a));
+    let tanh = unary(|s, a| s.tanh_f(a));
+    for x in [0.0, 0.75, -3.5] {
+        assert_sound(&format!("sinh({x})"), &*sinh, &[q(x)], &[kernel::fp_sinh(q(x), PRECISION_BITS).unwrap()], &[]);
+        assert_sound(&format!("cosh({x})"), &*cosh, &[q(x)], &[kernel::fp_cosh(q(x), PRECISION_BITS).unwrap()], &[]);
+    }
+    for x in [0.0, 1.25, -20.0] {
+        assert_sound(&format!("tanh({x})"), &*tanh, &[q(x)], &[kernel::fp_tanh(q(x), PRECISION_BITS).unwrap()], &[]);
+    }
+    assert!(kernel::fp_tanh(q(30.0), PRECISION_BITS).is_none());
+    assert!(!synthesize(&*tanh, &[q(30.0)], &[]).accepted, "tanh(30) uses exp(30), beyond the window");
+}
+
 #[test]
 fn arcsin_is_pinned_to_the_principal_branch() {
     let arcsin = unary(|s, a| s.arcsin_f(a));

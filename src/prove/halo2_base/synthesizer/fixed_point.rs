@@ -676,6 +676,16 @@ impl Halo2BaseSynthesizer<'_> {
         self.add_i(&k_ln2, &ln_m)
     }
 
+    /// `floor((exp x ± exp -x) / 2)` (`sinh`, `cosh` of `kernel`): two
+    /// pinned `exp`s and a pinned floor division by 2 (`rescale_by`).
+    pub(super) fn half_exp_combination(&mut self, x: &Halo2BaseCell, sum: bool) -> Result<Halo2BaseCell, ProvingError> {
+        let up = self.exp_f(x)?;
+        let negated = self.negate(x);
+        let down = self.exp_f(&negated)?;
+        let combined = if sum { self.add_i(&up, &down)? } else { self.sub_i(&up, &down)? };
+        self.rescale_by(&combined, 1)
+    }
+
     /// `a ** b` for float `a`, `b`, by `kernel::fp_pow`'s rules (Noir's
     /// `qpow` is the same): `exp(b·log |a|)`, negated for a negative `a` and
     /// an odd `b`; for `a == 0`, 1 when `b == 0` and 0 otherwise.
