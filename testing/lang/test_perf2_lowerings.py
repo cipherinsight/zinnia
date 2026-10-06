@@ -100,3 +100,27 @@ def test_reshape_of_a_row_prefix_still_compiles():
     x = np.arange(12).reshape(4, 3)
     satisfied, values, shapes = run_mock_layout(compile_kernel(source), x, 2)
     assert satisfied and list(shapes[0]) == [6] and list(values[:6]) == list(range(6))
+
+
+@pytest.mark.parametrize("expr", ["x[:, 1]", "x[:, -1]", "x[0:2, 1]", "x[1, :]", "x[-1, :]", "x[:, 1] * 2", "x[:, -2].sum()"])
+@pytest.mark.parametrize("x", [X22, X32])
+def test_mixed_subscripts_of_a_bounded_input_follow_its_runtime_shape(expr, x):
+    """A whole-axis slice keeps the axis' runtime extent and a single index
+    wraps against it (before: `x[:, 1]` had the buffer's 4 rows and
+    `x[:, -1]` read column 2 of the 3-wide buffer)."""
+    from testing.lang.mock_outputs import run_mock_layout, numpy_kernel
+    source = BOUNDED.format(expr)
+    satisfied, values, shapes = run_mock_layout(compile_kernel(source), x)
+    expected = np.asarray(numpy_kernel(source)(x))
+    assert satisfied
+    assert list(shapes[0]) == list(expected.shape)
+    assert list(values[: expected.size]) == expected.ravel().tolist()
+
+
+@pytest.mark.parametrize("expr", ["x[2, :]", "x[:, 2]", "x[:, -3]"])
+def test_single_index_past_the_runtime_extent_has_no_proof(expr):
+    """NumPy raises IndexError for row 2 of a 2-row array, even though the
+    buffer has 4 rows."""
+    from testing.lang.mock_outputs import run_mock
+    satisfied, _ = run_mock(compile_kernel(BOUNDED.format(expr)), X22)
+    assert not satisfied

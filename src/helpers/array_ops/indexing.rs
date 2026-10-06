@@ -769,6 +769,23 @@ fn dyn_subscript_multidim(
     data: &DynamicNDArrayData,
     indices: &[SliceIndex],
 ) -> Value {
+    // Single indices wrap against, and are checked below, the runtime
+    // extent of their axis (NumPy's IndexError has no proof), not the
+    // buffer width: `x[:, -1]` of a 2x2 array in a 4x3 buffer is column 1.
+    let indices: &Vec<SliceIndex> = &indices
+        .iter()
+        .enumerate()
+        .map(|(axis, idx)| match idx {
+            SliceIndex::Single(raw @ Value::Integer(_)) => {
+                let hi = scalar_i64_value(b, &data.meta.runtime_shape[axis]);
+                let wrapped = wrap_negative_index(b, raw, &hi);
+                SliceIndex::Single(crate::optim::resolver::discharge_index_below_value(
+                    b, &wrapped, 0, &hi, "dyn_subscript",
+                ))
+            }
+            other => other.clone(),
+        })
+        .collect();
     // Check if any Range has dynamic bounds.
     let first_dynamic_range = indices.iter().enumerate().find(|(_, idx)| {
         if let SliceIndex::Range(start, stop, step) = idx {
@@ -1241,7 +1258,37 @@ fn dyn_subscript_multidim_static(
     }
 
     let segment_id = crate::helpers::segment::alloc_and_write_values(b, &out_elements, data.dtype);
-    let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &out_shape);
+
+    // Every Range reaching this path on an axis with a runtime extent is the
+    // whole axis (see `dyn_subscript_multidim`), so the output axis has that
+    // runtime extent; the output buffer is padded (static strides of
+    // `out_shape`), its cells past the extent unused.
+    let runtime_shape: Vec<ScalarValue<i64>> = axis_ranges
+        .iter()
+        .map(|(src_ax, coords)| match data.meta.runtime_shape.get(*src_ax) {
+            Some(extent) if extent.static_val.is_none() && coords.len() == shape[*src_ax] => extent.clone(),
+            _ => ScalarValue::new(Some(coords.len() as i64), None),
+        })
+        .collect();
+    let dims: Vec<crate::types::Dim> = runtime_shape
+        .iter()
+        .zip(&out_shape)
+        .map(|(extent, &width)| match extent.static_val {
+            Some(_) => crate::types::Dim::new_static(&mut b.dim_table, width),
+            None => crate::types::Dim::new_dynamic(&mut b.dim_table, 0, width),
+        })
+        .collect();
+    let envelope = crate::types::Envelope::new_with_bound(dims, out_total);
+    let runtime_length = if runtime_shape.iter().all(|e| e.static_val.is_some()) {
+        ScalarValue::new(Some(out_total as i64), None)
+    } else {
+        let mut length = b.ir_constant_int(1);
+        for extent in &runtime_shape {
+            let extent = scalar_i64_value(b, extent);
+            length = b.ir_mul_i(&length, &extent);
+        }
+        crate::ops::dyn_ndarray::value_to_scalar_i64(&length)
+    };
 
     Value::DynamicNDArray(DynamicNDArrayData {
         envelope,
@@ -1251,12 +1298,9 @@ fn dyn_subscript_multidim_static(
             logical_shape: out_shape.clone(),
             logical_offset: 0,
             logical_strides: out_strides_out.clone(),
-            runtime_length: ScalarValue::new(Some(out_total as i64), None),
+            runtime_length,
             runtime_rank: ScalarValue::new(Some(out_shape.len() as i64), None),
-            runtime_shape: out_shape
-                .iter()
-                .map(|&s| ScalarValue::new(Some(s as i64), None))
-                .collect(),
+            runtime_shape,
             runtime_strides: out_strides_out
                 .iter()
                 .map(|&s| ScalarValue::new(Some(s as i64), None))
