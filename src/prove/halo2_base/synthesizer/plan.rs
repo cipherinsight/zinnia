@@ -126,10 +126,15 @@ fn planned_bounds(ir: &IRGraph) -> HashMap<ValueId, i128> {
 /// subtrahend), and is not a root of any affine view in the provenance
 /// table (memory reads translate roots to cells, so a root must be a cell).
 fn deferred_products(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<u32> {
+    // Only the views of memory addresses are read (memory.rs translates
+    // their roots to cells); a root of any other view may be deferred.
+    let value_of: HashMap<u32, ValueId> = ir.stmts.iter().map(|s| (s.stmt_id, s.value_id)).collect();
     let roots: HashSet<ValueId> = ir
         .stmts
         .iter()
-        .filter_map(|stmt| ir.provenance.affine_of(stmt.value_id))
+        .filter(|stmt| matches!(stmt.ir, IR::ReadMemory { .. } | IR::WriteMemory { .. }))
+        .filter_map(|stmt| stmt.arguments.first().and_then(|a| value_of.get(a)))
+        .filter_map(|vid| ir.provenance.affine_of(*vid))
         .flat_map(|view| view.terms.iter().map(|(root, _)| *root))
         .collect();
     ir.stmts
