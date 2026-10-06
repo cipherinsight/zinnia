@@ -35,6 +35,13 @@ pub fn constructions() -> Vec<&'static dyn Construction> {
     vec![&InsertBySharedProducts, &InsertByComplement, &OneHotWrite, &ZeroWriteChain]
 }
 
+/// The fact a pinned position one-hot proves about its index: `lo <= x <
+/// hi` on every path (the index operand is guarded by the execution
+/// predicate).
+fn index_window(x: StmtId, lo: i64, hi: i64) -> Requirement {
+    Requirement::Fact(Fact { claim: Claim::InRange { x, lo, hi: Bound::Const(hi) }, scope: Scope::Everywhere })
+}
+
 // ── np.insert ───────────────────────────────────────────────────────────
 
 /// The shape of an `OpKind::Insert` group: `n` source rows of `lanes` cells.
@@ -123,9 +130,8 @@ impl Construction for InsertByComplement {
 fn insert_candidate(group: &Group, cx: &Context, form: Form) -> Option<Candidate> {
     let (n, lanes) = insert_shape(group.kind)?;
     let pos = *group.shared.last().expect("an insertion has a position operand");
-    let in_range = Claim::InRange { x: pos, lo: -(n as i64), hi: Bound::Const(n as i64 + 1) };
     let mut post: Vec<Requirement> = group.lanes.iter().map(|lane| Requirement::Lane(lane.stmt)).collect();
-    post.push(Requirement::Fact(Fact { claim: in_range, scope: Scope::Everywhere }));
+    post.push(index_window(pos, -(n as i64), n as i64 + 1));
     Some(Candidate {
         pre: Vec::new(),
         post,
@@ -230,9 +236,8 @@ impl Construction for OneHotWrite {
             .iter()
             .filter(|lane| matches!(cx.stmt(lane.own[write::WRITTEN]).ir, crate::ir_defs::IR::ConstantInt { value: 0 }))
             .count();
-        let in_range = Claim::InRange { x: index, lo: -(n as i64), hi: Bound::Const(n as i64) };
         let mut post: Vec<Requirement> = group.lanes.iter().map(|lane| Requirement::Lane(lane.stmt)).collect();
-        post.push(Requirement::Fact(Fact { claim: in_range, scope: Scope::Everywhere }));
+        post.push(index_window(index, -(n as i64), n as i64));
         vec![Candidate {
             pre: Vec::new(),
             post,
@@ -280,8 +285,7 @@ impl Construction for ZeroWriteChain {
         let mut post = Vec::new();
         for g in &chain {
             post.extend(g.lanes.iter().map(|lane| Requirement::Lane(lane.stmt)));
-            let in_range = Claim::InRange { x: g.shared[0], lo: -(n as i64), hi: Bound::Const(n as i64) };
-            post.push(Requirement::Fact(Fact { claim: in_range, scope: Scope::Everywhere }));
+            post.push(index_window(g.shared[0], -(n as i64), n as i64));
         }
         let base: std::collections::HashMap<StmtId, StmtId> = group
             .lanes

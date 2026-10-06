@@ -88,7 +88,10 @@ pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction
         let provable = check.forms.iter().any(|f| established.iter().any(|e| e.implies(f)));
         let useful = check.forms.iter().any(|f| wanted.iter().any(|w| f.implies(w)));
         if provable || useful {
-            roots.push(Requirement::Fact(check.forms[0]));
+            // The forms are equivalent; the root is one a node establishes
+            // when there is one (so that node can justify the check).
+            let root = check.forms.iter().find(|f| established.iter().any(|e| e.implies(f))).unwrap_or(&check.forms[0]);
+            roots.push(Requirement::Fact(*root));
             nodes.push(NodeEntry::program_check(check, target));
         }
     }

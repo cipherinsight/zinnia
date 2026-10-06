@@ -58,6 +58,9 @@ impl<'a> FreeFacts<'a> {
             Claim::NonNegative(x) => self.bounds(x).is_some_and(|(min, _)| min >= 0),
             Claim::NonZero(x) => self.bounds(x).is_some_and(|(min, max)| min > 0 || max < 0),
             Claim::Equal(a, b) => a == b,
+            Claim::Within { x, lo, hi } => {
+                self.bounds(x).is_some_and(|(min, max)| lo.is_none_or(|l| l <= min) && hi.is_none_or(|u| max <= u))
+            }
         }
     }
 

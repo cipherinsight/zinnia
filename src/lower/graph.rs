@@ -104,6 +104,10 @@ pub enum Claim {
     NonZero(StmtId),
     /// `x == y`.
     Equal(StmtId, StmtId),
+    /// `lo <= x <= hi` for the integer `x`, both ends inclusive; `None` is
+    /// an open end (an asserted `x >= c` or `x <= c`, such as one side of an
+    /// input's int64 window, bounds one side only).
+    Within { x: StmtId, lo: Option<i64>, hi: Option<i64> },
 }
 
 impl Fact {
@@ -141,6 +145,12 @@ impl Claim {
                         (a, b) => a == b,
                     }
             }
+            (InRange { x, lo, hi: Bound::Const(h) }, Within { x: y, lo: lo2, hi: hi2 }) if x == y => {
+                lo2.is_none_or(|l| lo >= l) && hi2.is_none_or(|u| h - 1 <= u)
+            }
+            (Within { x, lo, hi }, Within { x: y, lo: lo2, hi: hi2 }) if x == y => {
+                lo2.is_none_or(|l| lo.is_some_and(|lo| lo >= l)) && hi2.is_none_or(|u| hi.is_some_and(|hi| hi <= u))
+            }
             (InRange { x, lo, .. }, NonNegative(y)) => x == y && lo >= 0,
             (InRange { x, lo, .. }, NonZero(y)) => x == y && lo >= 1,
             (Equal(a, b), Equal(c, d)) => (a, b) == (c, d) || (a, b) == (d, c),
@@ -152,7 +162,7 @@ impl Claim {
     pub fn subjects(&self) -> Vec<StmtId> {
         match *self {
             Claim::InRange { x, hi: Bound::Stmt(h), .. } => vec![x, h],
-            Claim::InRange { x, .. } | Claim::NonNegative(x) | Claim::NonZero(x) => vec![x],
+            Claim::InRange { x, .. } | Claim::NonNegative(x) | Claim::NonZero(x) | Claim::Within { x, .. } => vec![x],
             Claim::Equal(a, b) => vec![a, b],
         }
     }

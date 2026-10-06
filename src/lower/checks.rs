@@ -47,10 +47,20 @@ fn check_forms(graph: &IRGraph, ir: &IR, args: &[StmtId]) -> Vec<Fact> {
         (IR::SelectI | IR::SelectB, &[p, x, k]) => constant(k).map(|k| (p, x, k)),
         _ => None,
     };
+    // `x + k` with a constant `k`.
+    let shifted = |s: StmtId| match (&graph.stmts[s as usize].ir, graph.stmts[s as usize].arguments.as_slice()) {
+        (IR::AddI, &[x, k]) => constant(k).map(|k| (x, k)).or_else(|| constant(x).map(|c| (k, c))),
+        _ => None,
+    };
     match (ir, args) {
         (IR::AssertU128Lt, &[v, hi]) => {
             let bound = constant(hi).map_or(Bound::Stmt(hi), Bound::Const);
             let mut forms = vec![Fact::everywhere(Claim::InRange { x: v, lo: 0, hi: bound })];
+            // `0 <= x + k < h` is `-k <= x < h - k` (NumPy's index window
+            // `-n <= i < n` is checked as `AssertU128Lt(i + n, 2n)`).
+            if let (Some((x, k)), Bound::Const(h)) = (shifted(v), bound) {
+                forms.push(Fact::everywhere(Claim::InRange { x, lo: -k, hi: Bound::Const(h - k) }));
+            }
             if let Some((p, x, k)) = guarded(v) {
                 if k >= 0 && matches!(bound, Bound::Const(h) if k < h) {
                     forms.push(Fact { claim: Claim::InRange { x, lo: 0, hi: bound }, scope: Scope::When(p) });
@@ -88,6 +98,13 @@ fn condition_claim(graph: &IRGraph, c: StmtId, constant: &dyn Fn(StmtId) -> Opti
         (IR::GteI | IR::GteF, &[x, z]) | (IR::LteI | IR::LteF, &[z, x]) if zero(z) => Some(Claim::NonNegative(x)),
         (IR::NeI | IR::NeF, &[x, z]) | (IR::NeI | IR::NeF, &[z, x]) if zero(z) => Some(Claim::NonZero(x)),
         (IR::EqI, &[a, b]) => Some(Claim::Equal(a, b)),
+        // Integer orders against a constant (an input's int64 window).
+        (IR::GteI, &[x, c]) | (IR::LteI, &[c, x]) if constant(c).is_some() => {
+            Some(Claim::Within { x, lo: constant(c), hi: None })
+        }
+        (IR::LteI, &[x, c]) | (IR::GteI, &[c, x]) if constant(c).is_some() => {
+            Some(Claim::Within { x, lo: None, hi: constant(c) })
+        }
         _ => None,
     }
 }
@@ -128,6 +145,8 @@ pub fn cost(claim: &Claim, target: Target) -> u64 {
         (Claim::NonZero(_), Target::Halo2Base) => 4,
         (Claim::NonZero(_), Target::Noir) => 3,
         (Claim::Equal(..), _) => 1,
+        (Claim::Within { .. }, Target::Halo2Base) => 17,
+        (Claim::Within { .. }, Target::Noir) => 3,
     }
 }
 
@@ -171,6 +190,18 @@ fn emit_claim(b: &mut IRBuilder, claim: &Claim, lookup: &HashMap<StmtId, Value>)
         Claim::Equal(x, y) => {
             let equal = b.ir_equal_i(&v(x), &v(y));
             b.ir_assert(&equal);
+        }
+        Claim::Within { x, lo, hi } => {
+            if let Some(lo) = lo {
+                let lo = b.ir_constant_int(lo);
+                let above = b.ir_greater_than_or_equal_i(&v(x), &lo);
+                b.ir_assert(&above);
+            }
+            if let Some(hi) = hi {
+                let hi = b.ir_constant_int(hi);
+                let below = b.ir_less_than_or_equal_i(&v(x), &hi);
+                b.ir_assert(&below);
+            }
         }
     }
 }

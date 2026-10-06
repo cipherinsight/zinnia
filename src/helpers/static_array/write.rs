@@ -1517,11 +1517,13 @@ fn static_array_slice_setitem(
 }
 
 #[allow(clippy::too_many_arguments)]
-/// A slice write through exactly one runtime index (`a[i, :] = v`; the
-/// other axes static), lowered by the scatter family: every cell it may
-/// touch becomes an `OpKind::IndexWrite` lane over the index's pinned
-/// one-hot (`lower::scatter::write`), which also proves `-n <= i < n` (a
-/// slice write had no bounds check of its own). Integer and float arrays.
+/// A slice write of a constant through exactly one runtime index (`a[i, :]
+/// = 0`; the other axes static), lowered by the scatter family: every cell
+/// it may touch becomes an `OpKind::IndexWrite` lane over the index's
+/// pinned one-hot (`lower::scatter::write`), which also proves `-n <= i <
+/// n`. Integer and float arrays. A computed value keeps the per-cell
+/// equality tests, which a read of the same cells through the same index
+/// shares (`a[:, i] *= m`).
 struct OneHotWriteAxis {
     axis: usize,
     shared: std::sync::Arc<[Value]>,
@@ -1596,7 +1598,8 @@ fn try_overlay_dynamic_single_slice_setitem(
         return false;
     };
     let logical_strides = row_major_strides(shape);
-    let one_hot_write = OneHotWriteAxis::of(b, dtype, shape, axis_specs);
+    let constant_value = value_is_scalar && (value.int_val().is_some() || value.float_val().is_some());
+    let one_hot_write = constant_value.then(|| OneHotWriteAxis::of(b, dtype, shape, axis_specs)).flatten();
     for flat in 0..total {
         let coords = decode_coords(flat, shape, &logical_strides);
         let abs = abs_offset_for_coords(offset, strides, &coords);

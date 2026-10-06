@@ -230,3 +230,17 @@ fn a_check_an_earlier_check_implies_is_not_emitted() {
     // statements between the two without the bound it proves.
     assert_eq!(index_checks(&lowered([8, 4])), 2);
 }
+
+/// One side of a window is not the other: `x >= c` does not imply `x <= d`
+/// (a field element above the window passes the first), while a range
+/// `lo <= x < hi` implies both sides it covers.
+#[test]
+fn one_sided_bounds_imply_only_their_side() {
+    let above = Fact::everywhere(Claim::Within { x: 7, lo: Some(i64::MIN), hi: None });
+    let below = Fact::everywhere(Claim::Within { x: 7, lo: None, hi: Some(i64::MAX) });
+    assert!(!above.implies(&below) && !below.implies(&above));
+    let index = Fact::everywhere(Claim::InRange { x: 7, lo: -4, hi: Bound::Const(4) });
+    assert!(index.implies(&above) && index.implies(&below));
+    assert!(!index.implies(&Fact::everywhere(Claim::Within { x: 7, lo: Some(-3), hi: None })));
+    assert!(!index.implies(&Fact::everywhere(Claim::Within { x: 7, lo: None, hi: Some(2) })));
+}
