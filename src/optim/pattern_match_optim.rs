@@ -224,6 +224,10 @@ impl PatternMatchOptim {
     }
 
     fn optimize_sub_i(&self, b: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
+        // `x - x = 0` for every int64 `x` (no overflow).
+        if is_same_ptr(args) {
+            return b.ir_constant_int(0);
+        }
         if args[1].int_val() == Some(0) {
             return args[0].clone();
         }
@@ -234,6 +238,10 @@ impl PatternMatchOptim {
     }
 
     fn optimize_sub_f(&self, b: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
+        // `x - x = 0` exactly for every Q-encoded `x` (no inf or nan exists).
+        if is_same_ptr(args) {
+            return b.ir_constant_float(0.0);
+        }
         if args[1].float_val() == Some(0.0) {
             return args[0].clone();
         }
