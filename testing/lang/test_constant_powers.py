@@ -2,8 +2,8 @@
 
 `x ** e` (and `np.power(x, e)`) with an integer-valued constant `e`,
 `|e| <= 64`, written as an int (`x ** -2`) or a float (`x ** -2.0`), lowers
-in the IR to square-and-multiply `MulF`s, and for `e < 0` to the
-fixed-point reciprocal `1.0 / x ** |e|`. The mock and every circuit run the
+in the IR to square-and-multiply `MulF`s, for `e < 0` on the fixed-point
+reciprocal: `(1.0 / x) ** |e|`. The mock and every circuit run the
 same IR, so they agree bit for bit; no `exp`/`log` is involved. Non-negative
 exponents were already chains; negative ones went through `PowF`
 (`exp(b * log a)`, approximate and costlier) or `PowFI` (backend-specific
@@ -48,9 +48,9 @@ def test_negative_constant_powers_match_numpy_on_every_backend(body):
 
 
 def test_the_chain_is_the_product_of_fixed_point_multiplications():
-    # x ** -2.0 is 1 / (x * x), each step rounded as MulF / DivF: the same
-    # values as writing the operations out.
-    assert run_mock(compile_kernel(kernel("x ** -2.0")), X) == run_mock(compile_kernel(kernel("1.0 / (x * x)")), X)
+    # x ** -2.0 is (1 / x) * (1 / x), each step rounded as DivF / MulF: the
+    # same values as writing the operations out.
+    assert run_mock(compile_kernel(kernel("x ** -2.0")), X) == run_mock(compile_kernel(kernel("(1.0 / x) * (1.0 / x)")), X)
     assert run_mock(compile_kernel(kernel("x ** 3.0")), X) == run_mock(compile_kernel(kernel("x * x * x")), X)
 
 

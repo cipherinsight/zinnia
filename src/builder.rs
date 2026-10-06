@@ -2119,18 +2119,19 @@ impl IRBuilder {
     /// `base ** e` for a compile-time integer `e` as float products, so the
     /// mock and every circuit compute the same value: square-and-multiply
     /// (`x ** 6` is three `MulF`, `x ** 0` is `1.0`), and for `e < 0` the
-    /// fixed-point reciprocal `1.0 / base ** |e|` (`DivF`, whose `rhs != 0`
-    /// requirement leaves no proof where the power is 0: NumPy's `inf` at
-    /// `base == 0`, and a result beyond the window when it underflows).
-    /// Each product rounds like any other `MulF`: within one Q unit per
-    /// product of the real power.
+    /// same chain on the fixed-point reciprocal, `(1.0 / base) ** |e|`
+    /// (`DivF`, whose `rhs != 0` requirement leaves no proof at `base == 0`,
+    /// NumPy's `inf`). Taking the reciprocal first keeps the error at a few
+    /// Q units: `1.0 / base ** |e|` would divide by a rounded small power
+    /// when `|base| < 1` and amplify its rounding (thousands of units for
+    /// `0.3 ** -3`). Each product rounds like any other `MulF`.
     fn constant_power_f(&mut self, base: &Value, e: i64) -> Value {
-        let power = self.square_and_multiply_f(base, e.unsigned_abs() as u32);
         if e >= 0 {
-            return power;
+            return self.square_and_multiply_f(base, e as u32);
         }
         let one = self.ir_constant_float(1.0);
-        self.ir_div_f(&one, &power)
+        let reciprocal = self.ir_div_f(&one, base);
+        self.square_and_multiply_f(&reciprocal, e.unsigned_abs() as u32)
     }
 
     /// `base ** e` by square-and-multiply over the bits of `e`, most
