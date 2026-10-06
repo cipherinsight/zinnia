@@ -192,13 +192,17 @@ unconstrained fn hint_lt(a: Field, b: Field) -> bool {
     hint_is_negative(a - b)
 }
 
-/// Constraints for `qlt_bits::<W>`: the claimed answer c selects which of
-/// b - a - 1 (c = true) and a - b (c = false) must be a W-bit value. The two
-/// sum to -1, so when one of them is a value in [0, 2^W) the other is a field
-/// element above p - 2^(W+1): for W <= 250 at most one c passes, and one does
-/// exactly when a - b reads as an integer in [-2^W, 2^W).
+/// Constraints for `qlt_bits::<W>`: `t = a - b + c * 2^W` must be a W-bit
+/// value, with the claimed answer c a bit (Noir range-checks a `bool` that an
+/// unconstrained function returns). For c = false that is
+/// `0 <= a - b < 2^W`, for c = true `-2^W <= a - b < 0`. The two values of t
+/// differ by 2^W, so for W <= 250 (2^(W+1) far below p) at most one c passes,
+/// and one does exactly when a - b reads as an integer in [-2^W, 2^W). t is
+/// linear in c, so the check is one range constraint on a linear
+/// combination: no multiplication gate (selecting between `b - a - 1` and
+/// `a - b` by c costs one).
 fn constrain_lt<let W: u32>(a: Field, b: Field, c: bool) {
-    let gap = if c { b - a - 1 } else { a - b };
+    let gap = a - b + (c as Field) * 2.pow_32(W as Field);
     gap.assert_max_bit_size::<W>();
 }
 
@@ -1627,6 +1631,24 @@ fn test_lt_rejects_true_for_greater() {
 #[test(should_fail)]
 fn test_lt_rejects_true_for_equal() {
     constrain_lt::<64>(5, 5, true);
+}
+
+#[test(should_fail)]
+fn test_lt_rejects_false_beyond_width() {
+    // 8 - 0 = 2^3 is outside [-2^3, 2^3): no answer passes.
+    constrain_lt::<3>(8, 0, false);
+}
+
+#[test(should_fail)]
+fn test_lt_rejects_true_beyond_width() {
+    constrain_lt::<3>(8, 0, true);
+}
+
+#[test]
+fn test_lt_accepts_the_width_edges() {
+    // a - b = -2^3 (true) and 2^3 - 1 (false), the ends of the window.
+    constrain_lt::<3>(0, 8, true);
+    constrain_lt::<3>(7, 0, false);
 }
 
 #[test(should_fail)]
