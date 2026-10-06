@@ -687,7 +687,7 @@ fn returns_one_ndarray(name: &str, positional: usize) -> bool {
         "bincount", "block", "broadcast_to", "ceil", "clip", "column_stack", "concatenate",
         "copy", "corrcoef", "correlate", "cov", "cumprod", "cumsum", "delete", "diag", "diff",
         "dot", "dstack", "einsum", "empty_like", "expand_dims", "flatnonzero", "flip", "fliplr",
-        "flipud", "floor", "full", "full_like", "hstack", "in1d", "inner", "insert", "isclose",
+        "flipud", "floor", "full", "full_like", "hstack", "in1d", "inner", "insert", "isclose", "isin",
         "linspace", "matmul", "mean", "median", "moveaxis", "ones", "ones_like", "outer", "pad",
         "percentile", "reciprocal", "repeat", "reshape", "rot90", "round", "around", "row_stack", "select",
         "square", "squeeze", "stack", "swapaxes", "take", "take_along_axis", "tensordot", "tile",

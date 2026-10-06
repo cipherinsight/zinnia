@@ -383,6 +383,97 @@ fn np_triangle(
     crate::helpers::static_array::base::build_static_array_from_flat(b, out, shape, dtype)
 }
 
+/// `np.isin(element, test_elements, assume_unique=False, invert=False, *,
+/// kind=None)` (the result has `element`'s shape) and `np.in1d(ar1, ar2,
+/// ...)` (the result is flat): whether each element of the first argument
+/// equals some element of the second, `!=` with `invert=True`. Both
+/// arguments may be arrays, lists or scalars, with runtime values; the set
+/// is the flattened second argument. Each test is the disjunction
+/// `x == t_1 or ... or x == t_k`, which the optimizer's membership fusion
+/// turns into one zero test of `(x - t_1)...(x - t_k)` (by Horner's rule
+/// when many subjects share constant `t_i`). `assume_unique` and `kind`
+/// only select NumPy's algorithm, never the result, so they are accepted
+/// and ignored (as compile-time values).
+fn np_membership(
+    b: &mut crate::builder::IRBuilder,
+    keep_shape: bool,
+    args: &[Value],
+    kwargs: &HashMap<String, Value>,
+) -> Value {
+    let name = if keep_shape { "np.isin" } else { "np.in1d" };
+    ensure_no_kwargs(name, kwargs, &["assume_unique", "invert", "kind"]);
+    if args.len() < 2 || args.len() > 4 {
+        panic!("{name} takes 2 to 4 positional arguments, got {}", args.len());
+    }
+    let argument = |position: usize, parameter: &str| -> Option<Value> {
+        match (args.get(position), kwargs.get(parameter)) {
+            (Some(_), Some(_)) => panic!("{name} got multiple values for argument '{parameter}'"),
+            (Some(v), None) | (None, Some(v)) => Some(v.clone()),
+            (None, None) => None,
+        }
+    };
+    let flag = |value: Option<Value>, parameter: &str| -> bool {
+        value.map_or(false, |v| {
+            v.bool_val()
+                .or_else(|| v.int_val().map(|i| i != 0))
+                .unwrap_or_else(|| panic!("{name}: {parameter} must be a compile-time True or False"))
+        })
+    };
+    let invert = flag(argument(3, "invert"), "invert");
+    flag(argument(2, "assume_unique"), "assume_unique");
+    if let Some(kind) = kwargs.get("kind") {
+        if !matches!(kind, Value::None) && !matches!(kind.string_val(), Some("sort" | "table")) {
+            panic!("{name}: kind must be None, 'sort' or 'table'");
+        }
+    }
+    let (shape, subjects) = membership_operand(b, &args[0], name, "the first argument");
+    let (_, tests) = membership_operand(b, &args[1], name, "the second argument");
+    let out: Vec<Value> = subjects
+        .iter()
+        .map(|subject| {
+            let mut found = b.ir_constant_bool(false);
+            for test in &tests {
+                let eq = crate::helpers::value_ops::apply_binary_op(b, "eq", subject, test);
+                let eq = crate::helpers::value_ops::to_scalar_bool(b, &eq);
+                found = b.ir_logical_or(&found, &eq);
+            }
+            if invert { b.ir_logical_not(&found) } else { found }
+        })
+        .collect();
+    let out_shape = if keep_shape { shape } else { vec![out.len()] };
+    if out_shape.is_empty() {
+        return out.into_iter().next().expect("one element");
+    }
+    crate::helpers::static_array::base::build_static_array_from_flat(b, out, out_shape, NumberType::Integer)
+}
+
+/// The shape (empty for a scalar) and the row-major elements of an operand
+/// of `np.isin` / `np.in1d`.
+fn membership_operand(
+    b: &mut crate::builder::IRBuilder,
+    value: &Value,
+    name: &str,
+    which: &str,
+) -> (Vec<usize>, Vec<Value>) {
+    match value {
+        Value::StaticArray { shape, .. } => {
+            (shape.clone(), crate::helpers::static_array::elementwise::payload_cells(b, value))
+        }
+        Value::List(_) | Value::Tuple(_) => {
+            let array = crate::helpers::static_array::base::to_static_array(b, value)
+                .unwrap_or_else(|| panic!("{name}: {which} must be a rectangular array of numbers"));
+            membership_operand(b, &array, name, which)
+        }
+        Value::Integer(_) | Value::Float(_) | Value::Boolean(_) | Value::Complex { .. } => {
+            (vec![], vec![value.clone()])
+        }
+        Value::DynamicNDArray(_) => panic!(
+            "{name} is not yet supported for bounded-dynamic arrays ({which} has a runtime shape)"
+        ),
+        other => panic!("{name}: unsupported type {} for {which}", other.zinnia_type()),
+    }
+}
+
 /// Exact integer dot product `sum_i lhs[i] * rhs[i]`.
 fn integer_product_sum(b: &mut crate::builder::IRBuilder, lhs: &[Value], rhs: &[Value]) -> Value {
     let mut acc = b.ir_constant_int(0);
@@ -1620,64 +1711,12 @@ impl IRGenerator {
                     _ => panic!("np.flatnonzero: expected rank-1 nonzero output"),
                 }
             }
-            ("np", "in1d") => {
-                let ar1 = visited_args_orig.first().cloned().unwrap_or(Value::None);
-                let ar2 = visited_args_orig.get(1).cloned().unwrap_or(Value::None);
-                let ar1_flat = if matches!(ar1, Value::StaticArray { .. }) {
-                    crate::helpers::static_array::shape::try_apply_flatten(&mut self.builder, &ar1)
-                        .unwrap_or(ar1)
-                } else {
-                    ar1
-                };
-                let ar2_flat = if matches!(ar2, Value::StaticArray { .. }) {
-                    crate::helpers::static_array::shape::try_apply_flatten(&mut self.builder, &ar2)
-                        .unwrap_or(ar2)
-                } else {
-                    ar2
-                };
-                let (shape, ar1_cells) = match &ar1_flat {
-                    Value::StaticArray { shape, .. } => (
-                        shape.clone(),
-                        crate::helpers::static_array::elementwise::payload_cells(
-                            &mut self.builder,
-                            &ar1_flat,
-                        ),
-                    ),
-                    _ => panic!("np.in1d: ar1 must be a StaticArray in this slice"),
-                };
-                let ar2_cells = match &ar2_flat {
-                    Value::StaticArray { .. } => {
-                        crate::helpers::static_array::elementwise::payload_cells(
-                            &mut self.builder,
-                            &ar2_flat,
-                        )
-                    }
-                    Value::List(d) | Value::Tuple(d) => d.values.clone(),
-                    _ => panic!("np.in1d: ar2 must be a static array/list in this slice"),
-                };
-                let mut out = Vec::with_capacity(ar1_cells.len());
-                for lhs in ar1_cells {
-                    let mut found = self.builder.ir_constant_bool(false);
-                    for rhs in &ar2_cells {
-                        let eq = crate::helpers::value_ops::apply_binary_op(
-                            &mut self.builder,
-                            "eq",
-                            &lhs,
-                            rhs,
-                        );
-                        let eq_bool =
-                            crate::helpers::value_ops::to_scalar_bool(&mut self.builder, &eq);
-                        found = self.builder.ir_logical_or(&found, &eq_bool);
-                    }
-                    out.push(found);
-                }
-                crate::helpers::static_array::base::build_static_array_from_flat(
-                    &mut self.builder,
-                    out,
-                    shape,
-                    crate::types::NumberType::Integer,
-                )
-            }
+            ("np", name @ ("in1d" | "isin")) => np_membership(
+                &mut self.builder,
+                name == "isin",
+                visited_args_orig,
+                visited_kwargs_orig,
+            ),
             ("np", "bincount") => {
                 crate::ops::static_ndarray_ops::np_bincount(
                     &mut self.builder,

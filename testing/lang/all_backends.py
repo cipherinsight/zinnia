@@ -49,8 +49,10 @@ def noir_field_publics(program, *args) -> list[int]:
     return [int(v, 16) % BN254_P for v in json.loads(returned)]
 
 
-def assert_all_backends_match_numpy(source: str, *args, atol: float = 1e-6, noir: bool = True):
-    """``source`` defines ``def kernel(...)``; see the module docstring."""
+def assert_mock_matches_numpy(source: str, *args, atol: float = 1e-6):
+    """The mock's outputs of ``def kernel(...)`` equal NumPy's: every output
+    part's shape, and the values within ``atol``. Returns the program and
+    the values."""
     program = compile_kernel(source)
     satisfied, values, shapes = run_mock_layout(program, *args)
     assert satisfied, "honest witness rejected by the mock"
@@ -58,6 +60,12 @@ def assert_all_backends_match_numpy(source: str, *args, atol: float = 1e-6, noir
     assert shapes == expected_shapes
     np.testing.assert_allclose(np.asarray(values, dtype=float), np.asarray(expected_values, dtype=float),
                                atol=atol, rtol=0)
+    return program, values
+
+
+def assert_all_backends_match_numpy(source: str, *args, atol: float = 1e-6, noir: bool = True):
+    """``source`` defines ``def kernel(...)``; see the module docstring."""
+    program, values = assert_mock_matches_numpy(source, *args, atol=atol)
     mock = mock_field_publics(program, *args)
     assert halo2_field_publics(program, *args) == mock, "halo2-base differs from the mock"
     if noir and nargo_available():
