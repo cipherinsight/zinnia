@@ -3,7 +3,7 @@
 //! Operators (`OpKind`): `FirstSet`, `LastSet`, `ArgmaxOfFlags` (a position
 //! of a flag vector), `PermutationScatter` (`c[p] = v` for a permutation
 //! `p`), `Window` (a slice with runtime bounds) and `Element` (a read at a
-//! runtime index with a known one-hot). Each construction below names the
+//! runtime index checked into range). Each construction below names the
 //! generator it emits and its cost formula (`cost.rs`); the generators' doc
 //! comments carry the preconditions, postconditions and soundness
 //! arguments.
@@ -39,7 +39,17 @@ type Encodings = Vec<IndexEncoding>;
 
 /// The family's constructions, in the order the selection breaks ties.
 pub fn constructions() -> Vec<&'static dyn Construction> {
-    vec![&ScanByRunningProducts, &ScanBySelectChain, &ScatterByHits, &WindowShift, &ElementByOneHot, &ElementByMemory]
+    vec![
+        &ScanByRunningProducts,
+        &ScanBySelectChain,
+        &ScatterByHits,
+        &WindowShift,
+        &ElementOfWrite,
+        &ElementByOneHot,
+        &ElementBySelectChain,
+        &ElementByIndicators,
+        &ElementByMemory,
+    ]
 }
 
 fn lanes(group: &Group) -> impl Iterator<Item = Requirement> + '_ {
@@ -381,6 +391,88 @@ impl Emitter for WindowEmitter {
 /// (`encoding_source`), with that encoding. Cost `cost::element_by_onehot`.
 pub struct ElementByOneHot;
 
+/// A read at index `i` of cells that a write at the same `i` produced: every
+/// cell `k` is `select([i == k], v, old_k)` with the same statements `i` and
+/// `v` (the frontend's one-hot write `a[..., i, ...] = v`). The read is `v`.
+///
+/// **Precondition.** `0 <= i < n` where the read runs (the element
+/// placeholder's).
+///
+/// **Soundness.** No constraint: cell `i` is `select([i == i], v, old_i)`,
+/// which is `v` on every backend (an exact equality bit), so `x[i] = v`.
+/// The cells stay as they are for any other reader.
+///
+/// **Cost.** 0 (the selects are kept only if something else reads them).
+pub struct ElementOfWrite;
+
+impl Construction for ElementOfWrite {
+    fn name(&self) -> &'static str {
+        "gather: element of a write at the same index"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        if group.kind != OpKind::Element {
+            return Vec::new();
+        }
+        let written: Option<Vec<(StmtId, StmtId)>> =
+            group.lanes.iter().map(|lane| Some((lane.stmt, written_at(cx, &group.shared, lane.own[0])?))).collect();
+        let Some(written) = written else { return Vec::new() };
+        vec![Candidate {
+            pre: Vec::new(),
+            post: lanes(group).collect(),
+            cost: 0,
+            emitter: Box::new(WrittenReadEmitter { written }),
+        }]
+    }
+}
+
+/// `v` when every cell `k` of `cells` is `select([index == k], v, _)` for one
+/// statement `v`.
+fn written_at(cx: &Context, cells: &[StmtId], index: StmtId) -> Option<StmtId> {
+    let constant = |s: StmtId| match cx.stmt(s).ir {
+        IR::ConstantInt { value } => Some(value),
+        _ => None,
+    };
+    let tests_index_at = |c: StmtId, k: i64| {
+        let test = cx.stmt(c);
+        matches!(test.ir, IR::EqI)
+            && match test.arguments.as_slice() {
+                &[x, y] => (x == index && constant(y) == Some(k)) || (y == index && constant(x) == Some(k)),
+                _ => false,
+            }
+    };
+    let mut value = None;
+    for (k, &cell) in cells.iter().enumerate() {
+        let stmt = cx.stmt(cell);
+        let &[c, v, _] = stmt.arguments.as_slice() else { return None };
+        if !matches!(stmt.ir, IR::SelectI | IR::SelectF) || !tests_index_at(c, k as i64) || *value.get_or_insert(v) != v {
+            return None;
+        }
+    }
+    value
+}
+
+struct WrittenReadEmitter {
+    /// Each read's lane and the written value it reads.
+    written: Vec<(StmtId, StmtId)>,
+}
+
+impl Emitter for WrittenReadEmitter {
+    fn lane(&mut self, _b: &mut IRBuilder, cx: &mut EmitCx, lane: &Lane) -> Value {
+        let value = self.written.iter().find(|(stmt, _)| *stmt == lane.stmt).expect("a read of this node").1;
+        cx.value(value)
+    }
+}
+
+/// Every read of the group as a select chain over its index's equality bits
+/// (`element::gather_by_select_chain`). Cost `cost::element_by_select_chain`.
+pub struct ElementBySelectChain;
+
+/// Every read of the group as the inner product of the cells with its
+/// index's equality bits (`element::gather_by_indicators`). Cost
+/// `cost::element_by_indicators`.
+pub struct ElementByIndicators;
+
 /// Every read of the group through a memory segment holding the cells (the
 /// backends' dynamic read: a one-hot gather on halo2-base, a native array
 /// read on Noir). Cost `cost::element_by_memory`.
@@ -443,6 +535,95 @@ impl Emitter for OneHotReadEmitter {
         let source = self.sources.iter().find(|(stmt, _)| *stmt == lane.stmt).expect("a read of this node").1;
         let encoding = encoding_at(b, cx, source);
         super::element::gather_by_onehot(b, &cells, &encoding, dtype_of(&cells))
+    }
+}
+
+/// How [`IndexedReadEmitter`] reads the cells at a lane's index.
+#[derive(Clone, Copy)]
+enum IndexedRead {
+    SelectChain,
+    Indicators,
+}
+
+impl IndexedRead {
+    /// The cost of one read of `n` cells at `index`, read `index_reads`
+    /// times in the program.
+    fn cost(self, cx: &Context, n: u64, index: StmtId, index_reads: u64) -> u64 {
+        match self {
+            IndexedRead::SelectChain => {
+                cost::element_by_select_chain(n, index_reads, checked_below(cx, index, n), cx.target)
+            }
+            IndexedRead::Indicators => cost::element_by_indicators(n, index_reads, cx.target),
+        }
+    }
+
+    /// One candidate for every read of an element group: the sum of the
+    /// per-read costs, each read sharing its index's equality tests with
+    /// every element read at that index in the program.
+    fn candidate(self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        if group.kind != OpKind::Element {
+            return Vec::new();
+        }
+        let n = group.shared.len() as u64;
+        let indices: Vec<StmtId> = group.lanes.iter().map(|l| l.own[0]).collect();
+        let cost = indices
+            .iter()
+            .zip(index_reads(cx, &indices))
+            .map(|(&index, reads)| self.cost(cx, n, index, reads))
+            .sum();
+        vec![Candidate {
+            pre: Vec::new(),
+            post: lanes(group).collect(),
+            cost,
+            emitter: Box::new(IndexedReadEmitter { how: self, cells: group.shared.clone() }),
+        }]
+    }
+}
+
+/// Whether the program checks `AssertU128Lt(index, n)`.
+fn checked_below(cx: &Context, index: StmtId, n: u64) -> bool {
+    cx.users(index).iter().any(|&user| {
+        let stmt = cx.stmt(user);
+        matches!(stmt.ir, IR::AssertU128Lt)
+            && stmt.arguments.first() == Some(&index)
+            && matches!(stmt.arguments.get(1).map(|&h| &cx.stmt(h).ir), Some(IR::ConstantInt { value }) if *value as u64 == n)
+    })
+}
+
+impl Construction for ElementBySelectChain {
+    fn name(&self) -> &'static str {
+        "gather: element by a select chain"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        IndexedRead::SelectChain.candidate(group, cx)
+    }
+}
+
+impl Construction for ElementByIndicators {
+    fn name(&self) -> &'static str {
+        "gather: element by indicators"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        IndexedRead::Indicators.candidate(group, cx)
+    }
+}
+
+struct IndexedReadEmitter {
+    how: IndexedRead,
+    cells: Vec<StmtId>,
+}
+
+impl Emitter for IndexedReadEmitter {
+    fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, lane: &Lane) -> Value {
+        let cells = cx.values(&self.cells);
+        let index = cx.value(lane.own[0]);
+        let dtype = dtype_of(&cells);
+        match self.how {
+            IndexedRead::SelectChain => super::element::gather_by_select_chain(b, &cells, &index, dtype),
+            IndexedRead::Indicators => super::element::gather_by_indicators(b, &cells, &index, dtype),
+        }
     }
 }
 

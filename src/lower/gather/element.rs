@@ -1,28 +1,39 @@
-//! Element gather by an index whose one-hot is already known.
+//! Element gathers: `x[i]` over `n` cells at a runtime index `i`.
 //!
-//! `x[i]` at a runtime `i` is lowered by the backends as a memory read:
-//! halo2-base builds the indicators `[i == k]` (an equality test each,
-//! shared by the reads of the same index) and an inner product; Noir uses a
-//! native array read or the same one-hot gather. When `i` is a scan's result
-//! (plus a constant), the scan's running products are its one-hot already
-//! (`scan.rs`), and the read is the inner product alone:
+//! Three generators, all for an `i` that lies in `[0, n)` wherever the read
+//! runs (the frontend wrapped NumPy's negative index and checked it, or `i`
+//! is a scan's result):
 //!
 //! ```text
-//! x[i] = sum_k [i == k] * x[k]
+//! by a recorded one-hot:   x[i] = sum_k onehot[k] * x[k]
+//! by a select chain:       x[i] = select([i == n-1], x[n-1], ... select([i == 1], x[1], x[0]))
+//! by indicators:           x[i] = sum_k [i == k] * x[k]
 //! ```
 //!
-//! **Preconditions.** `encoding` is the encoding of `i`; `0 <= i < n` (the
-//! frontend's index check, which the scan's range usually discharges).
+//! **Preconditions.** `0 <= i < n` where the result is used (the frontend's
+//! index check, which a scan's range usually discharges); for the first
+//! form, `onehot` is the encoding of `i`.
 //!
 //! **Postcondition.** The result is `x[i]`.
 //!
-//! **Soundness.** No hint: the encoding's bits are exact and exactly one is
-//! 1 for an `i` in range, so the sum is `x[i]`.
+//! **Soundness.** No hint. Every bit is exact (an equality test, or a bit of
+//! a recorded encoding), and for an `i` in range exactly one of `[i == 0],
+//! ..., [i == n-1]` is 1: the chain then passes every select whose test is 0
+//! and stops at the one that is 1 (or reaches `x[0]` when `i == 0`), and
+//! the sum has exactly one non-zero term, `x[i]`. Where the read does not
+//! run, its value is not used (it is guarded), so the result for an index
+//! out of range (the chain gives `x[0]`, the sums 0) does not matter.
 //!
-//! **Cost** (`cost.rs`): halo2-base 3 cells per element (a multiply-add
-//! chain), against an equality test (7 cells) per element plus the same
-//! chain for a fresh one-hot; Noir one gate per element, against about 10
-//! gates plus 3 per element shared by the reads of a native array.
+//! **Cost** (`cost.rs`). The equality tests of one index are shared by every
+//! read at that index (the lowering deduplicates them). Per read, the chain
+//! has `n - 1` selects of two variable branches, the inner products `n`
+//! multiply-adds. halo2-base: a select chain over the equality bits of a
+//! bounded index is already an inner product in the backend
+//! (`prove/halo2_base/synthesizer/plan.rs`, `OneHotChain`), so the chain is
+//! never dearer there and needs one equality test less. Noir: a select of
+//! two variable branches is two gates (`c * a + (1 - c) * b`), a
+//! multiply-add one, so the inner product wins once the index's `[i == 0]`
+//! is shared by a few reads.
 
 use crate::builder::IRBuilder;
 use crate::types::{NumberType, Value};
@@ -42,10 +53,47 @@ pub fn gather_by_onehot(b: &mut IRBuilder, cells: &[Value], encoding: &IndexEnco
         })
         .collect();
     if terms.is_empty() {
-        return match dtype {
-            NumberType::Float => b.ir_constant_float(0.0),
-            _ => b.ir_constant_int(0),
-        };
+        return zero(b, dtype);
     }
     sum_typed(b, terms, dtype)
+}
+
+/// `cells[i]` (not empty) as a select chain over the equality bits of `i`:
+/// from `cells[0]`, select `cells[k]` under `[i == k]` for `k = 1..n`.
+pub fn gather_by_select_chain(b: &mut IRBuilder, cells: &[Value], index: &Value, dtype: NumberType) -> Value {
+    let (first, rest) = cells.split_first().expect("an element read over no cells");
+    rest.iter().enumerate().fold(first.clone(), |acc, (k, cell)| {
+        let hit = equals(b, index, k as i64 + 1);
+        match dtype {
+            NumberType::Float => b.ir_select_f(&hit, cell, &acc),
+            _ => b.ir_select_i(&hit, cell, &acc),
+        }
+    })
+}
+
+/// `cells[i]` (not empty) as the inner product of the cells with the
+/// equality bits `[i == k]`.
+pub fn gather_by_indicators(b: &mut IRBuilder, cells: &[Value], index: &Value, dtype: NumberType) -> Value {
+    let terms: Vec<Value> = cells
+        .iter()
+        .enumerate()
+        .map(|(k, cell)| {
+            let hit = equals(b, index, k as i64);
+            scale_by_bit(b, &hit, cell, dtype)
+        })
+        .collect();
+    sum_typed(b, terms, dtype)
+}
+
+/// `[index == k]`.
+fn equals(b: &mut IRBuilder, index: &Value, k: i64) -> Value {
+    let k = b.ir_constant_int(k);
+    b.ir_equal_i(index, &k)
+}
+
+fn zero(b: &mut IRBuilder, dtype: NumberType) -> Value {
+    match dtype {
+        NumberType::Float => b.ir_constant_float(0.0),
+        _ => b.ir_constant_int(0),
+    }
 }

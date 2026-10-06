@@ -18,22 +18,64 @@ use super::graph::{Bound, Claim, Fact, Scope};
 /// also has the form "the fact on `x` where `p` holds", which is
 /// equivalent: where `p` is false the guarded operand is the safe value,
 /// which passes.
+///
+/// `consequences` are facts the check implies but that do not imply it
+/// back (so they never stand for the check as a requirement); they only
+/// let the check make later checks redundant (`dominated`).
 #[derive(Clone, Debug)]
 pub struct ProgramCheck {
     pub stmt: StmtId,
     pub forms: Vec<Fact>,
+    pub consequences: Vec<Fact>,
 }
 
 /// The program's assertions the layer understands, in statement order.
 pub fn program_checks(graph: &IRGraph) -> Vec<ProgramCheck> {
+    let bits: HashSet<StmtId> = graph
+        .stmts
+        .iter()
+        .filter(|s| matches!(s.ir, IR::AssertBit))
+        .filter_map(|s| s.arguments.first().copied())
+        .collect();
     graph
         .stmts
         .iter()
         .filter_map(|stmt| {
             let forms = check_forms(graph, &stmt.ir, &stmt.arguments);
-            (!forms.is_empty()).then_some(ProgramCheck { stmt: stmt.stmt_id, forms })
+            let consequences = check_consequences(graph, &bits, &stmt.ir, &stmt.arguments);
+            (!forms.is_empty()).then_some(ProgramCheck { stmt: stmt.stmt_id, forms, consequences })
         })
         .collect()
+}
+
+/// Facts a check implies that are weaker than it. One kind: NumPy's index
+/// wrap `w = select(s, x + k, x)` (`helpers/static_array/base.rs`) checked
+/// as `0 <= w < h`, with `s` asserted to be a bit and `k >= 0`, implies
+/// `-k <= x < h`: for `s = 1`, `x = w - k` lies in `[-k, h - k)`; for
+/// `s = 0`, `x = w` lies in `[0, h)`. (It does not imply the check back:
+/// that also pins `s`.) The same index's write window `-n <= x < n`
+/// (`AssertU128Lt(x + n, 2n)`) is then redundant after the read's check.
+fn check_consequences(graph: &IRGraph, bits: &HashSet<StmtId>, ir: &IR, args: &[StmtId]) -> Vec<Fact> {
+    let stmt = |s: StmtId| &graph.stmts[s as usize];
+    let constant = |s: StmtId| match stmt(s).ir {
+        IR::ConstantInt { value } => Some(value),
+        _ => None,
+    };
+    let (IR::AssertU128Lt, &[w, hi]) = (ir, args) else { return Vec::new() };
+    let (Some(h), (IR::SelectI, &[s, shifted, x])) = (constant(hi), (&stmt(w).ir, stmt(w).arguments.as_slice())) else {
+        return Vec::new();
+    };
+    let offset = match (&stmt(shifted).ir, stmt(shifted).arguments.as_slice()) {
+        (IR::AddI, &[y, k]) if y == x => constant(k),
+        (IR::AddI, &[k, y]) if y == x => constant(k),
+        _ => None,
+    };
+    match offset {
+        Some(k) if k >= 0 && bits.contains(&s) => {
+            vec![Fact::everywhere(Claim::InRange { x, lo: -k, hi: Bound::Const(h) })]
+        }
+        _ => Vec::new(),
+    }
 }
 
 fn check_forms(graph: &IRGraph, ir: &IR, args: &[StmtId]) -> Vec<Fact> {
@@ -127,7 +169,7 @@ pub fn dominated(checks: &[ProgramCheck]) -> HashSet<StmtId> {
             dominated.insert(check.stmt);
             continue;
         }
-        for form in &check.forms {
+        for form in check.forms.iter().chain(&check.consequences) {
             known.entry(form.claim.subjects()[0]).or_default().push(*form);
         }
     }

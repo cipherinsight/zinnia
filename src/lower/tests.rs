@@ -244,3 +244,63 @@ fn one_sided_bounds_imply_only_their_side() {
     assert!(!index.implies(&Fact::everywhere(Claim::Within { x: 7, lo: Some(-3), hi: None })));
     assert!(!index.implies(&Fact::everywhere(Claim::Within { x: 7, lo: None, hi: Some(2) })));
 }
+
+/// NumPy's index wrap `w = select(s, x + n, x)` checked as `0 <= w < n`,
+/// then the write window `-n <= x < n` checked as `AssertU128Lt(x + n, 2n)`,
+/// then a sort lane. The sign `s` is a free input (a tampered hint),
+/// asserted to be a bit when `bit` is set.
+fn wrap_then_window(n: i64, bit: bool) -> IRGraph {
+    let mut b = IRBuilder::new();
+    let x = b.ir_read_integer(InputPath::new("x", vec![]), false);
+    let s = b.ir_read_integer(InputPath::new("s", vec![]), false);
+    if bit {
+        b.ir_assert_bit(&s);
+    }
+    let len = b.ir_constant_int(n);
+    let shifted = b.ir_add_i(&x, &len);
+    let wrapped = b.ir_select_i(&s, &shifted, &x);
+    b.ir_assert_u128_lt(&wrapped, &len);
+    let twice = b.ir_constant_int(2 * n);
+    let shifted_again = b.ir_add_i(&x, &len);
+    b.ir_assert_u128_lt(&shifted_again, &twice);
+    let elements: Arc<[Value]> =
+        (0..2).map(|j| b.ir_read_integer(InputPath::new(format!("a{j}"), vec![]), false)).collect();
+    let out = b.ir_sorted(&elements, 0, false);
+    b.ir_expose_public_i(&out);
+    b.export_ir_graph()
+}
+
+/// The wrap's check implies the write window (for `s` a bit: `x = w - n`
+/// or `x = w`), so the window is not emitted; the circuit still accepts
+/// exactly NumPy's indices `-n <= x < n` with the honest sign `[x < 0]`,
+/// and no other `(x, s)`.
+#[test]
+fn the_index_wrap_check_implies_the_write_window() {
+    use crate::circuit_input::{CircuitInputs, InputNode, InputParam, ResolvedWitness};
+    use crate::prove::types::ProvingParams;
+    let n = 3;
+    let lower = |bit| super::emit::lower(&wrap_then_window(n, bit), Target::Halo2Base, &super::registry()).unwrap();
+    assert_eq!(index_checks(&lower(true)), 1);
+    // Without the bit assertion `s` may be any field element, and the
+    // window is a separate fact.
+    assert_eq!(index_checks(&lower(false)), 2);
+    let lowered = lower(true);
+    for x in -2 * n - 1..=2 * n {
+        for s in [-1, 0, 1, 2] {
+            let mut inputs = CircuitInputs::new();
+            for (name, value) in [("x", x), ("s", s), ("a0", 5), ("a1", 2)] {
+                inputs.params.push(InputParam {
+                    name: name.to_string(),
+                    is_public: false,
+                    dtype: serde_json::Value::Null,
+                    value: InputNode::Int(value),
+                });
+            }
+            let witness = ResolvedWitness::new(inputs, ProvingParams::default().precision_bits);
+            let mut synth = crate::prove::mock::synthesizer::MockSynthesizer::new(witness, ProvingParams::default());
+            crate::prove::interpreter::interpret_ir(&lowered, &mut synth).expect("mock run");
+            let honest = -n <= x && x < n && s == i64::from(x < 0);
+            assert_eq!(synth.satisfied, honest, "x={x} s={s}");
+        }
+    }
+}

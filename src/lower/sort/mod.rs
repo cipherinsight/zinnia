@@ -6,13 +6,15 @@
 //! stable argsort index of a constant rank, or of a runtime rank (a read of
 //! a sorted array at a runtime index). After dead-code elimination a group's
 //! lanes are exactly the sort's live outputs (`np.argsort(a)[::-1][:7]`
-//! keeps 7 of 100). Four constructions offer plans that compute every live
+//! keeps 7 of 100). Five constructions offer plans that compute every live
 //! lane (`cost` prices them per target; the selection takes the cheapest):
 //!
 //! * [`SortingNetwork`]: a sorting network (Batcher's merge exchange on
 //!   values, on `(value, index)` keys, or on packed keys (`packed`) for an
 //!   argsort, or the adjacent-swap network for small or one-sided demands),
 //!   no hint;
+//! * [`RankSelection`]: one-hot rank selectors from the pairwise
+//!   comparisons, every output an inner product (`emit::rank_selectors`);
 //! * [`PermutationCheck`]: every rank's key hinted and pinned by one run
 //!   over every rank (`emit::pinned_run`);
 //! * [`PinnedSelection`]: hinted outputs pinned in runs of ranks, per-output
@@ -61,7 +63,8 @@ use super::{Candidate, Construction, Context, EmitCx, Emitter, Group, Lane, OpKi
 
 /// The sort family's constructions, in the order the selection breaks ties.
 pub fn constructions() -> Vec<&'static dyn Construction> {
-    let mut all: Vec<&'static dyn Construction> = vec![&SortingNetwork, &PermutationCheck, &PinnedSelection, &RoutedPermutation];
+    let mut all: Vec<&'static dyn Construction> =
+        vec![&SortingNetwork, &RankSelection, &PermutationCheck, &PinnedSelection, &RoutedPermutation];
     all.extend(search::constructions());
     all
 }
@@ -71,6 +74,11 @@ pub fn constructions() -> Vec<&'static dyn Construction> {
 /// network's outputs from a segment. One candidate per network that
 /// computes the live outputs (`cost::network_plans`). No hint.
 pub struct SortingNetwork;
+
+/// Every live output as an inner product with the stable sort's rank
+/// selectors, from one comparison per pair of elements
+/// (`emit::rank_selectors`, `cost::rank_selector_plan`). No hint.
+pub struct RankSelection;
 
 /// One run of pinned keys over every rank: the permutation check
 /// (`emit::pinned_run`); runtime-rank outputs read its outputs from a
@@ -104,6 +112,16 @@ impl Construction for SortingNetwork {
 
     fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
         plans(group, cx, cost::network_plans)
+    }
+}
+
+impl Construction for RankSelection {
+    fn name(&self) -> &'static str {
+        "sort: rank selectors"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        plans(group, cx, |demand, costs| vec![cost::rank_selector_plan(demand, costs)])
     }
 }
 
@@ -325,6 +343,20 @@ impl LoweredSort {
                 let (values, indices) = routed::sort_by_routing(b, &sort.as_elements(), with_values, &mut payloads);
                 sort.values = values.into_iter().enumerate().collect();
                 sort.indices = indices.into_iter().enumerate().collect();
+                sort.complete = true;
+            }
+            Plan::RankSelectors => {
+                let selectors = emit::rank_selectors(b, &sort.as_elements());
+                let indices: Vec<Value> = (0..n).map(|k| b.ir_constant_int(k as i64)).collect();
+                for (r, by_element) in selectors.iter().enumerate() {
+                    let value = emit::select_by(b, by_element, elements, dtype);
+                    let index = emit::select_by(b, by_element, &indices, NumberType::Integer);
+                    sort.values.insert(r, value);
+                    sort.indices.insert(r, index);
+                }
+                for payload in &mut payloads {
+                    payload.slots = selectors.iter().map(|s| emit::select_by(b, s, &payload.slots, payload.dtype)).collect();
+                }
                 sort.complete = true;
             }
             Plan::Hinted { runs } => {

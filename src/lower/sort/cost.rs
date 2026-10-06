@@ -49,6 +49,18 @@ pub(crate) struct UnitCosts {
     unpack: u32,
     /// Exchanging one payload's two slots on a comparator's result.
     exchange_payload: u32,
+    /// Rank selectors (`emit::rank_selectors`): one comparison of two
+    /// elements; one element's selectors when they are products (`n <= 3`)
+    /// or equality tests of its rank (per rank, `n > 3`); one term of an
+    /// output's inner product with the selectors of its rank. Calibrated on
+    /// 0358 (three keys carrying 9 payload lines): on Noir the selectors
+    /// cost 59 gates less than the network's payload exchanges (which cost
+    /// about 3 gates each, two selects of two variable branches sharing
+    /// terms), on halo2-base 6 cells more.
+    pair_comparison: u32,
+    rank_selector_products: u32,
+    rank_selector_test: u32,
+    selected_term: u32,
     /// A hinted key: its index bounded and its value read, a fixed part and
     /// a part per slot of the segment read.
     key_read_fixed: u32,
@@ -118,6 +130,10 @@ const HALO2_BASE: UnitCosts = UnitCosts {
     pack: 4,
     unpack: 46,
     exchange_payload: 12,
+    pair_comparison: 50,
+    rank_selector_products: 8,
+    rank_selector_test: 7,
+    selected_term: 4,
     key_read_fixed: 20,
     key_read_per_slot: 8,
     segment_per_slot: 0,
@@ -155,7 +171,11 @@ const NOIR: UnitCosts = UnitCosts {
     exchange_packed: 22,
     pack: 0,
     unpack: 10,
-    exchange_payload: 2,
+    exchange_payload: 3,
+    pair_comparison: 13,
+    rank_selector_products: 2,
+    rank_selector_test: 3,
+    selected_term: 1,
     key_read_fixed: 7,
     key_read_per_slot: 0,
     segment_per_slot: 3,
@@ -239,6 +259,10 @@ pub(super) enum Plan {
     /// the live outputs by dead-code elimination; runtime-rank outputs read
     /// the network's outputs.
     Network { network: Network },
+    /// Every rank's outputs as inner products with the stable sort's rank
+    /// selectors (`emit::rank_selectors`): one comparison per pair of
+    /// elements, no network and no hint.
+    RankSelectors,
     /// Hinted outputs pinned in runs of ranks (`emit::pinned_run`); a run
     /// over every rank is the full permutation check, whose outputs the
     /// runtime-rank outputs then read. Without it, runtime-rank values are
@@ -459,6 +483,7 @@ pub(super) fn cone_size(pairs: &[(usize, usize)], n: usize, live: &BTreeSet<usiz
 pub(super) fn choose_plan(demand: &Demand, costs: &UnitCosts) -> (Plan, u64) {
     network_plans(demand, costs)
         .into_iter()
+        .chain([rank_selector_plan(demand, costs)])
         .chain(full_permutation(demand, costs))
         .chain(selection_plans(demand, costs))
         .chain(routed_plan(demand, costs))
@@ -524,6 +549,26 @@ pub(super) fn network_plans(demand: &Demand, costs: &UnitCosts) -> Vec<(Plan, u6
             (Plan::Network { network }, exchanges + packing + carried + reads)
         })
         .collect()
+}
+
+/// Every live output as the inner product of its rank's selectors with the
+/// elements, their indices or a payload (`emit::rank_selectors`): `n(n-1)/2`
+/// comparisons, each element's selectors, and `n` terms per live output
+/// (every rank's values and indices when a runtime rank reads them).
+pub(super) fn rank_selector_plan(demand: &Demand, costs: &UnitCosts) -> (Plan, u64) {
+    let n = demand.n as u64;
+    let comparisons = n * n.saturating_sub(1) / 2 * u64::from(costs.pair_comparison);
+    let selectors = if n <= 3 {
+        n * u64::from(costs.rank_selector_products)
+    } else {
+        n * n * u64::from(costs.rank_selector_test)
+    };
+    let constant_outputs = demand.values.len() + demand.indices.len();
+    let runtime_outputs = n as usize * (usize::from(demand.runtime_values > 0) + usize::from(demand.runtime_indices > 0));
+    let payload_outputs: usize = demand.payloads.iter().map(BTreeSet::len).sum();
+    let outputs = (constant_outputs + runtime_outputs + payload_outputs) as u64;
+    let cost = comparisons + selectors + outputs * n * u64::from(costs.selected_term) + runtime_reads_of_outputs(demand, costs);
+    (Plan::RankSelectors, cost)
 }
 
 /// The routed Waksman network (`routed`) when the target offers it and
