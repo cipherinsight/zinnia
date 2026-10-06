@@ -298,6 +298,60 @@ fn wrapped_index_equalities_match_the_mock() {
     }
 }
 
+/// A witness whose inputs are raw field elements (hex), e.g. values outside
+/// the signed 64-bit window.
+fn raw_witness(inputs: &[(&str, &str)]) -> ResolvedWitness {
+    let mut w = CircuitInputs::new();
+    for (name, hex) in inputs {
+        w.params.push(InputParam {
+            name: name.to_string(),
+            is_public: false,
+            dtype: serde_json::Value::Null,
+            value: InputNode::Hex(hex.to_string()),
+        });
+    }
+    ResolvedWitness::new(w, 32)
+}
+
+/// The input-domain checks `x >= i64::MIN` and `x <= i64::MAX` (each used
+/// only by an assert) cost one 64-bit check of x - i64::MIN: the second is
+/// decided by the range the first proves. An asserted `y < 10` is one check
+/// of 9 - y. Values in the window pass, values outside it are rejected.
+#[test]
+fn asserted_comparisons_check_their_outcome_directly() {
+    if !toolchain_present(false) {
+        return;
+    }
+    let mut g = Graph::default();
+    let x = g.read_int("x");
+    let y = g.read_int("y");
+    let min = g.int(i64::MIN);
+    let max = g.int(i64::MAX);
+    let above = g.push(IR::GteI, &[x, min]);
+    g.push(IR::Assert, &[above]);
+    let below = g.push(IR::LteI, &[x, max]);
+    g.push(IR::Assert, &[below]);
+    let ten = g.int(10);
+    let small = g.push(IR::LtI, &[y, ten]);
+    g.push(IR::Assert, &[small]);
+    g.expose(x);
+    g.expose(y);
+    let graph = g.finish();
+    let honest = witness(&[("x", -5), ("y", 9)]);
+    let emitted = emit_circuit(&graph, &honest, &ProvingParams::default()).unwrap();
+    assert_eq!(emitted.main_nr.matches("assert_max_bit_size::<64>").count(), 2, "{}", emitted.main_nr);
+    assert!(!emitted.main_nr.contains("qlt_bits"), "{}", emitted.main_nr);
+    assert_eq!(execute(&graph, &honest).unwrap(), vec![-5, 9]);
+    for x in [i64::MIN, i64::MAX] {
+        assert_eq!(execute(&graph, &witness(&[("x", x), ("y", -3)])).unwrap(), vec![x as i128, -3]);
+    }
+    assert_rejected(execute(&graph, &witness(&[("x", 0), ("y", 10)])));
+    // 2^63 and -2^63 - 1 (p - 2^63 - 1) leave the window.
+    let p_minus = "0x30644e72e131a029b85045b68181585d2833e84879b97090c3e1f593f0000000";
+    assert_rejected(execute(&graph, &raw_witness(&[("x", "0x8000000000000000"), ("y", "0x0")])));
+    assert_rejected(execute(&graph, &raw_witness(&[("x", p_minus), ("y", "0x0")])));
+}
+
 /// M5: a dynamic-address write outside the segment used to update no slot
 /// and succeed; the mock rejects it.
 #[test]

@@ -83,6 +83,7 @@ pub fn emit_circuit(
     let mut emitter = NoirEmitter::new(input_params.clone(), bounds, &ir.provenance);
     emitter.dynamic_reads_per_epoch = count_dynamic_reads_per_epoch(ir);
     emitter.wrapped_index_ranges = wrapped_index_ranges(ir);
+    emitter.asserted_comparisons = asserted_comparisons(ir);
     interpret_ir(ir, &mut emitter)?;
 
     let main_nr = render_main_nr(&input_params, &emitter);
@@ -99,6 +100,36 @@ pub fn emit_circuit(
         public_input_count,
         return_count,
     })
+}
+
+/// Comparison statements whose result is used only by `Assert` statements:
+/// their lowering checks the asserted outcome directly
+/// (`NoirEmitter::asserted_compare`) and the asserts become trivial.
+fn asserted_comparisons(ir: &IRGraph) -> HashSet<u32> {
+    use crate::ir_defs::IR;
+    let mut assert_uses: HashMap<u32, usize> = HashMap::new();
+    let mut other_uses: HashSet<u32> = HashSet::new();
+    for stmt in &ir.stmts {
+        for arg in &stmt.arguments {
+            if matches!(stmt.ir, IR::Assert) {
+                *assert_uses.entry(*arg).or_insert(0) += 1;
+            } else {
+                other_uses.insert(*arg);
+            }
+        }
+    }
+    ir.stmts
+        .iter()
+        .filter(|s| {
+            matches!(
+                s.ir,
+                IR::LtI | IR::LteI | IR::GtI | IR::GteI | IR::LtF | IR::LteF | IR::GtF | IR::GteF
+                    | IR::LtIBounded | IR::GtIBounded | IR::IndexInBox { .. }
+            )
+        })
+        .map(|s| s.stmt_id)
+        .filter(|id| assert_uses.contains_key(id) && !other_uses.contains(id))
+        .collect()
 }
 
 /// Ranges that NumPy's index wrap-around proves for raw indices. A runtime
@@ -570,6 +601,14 @@ pub struct NoirEmitter<'a> {
     plane_cache: HashMap<(u32, u64, String, i64, i64), String>,
     /// Bumped on every write to a segment; invalidates plane_cache.
     write_version: HashMap<u32, u64>,
+    /// Comparisons used only by asserts (see `asserted_comparisons`).
+    asserted_comparisons: HashSet<u32>,
+    /// Statement being dispatched (set by `on_stmt_begin`).
+    current_stmt: Option<u32>,
+    /// Ranges a check emitted earlier in this circuit proves for a cell
+    /// (`asserted_compare` against a constant): every accepted witness lies
+    /// in them, so they may decide later comparisons of the cell.
+    proven_range: HashMap<String, (i128, i128)>,
     /// Ranges of raw indices that every accepted witness satisfies, from
     /// NumPy's wrap-around lowering (see `wrapped_index_ranges`). Used only
     /// to size comparisons.
@@ -868,6 +907,16 @@ impl<'a> NoirEmitter<'a> {
         if let Some(v) = self.compare_nonneg_with_zero(a, b, cmp) {
             return v;
         }
+        if let Some(outcome) = self.decide_from_proven_ranges(a, b, cmp) {
+            return self.literal_int(outcome as i64);
+        }
+        let asserted = self
+            .current_stmt
+            .is_some_and(|id| self.asserted_comparisons.contains(&id));
+        if asserted && !self.has_cached_sign_for_zero_test(a, b) {
+            self.asserted_compare(a, b, cmp);
+            return self.literal_int(1);
+        }
         if let Some(v) = self.compare_with_zero_by_sign(a, b, cmp) {
             return v;
         }
@@ -1030,6 +1079,73 @@ impl<'a> NoirEmitter<'a> {
         }
         let x = x.to_string();
         Some(self.nonzero_flag(&x, nonzero))
+    }
+
+    /// `a cmp b` for a comparison whose outcome is asserted (its only uses
+    /// are `Assert`s, so every accepted witness makes it true): one range
+    /// check of the gap that must be non-negative, `b - a - 1` for `<`,
+    /// `b - a` for `<=` (and mirrored for `>`, `>=`), at the width
+    /// `comparison_width` picks. It accepts exactly the pairs `qlt_bits`
+    /// would accept with this outcome, without the hinted answer and its
+    /// select. Against a constant c it proves a range for the other operand
+    /// (`x >= c`: x in [c, c + 2^W)), kept in `proven_range`.
+    fn asserted_compare(&mut self, a: &str, b: &str, cmp: Cmp) {
+        let (low, high, strict) = match cmp {
+            Cmp::Lt => (a, b, true),
+            Cmp::Le => (a, b, false),
+            Cmp::Gt => (b, a, true),
+            Cmp::Ge => (b, a, false),
+        };
+        let width = self.comparison_width(low, high);
+        let gap = if strict { format!("{high} - {low} - 1") } else { format!("{high} - {low}") };
+        let t = self.fresh();
+        let _ = writeln!(self.body, "    let {t}: Field = {gap};");
+        let _ = writeln!(self.body, "    {t}.assert_max_bit_size::<{width}>();");
+        // low + strict <= high < low + strict + 2^W.
+        let span = 1i128 << width;
+        let offset = strict as i128;
+        if let Some(c) = self.raw_constant(high) {
+            self.narrow_proven_range(low, c - offset - span + 1, c - offset);
+        }
+        if let Some(c) = self.raw_constant(low) {
+            self.narrow_proven_range(high, c + offset, c + offset + span - 1);
+        }
+    }
+
+    fn narrow_proven_range(&mut self, cell: &str, lo: i128, hi: i128) {
+        let entry = self.proven_range.entry(cell.to_string()).or_insert((lo, hi));
+        *entry = (entry.0.max(lo), entry.1.min(hi));
+    }
+
+    /// The outcome of `a cmp b` when one operand is a constant and a check
+    /// emitted earlier proves the other's range on one side of it.
+    fn decide_from_proven_ranges(&self, a: &str, b: &str, cmp: Cmp) -> Option<bool> {
+        let range = |cell: &str| {
+            self.raw_constant(cell)
+                .map(|c| (c, c))
+                .or_else(|| self.proven_range.get(cell).copied())
+        };
+        let ((al, ah), (bl, bh)) = (range(a)?, range(b)?);
+        let decide = |always: bool, never: bool| match (always, never) {
+            (true, _) => Some(true),
+            (_, true) => Some(false),
+            _ => None,
+        };
+        let less = decide(ah < bl, al >= bh);
+        let less_or_equal = decide(ah <= bl, al > bh);
+        match cmp {
+            Cmp::Lt => less,
+            Cmp::Ge => less.map(|v| !v),
+            Cmp::Le => less_or_equal,
+            Cmp::Gt => less_or_equal.map(|v| !v),
+        }
+    }
+
+    /// Whether `a` or `b` is a zero literal whose other operand already has
+    /// a `sign_abs` pair (then the comparison reads its sign for free).
+    fn has_cached_sign_for_zero_test(&self, a: &str, b: &str) -> bool {
+        (self.is_zero_literal(b) && self.sign_abs_of.contains_key(a))
+            || (self.is_zero_literal(a) && self.sign_abs_of.contains_key(b))
     }
 
     /// `x cmp 0` (or `0 cmp x`) from the sign of x's `sign_abs` pair: `x < 0`
@@ -1599,6 +1715,9 @@ impl<'a> NoirEmitter<'a> {
             plane_cache: HashMap::new(),
             write_version: HashMap::new(),
             wrapped_index_ranges: HashMap::new(),
+            asserted_comparisons: HashSet::new(),
+            current_stmt: None,
+            proven_range: HashMap::new(),
             dynamic_reads_per_epoch: HashMap::new(),
             segment_arrays: HashMap::new(),
             interval_of: HashMap::new(),
@@ -1833,6 +1952,7 @@ impl Synthesizer for NoirEmitter<'_> {
     fn on_stmt_begin(&mut self, stmt_id: u32) {
         // Stash the IR-analysis bound for the result of this statement.
         self.current_stmt_bound = self.stmt_bounds.get(&stmt_id).copied();
+        self.current_stmt = Some(stmt_id);
     }
 
     fn constant_int(&mut self, value: i64) -> Result<Self::CellRef, ProvingError> {
@@ -2381,7 +2501,12 @@ impl Synthesizer for NoirEmitter<'_> {
     }
 
     fn assert_true(&mut self, a: &CellRef) -> Result<(), ProvingError> {
-        // Python truthiness, as the mock: any non-zero value passes.
+        // Python truthiness, as the mock: any non-zero value passes. A
+        // literal true (an asserted comparison checked where it was
+        // lowered, see `asserted_compare`) needs nothing.
+        if matches!(self.s_int_of(a), Some(v) if v != 0) {
+            return Ok(());
+        }
         if self.is_boolean(a) {
             let _ = writeln!(self.body, "    assert({} == 1);", a);
         } else {
