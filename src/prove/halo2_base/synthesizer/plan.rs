@@ -35,6 +35,14 @@ pub(super) struct Plan {
     /// Statement ids of the comparisons (`<`, `<=`, `>`, `>=`, `!=`, key
     /// orders) whose only use is `Assert`.
     pub asserted_comparisons: HashSet<u32>,
+    /// Statement ids of address values that never need a cell: constants and
+    /// affine combinations (`AddI`, `SubI`, `MulI` by a constant) whose every
+    /// use is a memory address or another such value. A memory access reads
+    /// them through their affine view (roots and constant offsets), so the
+    /// lowering assigns no cell unless an access needs the address itself
+    /// (an overlay comparison, an address bound the roots do not imply), and
+    /// then computes it from the view (see `Halo2BaseSynthesizer::materialize_address`).
+    pub address_only: HashSet<u32>,
 }
 
 impl Plan {
@@ -44,6 +52,7 @@ impl Plan {
             bounds: planned_bounds(ir),
             deferred_products: deferred_products(ir, &uses),
             asserted_comparisons: asserted_comparisons(ir, &uses),
+            address_only: address_only(ir, &uses),
         }
     }
 }
@@ -136,4 +145,58 @@ fn deferred_products(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<u32
         })
         .map(|stmt| stmt.stmt_id)
         .collect()
+}
+
+/// See [`Plan::address_only`]. Candidates are constants used only as memory
+/// addresses (or by other candidates) and integer `+`, `-`, `*` whose value
+/// has an affine view with at least one root; a candidate is dropped when a
+/// use is anything else or when its view has a candidate (or itself) as a
+/// root, until no candidate changes.
+fn address_only(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<u32> {
+    let stmt_of_vid: HashMap<ValueId, u32> = ir.stmts.iter().map(|s| (s.value_id, s.stmt_id)).collect();
+    let mut set: HashSet<u32> = ir
+        .stmts
+        .iter()
+        .filter(|stmt| match stmt.ir {
+            IR::ConstantInt { .. } => true,
+            IR::AddI | IR::SubI | IR::MulI => ir
+                .provenance
+                .affine_of(stmt.value_id)
+                .is_some_and(|view| !view.terms.is_empty() && view.terms.iter().all(|(root, _)| *root != stmt.value_id)),
+            _ => false,
+        })
+        .filter(|stmt| uses.get(&stmt.stmt_id).is_some_and(|u| !u.is_empty()))
+        .map(|stmt| stmt.stmt_id)
+        .collect();
+    loop {
+        let keep: HashSet<u32> = set
+            .iter()
+            .copied()
+            .filter(|&id| {
+                let stmt = &ir.stmts[id as usize];
+                let uses_ok = uses.get(&id).into_iter().flatten().all(|&user| {
+                    let u = &ir.stmts[user as usize];
+                    match u.ir {
+                        IR::ReadMemory { .. } => true,
+                        IR::WriteMemory { .. } => {
+                            matches!(stmt.ir, IR::ConstantInt { .. }) && u.arguments.first() == Some(&id) && u.arguments.get(1) != Some(&id)
+                        }
+                        _ => set.contains(&user),
+                    }
+                });
+                let roots_ok = match ir.provenance.affine_of(stmt.value_id) {
+                    Some(view) if !matches!(stmt.ir, IR::ConstantInt { .. }) => view
+                        .terms
+                        .iter()
+                        .all(|(root, _)| stmt_of_vid.get(root).is_some_and(|r| !set.contains(r))),
+                    _ => true,
+                };
+                uses_ok && roots_ok
+            })
+            .collect();
+        if keep.len() == set.len() {
+            return keep;
+        }
+        set = keep;
+    }
 }

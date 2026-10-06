@@ -133,6 +133,12 @@ impl Halo2BaseSynthesizer<'_> {
             Some(_) => {}
             None => self.assert_less(addr, Operand::Constant(len as i128))?,
         }
+        // An overlay entry is compared with later reads by its cell.
+        let addr = &if const_addr.is_some() && self.segment(segment_id)?.overlay.is_empty() {
+            *addr
+        } else {
+            self.materialize_address(addr)?
+        };
         let segment = self.memory.segments.get_mut(&segment_id).expect("checked above");
         match const_addr {
             Some(a) if segment.overlay.is_empty() => {
@@ -151,6 +157,8 @@ impl Halo2BaseSynthesizer<'_> {
         } else {
             self.gather_slots(segment_id, addr)?
         };
+        // The overlay compares the read address with write addresses by cell.
+        let addr = &if self.segment(segment_id)?.overlay.is_empty() { *addr } else { self.materialize_address(addr)? };
         self.apply_overlay(segment_id, addr, base)
     }
 
@@ -317,7 +325,7 @@ impl Halo2BaseSynthesizer<'_> {
         }
         let (root, scale, offset) = match lin.terms.len() {
             1 => (lin.terms[0].0, lin.terms[0].1, lin.offset),
-            _ => (*addr, 1, 0),
+            _ => (self.materialize_address(addr)?, 1, 0),
         };
         let choices = self.root_choices(&root, scale, offset, len);
         if choices.is_empty() {
@@ -367,9 +375,19 @@ impl Halo2BaseSynthesizer<'_> {
         if ws.is_empty() || vs.is_empty() {
             return Ok(None);
         }
-        self.assert_less(addr, Operand::Constant(len as i128))?;
         self.assert_one_hot(&root2, &ws)?;
         self.assert_one_hot(&root1, &vs)?;
+        // The memberships just asserted pin both roots; when every pair they
+        // allow lands in bounds, a placeholder address needs no cell and no
+        // check.
+        let (vlo, vhi) = (*vs.first().expect("non-empty") as i128, *vs.last().expect("non-empty") as i128);
+        let (wlo, whi) = (*ws.iter().min().expect("non-empty") as i128, *ws.iter().max().expect("non-empty") as i128);
+        let lo = vlo * s1 as i128 + wlo * s2 as i128 + lin.offset as i128;
+        let hi = vhi * s1 as i128 + whi * s2 as i128 + lin.offset as i128;
+        if !(self.is_address_placeholder(addr) && lo >= 0 && hi < len as i128) {
+            let addr = self.materialize_address(addr)?;
+            self.assert_less(&addr, Operand::Constant(len as i128))?;
+        }
         let mut planes = Vec::with_capacity(ws.len());
         for w in &ws {
             let plane = self.gathered_plane(segment_id, &root1, s1, w * s2 + lin.offset, len)?;
