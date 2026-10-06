@@ -140,9 +140,29 @@ impl IRGenerator {
     /// conditional assignment, with the aliasing recorded (see
     /// [`Self::record_path_dependent_alias`]).
     pub(crate) fn merge_binding(&mut self, condition: &Value, a: &Value, b: &Value) -> Value {
-        let merged = crate::helpers::value_ops::select_value(&mut self.builder, condition, a, b);
+        let (a_cells, b_cells) = self.static_side_as_cells(a, b);
+        let merged =
+            crate::helpers::value_ops::select_value(&mut self.builder, condition, &a_cells, &b_cells);
         self.record_path_dependent_alias(&merged, [a, b]);
         merged
+    }
+
+    /// When one side of a merge has a runtime shape and the other is a
+    /// static array, `select_value` promotes the static side to a runtime-
+    /// shaped array from its element values; hand it the static array's
+    /// cells as a (nested) list, which is what the promotion reads.
+    fn static_side_as_cells(&mut self, a: &Value, b: &Value) -> (Value, Value) {
+        let as_cells = |builder: &mut crate::builder::IRBuilder, v: &Value| match v {
+            Value::StaticArray { .. } => crate::helpers::static_array::base::to_value_list(builder, v),
+            other => other.clone(),
+        };
+        match (a, b) {
+            (Value::DynamicNDArray(_), Value::StaticArray { .. })
+            | (Value::StaticArray { .. }, Value::DynamicNDArray(_)) => {
+                (as_cells(&mut self.builder, a), as_cells(&mut self.builder, b))
+            }
+            _ => (a.clone(), b.clone()),
+        }
     }
 
     /// Note a write into the memory of `written` (an array value): every
