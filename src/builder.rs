@@ -42,14 +42,11 @@ macro_rules! ir_binary {
     () => {};
     ($name:ident => $variant:expr, contract = $contract:literal $(, $($rest:tt)*)?) => {
         pub fn $name(&mut self, a: &Value, b: &Value) -> Value {
+            let formals = Self::binary_formals(a, b);
+            self.discharge_contract_requires($contract, &formals);
             let out = self.create_ir(&$variant, &[a.clone(), b.clone()]);
-            if let (Some(vid), Some(lhs_vid), Some(rhs_vid)) =
-                (out.value_id(), a.value_id(), b.value_id())
-            {
-                let mut formals = HashMap::new();
-                formals.insert("lhs".to_string(), lhs_vid);
-                formals.insert("rhs".to_string(), rhs_vid);
-                self.fire_contract($contract, vid, &formals);
+            if let (Some(vid), false) = (out.value_id(), formals.is_empty()) {
+                self.plant_contract_ensures($contract, vid, &formals);
             }
             out
         }
@@ -74,11 +71,11 @@ macro_rules! ir_unary {
     () => {};
     ($name:ident => $variant:expr, contract = $contract:literal $(, $($rest:tt)*)?) => {
         pub fn $name(&mut self, a: &Value) -> Value {
+            let formals = Self::unary_formals(a);
+            self.discharge_contract_requires($contract, &formals);
             let out = self.create_ir(&$variant, &[a.clone()]);
-            if let (Some(vid), Some(x_vid)) = (out.value_id(), a.value_id()) {
-                let mut formals = HashMap::new();
-                formals.insert("x".to_string(), x_vid);
-                self.fire_contract($contract, vid, &formals);
+            if let (Some(vid), false) = (out.value_id(), formals.is_empty()) {
+                self.plant_contract_ensures($contract, vid, &formals);
             }
             out
         }
@@ -1627,18 +1624,15 @@ impl IRBuilder {
     }
 
     fn power(&mut self, ir: &IR, contract: &str, base: &Value, exp: &Value) -> Value {
+        let formals = Self::binary_formals(base, exp);
+        self.discharge_contract_requires(contract, &formals);
         let exp_operand = match exp {
             Value::Integer(_) | Value::Boolean(_) => self.guard_operand(exp, 0),
             _ => self.guard_float_operand(exp, 0.0),
         };
         let out = self.create_ir(ir, &[base.clone(), exp_operand]);
-        if let (Some(vid), Some(lhs_vid), Some(rhs_vid)) =
-            (out.value_id(), base.value_id(), exp.value_id())
-        {
-            let mut formals = HashMap::new();
-            formals.insert("lhs".to_string(), lhs_vid);
-            formals.insert("rhs".to_string(), rhs_vid);
-            self.fire_contract(contract, vid, &formals);
+        if let (Some(vid), false) = (out.value_id(), formals.is_empty()) {
+            self.plant_contract_ensures(contract, vid, &formals);
         }
         out
     }
@@ -1946,14 +1940,13 @@ impl IRBuilder {
     /// interval deposit (would expand to `±inf`); the registered
     /// contract's soundness check still fires.
     pub fn ir_div_f(&mut self, a: &Value, b: &Value) -> Value {
+        let formals = Self::binary_formals(a, b);
+        self.discharge_contract_requires("div_f", &formals);
         let out = self.create_ir(&IR::DivF, &[a.clone(), b.clone()]);
         if let (Some(a_vid), Some(b_vid), Some(out_vid)) =
             (a.value_id(), b.value_id(), out.value_id())
         {
-            let mut formals = HashMap::new();
-            formals.insert("lhs".to_string(), a_vid);
-            formals.insert("rhs".to_string(), b_vid);
-            self.fire_contract("div_f", out_vid, &formals);
+            self.plant_contract_ensures("div_f", out_vid, &formals);
 
             if let Some(fact) = crate::optim::resolver::interval_fact_for_float_binary(
                 &self.facts,
@@ -2211,7 +2204,7 @@ impl IRBuilder {
     /// `[acos(hi), acos(lo)]` on the output (note: arccos is
     /// monotone-decreasing, so the bounds swap).
     pub fn ir_arccos_f(&mut self, a: &Value) -> Value {
-        let formals = self.unary_formals(a);
+        let formals = Self::unary_formals(a);
         self.discharge_contract_requires("arccos_f", &formals);
         let out = self.create_ir(&IR::ArcCosF, &[a.clone()]);
         if let (Some(vid), Some(x_vid)) = (out.value_id(), a.value_id()) {
@@ -2225,7 +2218,7 @@ impl IRBuilder {
     /// `-1 <= x <= 1` is discharged if visible, otherwise emitted as a
     /// witness assertion in lenient mode.
     pub fn ir_arcsin_f(&mut self, a: &Value) -> Value {
-        let formals = self.unary_formals(a);
+        let formals = Self::unary_formals(a);
         self.discharge_contract_requires("arcsin_f", &formals);
         let out = self.create_ir(&IR::ArcSinF, &[a.clone()]);
         if let Some(vid) = out.value_id() {
@@ -2243,7 +2236,7 @@ impl IRBuilder {
         // The `log_f` contract checks `a > 0` where the code runs; the
         // lowering itself needs a positive operand on every path (Noir's
         // `qlog` asserts it), so where the code does not run it gets 1.0.
-        let formals = self.unary_formals(a);
+        let formals = Self::unary_formals(a);
         self.discharge_contract_requires("log_f", &formals);
         let operand = self.guard_float_operand(a, 1.0);
         let out = self.create_ir(&IR::LogF, &[operand]);
@@ -2280,7 +2273,7 @@ impl IRBuilder {
     /// the `requires(x >= 0.0)` precondition is discharged against the
     /// input value's fact bucket (formal `"x"` ↔ input ValueId).
     pub fn ir_sqrt_f(&mut self, a: &Value) -> Value {
-        let formals = self.unary_formals(a);
+        let formals = Self::unary_formals(a);
         self.discharge_contract_requires("sqrt_f", &formals);
         let out = self.create_ir(&IR::SqrtF, &[a.clone()]);
         if let (Some(vid), Some(x_vid)) = (out.value_id(), a.value_id()) {
@@ -2292,8 +2285,17 @@ impl IRBuilder {
 
     /// The formal binding `x -> a` of a unary op contract (empty for a
     /// value without an id, e.g. a literal).
-    fn unary_formals(&self, a: &Value) -> HashMap<String, crate::types::ValueId> {
+    fn unary_formals(a: &Value) -> HashMap<String, crate::types::ValueId> {
         a.value_id().map(|vid| HashMap::from([("x".to_string(), vid)])).unwrap_or_default()
+    }
+
+    /// The formal bindings `lhs -> a`, `rhs -> b` of a binary op contract
+    /// (empty unless both operands have ids, as contracts fire only then).
+    fn binary_formals(a: &Value, b: &Value) -> HashMap<String, crate::types::ValueId> {
+        match (a.value_id(), b.value_id()) {
+            (Some(lhs), Some(rhs)) => HashMap::from([("lhs".to_string(), lhs), ("rhs".to_string(), rhs)]),
+            _ => HashMap::new(),
+        }
     }
 
     /// Float `exp`. Fires the `exp_f` op contract so the output value

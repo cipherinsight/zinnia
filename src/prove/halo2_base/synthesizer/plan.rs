@@ -13,9 +13,9 @@
 //!   and the later `AssertU128Lt` then finds it proven and emits nothing.
 //!   The set of accepted witnesses is unchanged.
 //! * **Deferred products** (see `Halo2BaseSynthesizer::mul_i`, `add_i`).
-//! * **Asserted comparisons.** A signed comparison whose only use is an
-//!   `Assert` needs no result bit: its relation is range-checked directly
-//!   (see `Halo2BaseSynthesizer::assert_relation`).
+//! * **Asserted comparisons.** A comparison whose only use is an `Assert`
+//!   needs no result bit: an order is range-checked directly, `a != b` is an
+//!   inverse (see `Halo2BaseSynthesizer::assert_relation`, `assert_distinct`).
 
 use std::collections::{HashMap, HashSet};
 
@@ -32,7 +32,8 @@ pub(super) struct Plan {
     /// or the subtrahend of one `SubI`: the sum is emitted as one
     /// multiply-add gate there, and the product is never a cell.
     pub deferred_products: HashSet<u32>,
-    /// Statement ids of the signed comparisons whose only use is `Assert`.
+    /// Statement ids of the comparisons (`<`, `<=`, `>`, `>=`, `!=`) whose
+    /// only use is `Assert`.
     pub asserted_comparisons: HashSet<u32>,
 }
 
@@ -72,7 +73,16 @@ fn asserted_comparisons(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<
         .filter(|stmt| {
             matches!(
                 stmt.ir,
-                IR::LtI | IR::LteI | IR::GtI | IR::GteI | IR::LtF | IR::LteF | IR::GtF | IR::GteF
+                IR::LtI
+                    | IR::LteI
+                    | IR::GtI
+                    | IR::GteI
+                    | IR::LtF
+                    | IR::LteF
+                    | IR::GtF
+                    | IR::GteF
+                    | IR::NeI
+                    | IR::NeF
             )
         })
         .filter(|stmt| only_user(ir, uses, stmt.stmt_id).is_some_and(|user| matches!(user.ir, IR::Assert)))

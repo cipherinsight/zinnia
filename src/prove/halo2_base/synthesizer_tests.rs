@@ -904,7 +904,8 @@ fn overlay_skips_writes_whose_addresses_cannot_reach_the_read() {
     });
     let (rows, _) = cells_of(&*scatter, &[int(0), int(0), int(0)]);
     let (row, _) = cells_of(&*one_row, &[int(0)]);
-    assert!(rows <= 3 * row + 12, "three rows {rows} cells, one row {row}");
+    // (Comparing every read with every write would cost about 9x one row.)
+    assert!(rows < 4 * row, "three rows {rows} cells, one row {row}");
 }
 
 /// Reads after many runtime-address writes cost one address comparison per
@@ -1349,4 +1350,85 @@ fn asserted_comparisons_check_their_gap() {
     });
     let extra = run(&with, &[("x", 5)], None).advice - run(&without, &[("x", 5)], None).advice;
     assert!(extra <= 1 + 3 * 8 - 2, "asserted x >= 0 costs {extra} cells");
+}
+
+/// Synthesize `op` honestly but check the circuit against `claimed` public
+/// values: a wrong claim must be rejected.
+fn accepts_claim(op: &Op, inputs: &[Fp], claimed: &[Fp]) -> bool {
+    let mut builder = BaseCircuitBuilder::<Fp>::from_stage(CircuitBuilderStage::Mock);
+    builder.set_k(K as usize);
+    builder.set_lookup_bits(LOOKUP_BITS as usize);
+    builder.set_instance_columns(1);
+    let provenance = ProvenanceTable::new();
+    let params = ProvingParams { k: K, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
+    let witness = ResolvedWitness::new(CircuitInputs::new(), PRECISION_BITS);
+    {
+        let mut synth = Halo2BaseSynthesizer::new(&mut builder, Some(witness), params, &provenance);
+        let cells: Vec<Halo2BaseCell> = inputs.iter().map(|v| synth.cell(*v)).collect();
+        for out in op(&mut synth, &cells).expect("synthesis failed") {
+            synth.expose_public(&out, "out").unwrap();
+        }
+    }
+    builder.calculate_params(Some(20));
+    MockProver::run(K, &builder, vec![claimed.to_vec()]).expect("MockProver::run").verify().is_ok()
+}
+
+/// `[a == b]` by the seven-cell zero test of `a - b` (of `a` itself against
+/// the constant 0): the honest bit is accepted, the other one rejected.
+#[test]
+fn equality_tests_are_pinned() {
+    let eq = binary(|s, a, b| s.eq_i(a, b));
+    let eq_zero = with_constant_rhs(|s, a, b| s.eq_i(a, b), int(0));
+    for (a, b) in [(3i64, 3i64), (3, 4), (-1, -1), (0, 0), (i64::MIN, i64::MAX), (0, 1)] {
+        let honest = synthesize(&*eq, &[int(a), int(b)], &[]);
+        assert!(honest.accepted && honest.outputs == vec![bit(a == b)], "{a} == {b}");
+        assert!(!accepts_claim(&*eq, &[int(a), int(b)], &[bit(a != b)]), "{a} == {b}: flipped bit accepted");
+        let honest = synthesize(&*eq_zero, &[int(a)], &[]);
+        assert!(honest.accepted && honest.outputs == vec![bit(a == 0)], "{a} == 0");
+        assert!(!accepts_claim(&*eq_zero, &[int(a)], &[bit(a != 0)]), "{a} == 0: flipped bit accepted");
+    }
+    let (with_zero, general) = (cells_of(&*eq_zero, &[int(5)]).0, cells_of(&*eq, &[int(5), int(6)]).0);
+    assert!(with_zero + 4 <= general, "x == 0 costs {with_zero}, a == b {general}");
+}
+
+/// An asserted `x != 0` is the pinned inverse `x·inv = 1`; division by a
+/// divisor so asserted and proven non-negative needs neither the zero
+/// mapping nor a sign: the quotient equals the kernel's, every hint is
+/// pinned, and a zero divisor has no witness.
+#[test]
+fn divisions_by_asserted_nonzero_divisors_are_pinned() {
+    use crate::ir_defs::IR;
+    use graphs::*;
+    let mut g = Graph::default();
+    let (a, b) = (g.read("a"), g.read("b"));
+    g.domain_check(a);
+    g.domain_check(b);
+    let zero = g.int(0);
+    let non_negative = g.push(IR::GteI, &[b, zero]);
+    g.push(IR::Assert, &[non_negative]);
+    let nonzero = g.push(IR::NeI, &[b, zero]);
+    g.push(IR::Assert, &[nonzero]);
+    let quotient = g.push(IR::FloorDivI, &[a, b]);
+    let remainder = g.push(IR::ModI, &[a, b]);
+    g.push(IR::ExposePublicI, &[quotient]);
+    g.push(IR::ExposePublicI, &[remainder]);
+    let ir = g.finish();
+    for (x, y) in [(7i64, 2i64), (-7, 2), (0, 5), (i64::MAX, 3), (i64::MIN, 7)] {
+        let (q, r) = kernel::fp_floor_div(int(x), int(y));
+        let honest = run(&ir, &[("a", x), ("b", y)], None);
+        assert!(honest.accepted && honest.outputs == vec![q, r], "{x} // {y}");
+        assert!(!run(&ir, &[("a", x), ("b", y)], Some(vec![q + Fp::one(), r - int(y)])).accepted, "{x} // {y}: shifted quotient accepted");
+    }
+    assert!(!run(&ir, &[("a", 7), ("b", 0)], None).accepted, "division by zero accepted");
+    assert!(!run(&ir, &[("a", 7), ("b", -2)], None).accepted, "negative divisor accepted");
+    // The asserted inverse is pinned: perturbing it is rejected.
+    let distinct: Box<Op> = Box::new(|s, c| {
+        s.plan.asserted_comparisons.insert(s.current_stmt);
+        let zero = s.constant_int(0)?;
+        Ok(vec![s.ne_i(&c[0], &zero)?])
+    });
+    for x in [1i64, -5, i64::MAX] {
+        assert_sound(&format!("assert {x} != 0"), &*distinct, &[int(x)], &[Fp::one()], &[]);
+    }
+    assert!(!synthesize(&*distinct, &[int(0)], &[]).accepted, "0 != 0 accepted");
 }
