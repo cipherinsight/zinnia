@@ -67,7 +67,7 @@ pub(crate) fn mock_run(ir: &IRGraph, inputs: &[(&str, InputNode)], tamper: &Tamp
         (synth.public_values().to_vec(), synth.tamper.hints_seen(), std::mem::take(&mut synth.second_phase))
     };
     let second_phase_cells = second_phase.shape().advice + second_phase.challenges();
-    let mut circuit = Halo2BaseCircuit::new(builder, second_phase);
+    let mut circuit = Halo2BaseCircuit::new(builder, second_phase, Default::default(), Default::default());
     circuit.challenge_offset = tamper.challenge_offset;
     layout(&mut circuit);
     let instance = tamper.claimed.clone().unwrap_or_else(|| outputs.clone());
