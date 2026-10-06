@@ -1766,3 +1766,30 @@ fn root_preconditions_are_proven_by_the_root() {
     let checked = build(1);
     assert!(run(&guarded, &[("x", 5)], None).advice + 20 < run(&checked, &[("x", 5)], None).advice, "the root's guard paid a check");
 }
+
+/// `a[i, :] = 0` by the one-hot write: NumPy's result for every index in
+/// `[-n, n)` (negative ones from the end), no witness outside, and every
+/// one-hot lane moved by any delta rejected (MockProver).
+#[test]
+fn index_write_hints_are_pinned() {
+    use crate::lower::scatter::test_support::{witness, zero_row_graph};
+    use crate::lower::scatter::OneHotWrite;
+    let mut shifts: Vec<Fp> = vec![int(1), int(-1), int(2)];
+    shifts.extend(deltas(&[]));
+    for index in -4..=4 {
+        let case = zero_row_graph(3, 2, index, &OneHotWrite);
+        let w = witness(&case.inputs);
+        let honest = synthesize_graph(&case.graph, &w, &[]);
+        let Some(expected) = &case.expected else {
+            assert!(!honest.accepted, "index {index}: accepted, NumPy raises");
+            continue;
+        };
+        assert!(honest.accepted, "index {index}: honest witness rejected");
+        assert_eq!(honest.outputs, expected.iter().map(|&v| int(v)).collect::<Vec<_>>(), "index {index}");
+        for hint in 0..honest.hints {
+            for shift in &shifts {
+                assert!(!synthesize_graph(&case.graph, &w, &[(hint, *shift)]).accepted, "index {index}: hint #{hint} moved by {shift:?}");
+            }
+        }
+    }
+}

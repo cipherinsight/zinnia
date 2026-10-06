@@ -199,3 +199,38 @@ pub(crate) fn mask_write_chain_graph(x: i64, t1: i64, t2: i64, construction: &dy
 pub(crate) fn selects(graph: &IRGraph) -> usize {
     graph.stmts.iter().filter(|s| matches!(s.ir, IR::SelectI | IR::SelectF)).count()
 }
+
+/// `a[i, :] = 0` on a `rows x cols` array of inputs `a{r}_{c}` with the
+/// input index `i`: `OpKind::IndexWrite` lanes lowered by
+/// `construction` alone, every cell exposed. `expected`: NumPy's result,
+/// `None` for an index outside `[-rows, rows)`.
+pub(crate) fn zero_row_graph(rows: usize, cols: usize, index: i64, construction: &dyn Construction) -> ScatterGraph {
+    use crate::lower::scatter::write::{OLD, WRITTEN};
+    let mut b = IRBuilder::new();
+    let mut inputs = Vec::new();
+    let cells: Vec<Value> = (0..rows * cols)
+        .map(|k| read(&mut b, &mut inputs, format!("a{}_{}", k / cols, k % cols), 10 + k as i64))
+        .collect();
+    let i = read(&mut b, &mut inputs, "i".into(), index);
+    let shared: Arc<[Value]> = Arc::from(vec![i]);
+    let zero = b.ir_constant_int(0);
+    for (k, cell) in cells.iter().enumerate() {
+        let op = ArrayOp {
+            kind: OpKind::IndexWrite { axis_len: rows as u32 },
+            shared: 1,
+            output: 0,
+            position: Some((k / cols) as u32),
+        };
+        let mut own = vec![Value::None; 2];
+        own[OLD] = cell.clone();
+        own[WRITTEN] = zero.clone();
+        let out = b.ir_array_op(op, &shared, &own);
+        b.ir_expose_public_i(&out);
+    }
+    let expected = numpy_position(index, rows, Positions::Element).map(|row| {
+        (0..rows * cols).map(|k| if k / cols == row { 0 } else { 10 + k as i64 }).collect()
+    });
+    let graph = b.export_ir_graph();
+    let lowered = crate::lower::emit::lower(&graph, Target::Halo2Base, &[construction]).expect("a write to lower");
+    ScatterGraph { graph: optimized(lowered), inputs, expected }
+}

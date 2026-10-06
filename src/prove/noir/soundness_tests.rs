@@ -1236,3 +1236,37 @@ fn select_chains_and_or_chains_use_the_cheaper_forms() {
     assert_eq!(execute(&graph, &w([-3, -1, -7, -1])).unwrap(), vec![1, 0]);
     assert_eq!(execute(&graph, &w([-3, -4, -7, 2])).unwrap(), vec![3, 1]);
 }
+
+/// `a[i, :] = 0` by the one-hot write in Noir with its one-hot as free
+/// inputs: NumPy's result at negative and non-negative indices; any other
+/// lane value fails; an index outside `[-n, n)` has no witness.
+#[test]
+fn index_write_hints_are_pinned_in_noir() {
+    use crate::lower::scatter::test_support::{hints_as_inputs, with_hints, zero_row_graph};
+    use crate::lower::scatter::OneHotWrite;
+    if !toolchain_present(false) {
+        return;
+    }
+    let as_witness = |inputs: &[(String, i64)]| {
+        let named: Vec<(&str, i64)> = inputs.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+        witness(&named)
+    };
+    for index in [-3, -1, 0, 2, 3] {
+        let case = zero_row_graph(3, 2, index, &OneHotWrite);
+        let (graph, sites) = hints_as_inputs(&case);
+        let honest: Vec<i64> = sites.iter().map(|s| s.honest).collect();
+        let run = execute(&graph, &as_witness(&with_hints(&case, &sites, &honest)));
+        let Some(expected) = &case.expected else {
+            assert_rejected(run);
+            continue;
+        };
+        assert_eq!(run.expect("honest hints"), expected.iter().map(|&v| v as i128).collect::<Vec<_>>(), "index {index}");
+        for k in 0..sites.len() {
+            for v in [1 - honest[k], 2] {
+                let mut hints = honest.clone();
+                hints[k] = v;
+                assert_rejected(execute(&graph, &as_witness(&with_hints(&case, &sites, &hints))));
+            }
+        }
+    }
+}
