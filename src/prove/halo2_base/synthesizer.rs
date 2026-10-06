@@ -677,6 +677,10 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
             return Ok(self.multiply_add(b, &x, &y));
         }
         let out = self.gate_from(a, QuantumCell::Existing(b.assigned), QuantumCell::Constant(Fp::one()), a.value + b.value);
+        // out - a = b and out - b = a: a select between the sum and one of
+        // its summands needs no difference gate (see `select_bit`).
+        self.differences.entry((out.id, a.id)).or_insert(*b);
+        self.differences.entry((out.id, b.id)).or_insert(*a);
         self.propagate_range(&out, a, b, Interval::add);
         self.propagate_two_valued(&out, a, b, |x, c| x.checked_add(c));
         self.propagate_two_valued(&out, b, a, |x, c| x.checked_add(c));
@@ -699,6 +703,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         // one); later selects on the same operands may reuse it.
         let out = self.gate_cell(a.value - b.value, |gate, ctx| gate.sub(ctx, a.assigned, b.assigned));
         self.differences.entry((a.id, b.id)).or_insert(out);
+        self.differences.entry((a.id, out.id)).or_insert(*b); // a - out = b
         self.propagate_range(&out, a, b, Interval::sub);
         self.propagate_two_valued(&out, a, b, |x, c| x.checked_sub(c));
         self.propagate_two_valued(&out, b, a, |x, c| c.checked_sub(x));

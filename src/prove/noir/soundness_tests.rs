@@ -445,6 +445,32 @@ fn divisions_by_an_asserted_nonzero_divisor_share_its_sign() {
     assert_rejected(execute(&graph, &float_witness(&[], &[("x", 1.0), ("d", 0.0)])));
 }
 
+/// `select(c, x + 5.0, x)` (a masked increment) is emitted as
+/// `x + c * 5.0`-style single product (`f + c * (t - f)` with the
+/// difference known), and equals the mock for both outcomes.
+#[test]
+fn selects_of_a_sum_and_its_summand_are_one_product() {
+    if !toolchain_present(false) {
+        return;
+    }
+    let mut g = Graph::default();
+    let x = g.push(IR::ReadFloat { path: InputPath::new("x", vec![]), is_public: false }, &[]);
+    let t = g.push(IR::ReadFloat { path: InputPath::new("t", vec![]), is_public: false }, &[]);
+    let five = g.push(IR::ConstantFloat { value: 5.0 }, &[]);
+    let below = g.push(IR::LtF, &[x, t]);
+    let bumped = g.push(IR::AddF, &[x, five]);
+    let out = g.push(IR::SelectF, &[below, bumped, x]);
+    g.push(IR::ExposePublicF, &[out]);
+    let graph = g.finish();
+    let honest = float_witness(&[], &[("x", 1.5), ("t", 2.0)]);
+    let emitted = emit_circuit(&graph, &honest, &ProvingParams::default()).unwrap();
+    assert!(!emitted.main_nr.contains("(1 -"), "{}", emitted.main_nr);
+    for (xv, tv) in [(1.5, 2.0), (2.5, 2.0), (-3.0, -3.0)] {
+        let w = float_witness(&[], &[("x", xv), ("t", tv)]);
+        assert_eq!(execute(&graph, &w).unwrap(), mock_outputs(&graph, &w).1, "x = {xv}, t = {tv}");
+    }
+}
+
 /// M5: a dynamic-address write outside the segment used to update no slot
 /// and succeed; the mock rejects it.
 #[test]

@@ -650,6 +650,8 @@ pub struct NoirEmitter<'a> {
     asserted_comparisons: HashSet<u32>,
     /// Cells an emitted `assert(x != 0)` proves non-zero.
     nonzero: HashSet<String>,
+    /// `out -> (a, b)` for every emitted sum `out = a + b`.
+    sum_of: HashMap<String, (String, String)>,
     /// Asserted comparisons a bounds check elsewhere implies (see
     /// `implied_comparisons`): they emit nothing.
     implied_comparisons: HashSet<u32>,
@@ -826,6 +828,9 @@ impl<'a> NoirEmitter<'a> {
     /// integer arithmetic: the values involved stay far below p).
     fn integer_arith(&mut self, a: &str, b: &str, op: char) -> String {
         let v = self.bind(&format!("{a} {op} {b}"));
+        if op == '+' {
+            self.record_sum(&v, a, b);
+        }
         if let (Some((al, ah)), Some((bl, bh))) = (self.ival(a), self.ival(b)) {
             let (al, ah, bl, bh) = (al as i128, ah as i128, bl as i128, bh as i128);
             let (lo, hi) = match op {
@@ -1163,6 +1168,12 @@ impl<'a> NoirEmitter<'a> {
         if let Some(c) = self.raw_constant(low) {
             self.narrow_proven_range(high, c + offset, c + offset + span - 1);
         }
+    }
+
+    /// Remember that `out = a + b`, so a select between `out` and one of
+    /// its summands is one product of the other summand (see `select`).
+    fn record_sum(&mut self, out: &str, a: &str, b: &str) {
+        self.sum_of.insert(out.to_string(), (a.to_string(), b.to_string()));
     }
 
     /// `a != b` for a `!=` whose only uses are asserts: the assertion
@@ -1794,6 +1805,7 @@ impl<'a> NoirEmitter<'a> {
             wrapped_index_ranges: HashMap::new(),
             asserted_comparisons: HashSet::new(),
             nonzero: HashSet::new(),
+            sum_of: HashMap::new(),
             implied_comparisons: HashSet::new(),
             current_stmt: None,
             proven_range: HashMap::new(),
@@ -2178,6 +2190,7 @@ impl Synthesizer for NoirEmitter<'_> {
     fn add_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qadd");
         let v = self.bind(&format!("qadd({}, {})", a, b));
+        self.record_sum(&v, a, b);
         Ok(v)
     }
     fn sub_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
@@ -2523,8 +2536,24 @@ impl Synthesizer for NoirEmitter<'_> {
         let c = self.booleanize(cond);
         let is_zero_int = self.s_int_of(if_false) == Some(0);
         let is_zero_flt = self.s_float_of(if_false) == Some(0.0);
+        let difference = |x: &str, base: &str| -> Option<String> {
+            let (p, q) = self.sum_of.get(x)?;
+            if p == base {
+                Some(q.clone())
+            } else if q == base {
+                Some(p.clone())
+            } else {
+                None
+            }
+        };
         let expr = if is_zero_int || is_zero_flt {
             format!("{} * {}", c, if_true)
+        } else if let Some(x) = difference(if_true, if_false) {
+            // t = f + x: one product, f + c * x.
+            format!("{if_false} + {c} * {x}")
+        } else if let Some(x) = difference(if_false, if_true) {
+            // f = t + x: t + (1 - c) * x.
+            format!("{if_true} + (1 - {c}) * {x}")
         } else {
             format!("{} * {} + (1 - {}) * {}", c, if_true, c, if_false)
         };

@@ -626,6 +626,33 @@ fn compare_exchange_shares_the_difference() {
     assert!(shared_cost + 8 <= separate_cost, "shared {shared_cost}, separate {separate_cost}");
 }
 
+/// `select(c, x + y, x)` (a masked increment) needs no difference gate:
+/// the sum's difference from its summand is the other summand, so the select
+/// is one gate `x + c·y`; likewise `select(c, x - y, x)` uses `y`. Pinned by
+/// the comparison bit as any select.
+#[test]
+fn selects_of_a_sum_and_its_summand_are_one_gate() {
+    let increment: Box<Op> = Box::new(|s, c| {
+        let below = s.lt_i(&c[0], &c[1])?;
+        let sum = s.add_i(&c[0], &c[2])?;
+        let difference = s.sub_i(&c[0], &c[2])?;
+        Ok(vec![s.select(&below, &sum, &c[0])?, s.select(&below, &difference, &c[0])?])
+    });
+    for (x, t, y) in [(3i64, 5i64, 7i64), (5, 3, 7), (-2, -2, 1)] {
+        let below = x < t;
+        let expected = [int(if below { x + y } else { x }), int(if below { x - y } else { x })];
+        assert_sound(&format!("masked step {x} {t} {y}"), &*increment, &[int(x), int(t), int(y)], &expected, &[]);
+    }
+    let plain: Box<Op> = Box::new(|s, c| {
+        let below = s.lt_i(&c[0], &c[1])?;
+        let sum = s.add_i(&c[0], &c[2])?;
+        let difference = s.sub_i(&c[0], &c[2])?;
+        Ok(vec![sum, difference, below])
+    });
+    let (with_selects, without) = (cells_of(&*increment, &[int(1), int(2), int(3)]).0, cells_of(&*plain, &[int(1), int(2), int(3)]).0);
+    assert_eq!(with_selects, without + 2 * 4, "two selects, one gate each");
+}
+
 /// A select between bits is a bit, and a two-valued cell's truth value is
 /// its bit: neither needs an `is_zero` conversion when used as a condition.
 #[test]
