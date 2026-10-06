@@ -142,7 +142,13 @@ pub fn dyn_subscript(
         dyn_getitem_row(b, data, indices)
     } else if indices.len() == 1 {
         if let SliceIndex::Range(start, stop, step) = &indices[0] {
-            dyn_slice_1d(b, data, start.as_ref(), stop.as_ref(), step.as_ref())
+            // One range on a rank >= 2 array slices axis 0 (rows), not the
+            // flattened buffer.
+            if data.meta.logical_shape.len() >= 2 {
+                dyn_slice_axis(b, data, 0, start.as_ref(), stop.as_ref(), step.as_ref())
+            } else {
+                dyn_slice_1d(b, data, start.as_ref(), stop.as_ref(), step.as_ref())
+            }
         } else {
             panic!("dyn_subscript: unsupported single index type")
         }
@@ -318,6 +324,130 @@ fn dyn_getitem_row(b: &mut IRBuilder, data: &DynamicNDArrayData, indices: &[Slic
 
 // ── Range slicing ───────────────────────────────────────────────────────
 
+/// The slice-bound check of a runtime (non-literal) bound (see
+/// `dyn_slice_1d`); a literal bound needs none, `normalize_runtime_slice`
+/// clamps it as Python does.
+fn discharge_runtime_slice_bound(
+    b: &mut IRBuilder,
+    bound: Option<&Value>,
+    len: usize,
+    op_name: &'static str,
+) {
+    if bound.is_some_and(|v| v.int_val().is_none()) {
+        crate::optim::resolver::discharge_slice_bound(b, bound, len, op_name);
+    }
+}
+
+/// A slice `start:stop:step` normalized against a runtime extent: the
+/// first source index, the step, and the number of selected elements.
+struct RuntimeSlice {
+    start: Value,
+    step: Value,
+    length: Value,
+}
+
+/// Python's slice semantics against the runtime extent `len_rt` of the
+/// sliced axis: missing bounds take the defaults of the step's sign,
+/// negative bounds count from `len_rt`, and both are clamped into
+/// `[0, len_rt]` (step > 0) or `[-1, len_rt - 1]` (step < 0); the length is
+/// `max(0, ceil((stop - start) / step))`. Every selected index
+/// `start + i * step`, `i < length`, is then in `[0, len_rt)`. A zero step
+/// is rejected (statically, or by an in-circuit assert).
+fn normalize_runtime_slice(
+    b: &mut IRBuilder,
+    start: Option<&Value>,
+    stop: Option<&Value>,
+    step: Option<&Value>,
+    len_rt: &Value,
+) -> RuntimeSlice {
+    let is_present =
+        |v: Option<&Value>| -> bool { matches!(v, Some(val) if !matches!(val, Value::None)) };
+    let step_static = step.and_then(|v| if matches!(v, Value::None) { None } else { v.int_val() });
+
+    let zero = b.ir_constant_int(0);
+    let one = b.ir_constant_int(1);
+    let neg_one = b.ir_constant_int(-1);
+    let len_rt_m1 = b.ir_sub_i(len_rt, &one);
+
+    // Step: static when possible; a runtime step is supported via
+    // sign-dependent selects. step == 0 is rejected (statically or by an
+    // in-circuit assert, mirroring python).
+    let step_ir = match (is_present(step), step_static) {
+        (false, _) => b.ir_constant_int(1),
+        (true, Some(s)) => {
+            assert!(s != 0, "slice step cannot be zero");
+            b.ir_constant_int(s)
+        }
+        (true, None) => {
+            let s = step.unwrap().clone();
+            let nonzero = b.ir_not_equal_i(&s, &zero);
+            b.ir_assert(&nonzero);
+            s
+        }
+    };
+    let step_pos: Option<bool> = step_static.map(|s| s > 0).or(if is_present(step) {
+        None
+    } else {
+        Some(true)
+    });
+    // Step-sign-dependent quantities: fold statically when the sign is
+    // known, otherwise select on the runtime sign bit.
+    let by_sign = |b: &mut IRBuilder, pos: &Value, neg: &Value| -> Value {
+        match step_pos {
+            Some(true) => pos.clone(),
+            Some(false) => neg.clone(),
+            None => {
+                let sp = b.ir_greater_than_i(&step_ir, &zero);
+                b.ir_select_i(&sp, pos, neg)
+            }
+        }
+    };
+    let window_lo = by_sign(b, &zero, &neg_one);
+    let window_hi = by_sign(b, len_rt, &len_rt_m1);
+    let start_default = by_sign(b, &zero, &len_rt_m1);
+    let stop_default = by_sign(b, len_rt, &neg_one);
+
+    // Normalize a slice bound against the runtime length: missing bounds
+    // take the python default for the step sign; negative values are
+    // length-relative; everything clamps into the valid window
+    // (step>0: [0, len]; step<0: [-1, len-1]).
+    let normalize = |b: &mut IRBuilder, v: Option<&Value>, default: &Value| -> Value {
+        let raw = match v {
+            Some(val) if !matches!(val, Value::None) => {
+                if let Some(s) = val.int_val() {
+                    b.ir_constant_int(s)
+                } else {
+                    val.clone()
+                }
+            }
+            _ => return default.clone(),
+        };
+        let shifted = b.ir_add_i(&raw, len_rt);
+        let is_neg = b.ir_less_than_i(&raw, &zero);
+        let adjusted = b.ir_select_i(&is_neg, &shifted, &raw);
+        let lt_lo = b.ir_less_than_i(&adjusted, &window_lo);
+        let above = b.ir_select_i(&lt_lo, &window_lo, &adjusted);
+        let gt_hi = b.ir_greater_than_i(&above, &window_hi);
+        b.ir_select_i(&gt_hi, &window_hi, &above)
+    };
+    let start_ir = normalize(b, start, &start_default);
+    let stop_ir = normalize(b, stop, &stop_default);
+
+    // out_len = max(0, ceil(diff / |step|)) with diff oriented by step sign.
+    let stop_minus_start = b.ir_sub_i(&stop_ir, &start_ir);
+    let start_minus_stop = b.ir_sub_i(&start_ir, &stop_ir);
+    let diff = by_sign(b, &stop_minus_start, &start_minus_stop);
+    let neg_step = b.ir_sub_i(&zero, &step_ir);
+    let abs_step = by_sign(b, &step_ir, &neg_step);
+    let abs_step_m1 = b.ir_sub_i(&abs_step, &one);
+    let numerator = b.ir_add_i(&diff, &abs_step_m1);
+    let divided = b.ir_floor_div_i(&numerator, &abs_step);
+    let diff_pos = b.ir_greater_than_i(&diff, &zero);
+    let runtime_length = b.ir_select_i(&diff_pos, &divided, &zero);
+
+    RuntimeSlice { start: start_ir, step: step_ir, length: runtime_length }
+}
+
 fn dyn_slice_1d(
     b: &mut IRBuilder,
     data: &DynamicNDArrayData,
@@ -366,95 +496,17 @@ fn dyn_slice_1d(
     // though a valid runtime shape is `(2,4)`). `total_bound` is the
     // max possible storage extent and matches the scalar dyn-getitem path.
     let bound = data.envelope.total_bound;
-    crate::optim::resolver::discharge_slice_bound(b, start, bound, "dyn_slice_start");
-    crate::optim::resolver::discharge_slice_bound(b, stop, bound, "dyn_slice_stop");
+    discharge_runtime_slice_bound(b, start, bound, "dyn_slice_start");
+    discharge_runtime_slice_bound(b, stop, bound, "dyn_slice_stop");
 
     // Dynamic path: pad-and-mask, with slice defaults / negative bounds /
     // clamping all relative to the array's *runtime* length (python slice
     // semantics), not the padded bound.
     let max_out_len = len;
-
-    let zero = b.ir_constant_int(0);
-    let one = b.ir_constant_int(1);
-    let neg_one = b.ir_constant_int(-1);
     let len_rt = Value::Integer(data.meta.runtime_length.clone());
-    let len_rt_m1 = b.ir_sub_i(&len_rt, &one);
-
-    // Step: static when possible; a runtime step is supported via
-    // sign-dependent selects. step == 0 is rejected (statically or by an
-    // in-circuit assert, mirroring python).
-    let step_ir = match (is_present(step), step_static) {
-        (false, _) => b.ir_constant_int(1),
-        (true, Some(s)) => {
-            assert!(s != 0, "slice step cannot be zero");
-            b.ir_constant_int(s)
-        }
-        (true, None) => {
-            let s = step.unwrap().clone();
-            let nonzero = b.ir_not_equal_i(&s, &zero);
-            b.ir_assert(&nonzero);
-            s
-        }
-    };
-    let step_pos: Option<bool> = step_static.map(|s| s > 0).or(if is_present(step) {
-        None
-    } else {
-        Some(true)
-    });
-    // Step-sign-dependent quantities: fold statically when the sign is
-    // known, otherwise select on the runtime sign bit.
-    let mut by_sign = |b: &mut IRBuilder, pos: &Value, neg: &Value| -> Value {
-        match step_pos {
-            Some(true) => pos.clone(),
-            Some(false) => neg.clone(),
-            None => {
-                let sp = b.ir_greater_than_i(&step_ir, &zero);
-                b.ir_select_i(&sp, pos, neg)
-            }
-        }
-    };
-    let window_lo = by_sign(b, &zero, &neg_one);
-    let window_hi = by_sign(b, &len_rt, &len_rt_m1);
-    let start_default = by_sign(b, &zero, &len_rt_m1);
-    let stop_default = by_sign(b, &len_rt, &neg_one);
-
-    // Normalize a slice bound against the runtime length: missing bounds
-    // take the python default for the step sign; negative values are
-    // length-relative; everything clamps into the valid window
-    // (step>0: [0, len]; step<0: [-1, len-1]).
-    let mut normalize = |b: &mut IRBuilder, v: Option<&Value>, default: &Value| -> Value {
-        let raw = match v {
-            Some(val) if !matches!(val, Value::None) => {
-                if let Some(s) = val.int_val() {
-                    b.ir_constant_int(s)
-                } else {
-                    val.clone()
-                }
-            }
-            _ => return default.clone(),
-        };
-        let shifted = b.ir_add_i(&raw, &len_rt);
-        let is_neg = b.ir_less_than_i(&raw, &zero);
-        let adjusted = b.ir_select_i(&is_neg, &shifted, &raw);
-        let lt_lo = b.ir_less_than_i(&adjusted, &window_lo);
-        let above = b.ir_select_i(&lt_lo, &window_lo, &adjusted);
-        let gt_hi = b.ir_greater_than_i(&above, &window_hi);
-        b.ir_select_i(&gt_hi, &window_hi, &above)
-    };
-    let start_ir = normalize(b, start, &start_default);
-    let stop_ir = normalize(b, stop, &stop_default);
-
-    // out_len = max(0, ceil(diff / |step|)) with diff oriented by step sign.
-    let stop_minus_start = b.ir_sub_i(&stop_ir, &start_ir);
-    let start_minus_stop = b.ir_sub_i(&start_ir, &stop_ir);
-    let diff = by_sign(b, &stop_minus_start, &start_minus_stop);
-    let neg_step = b.ir_sub_i(&zero, &step_ir);
-    let abs_step = by_sign(b, &step_ir, &neg_step);
-    let abs_step_m1 = b.ir_sub_i(&abs_step, &one);
-    let numerator = b.ir_add_i(&diff, &abs_step_m1);
-    let divided = b.ir_floor_div_i(&numerator, &abs_step);
-    let diff_pos = b.ir_greater_than_i(&diff, &zero);
-    let runtime_length = b.ir_select_i(&diff_pos, &divided, &zero);
+    let RuntimeSlice { start: start_ir, step: step_ir, length: runtime_length } =
+        normalize_runtime_slice(b, start, stop, step, &len_rt);
+    let zero = b.ir_constant_int(0);
 
     let default_val = crate::ops::dyn_ndarray::metadata::dyn_default_value(b, data.dtype);
     let max_idx = b.ir_constant_int(len as i64 - 1);
@@ -723,12 +775,12 @@ fn dyn_subscript_multidim(
         return dyn_subscript_with_dynamic_axis(b, data, indices, dyn_ax);
     }
 
-    // A Range with static bounds can still be RUNTIME-dependent: on an
-    // axis whose runtime extent is dynamic, negative steps and negative
-    // bounds resolve against the runtime length, not the envelope width
-    // (`m[:, ::-1]` on a runtime-ncols array must reverse the first
-    // `ncols` cells — enumerating envelope coordinates parked the
-    // content at the padding end; binding-audit case 0419).
+    // A Range with static bounds is still RUNTIME-dependent on an axis
+    // whose runtime extent is dynamic, unless it is the whole axis: the
+    // bounds clamp to the runtime extent, and negative steps and bounds
+    // resolve against it, not the envelope width (`a[0:3, :]` on 2 runtime
+    // rows has 2 rows; `m[:, ::-1]` on a runtime-ncols array reverses the
+    // first `ncols` cells, binding-audit case 0419).
     let runtime_dependent = indices.iter().enumerate().find(|(ax, idx)| {
         if let SliceIndex::Range(start, stop, step) = idx {
             let static_of = |v: &Option<Value>| -> Option<i64> {
@@ -737,15 +789,16 @@ fn dyn_subscript_multidim(
                     Some(val) => val.int_val(),
                 }
             };
-            let st = static_of(step).unwrap_or(1);
-            let neg_bound = static_of(start).is_some_and(|v| v < 0)
-                || static_of(stop).is_some_and(|v| v < 0);
+            let unset = |v: &Option<Value>| matches!(v, None | Some(Value::None));
+            let whole_axis = (unset(start) || static_of(start) == Some(0))
+                && unset(stop)
+                && (unset(step) || static_of(step) == Some(1));
             let axis_runtime_dynamic = data
                 .meta
                 .runtime_shape
                 .get(*ax)
                 .is_some_and(|sv| sv.static_val.is_none());
-            axis_runtime_dynamic && (st < 0 || neg_bound)
+            axis_runtime_dynamic && !whole_axis
         } else {
             false
         }
@@ -840,69 +893,21 @@ fn dyn_slice_axis(
     // See `dyn_slice_1d` for rationale; multi-dim path uses `total_bound`
     // for the same reshape over-approximation reason.
     let bound = data.envelope.total_bound;
-    crate::optim::resolver::discharge_slice_bound(b, start, bound, "dyn_slice_start");
-    crate::optim::resolver::discharge_slice_bound(b, stop, bound, "dyn_slice_stop");
+    discharge_runtime_slice_bound(b, start, bound, "dyn_slice_start");
+    discharge_runtime_slice_bound(b, stop, bound, "dyn_slice_stop");
 
-    fn val_to_ir(b: &mut IRBuilder, v: Option<&Value>, default: i64) -> Value {
-        match v {
-            Some(val) if !matches!(val, Value::None) => {
-                if let Some(s) = val.int_val() {
-                    b.ir_constant_int(s)
-                } else {
-                    val.clone()
-                }
-            }
-            _ => b.ir_constant_int(default),
-        }
-    }
-    // Slice-bound defaults are step-sign dependent (Python semantics):
-    // step < 0 walks len-1 down to "before 0" — where `len` is the
-    // RUNTIME extent of this axis when that's dynamic (the envelope
-    // width is just padding). Resolve the step sign statically when
-    // possible; a fully-dynamic step keeps the positive defaults (no
-    // DS-1000 lowering produces one today).
-    let step_static = match step {
-        Some(v) if !matches!(v, Value::None) => v.int_val().unwrap_or(1),
-        _ => 1,
-    };
+    // Python slice semantics against the RUNTIME extent of this axis (the
+    // envelope width is padding): bounds are wrapped and clamped, so every
+    // selected index lies inside the runtime extent and the selected count
+    // never exceeds it.
     let axis_rt_sv = data.meta.runtime_shape.get(axis).cloned();
     let axis_len_rt: Value = match &axis_rt_sv {
         Some(sv) if sv.static_val.is_none() => Value::Integer(sv.clone()),
         Some(sv) => b.ir_constant_int(sv.static_val.unwrap()),
         None => b.ir_constant_int(axis_len as i64),
     };
-    let is_given = |v: Option<&Value>| matches!(v, Some(val) if !matches!(val, Value::None));
-    let one_c = b.ir_constant_int(1);
-    let start_ir = if is_given(start) {
-        let raw = val_to_ir(b, start, 0);
-        // Negative static bounds wrap against the runtime length.
-        match raw.int_val() {
-            Some(v) if v < 0 => {
-                let off = b.ir_constant_int(v);
-                b.ir_add_i(&axis_len_rt, &off)
-            }
-            _ => raw,
-        }
-    } else if step_static > 0 {
-        b.ir_constant_int(0)
-    } else {
-        b.ir_sub_i(&axis_len_rt, &one_c)
-    };
-    let stop_ir = if is_given(stop) {
-        let raw = val_to_ir(b, stop, 0);
-        match raw.int_val() {
-            Some(v) if v < 0 => {
-                let off = b.ir_constant_int(v);
-                b.ir_add_i(&axis_len_rt, &off)
-            }
-            _ => raw,
-        }
-    } else if step_static > 0 {
-        axis_len_rt.clone()
-    } else {
-        b.ir_constant_int(-1)
-    };
-    let step_ir = val_to_ir(b, step, 1);
+    let RuntimeSlice { start: start_ir, step: step_ir, length: runtime_axis_len } =
+        normalize_runtime_slice(b, start, stop, step, &axis_len_rt);
 
     // Output shape: same as input but with the sliced axis replaced by max_slice_len.
     let mut out_shape = shape.clone();
@@ -920,7 +925,6 @@ fn dyn_slice_axis(
 
     let default_val = crate::ops::dyn_ndarray::metadata::dyn_default_value(b, data.dtype);
     let zero = b.ir_constant_int(0);
-    let axis_len_val = b.ir_constant_int(axis_len as i64);
     let axis_stride_val = stride_value(b, &mode, axis);
 
     let mut out_elements = Vec::with_capacity(out_total);
@@ -937,17 +941,9 @@ fn dyn_slice_axis(
         let offset = b.ir_mul_i(&slice_idx_val, &step_ir);
         let src_axis_idx = b.ir_add_i(&start_ir, &offset);
 
-        // In-bounds check.
-        let ge_zero = b.ir_greater_than_or_equal_i(&src_axis_idx, &zero);
-        let lt_len = b.ir_less_than_i(&src_axis_idx, &axis_len_val);
-        let in_range = b.ir_logical_and(&ge_zero, &lt_len);
-
-        let step_pos = b.ir_greater_than_i(&step_ir, &zero);
-        let lt_stop = b.ir_less_than_i(&src_axis_idx, &stop_ir);
-        let gt_stop = b.ir_greater_than_i(&src_axis_idx, &stop_ir);
-        let stop_ok = b.ir_select_i(&step_pos, &lt_stop, &gt_stop);
-        let stop_bool = b.ir_bool_cast(&stop_ok);
-        let in_bounds = b.ir_logical_and(&in_range, &stop_bool);
+        // Output row `slice_idx` holds data iff it is below the selected
+        // count; its source index is then inside the runtime extent.
+        let in_bounds = b.ir_less_than_i(&slice_idx_val, &runtime_axis_len);
 
         // Clamp for safe read.
         let max_idx = b.ir_constant_int(axis_len as i64 - 1);
@@ -995,19 +991,6 @@ fn dyn_slice_axis(
         out_elements.push(masked.clone());
     }
 
-    // Runtime length along sliced axis.
-    let step_pos_2 = b.ir_greater_than_i(&step_ir, &zero);
-    let s_m_s = b.ir_sub_i(&stop_ir, &start_ir);
-    let s_m_s2 = b.ir_sub_i(&start_ir, &stop_ir);
-    let diff = b.ir_select_i(&step_pos_2, &s_m_s, &s_m_s2);
-    let neg_step = b.ir_sub_i(&zero, &step_ir);
-    let abs_step = b.ir_select_i(&step_pos_2, &step_ir, &neg_step);
-    let diff_pos = b.ir_greater_than_i(&diff, &zero);
-    let one = b.ir_constant_int(1);
-    let abs_step_m1 = b.ir_sub_i(&abs_step, &one);
-    let numerator = b.ir_add_i(&diff, &abs_step_m1);
-    let divided = b.ir_floor_div_i(&numerator, &abs_step);
-    let runtime_axis_len = b.ir_select_i(&diff_pos, &divided, &zero);
 
     // Build output metadata.
     let segment_id = crate::helpers::segment::alloc_and_write_values(b, &out_elements, data.dtype);

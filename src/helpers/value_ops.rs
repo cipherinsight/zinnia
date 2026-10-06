@@ -126,20 +126,6 @@ fn is_statically_empty(d: &crate::types::DynamicNDArrayData) -> bool {
     d.meta.runtime_length.static_val == Some(0)
 }
 
-/// Whether element `(i_0, ..., i_k)` of a contiguous runtime-shaped array
-/// sits at `sum_a i_a * stride_a` with the row-major strides of its buffer
-/// shape (`logical_shape`): a prefix rectangle of the buffer ("padded"), as
-/// runtime-bounds slices and promoted static arrays store their elements.
-fn is_padded_layout(d: &crate::types::DynamicNDArrayData) -> bool {
-    let strides = crate::helpers::shape_arith::row_major_strides(&d.meta.logical_shape);
-    d.meta.runtime_strides.len() == strides.len()
-        && d.meta
-            .runtime_strides
-            .iter()
-            .zip(&strides)
-            .all(|(rs, s)| rs.static_val == Some(*s as i64))
-}
-
 /// `cond ? t : f` for two runtime-shaped arrays (the value of a variable
 /// assigned in both arms of a runtime `if`).
 ///
@@ -179,7 +165,7 @@ fn merge_dynamic_arrays(
     let data_arms: Vec<&DynamicNDArrayData> =
         [&td, &fd].into_iter().filter(|d| !is_statically_empty(d)).collect();
     let rank = data_arms.first().map_or(td.meta.logical_shape.len(), |d| d.meta.logical_shape.len());
-    if data_arms.iter().any(|d| d.meta.logical_shape.len() != rank || !is_padded_layout(d)) {
+    if data_arms.iter().any(|d| d.meta.logical_shape.len() != rank || !crate::ops::dyn_ndarray::has_padded_layout(d)) {
         panic!(
             "a variable assigned runtime-shaped arrays of different ranks or with a compact \
              multi-dimensional layout in the two arms of a runtime `if` is not supported"

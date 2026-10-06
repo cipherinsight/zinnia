@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::builder::IRBuilder;
-use crate::types::{DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value, ValueId};
+use crate::types::{DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, SliceIndex, Value, ValueId};
 
 use super::{
     dyn_decode_coords, dyn_encode_coords, dyn_num_elements, dyn_row_major_strides,
@@ -546,6 +546,24 @@ pub fn dyn_concatenate(
         }
     }
 
+    // Inputs are made contiguous; element (c_0, ..., c_{n-1}) of an input is
+    // then at its row-major position in the buffer shape (a padded layout),
+    // or at `sum_d c_d * runtime_stride_d` (a compact multi-dimensional
+    // buffer), see the read below.
+    let arrays: Vec<DynamicNDArrayData> =
+        arrays.iter().map(|a| super::force_contiguous(b, a)).collect();
+    // NumPy requires equal extents on every axis but the concatenation
+    // axis; the output takes the first operand's runtime extents there.
+    let other_extents: Vec<(usize, ScalarValue<i64>)> = (0..ndim)
+        .filter(|&d| d != ax)
+        .map(|d| (d, runtime_extent(&arrays[0], d)))
+        .collect();
+    for arr in arrays.iter().skip(1) {
+        for (d, first) in &other_extents {
+            require_equal_extent(b, first, &runtime_extent(arr, *d), *d);
+        }
+    }
+
     // Max output shape: sum of max axis dims.
     let max_concat_dim: usize = arrays.iter().map(|a| a.meta.logical_shape[ax]).sum();
     let mut out_shape = base_shape.clone();
@@ -644,9 +662,16 @@ pub fn dyn_concatenate(
             arg_len_terms.push(term);
         }
 
+        let padded = super::has_padded_layout(arr);
+        let runtime_strides: Vec<Value> = (0..ndim)
+            .map(|d| crate::ops::dyn_ndarray::scalar_i64_to_value(
+                &arr.meta.runtime_strides[d],
+                NumberType::Integer,
+            ))
+            .collect();
         for i in 0..src_max_ax {
             let i_val = b.ir_constant_int(i as i64);
-            let in_bounds = b.ir_less_than_i(&i_val, &runtime_ax_len);
+            let along_ax = b.ir_less_than_i(&i_val, &runtime_ax_len);
 
             // Source address: i * src_stride[ax] (base for this axis position).
             let src_ax_base = i as i64 * src_ax_stride;
@@ -671,10 +696,48 @@ pub fn dyn_concatenate(
                     }
                 }
 
-                // Source: read via ir_read_memory with clamped address.
-                let src_addr_static = src_ax_base + src_other_addr;
-                let clamped_src = src_addr_static.max(0).min(src_max_len - 1);
-                let src_addr_val = b.ir_constant_int(clamped_src);
+                // Element (i, other coordinates) holds data iff every
+                // coordinate is below the input's runtime extent; the
+                // others take the default (no input cell, private or
+                // padding, reaches the output's padding).
+                let mut in_bounds = along_ax.clone();
+                for (oc, (d, _)) in other_coords.iter().zip(&other_extents) {
+                    let extent = runtime_extent(arr, *d);
+                    if extent.static_val.is_some_and(|n| (*oc as i64) < n) {
+                        continue;
+                    }
+                    let coord = b.ir_constant_int(*oc as i64);
+                    let extent_v =
+                        crate::ops::dyn_ndarray::scalar_i64_to_value(&extent, NumberType::Integer);
+                    let inside = b.ir_less_than_i(&coord, &extent_v);
+                    in_bounds = b.ir_logical_and(&in_bounds, &inside);
+                }
+
+                // Source address: the row-major position in a padded
+                // buffer, or the runtime-stride position in a compact one
+                // (clamped into the buffer; out-of-range positions are
+                // masked above).
+                let src_addr_val = if padded {
+                    let src_addr_static = src_ax_base + src_other_addr;
+                    b.ir_constant_int(src_addr_static.max(0).min(src_max_len - 1))
+                } else {
+                    let mut addr = b.ir_mul_i(&i_val, &runtime_strides[ax]);
+                    let mut oc_idx = 0;
+                    for d in 0..ndim {
+                        if d != ax {
+                            let c = b.ir_constant_int(other_coords[oc_idx] as i64);
+                            let part = b.ir_mul_i(&c, &runtime_strides[d]);
+                            addr = b.ir_add_i(&addr, &part);
+                            oc_idx += 1;
+                        }
+                    }
+                    let zero_v = b.ir_constant_int(0);
+                    let max_v = b.ir_constant_int(src_max_len - 1);
+                    let below = b.ir_less_than_i(&addr, &zero_v);
+                    let low = b.ir_select_i(&below, &zero_v, &addr);
+                    let over = b.ir_greater_than_i(&low, &max_v);
+                    b.ir_select_i(&over, &max_v, &low)
+                };
                 let src_val = crate::helpers::segment::read_typed(
                     b,
                     arr.segment_id,
@@ -720,16 +783,15 @@ pub fn dyn_concatenate(
         runtime_concat_len = b.ir_add_i(&runtime_concat_len, &runtime_ax_len);
     }
 
-    // Runtime metadata.
-    let other_prod_val = b.ir_constant_int(other_product as i64);
-    let runtime_length = b.ir_mul_i(&runtime_concat_len, &other_prod_val);
-
-    let mut runtime_shape: Vec<ScalarValue<i64>> = out_shape
-        .iter()
-        .map(|&s| ScalarValue::new(Some(s as i64), None))
-        .collect();
-    if has_dynamic_axis {
-        runtime_shape[ax] = value_to_scalar_i64(&runtime_concat_len);
+    // Runtime metadata: the concatenated extent on `ax`, the first
+    // operand's (checked equal) runtime extents elsewhere.
+    let mut runtime_shape: Vec<ScalarValue<i64>> = vec![ScalarValue::new(Some(0), None); ndim];
+    runtime_shape[ax] = value_to_scalar_i64(&runtime_concat_len);
+    let mut runtime_length = runtime_concat_len.clone();
+    for (d, extent) in &other_extents {
+        runtime_shape[*d] = extent.clone();
+        let extent_v = crate::ops::dyn_ndarray::scalar_i64_to_value(extent, NumberType::Integer);
+        runtime_length = b.ir_mul_i(&runtime_length, &extent_v);
     }
 
     let runtime_length_sv = value_to_scalar_i64(&runtime_length);
@@ -809,6 +871,30 @@ pub fn dyn_concatenate(
         },
         value_id: out_value_id,
     })
+}
+
+/// The runtime extent of axis `d` (the buffer extent when none is recorded).
+fn runtime_extent(a: &DynamicNDArrayData, d: usize) -> ScalarValue<i64> {
+    a.meta
+        .runtime_shape
+        .get(d)
+        .cloned()
+        .unwrap_or_else(|| ScalarValue::new(Some(a.meta.logical_shape[d] as i64), None))
+}
+
+/// Requires two runtime extents of axis `d` to be equal: a compile error
+/// for two different constants, an in-circuit check otherwise.
+fn require_equal_extent(b: &mut IRBuilder, x: &ScalarValue<i64>, y: &ScalarValue<i64>, d: usize) {
+    if let (Some(p), Some(q)) = (x.static_val, y.static_val) {
+        if p != q {
+            panic!("concatenate: operands have sizes {p} and {q} on axis {d}");
+        }
+        return;
+    }
+    let xv = crate::ops::dyn_ndarray::scalar_i64_to_value(x, NumberType::Integer);
+    let yv = crate::ops::dyn_ndarray::scalar_i64_to_value(y, NumberType::Integer);
+    let equal = b.ir_equal_i(&xv, &yv);
+    b.ir_assert(&equal);
 }
 
 /// Stack dynamic arrays along a new axis.
@@ -1082,257 +1168,46 @@ fn dyn_split_impl(
         }
     }
 
-    let all_static = split_values.iter().all(|v| v.int_val().is_some());
-
-    // Pre-read source segment. Force contiguity so row-major indexing
-    // below is consistent with cell ordering after a lazy transpose view.
-    let data_owned = super::force_contiguous(b, data);
-    let data = &data_owned;
-    let src_vals =
-        crate::helpers::segment::read_all_typed(b, data.segment_id, data.max_length(), data.dtype);
-    let src_strides = dyn_row_major_strides(&data.meta.logical_shape);
-
-    let mut result_arrays: Vec<Value> = Vec::with_capacity(num_chunks);
-
-    if all_static {
-        // ── Fast path: all split points are compile-time constants ──
-        let static_points: Vec<usize> = split_values
-            .iter()
-            .map(|v| v.int_val().unwrap().min(axis_len as i64).max(0) as usize)
-            .collect();
-
-        let mut ranges: Vec<(usize, usize)> = Vec::new();
-        let mut prev = 0;
-        for &sp in &static_points {
-            ranges.push((prev, sp.min(axis_len)));
-            prev = sp.min(axis_len);
-        }
-        ranges.push((prev, axis_len));
-
-        for (start, end) in &ranges {
-            let chunk_len = end - start;
-            let mut chunk_shape = data.meta.logical_shape.clone();
-            chunk_shape[ax] = chunk_len;
-            let chunk_numel: usize = chunk_shape.iter().product();
-            let chunk_strides = dyn_row_major_strides(&chunk_shape);
-
-            let mut chunk_elements = Vec::with_capacity(chunk_numel);
-            for flat in 0..chunk_numel {
-                let chunk_coords = dyn_decode_coords(flat, &chunk_shape, &chunk_strides);
-                let mut src_coords = chunk_coords.clone();
-                src_coords[ax] += start;
-                let src_flat = dyn_encode_coords(&src_coords, &src_strides);
-                chunk_elements.push(src_vals[src_flat].clone());
-            }
-
-            let segment_id =
-                crate::helpers::segment::alloc_and_write_values(b, &chunk_elements, data.dtype);
-            let mut chunk_dims = data.envelope.dims.clone();
-            chunk_dims[ax] = crate::types::Dim::new_static(&mut b.dim_table, chunk_len);
-            let chunk_bound = chunk_numel.min(data.envelope.total_bound);
-            let envelope = crate::types::Envelope::new_with_bound(chunk_dims, chunk_bound);
-
-            result_arrays.push(Value::DynamicNDArray(DynamicNDArrayData {
-                envelope,
-                dtype: data.dtype,
-                segment_id,
-                meta: DynArrayMeta {
-                    logical_shape: chunk_shape.clone(),
-                    logical_offset: 0,
-                    logical_strides: chunk_strides.clone(),
-                    runtime_length: ScalarValue::new(Some(chunk_numel as i64), None),
-                    runtime_rank: ScalarValue::new(Some(ndim as i64), None),
-                    runtime_shape: chunk_shape
-                        .iter()
-                        .map(|&s| ScalarValue::new(Some(s as i64), None))
-                        .collect(),
-                    runtime_strides: chunk_strides
-                        .iter()
-                        .map(|&s| ScalarValue::new(Some(s as i64), None))
-                        .collect(),
-                    runtime_offset: ScalarValue::new(Some(0), None),
-                },
-                value_id: ValueId::next(),
-            }));
-        }
+    // NumPy: chunk k is `a[d_k : d_{k+1}]` along the axis, with
+    // `d = [0, *split_points, len]` and Python's slice semantics (negative
+    // points count from the end, everything clamps into [0, len], a
+    // decreasing pair gives an empty chunk), `len` being the axis's
+    // runtime extent.
+    let shape_is_static = data
+        .meta
+        .runtime_shape
+        .iter()
+        .zip(&data.meta.logical_shape)
+        .all(|(rt, &n)| rt.static_val == Some(n as i64));
+    let result_arrays: Vec<Value> = if shape_is_static
+        && split_values.iter().all(|v| v.int_val().is_some())
+    {
+        let points: Vec<i64> = split_values.iter().map(|v| v.int_val().unwrap()).collect();
+        static_split_chunks(b, data, ax, &points)
     } else {
-        // ── Dynamic path: direct address computation per chunk ──
-        // For each chunk k with boundaries [start_k, end_k), output position i
-        // maps to source axis position (start_k + i). We use ir_read_memory
-        // with the computed source address — no iteration over all positions.
-        //
-        // Each chunk is allocated at max size (axis_len). Positions where
-        // i >= (end_k - start_k) get default values.
-        // Total IR ops: K * axis_len * other_product (reads + writes).
-
-        // Build boundary Values: [0, sp[0], sp[1], ..., axis_len]
-        let zero = b.ir_constant_int(0);
-        let axis_len_val = b.ir_constant_int(axis_len as i64);
-        let mut boundaries: Vec<Value> = Vec::with_capacity(num_chunks + 1);
-        boundaries.push(zero);
-        for sv in &split_values {
-            let v = if let Some(s) = sv.int_val() {
-                b.ir_constant_int(s)
-            } else {
-                sv.clone()
-            };
-            // Clamp to [0, axis_len].
-            let clamped_lo = {
-                let zero_v = b.ir_constant_int(0);
-                let is_neg = b.ir_less_than_i(&v, &zero_v);
-                b.ir_select_i(&is_neg, &zero_v, &v)
-            };
-            let clamped = {
-                let is_over = b.ir_greater_than_i(&clamped_lo, &axis_len_val);
-                b.ir_select_i(&is_over, &axis_len_val, &clamped_lo)
-            };
-            boundaries.push(clamped);
-        }
-        boundaries.push(axis_len_val);
-
-        // Non-split axes dimensions and strides.
-        let other_product: usize = data
-            .meta
-            .logical_shape
-            .iter()
-            .enumerate()
-            .filter(|&(i, _)| i != ax)
-            .map(|(_, &s)| s)
-            .product::<usize>()
-            .max(1);
-        let mut other_dims: Vec<usize> = Vec::new();
-        for (d, &s) in data.meta.logical_shape.iter().enumerate() {
-            if d != ax {
-                other_dims.push(s);
+        let split_values = match sections_val.int_val() {
+            Some(n) if !shape_is_static => {
+                runtime_section_points(b, data, ax, n as usize, allow_unequal)
             }
-        }
-        let other_strides = dyn_row_major_strides(&other_dims);
-
-        let max_chunk_shape = {
-            let mut s = data.meta.logical_shape.clone();
-            s[ax] = axis_len;
-            s
+            _ => split_values,
         };
-        let max_chunk_numel = axis_len * other_product;
-        let max_chunk_strides = dyn_row_major_strides(&max_chunk_shape);
-
-        let default_val = super::metadata::dyn_default_value(b, data.dtype);
-        let ax_stride = src_strides[ax] as i64;
-        let max_addr = (data.max_length() as i64 - 1).max(0);
-
-        for chunk_idx in 0..num_chunks {
-            let chunk_start = &boundaries[chunk_idx];
-            let chunk_end = &boundaries[chunk_idx + 1];
-
-            // chunk_len = end - start (dynamic).
-            let chunk_len = b.ir_sub_i(chunk_end, chunk_start);
-
-            // Allocate output segment with defaults.
-            let init_elements = vec![default_val.clone(); max_chunk_numel];
-            let segment_id =
-                crate::helpers::segment::alloc_and_write_values(b, &init_elements, data.dtype);
-
-            // For each output position i on the split axis, compute source
-            // address = (start_k + i) * stride[ax] + other_offset.
-            // In-bounds: i < chunk_len.
-            for i in 0..axis_len {
-                let i_val = b.ir_constant_int(i as i64);
-                let in_bounds = b.ir_less_than_i(&i_val, &chunk_len);
-
-                // source axis position = start_k + i
-                let src_axis_pos = b.ir_add_i(chunk_start, &i_val);
-                // Base address contribution from split axis.
-                let ax_stride_val = b.ir_constant_int(ax_stride);
-                let ax_addr_part = b.ir_mul_i(&src_axis_pos, &ax_stride_val);
-
-                for other_flat in 0..other_product {
-                    let other_coords = dyn_decode_coords(other_flat, &other_dims, &other_strides);
-
-                    // Compute non-split address contribution (static).
-                    let mut other_addr: i64 = 0;
-                    let mut oc_idx = 0;
-                    for d in 0..ndim {
-                        if d != ax {
-                            other_addr += other_coords[oc_idx] as i64 * src_strides[d] as i64;
-                            oc_idx += 1;
+        (0..num_chunks)
+            .map(|k| {
+                let start = if k == 0 { Some(b.ir_constant_int(0)) } else { Some(split_values[k - 1].clone()) };
+                let stop = split_values.get(k).cloned();
+                let indices: Vec<SliceIndex> = (0..ndim)
+                    .map(|d| {
+                        if d == ax {
+                            SliceIndex::Range(start.clone(), stop.clone(), None)
+                        } else {
+                            SliceIndex::Range(None, None, None)
                         }
-                    }
-                    let other_addr_val = b.ir_constant_int(other_addr);
-
-                    // Full source address = ax_addr_part + other_addr.
-                    let src_addr = b.ir_add_i(&ax_addr_part, &other_addr_val);
-
-                    // Clamp address for out-of-bounds safety.
-                    let max_addr_val = b.ir_constant_int(max_addr);
-                    let zero_val = b.ir_constant_int(0);
-                    let is_neg = b.ir_less_than_i(&src_addr, &zero_val);
-                    let clamped_lo = b.ir_select_i(&is_neg, &zero_val, &src_addr);
-                    let is_over = b.ir_greater_than_i(&clamped_lo, &max_addr_val);
-                    let clamped_addr = b.ir_select_i(&is_over, &max_addr_val, &clamped_lo);
-
-                    // Random access read from source.
-                    let src_val = crate::helpers::segment::read_typed(
-                        b,
-                        data.segment_id,
-                        &clamped_addr,
-                        data.dtype,
-                    );
-
-                    // Select: in-bounds → source value, else → default.
-                    let write_val = crate::helpers::value_ops::select_value(
-                        b,
-                        &in_bounds,
-                        &src_val,
-                        &default_val,
-                    );
-
-                    // Direct output address: i * other_product + other_flat.
-                    let out_addr = b.ir_constant_int((i * other_product + other_flat) as i64);
-                    crate::helpers::segment::write_typed(
-                        b, segment_id, &out_addr, &write_val, data.dtype,
-                    );
-                }
-            }
-
-            // Envelope and runtime metadata.
-            let mut chunk_dims = data.envelope.dims.clone();
-            chunk_dims[ax] = crate::types::Dim::new_dynamic(&mut b.dim_table, 0, axis_len);
-            let chunk_bound = max_chunk_numel.min(data.envelope.total_bound);
-            let envelope = crate::types::Envelope::new_with_bound(chunk_dims, chunk_bound);
-
-            let mut runtime_shape: Vec<ScalarValue<i64>> = data
-                .meta
-                .logical_shape
-                .iter()
-                .map(|&s| ScalarValue::new(Some(s as i64), None))
-                .collect();
-            let runtime_axis_len = b.ir_sub_i(chunk_end, chunk_start);
-            runtime_shape[ax] = value_to_scalar_i64(&runtime_axis_len);
-
-            let other_prod_val = b.ir_constant_int(other_product as i64);
-            let runtime_length = b.ir_mul_i(&runtime_axis_len, &other_prod_val);
-
-            result_arrays.push(Value::DynamicNDArray(DynamicNDArrayData {
-                envelope,
-                dtype: data.dtype,
-                segment_id,
-                meta: DynArrayMeta {
-                    logical_shape: max_chunk_shape.clone(),
-                    logical_offset: 0,
-                    logical_strides: max_chunk_strides.clone(),
-                    runtime_length: value_to_scalar_i64(&runtime_length),
-                    runtime_rank: ScalarValue::new(Some(ndim as i64), None),
-                    runtime_shape,
-                    runtime_strides: max_chunk_strides
-                        .iter()
-                        .map(|&s| ScalarValue::new(Some(s as i64), None))
-                        .collect(),
-                    runtime_offset: ScalarValue::new(Some(0), None),
-                },
-                value_id: ValueId::next(),
-            }));
-        }
-    }
+                    })
+                    .collect();
+                crate::helpers::array_ops::dyn_subscript(b, data, &indices)
+            })
+            .collect()
+    };
 
     let types = result_arrays.iter().map(|v| v.zinnia_type()).collect();
     Value::List(crate::types::CompositeData {
@@ -1341,4 +1216,104 @@ fn dyn_split_impl(
 
         value_id: ValueId::next(),
     })
+}
+
+/// The split points of `n` sections of axis `ax` with a runtime extent `L`
+/// (NumPy): `np.split` requires `L % n == 0` (else `ValueError`: no proof)
+/// and cuts at `k * (L // n)`; `np.array_split` gives the first `L % n`
+/// sections one extra element, cutting at `k * (L // n) + min(k, L % n)`.
+fn runtime_section_points(
+    b: &mut IRBuilder,
+    data: &DynamicNDArrayData,
+    ax: usize,
+    n: usize,
+    allow_unequal: bool,
+) -> Vec<Value> {
+    let extent = crate::ops::dyn_ndarray::scalar_i64_to_value(
+        &data.meta.runtime_shape[ax],
+        NumberType::Integer,
+    );
+    let n_v = b.ir_constant_int(n as i64);
+    let size = b.ir_floor_div_i(&extent, &n_v);
+    let covered = b.ir_mul_i(&size, &n_v);
+    let rest = b.ir_sub_i(&extent, &covered);
+    if !allow_unequal {
+        let zero = b.ir_constant_int(0);
+        let even = b.ir_equal_i(&rest, &zero);
+        b.ir_assert(&even);
+    }
+    (1..n)
+        .map(|k| {
+            let k_v = b.ir_constant_int(k as i64);
+            let base = b.ir_mul_i(&k_v, &size);
+            if allow_unequal {
+                let k_below = b.ir_less_than_i(&k_v, &rest);
+                let extra = b.ir_select_i(&k_below, &k_v, &rest);
+                b.ir_add_i(&base, &extra)
+            } else {
+                base
+            }
+        })
+        .collect()
+}
+
+/// The chunks of a static-shape array split at compile-time points along
+/// axis `ax`: Python slice semantics for each `a[d_k : d_{k+1}]` (module of
+/// `dyn_split_impl`), copied cell by cell.
+fn static_split_chunks(
+    b: &mut IRBuilder,
+    data: &DynamicNDArrayData,
+    ax: usize,
+    points: &[i64],
+) -> Vec<Value> {
+    let ndim = data.meta.logical_shape.len();
+    let axis_len = data.meta.logical_shape[ax] as i64;
+    let wrap = |p: i64| (if p < 0 { p + axis_len } else { p }).clamp(0, axis_len) as usize;
+    let mut bounds: Vec<usize> = vec![0];
+    bounds.extend(points.iter().map(|&p| wrap(p)));
+    bounds.push(axis_len as usize);
+
+    let data = super::force_contiguous(b, data);
+    let src_vals =
+        crate::helpers::segment::read_all_typed(b, data.segment_id, data.max_length(), data.dtype);
+    let src_strides = dyn_row_major_strides(&data.meta.logical_shape);
+    bounds
+        .windows(2)
+        .map(|w| {
+            let (start, end) = (w[0], w[1].max(w[0]));
+            let mut chunk_shape = data.meta.logical_shape.clone();
+            chunk_shape[ax] = end - start;
+            let chunk_numel: usize = chunk_shape.iter().product();
+            let chunk_strides = dyn_row_major_strides(&chunk_shape);
+            let chunk_elements: Vec<Value> = (0..chunk_numel)
+                .map(|flat| {
+                    let mut coords = dyn_decode_coords(flat, &chunk_shape, &chunk_strides);
+                    coords[ax] += start;
+                    src_vals[dyn_encode_coords(&coords, &src_strides)].clone()
+                })
+                .collect();
+            let segment_id =
+                crate::helpers::segment::alloc_and_write_values(b, &chunk_elements, data.dtype);
+            let mut chunk_dims = data.envelope.dims.clone();
+            chunk_dims[ax] = crate::types::Dim::new_static(&mut b.dim_table, end - start);
+            let envelope = crate::types::Envelope::new_with_bound(chunk_dims, chunk_numel);
+            let constant = |v: usize| ScalarValue::new(Some(v as i64), None);
+            Value::DynamicNDArray(DynamicNDArrayData {
+                envelope,
+                dtype: data.dtype,
+                segment_id,
+                meta: DynArrayMeta {
+                    logical_shape: chunk_shape.clone(),
+                    logical_offset: 0,
+                    logical_strides: chunk_strides.clone(),
+                    runtime_length: constant(chunk_numel),
+                    runtime_rank: constant(ndim),
+                    runtime_shape: chunk_shape.iter().map(|&n| constant(n)).collect(),
+                    runtime_strides: chunk_strides.iter().map(|&n| constant(n)).collect(),
+                    runtime_offset: constant(0),
+                },
+                value_id: ValueId::next(),
+            })
+        })
+        .collect()
 }
