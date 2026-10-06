@@ -20,6 +20,8 @@ pub(super) struct Units {
     pub eq_const: u64,
     /// `select(c, k, acc)` with a constant branch.
     pub select: u64,
+    /// `select(c, x, acc)` with two variable branches.
+    pub select_var: u64,
     /// `[x < y]` of two small bounded values.
     pub less_than: u64,
     /// A native array read at an index already checked (Noir; halo2-base
@@ -40,6 +42,7 @@ pub(super) fn units(target: Target) -> Units {
             add: 3,
             eq_const: 7,
             select: 7,
+            select_var: 4,
             less_than: 20,
             native_read: u64::MAX / 4,
             native_index: 0,
@@ -51,6 +54,7 @@ pub(super) fn units(target: Target) -> Units {
             add: 1,
             eq_const: 3,
             select: 1,
+            select_var: 2,
             less_than: 8,
             native_read: 3,
             native_index: 8,
@@ -126,6 +130,29 @@ pub(super) fn window_shift(dims: &[u64], axes: &[AxisCost], target: Target) -> u
 pub(super) fn element_by_onehot(n: u64, onehot_is_free: bool, target: Target) -> u64 {
     let bits = if onehot_is_free { 0 } else { onehot_cells(n, target) };
     bits + n * units(target).mul_add
+}
+
+/// One read of `n` cells at an index read `index_reads` times by element
+/// reads in the whole program (they share its equality tests): a select
+/// chain over the index's bits `[i == 1..n)` (`element::gather_by_select_chain`).
+/// `checked_below_n`: the program checks `AssertU128Lt(i, n)`. halo2-base
+/// then turns a chain of at least three links into an inner product, one
+/// multiply-add per link (`prove/halo2_base/synthesizer/plan.rs`,
+/// `OneHotChain`); otherwise each link is a select gate.
+pub(super) fn element_by_select_chain(n: u64, index_reads: u64, checked_below_n: bool, target: Target) -> u64 {
+    let u = units(target);
+    let links = n.saturating_sub(1);
+    let fused = target == Target::Halo2Base && checked_below_n && links >= 3;
+    let link = if fused { u.mul_add } else { u.select_var };
+    (links * u.eq_const).div_ceil(index_reads.max(1)) + links * link
+}
+
+/// One read of `n` cells at an index read `index_reads` times (see
+/// `element_by_select_chain`): the inner product with the bits `[i == 0..n)`
+/// (`element::gather_by_indicators`).
+pub(super) fn element_by_indicators(n: u64, index_reads: u64, target: Target) -> u64 {
+    let u = units(target);
+    (n * u.eq_const).div_ceil(index_reads.max(1)) + n * u.mul_add
 }
 
 /// A permutation scatter of `n` values: the hits (shared with the
