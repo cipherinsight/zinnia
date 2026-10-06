@@ -9,8 +9,15 @@
 //! No proof when a variance is 0 (NumPy returns nan) or when B * C >= 2^62,
 //! where sqrt(B * C) leaves the Q32 window (inputs within +-11585 always fit).
 //! The inputs get window proofs, so A, B and C are exact integers (field
-//! elements could otherwise make them any small integers, r = 3 included), and
-//! B is range-checked to 64 bits so that B * C (C < 2^132) cannot wrap the field.
+//! elements could otherwise make them any small integers, r = 3 included).
+//! B and C are range-checked to 64 bits, so t = B * C * 2^64 < 2^192 is the
+//! integer product (no field wrap) and the square root's checks
+//! (y < 2^63, t - y^2 and y^2 + 2y - t in [0, 2^64)) give y = floor(sqrt(t))
+//! and B * C < 2^62, Zinnia's domain. With B alone checked, B * C reaches
+//! 2^194 and t can wrap the field to some t mod p < 2^126 whose root the checks
+//! accept: a wrong r where NumPy has a value (`hw_check/domain_edges.json`,
+//! 0438 `wrapped_root`: r = 13.7 for NumPy's 0.0). Checking C costs the same
+//! as checking B * C < 2^62 at this case's lookup width (6 bits).
 
 use crate::prelude::*;
 
@@ -35,6 +42,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let b = centred(ctx, sxx, sx, sx);
     let c = centred(ctx, syy, sy, sy);
     q.range.range_check(ctx, b, 64);
+    q.range.range_check(ctx, c, 64);
 
     let bc = q.gate.mul(ctx, b, c);
     let bc = q.int_to_float(ctx, bc);

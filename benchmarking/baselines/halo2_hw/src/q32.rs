@@ -338,11 +338,34 @@ impl Q32 {
     }
 
     /// `|a|` (for floats and integers; `|-2^63|` leaves the window and is
-    /// returned unbounded).
+    /// returned unbounded). For a divisor's magnitude, where that is fine; a
+    /// kernel's `np.abs` / `abs` is [`Q32::abs_int64`].
     pub fn abs(&self, ctx: &mut Ctx, a: I64) -> Cell {
         let neg = self.is_neg(ctx, a);
         let minus_a = self.gate.neg(ctx, a.cell);
         self.gate.select(ctx, minus_a, a.cell, neg)
+    }
+
+    /// `np.abs` / `abs` of an int64 or a Q32 value: `|a|`, with no proof when
+    /// `|a| >= 2^63`. `|i64::MIN| = 2^63` overflows int64 (NumPy wraps it back
+    /// to `i64::MIN`); like Zinnia, the baselines have no proof there.
+    ///
+    /// Constraints: a sign bit `s`, `m = a (1 - 2s)` and `m` in `[0, 2^63)`.
+    /// For `a != 0` the wrong sign gives `m = p - |a|`, far above `2^63`, so
+    /// `s` is pinned; at `a = 0` both signs give `m = 0`. `a` needs no window
+    /// proof of its own: the check puts it in `(-2^63, 2^63)`.
+    pub fn abs_int64(&self, ctx: &mut Ctx, a: Cell) -> Cell {
+        let negative = signed(a.value()) < 0;
+        self.abs_int64_with(ctx, a, Fr::from(negative as u64))
+    }
+
+    fn abs_int64_with(&self, ctx: &mut Ctx, a: Cell, s: Fr) -> Cell {
+        let s = ctx.load_witness(s);
+        self.gate.assert_bit(ctx, s);
+        let sign = self.gate.mul_add(ctx, s, Constant(-Fr::from(2)), Constant(Fr::ONE));
+        let m = self.gate.mul(ctx, a, sign);
+        self.range.range_check(ctx, m, 63);
+        m
     }
 
     // -------------------------------------------------------------- arithmetic
@@ -983,6 +1006,24 @@ mod tests {
             let big = ctx.load_witness(fe(1 << 63));
             q.bound(ctx, big);
         }));
+    }
+
+    #[test]
+    fn abs_int64_pins_the_magnitude_and_rejects_int64_min() {
+        let run = |a: i128, s: u64| accepts(move |q, ctx| {
+            let a = ctx.load_witness(fe(a));
+            q.abs_int64_with(ctx, a, Fr::from(s));
+        });
+        let max = i64::MAX as i128;
+        for a in [-5i128, 5, 0, max, -max] {
+            assert!(run(a, (a < 0) as u64), "|{a}|");
+        }
+        // The flipped sign (m = p - |a|), except at 0 where both signs agree.
+        assert!(!run(-5, 0) && !run(5, 1) && run(0, 1));
+        // |i64::MIN| = 2^63 and anything outside the window, with either sign.
+        for a in [i64::MIN as i128, 1 << 63, -(1 << 64)] {
+            assert!(!run(a, 0) && !run(a, 1), "|{a}|");
+        }
     }
 
     #[test]

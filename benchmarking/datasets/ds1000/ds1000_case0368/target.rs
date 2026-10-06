@@ -4,8 +4,8 @@
 //! `atol = 0`, `y = a[0, j]`.
 //! Row 0 against itself is always close (`0 <= rtol * |y|`) and is skipped.
 //! The tolerance `rtol * |a[0, j]|` (a rescaled product) is computed once per
-//! column; each of the 6 other values costs one window bound of `x - y`, its
-//! sign test, and one comparison. `.all()` is "no value is far".
+//! column; each of the 6 other values costs one magnitude `|x - y|` (one range
+//! check) and one comparison. `.all()` is "no value is far".
 
 use crate::prelude::*;
 
@@ -17,9 +17,8 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    let ab = q.load_floats_bounded(ctx, &a);
-    let a: Vec<Cell> = ab.iter().map(|x| x.cell).collect();
-    let tol: Vec<Cell> = (0..N).map(|j| tolerance(&q, ctx, ab[j])).collect();
+    let a = q.load_floats(ctx, &a);
+    let tol: Vec<Cell> = (0..N).map(|j| tolerance(&q, ctx, a[j])).collect();
     let mut far = Vec::with_capacity((N - 1) * N);
     for i in 1..N {
         for j in 0..N {
@@ -33,18 +32,19 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
 }
 
 /// `rtol * |y|` as a rescaled product; it lies in `[0, 2^63)` because `|y|`
-/// does and the rescale is the floor of a non-negative product.
-fn tolerance(q: &Q32, ctx: &mut Ctx, y: I64) -> Cell {
-    let abs_y = q.abs(ctx, y);
+/// does and the rescale is the floor of a non-negative product. `|y|` is
+/// `q.abs_int64`: `y = -2^31` (Q32 code `i64::MIN`) has no proof, as in Zinnia.
+fn tolerance(q: &Q32, ctx: &mut Ctx, y: Cell) -> Cell {
+    let abs_y = q.abs_int64(ctx, y);
     q.mul(ctx, abs_y, Constant(fe(quantize(RTOL)))).cell
 }
 
-/// `!isclose(x, y)`, i.e. `tol < |x - y|`. Both sides lie in `[0, 2^64)`
-/// (`|x - y| <= 2^63` once `x - y` is in the window), as halo2-base's 64-bit
-/// `is_less_than` requires.
+/// `!isclose(x, y)`, i.e. `tol < |x - y|`. `q.abs_int64` proves
+/// `|x - y| < 2^63` (a difference of Q32 code `-2^63` or outside the window has
+/// no proof, as in Zinnia), so both sides lie in `[0, 2^64)`, as halo2-base's
+/// 64-bit `is_less_than` requires.
 fn is_far(q: &Q32, ctx: &mut Ctx, x: Cell, y: Cell, tol: Cell) -> Cell {
     let diff = q.sub(ctx, x, y);
-    let diff = q.bound(ctx, diff);
-    let gap = q.abs(ctx, diff);
+    let gap = q.abs_int64(ctx, diff);
     q.range.is_less_than(ctx, tol, gap, 64)
 }
