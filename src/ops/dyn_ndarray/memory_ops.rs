@@ -78,6 +78,10 @@ pub(crate) fn compact_by_mask(
 
     let is_const_zero = |v: &Value| v.int_val() == Some(0);
     let zero_default = is_zero_scalar(default_val);
+    // With a zero default, the `(one-hot entry, deposit)` terms of each slot,
+    // summed after the network so that each slot's sum is one contiguous
+    // multiply-add chain (backends chain consecutive multiply-adds).
+    let mut terms: Vec<Vec<(Value, Value)>> = vec![Vec::new(); total];
 
     for i in 0..leading_total {
         let mask_bool = ensure_bool(b, &mask_cells[i]);
@@ -98,11 +102,11 @@ pub(crate) fn compact_by_mask(
             }
             for (t, dep) in deposit.iter().enumerate() {
                 let slot = &acc[j * trailing_total + t];
-                acc[j * trailing_total + t] = if zero_default {
-                    add_weighted(b, slot, &row[j], dep)
+                if zero_default {
+                    terms[j * trailing_total + t].push((row[j].clone(), dep.clone()));
                 } else {
-                    crate::helpers::value_ops::select_value(b, &row[j], dep, slot)
-                };
+                    acc[j * trailing_total + t] = crate::helpers::value_ops::select_value(b, &row[j], dep, slot);
+                }
             }
         }
 
@@ -119,6 +123,11 @@ pub(crate) fn compact_by_mask(
 
         let inc = b.ir_select_i(&mask_bool, &one, &zero);
         kept_rows = b.ir_add_i(&kept_rows, &inc);
+    }
+    for (slot, slot_terms) in terms.into_iter().enumerate() {
+        for (hit, dep) in slot_terms {
+            acc[slot] = add_weighted(b, &acc[slot], &hit, &dep);
+        }
     }
 
     Compaction { acc, kept_rows }
