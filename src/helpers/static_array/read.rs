@@ -128,44 +128,6 @@ fn read_at_scan_result(
     Some(scalar_i64_to_value(&value_to_scalar_i64(&out), dtype))
 }
 
-/// A read at checked indices of which exactly one is runtime, from an array
-/// whose cells are known values (`IRBuilder::static_array_payload`): a read
-/// placeholder of the memory family over the line along that axis
-/// (`lower::memory::read_lane`), whose construction the layer chooses per
-/// target. `None` otherwise (the caller reads through the segment).
-fn read_line(
-    b: &mut IRBuilder,
-    segment_id: u32,
-    base_offset: usize,
-    strides: &[usize],
-    shape: &[usize],
-    indices: &[Value],
-    dtype: NumberType,
-) -> Option<Value> {
-    let mut dynamic = indices.iter().enumerate().filter(|(_, v)| v.int_val().is_none());
-    let (axis, index) = dynamic.next()?;
-    if dynamic.next().is_some() {
-        return None;
-    }
-    if b.static_array_product_provenance.contains_key(&segment_id) {
-        super::base::force_static_array_product_provenance(b, segment_id);
-    }
-    let cells = b.static_array_payload.get(&segment_id)?;
-    let fixed: usize = base_offset
-        + indices
-            .iter()
-            .enumerate()
-            .filter(|(ax, _)| *ax != axis)
-            .map(|(ax, v)| v.int_val().expect("static") as usize * strides[ax])
-            .sum::<usize>();
-    let line: Vec<Value> = (0..shape[axis]).map(|k| cells.get(fixed + k * strides[axis]).cloned()).collect::<Option<_>>()?;
-    let out = crate::lower::memory::read_lane(b, &line, index)?;
-    if b.is_bool_segment(segment_id) {
-        b.record_bool_cell(&out);
-    }
-    Some(scalar_i64_to_value(&value_to_scalar_i64(&out), dtype))
-}
-
 /// Build a runtime address from `offset + sum_k(idx[k] * strides[k])`.
 fn compute_addr(
     b: &mut IRBuilder,
@@ -227,25 +189,25 @@ struct GatherAxis {
 }
 
 /// Runtime-index reads of a static array whose cells are known values
-/// (`IRBuilder::static_array_payload`), as select chains instead of a
-/// memory read.
+/// (`IRBuilder::static_array_payload`), as element reads over those cells
+/// instead of a memory read.
 ///
 /// `cells[base + sum_k i_k * stride_k]` is selected one index axis at a
 /// time, outermost axis last: for the inner axes the selection is a
 /// "plane" `cells[base' + ...]`, cached per (base', inner indices), so reads
 /// that differ only in their outer indices share their inner selections
-/// (a 2-D gather costs one chain per distinct row and column index instead
-/// of one chain over the product of the two axes per read). Each chain
-/// starts from coordinate 0 and selects coordinate `p` under `index == p`.
+/// (a 2-D gather costs one selection per distinct row and column index
+/// instead of one over the product of the two axes per read). Each
+/// selection over an axis is an element placeholder
+/// (`lower::gather::checked_element_lane`) over the axis's candidates; the
+/// array lowering layer reads it per target (a select chain over the
+/// index's equality bits, or their inner product with the candidates).
 ///
 /// Soundness: every index is wrapped and bounds-checked on its axis before
-/// it reaches the gather, so exactly one coordinate test holds per axis and
-/// the chain yields the indexed cell; the equality tests are shared by
-/// every chain over the same index.
+/// it reaches the gather (where the read runs), which is the element
+/// placeholder's precondition.
 struct PayloadGather {
     cells: Vec<Value>,
-    dtype: NumberType,
-    hits: std::collections::HashMap<(crate::types::StmtId, usize), Value>,
     planes: std::collections::HashMap<(i64, Vec<crate::types::StmtId>), Value>,
 }
 
@@ -263,8 +225,6 @@ impl PayloadGather {
         let cells = b.static_array_payload.get(&segment_id)?.clone();
         Some(Self {
             cells,
-            dtype,
-            hits: std::collections::HashMap::new(),
             planes: std::collections::HashMap::new(),
         })
     }
@@ -273,45 +233,6 @@ impl PayloadGather {
     fn affordable(axes: &[GatherAxis]) -> bool {
         let choices: usize = axes.iter().map(|a| a.len).product();
         !axes.is_empty() && choices > 0 && choices <= SMALL_DYNAMIC_SINGLE_READ_SELECT_LIMIT
-    }
-
-    fn hit(&mut self, b: &mut IRBuilder, index: &Value, coord: usize) -> Option<Value> {
-        let key = (index.stmt_id()?, coord);
-        if let Some(hit) = self.hits.get(&key) {
-            return Some(hit.clone());
-        }
-        let coord_v = b.ir_constant_int(coord as i64);
-        let hit = b.ir_equal_i(index, &coord_v);
-        self.hits.insert(key, hit.clone());
-        Some(hit)
-    }
-
-    /// A read with one runtime axis: `cells[base + index * stride]` as a
-    /// read placeholder over the line along that axis
-    /// (`lower::memory::read_lane`), whose construction the layer chooses;
-    /// a line of consecutive sort outputs is read by the sort instead
-    /// (`sorted_output_at_index`). With several runtime axes, the select
-    /// chains of [`Self::read`]. `None` as for `read`.
-    fn read_access(&mut self, b: &mut IRBuilder, base: i64, axes: &[GatherAxis]) -> Option<Value> {
-        let [axis] = axes else {
-            return self.read(b, base, axes);
-        };
-        let base = usize::try_from(base).ok()?;
-        if let Some(output) = sorted_output_at_index(b, &self.cells, base, axis.stride, axis.len, &axis.index) {
-            return Some(output);
-        }
-        let key = (base as i64, vec![axis.index.stmt_id()?]);
-        if let Some(read) = self.planes.get(&key) {
-            return Some(read.clone());
-        }
-        let line: Vec<Value> =
-            (0..axis.len).map(|coord| self.cells.get(base + coord * axis.stride).cloned()).collect::<Option<_>>()?;
-        let read = match crate::lower::memory::read_lane(b, &line, &axis.index) {
-            Some(read) => read,
-            None => return self.read(b, base as i64, axes),
-        };
-        self.planes.insert(key, read.clone());
-        Some(read)
     }
 
     /// `cells[base + sum_k axes[k].index * axes[k].stride]`, or `None` when
@@ -331,14 +252,15 @@ impl PayloadGather {
         if let Some(plane) = self.planes.get(&key) {
             return Some(plane.clone());
         }
-        let mut acc = self.read(b, base, inner)?;
-        for coord in 1..outer.len {
-            let candidate = self.read(b, base + (coord * outer.stride) as i64, inner)?;
-            let hit = self.hit(b, &outer.index, coord)?;
-            acc = select_typed(b, self.dtype, &hit, &candidate, &acc);
-        }
-        self.planes.insert(key, acc.clone());
-        Some(acc)
+        let candidates = (0..outer.len)
+            .map(|coord| self.read(b, base + (coord * outer.stride) as i64, inner))
+            .collect::<Option<Vec<Value>>>()?;
+        let plane = match candidates.as_slice() {
+            [only] => only.clone(),
+            _ => crate::lower::gather::checked_element_lane(b, &candidates, &outer.index),
+        };
+        self.planes.insert(key, plane.clone());
+        Some(plane)
     }
 }
 
@@ -1016,9 +938,6 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
         }
         if dtype != NumberType::Complex {
             if let Some(out) = read_at_scan_result(b, segment_id, offset, &strides, &shape, &idx_vals, dtype) {
-                return out;
-            }
-            if let Some(out) = read_line(b, segment_id, offset, &strides, &shape, &idx_vals, dtype) {
                 return out;
             }
         }
@@ -2757,7 +2676,7 @@ fn multidim_subscript_static_array(
                 // read_leaf_at_flat takes a base+rel; pass abs as 0+abs.
                 leaves.push(read_leaf_at_flat(b, segment_id, 0, flat_idx, dtype));
             }
-        } else if let Some(v) = gather.as_mut().and_then(|g| g.read_access(b, src_flat, &gather_axes)) {
+        } else if let Some(v) = gather.as_mut().and_then(|g| g.read(b, src_flat, &gather_axes)) {
             leaves.push(v);
         } else {
             let static_part = b.ir_constant_int(src_flat);

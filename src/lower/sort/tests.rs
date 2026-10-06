@@ -190,6 +190,39 @@ fn packed_network_is_the_stable_argsort() {
     }
 }
 
+/// Rank selectors give NumPy's stable sort, argsort and payload gather for
+/// every length up to 5 (products for n <= 3, rank equality tests above), on
+/// every input with ties of three values, for every output kind, constant
+/// and runtime ranks (out of range: no proof).
+#[test]
+fn rank_selectors_are_the_stable_sort() {
+    for n in 1..=5u32 {
+        // Payload lanes first: a sort starts at its first lane, after the
+        // payload's inputs (`test_support::sort_graph` reads them there).
+        let payloads: Vec<Output> = (0..n).map(Output::Payload).collect();
+        let mixed: Vec<Output> = payloads.iter().copied().chain(every_output(n)).collect();
+        for code in 0..3i64.pow(n) {
+            let values: Vec<i64> = (0..n).map(|j| (code / 3i64.pow(j)) % 3 - 1).collect();
+            assert_computes_numpy(&values, &every_output(n), Forced::RankSelectors);
+            assert_computes_numpy(&values, &mixed, Forced::RankSelectors);
+        }
+        for r in [0, i64::from(n) - 1, -1, i64::from(n)] {
+            assert_computes_numpy(&TIED[..n as usize], &[Output::ValueAt(r), Output::IndexAt(r)], Forced::RankSelectors);
+        }
+    }
+    assert_computes_numpy(&TIED, &every_output(TIED.len() as u32), Forced::RankSelectors);
+}
+
+/// The 0358 shape: three elements carrying a payload of nine lines. On Noir
+/// the rank selectors (3 comparisons, 9 products per rank) cost less than
+/// the network's 27 payload exchanges.
+#[test]
+fn a_small_sort_carrying_a_wide_payload_uses_rank_selectors_on_noir() {
+    let mut demand = demand(3, &[], &[], 0);
+    demand.payloads = vec![(0..3).collect(); 9];
+    assert_eq!(choose_plan(&demand, &unit_costs(Target::Noir)).0, Plan::RankSelectors);
+}
+
 #[test]
 fn runtime_ranks_are_the_stable_sort_and_out_of_range_has_no_proof() {
     for forced in [Forced::Batcher, Forced::Permutation, Forced::Runs] {
