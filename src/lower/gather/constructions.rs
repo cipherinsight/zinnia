@@ -1,18 +1,20 @@
 //! The gather family's constructions over `IR::ArrayOp` placeholders.
 //!
 //! Operators (`OpKind`): `FirstSet`, `LastSet`, `ArgmaxOfFlags` (a position
-//! of a flag vector), `Window` (a slice with runtime bounds) and `Element`
-//! (a read at a runtime index whose value is a scan's result). Each
-//! construction below names the generator it emits and its cost formula
-//! (`cost.rs`); the generators' doc comments carry the preconditions,
-//! postconditions and soundness arguments.
+//! of a flag vector), `PermutationScatter` (`c[p] = v` for a permutation
+//! `p`), `Window` (a slice with runtime bounds) and `Element` (a read at a
+//! runtime index with a known one-hot). Each construction below names the
+//! generator it emits and its cost formula (`cost.rs`); the generators' doc
+//! comments carry the preconditions, postconditions and soundness
+//! arguments.
 //!
-//! A scan by running products also produces the shared value [`ENCODING`]
-//! (its result's one-hot and thermometer). A window or an element read
-//! whose index is that result (plus a constant) offers a second candidate
-//! that consumes it instead of building indicators by equality tests and
-//! comparisons; the selection weighs the pair against the cheaper scan
-//! (a select chain) with the self-contained window or read.
+//! A scan by running products, and a permutation scatter of `arange`, also
+//! produce the shared value [`ENCODING`] (each lane's one-hot, and a scan's
+//! thermometer). A window or an element read whose index is such a lane
+//! (plus a constant) offers a second candidate that consumes it instead of
+//! building indicators by equality tests and comparisons; the selection
+//! weighs the pair against the cheaper scan (a select chain) with the
+//! self-contained window or read.
 
 use std::any::Any;
 use std::rc::Rc;
@@ -119,27 +121,11 @@ impl Emitter for ScanEmitter {
 /// `position` of a group whose producer may offer `ENCODING` (a scan, or a
 /// permutation scatter of `k + c'`).
 fn encoding_source(cx: &Context, stmt: StmtId) -> Option<(GroupId, usize, i64)> {
-    let mut stmt = stmt;
-    let mut offset = 0i64;
-    for _ in 0..8 {
-        if let Some(group) = cx.group_of_lane(stmt) {
-            let encoded = ScanKind::of(group.kind).is_some() || scatter_offset(cx, group).is_some();
-            let position = group.lanes.iter().find(|l| l.stmt == stmt)?.position? as usize;
-            return encoded.then_some((group.id, position, offset));
-        }
-        let s = cx.stmt(stmt);
-        let constant = |id: StmtId| match cx.stmt(id).ir {
-            IR::ConstantInt { value } => Some(value),
-            _ => None,
-        };
-        (stmt, offset) = match (&s.ir, s.arguments.as_slice()) {
-            (IR::AddI, [x, c]) if constant(*c).is_some() => (*x, offset + constant(*c)?),
-            (IR::AddI, [c, x]) if constant(*c).is_some() => (*x, offset + constant(*c)?),
-            (IR::SubI, [x, c]) if constant(*c).is_some() => (*x, offset - constant(*c)?),
-            _ => return None,
-        };
-    }
-    None
+    let (root, offset) = super::strip_constant_offset(&cx.graph.stmts, stmt);
+    let group = cx.group_of_lane(root)?;
+    let encoded = ScanKind::of(group.kind).is_some() || scatter_offset(cx, group).is_some();
+    let position = group.lanes.iter().find(|l| l.stmt == root)?.position? as usize;
+    encoded.then_some((group.id, position, offset))
 }
 
 /// `c` when `group` is a permutation scatter of the values `k + c`.

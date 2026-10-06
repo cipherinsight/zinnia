@@ -40,17 +40,16 @@ def test_is_permutation_atom_emitted_with_correct_payload():
 
 
 def test_is_permutation_witness_emits_quadratic_chain():
-    """For N=4, the witness emitter emits:
-    - 4 GteI (range lower) + 4 LtI (range upper) + 4*(4-1)/2 = 6 NeI
-      (injectivity pairs)
-    - 4 + 4 + 6 = 14 IR::Assert
+    """For N=4, the witness emitter checks that every position is hit exactly
+    once: 4 x 4 = 16 hits `p[k] == j` (EqI against constants), one sum per
+    `j`, and 4 asserted `sum == 1` (EqI under an Assert), which proves the
+    entries are in [0, 4) and distinct.
     """
     stmts = _dump_ir(_perm_input)
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
-    assert classes.count("GreaterThanOrEqualIIR") >= 4
-    assert classes.count("LessThanIIR") >= 4
-    assert classes.count("NotEqualIIR") >= 6
-    assert classes.count("AssertIR") >= 14
+    assert classes.count("EqualIIR") >= 4 * 4 + 4
+    assert classes.count("AddIIR") >= 4 * 3
+    assert classes.count("AssertIR") >= 4
 
 
 # ── fixed_point_count: atom + indicator sum chain ────────────────────────

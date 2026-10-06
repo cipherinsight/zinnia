@@ -40,6 +40,7 @@ pub use scan::ScanKind;
 pub use semantics::GatherSemantics;
 
 use crate::builder::IRBuilder;
+use crate::ir::IRStatement;
 use crate::ir_defs::IR;
 use crate::lower::{ArrayOp, OpKind};
 use crate::optim::predicates::formula::{BoolOp, CmpOp, ContractTerm, ContractVar};
@@ -172,25 +173,38 @@ pub fn scan_bounds_ordered(b: &IRBuilder, start: &Value, stop: &Value) -> bool {
 }
 
 /// `(lane, c)` when `v` is a gather placeholder's lane `lane` plus the
-/// constant `c` (through `+`/`-` of constants).
+/// constant `c`.
 fn lane_source(b: &IRBuilder, v: &Value) -> Option<(StmtId, i64)> {
-    let mut stmt = v.stmt_id()?;
-    let mut offset = 0i64;
+    let (root, offset) = strip_constant_offset(&b.stmts, v.stmt_id()?);
+    matches!(b.stmts.get(root as usize)?.ir, IR::ArrayOp(_)).then_some((root, offset))
+}
+
+/// `(r, c)` with `stmt = r + c` for a constant `c`, through `+` and `-` of
+/// constants (`r` is `stmt` itself when there are none). `stmts` holds
+/// every statement by id (an `IRGraph`'s or an `IRBuilder`'s).
+pub(super) fn strip_constant_offset(stmts: &[IRStatement], stmt: StmtId) -> (StmtId, i64) {
+    let constant = |id: StmtId| match stmts.get(id as usize).map(|s| &s.ir) {
+        Some(IR::ConstantInt { value }) => Some(*value),
+        _ => None,
+    };
+    let (mut stmt, mut offset) = (stmt, 0i64);
     for _ in 0..8 {
-        let s = b.stmts.get(stmt as usize)?;
-        let constant = |id: StmtId| match b.stmts.get(id as usize).map(|s| &s.ir) {
-            Some(IR::ConstantInt { value }) => Some(*value),
-            _ => None,
+        let Some(s) = stmts.get(stmt as usize) else { break };
+        let step = match s.arguments.as_slice() {
+            [x, c] if matches!(s.ir, IR::AddI) && constant(*c).is_some() => (*x, constant(*c)),
+            [c, x] if matches!(s.ir, IR::AddI) && constant(*c).is_some() => (*x, constant(*c)),
+            [x, c] if matches!(s.ir, IR::SubI) && constant(*c).is_some() => (*x, constant(*c).map(|c| -c)),
+            _ => break,
         };
-        (stmt, offset) = match (&s.ir, s.arguments.as_slice()) {
-            (IR::ArrayOp(_), _) => return Some((stmt, offset)),
-            (IR::AddI, [x, c]) if constant(*c).is_some() => (*x, offset + constant(*c)?),
-            (IR::AddI, [c, x]) if constant(*c).is_some() => (*x, offset + constant(*c)?),
-            (IR::SubI, [x, c]) if constant(*c).is_some() => (*x, offset - constant(*c)?),
-            _ => return None,
-        };
+        match step {
+            (x, Some(c)) => match offset.checked_add(c) {
+                Some(sum) => (stmt, offset) = (x, sum),
+                None => break,
+            },
+            _ => break,
+        }
     }
-    None
+    (stmt, offset)
 }
 
 /// The fact `lo <= v <= hi`, which every construction's result satisfies.
