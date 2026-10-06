@@ -5,7 +5,8 @@
 // For sorted xs, (xs > e).argmax() is the number c of grades <= e whenever
 // some grade exceeds e, so every branch equals c / 50 (c = 0 below xs[0],
 // c = 50 from xs[-1] on), ties included. The circuit counts c directly (no
-// sort) and returns floor(c * 2^32 / 50), the Q32 value of ys[c - 1] = c / 50.
+// sort) and returns floor((c * 2^32 + 25) / 50) = round(c / 50 * 2^32), the
+// kernel's rounded Q32 constant ys[c - 1] = c / 50.
 // e is compared as the float e * 2^32, which must lie in the window
 // (-2^31 <= e < 2^31).
 // @outputs: float[5]
@@ -27,7 +28,7 @@ fn main(grades: [Field; 50], eval: [Field; 5]) -> pub [Field; 5] {
         for i in 0..50 {
             c += (w[i] <= e) as Field;
         }
-        result[k] = divmod_pos(c * SCALE, 50).0;
+        result[k] = divmod_pos(c * SCALE + 25, 50).0;
     }
     result
 }

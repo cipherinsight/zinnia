@@ -411,6 +411,44 @@ fn sqrt_of_an_asserted_non_negative_needs_no_sign() {
     assert_rejected(execute(&graph, &float_witness(&[], &[("x", -1e-9)])));
 }
 
+/// `np.sqrt(x)` of an input with its domain check: the precondition
+/// `x >= 0` emits no check of its own (the root's `isqrt_floor` admits no
+/// negative radicand of a window value, `crate::prove::guards`), while
+/// `x >= 1.0` (not implied by the root) keeps its check. Results equal the
+/// mock; negative inputs are rejected.
+#[test]
+fn sqrt_preconditions_are_proven_by_the_root() {
+    if !toolchain_present(false) {
+        return;
+    }
+    let build = |bound: f64| {
+        let mut g = Graph::default();
+        let x = g.push(IR::ReadFloat { path: InputPath::new("x", vec![]), is_public: false }, &[]);
+        let (min, max) = (g.push(IR::ConstantInt { value: i64::MIN }, &[]), g.push(IR::ConstantInt { value: i64::MAX }, &[]));
+        let above = g.push(IR::GteI, &[x, min]);
+        g.push(IR::Assert, &[above]);
+        let below = g.push(IR::LteI, &[x, max]);
+        g.push(IR::Assert, &[below]);
+        let lo = g.push(IR::ConstantFloat { value: bound }, &[]);
+        let holds = g.push(IR::GteF, &[x, lo]);
+        g.push(IR::Assert, &[holds]);
+        let root = g.push(IR::SqrtF, &[x]);
+        g.push(IR::ExposePublicF, &[root]);
+        g.finish()
+    };
+    let (guarded, checked) = (build(0.0), build(1.0));
+    let honest = float_witness(&[], &[("x", 2.0)]);
+    let checks = |graph: &IRGraph| emit_circuit(graph, &honest, &ProvingParams::default()).unwrap().main_nr.matches("assert_max_bit_size").count();
+    assert_eq!(checks(&guarded) + 1, checks(&checked), "the root's precondition kept a check");
+    for value in [2.0, 0.0, 1e-9, 1.5e9] {
+        let w = float_witness(&[], &[("x", value)]);
+        assert_eq!(execute(&guarded, &w).unwrap(), mock_outputs(&guarded, &w).1, "sqrt({value})");
+    }
+    assert_rejected(execute(&guarded, &float_witness(&[], &[("x", -1.0)])));
+    assert_rejected(execute(&guarded, &float_witness(&[], &[("x", -1e-9)])));
+    assert_rejected(execute(&guarded, &float_witness(&[], &[("x", -1.5e9)])));
+}
+
 /// `x / d` as the builder emits it: the precondition `d != 0` asserted
 /// first. The assertion is `assert(d != 0)`; the division then uses `d`'s
 /// `sign_abs` pair without the zero-divisor mapping, one pair for every
@@ -1153,4 +1191,48 @@ fn insert_hints_are_pinned_in_noir() {
         let honest: Vec<i64> = sites.iter().map(|s| s.honest).collect();
         assert_rejected(execute(&graph, &as_witness(&with_hints(&case, &sites, &honest))));
     }
+}
+
+/// A running argmax (a chain of selects on comparison bits) and an `any`
+/// (a chain of ORs) are written in the forms Noir lowers with fewest gates:
+/// a select on a comparison bit `c` as `f - c * f + c * t`, an OR as
+/// `a + (1 - a) * b`. Both are the polynomials of the textbook forms, so the
+/// answers are unchanged; this checks the text and the answers.
+#[test]
+fn select_chains_and_or_chains_use_the_cheaper_forms() {
+    let mut g = Graph::default();
+    let xs: Vec<u32> = (0..4).map(|i| g.read_int(&format!("x{i}"))).collect();
+    let zero = g.int(0);
+    let (mut best, mut best_idx, mut any) = (xs[0], zero, g.push(IR::GtI, &[xs[0], zero]));
+    for (i, x) in xs.iter().enumerate().skip(1) {
+        let idx = g.int(i as i64);
+        let greater = g.push(IR::GtI, &[*x, best]);
+        best = g.push(IR::SelectI, &[greater, *x, best]);
+        best_idx = g.push(IR::SelectI, &[greater, idx, best_idx]);
+        let positive = g.push(IR::GtI, &[*x, zero]);
+        any = g.push(IR::LogicalOr, &[any, positive]);
+    }
+    g.expose(best_idx);
+    g.expose(any);
+    let graph = g.finish();
+    let w = |v: [i64; 4]| witness(&[("x0", v[0]), ("x1", v[1]), ("x2", v[2]), ("x3", v[3])]);
+    let emitted = emit_circuit(&graph, &w([1, 5, 5, -2]), &ProvingParams::default()).unwrap();
+    let terms: Vec<Vec<&str>> = emitted
+        .main_nr
+        .lines()
+        .filter_map(|l| l.split(" = ").nth(1))
+        .map(|rhs| rhs.trim_end_matches(';').split(' ').collect())
+        .collect();
+    // `f - c * f + c * t`: two value selects (the last value is unused)
+    // and two index selects (the first is `c * t`, its `f` is 0)
+    let selects = terms.iter().filter(|t| t.len() == 9 && t[1] == "-" && t[4] == t[0] && t[5] == "+" && t[6] == t[2]);
+    // `a + (1 - a) * b`
+    let ors = terms.iter().filter(|t| t.len() == 7 && t[2] == "(1" && t[4] == format!("{})", t[0]));
+    assert_eq!((selects.count(), ors.count()), (4, 3), "{}", emitted.main_nr);
+    if !toolchain_present(false) {
+        return;
+    }
+    assert_eq!(execute(&graph, &w([1, 5, 5, -2])).unwrap(), vec![1, 1]);
+    assert_eq!(execute(&graph, &w([-3, -1, -7, -1])).unwrap(), vec![1, 0]);
+    assert_eq!(execute(&graph, &w([-3, -4, -7, 2])).unwrap(), vec![3, 1]);
 }

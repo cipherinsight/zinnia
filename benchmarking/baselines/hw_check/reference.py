@@ -33,10 +33,18 @@ def _identity_decorator(fn=None, *args, **kwargs):
     return lambda f: f
 
 
+def _condition_decorator(*_conditions):
+    """`@requires(lambda ...: ...)` / `@ensures(...)`: the condition is a
+    compile-time contract, never called; the decorated function is unchanged."""
+    return lambda f: f
+
+
 def _fake_zinnia() -> types.ModuleType:
     mod = types.ModuleType("zinnia")
-    for name in ("zk_circuit", "zk_chip", "requires", "ensures"):
+    for name in ("zk_circuit", "zk_chip"):
         setattr(mod, name, _identity_decorator)
+    for name in ("requires", "ensures"):
+        setattr(mod, name, _condition_decorator)
     for name in ("Float", "Integer", "Boolean", "Array", "Public", "Private"):
         setattr(mod, name, _Inert())
     mod.__all__ = [n for n in dir(mod) if not n.startswith("_")]

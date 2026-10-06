@@ -86,6 +86,7 @@ pub fn emit_circuit(
     emitter.asserted_comparisons = asserted_comparisons(ir);
     emitter.implied_comparisons = implied_comparisons(ir, &emitter.asserted_comparisons);
     emitter.multiplied = multiplied(ir);
+    emitter.root_guards = crate::prove::guards::root_guards(ir);
     interpret_ir(ir, &mut emitter)?;
 
     let main_nr = render_main_nr(&input_params, &emitter);
@@ -670,6 +671,8 @@ pub struct NoirEmitter<'a> {
     write_version: HashMap<u32, u64>,
     /// Comparisons used only by asserts (see `asserted_comparisons`).
     asserted_comparisons: HashSet<u32>,
+    /// Asserted `x >= 0` with a later `sqrt(x)` (`crate::prove::guards`).
+    root_guards: HashSet<u32>,
     /// Cells an emitted `assert(x != 0)` proves non-zero.
     nonzero: HashSet<String>,
     /// `out -> (a, b)` for every emitted sum `out = a + b`.
@@ -680,6 +683,10 @@ pub struct NoirEmitter<'a> {
     /// How many `MulI` operands each statement's value is (see
     /// `linear_terms`).
     multiplied: HashMap<u32, usize>,
+    /// Cells bound to the cast of one value (`b as Field`, `bs[i] as
+    /// Field`, typically a comparison's `bool`), which Noir keeps as a single
+    /// witness (see `select`).
+    cast_cells: HashSet<String>,
     /// Asserted comparisons a bounds check elsewhere implies (see
     /// `implied_comparisons`): they emit nothing.
     implied_comparisons: HashSet<u32>,
@@ -1009,6 +1016,9 @@ impl<'a> NoirEmitter<'a> {
         if self.current_stmt.is_some_and(|id| self.implied_comparisons.contains(&id)) {
             return self.literal_int(1);
         }
+        if self.nonneg_by_later_root(a, b, cmp) {
+            return self.literal_int(1);
+        }
         let asserted = self
             .current_stmt
             .is_some_and(|id| self.asserted_comparisons.contains(&id));
@@ -1178,6 +1188,29 @@ impl<'a> NoirEmitter<'a> {
         }
         let x = x.to_string();
         Some(self.nonzero_flag(&x, nonzero))
+    }
+
+    /// An asserted `x >= 0` that a later `sqrt(x)` proves
+    /// (`crate::prove::guards`): when an earlier check puts `x` in the
+    /// signed 64-bit window, nothing is emitted and `x`'s range becomes
+    /// `[0, hi]`, so `sqrt_f` takes `qsqrt_of(false, x)`, whose
+    /// `isqrt_floor(x·Q)` has no witness for a negative `x` (`y` and
+    /// `x·Q - y^2` are range-checked to 64 bits, far below p).
+    fn nonneg_by_later_root(&mut self, a: &str, b: &str, cmp: Cmp) -> bool {
+        if !self.current_stmt.is_some_and(|id| self.root_guards.contains(&id)) {
+            return false;
+        }
+        let x = match cmp {
+            Cmp::Ge if self.raw_constant(b) == Some(0) => a,
+            Cmp::Le if self.raw_constant(a) == Some(0) => b,
+            _ => return false,
+        };
+        let Some((lo, hi)) = self.proven_range.get(x).copied() else { return false };
+        if lo < -(1i128 << 63) || hi >= 1i128 << 63 {
+            return false;
+        }
+        self.narrow_proven_range(x, 0, hi);
+        true
     }
 
     /// `a cmp b` for a comparison whose outcome is asserted (its only uses
@@ -1375,6 +1408,15 @@ impl<'a> NoirEmitter<'a> {
         self.sign_abs_of
             .insert(x.to_string(), (negative.clone(), mag.clone()));
         (negative, mag)
+    }
+
+    /// `|x|` (library `abs_int64`, one 64-bit range check): no proof for
+    /// `x = i64::MIN`, whose magnitude overflows int64 (the raw Q32 value of
+    /// a float lives in the same window). `sign_abs`'s magnitude is not used
+    /// here because it admits `2^63`.
+    fn abs_int64(&mut self, x: &str) -> String {
+        self.use_lib("abs_int64");
+        self.bind(&format!("abs_int64({x})"))
     }
 
     /// `x != 0` (`nonzero`) or `x == 0` as a 0/1 cell; for a scaled bit
@@ -1899,10 +1941,12 @@ impl<'a> NoirEmitter<'a> {
             write_version: HashMap::new(),
             wrapped_index_ranges: HashMap::new(),
             asserted_comparisons: HashSet::new(),
+            root_guards: HashSet::new(),
             nonzero: HashSet::new(),
             sum_of: HashMap::new(),
             sum_terms: HashMap::new(),
             multiplied: HashMap::new(),
+            cast_cells: HashSet::new(),
             implied_comparisons: HashSet::new(),
             current_stmt: None,
             proven_range: HashMap::new(),
@@ -1981,6 +2025,9 @@ impl<'a> NoirEmitter<'a> {
         // bind_typed).
         let _ = writeln!(self.body, "    let {}: Field = {};", v, expr);
         self.cse_cache.insert(expr.to_string(), v.clone());
+        if is_single_cast(expr) {
+            self.cast_cells.insert(v.clone());
+        }
         // NOTE: the IR-analysis bound is NOT stamped here. `bind()` runs
         // for every *intermediate* cell produced while dispatching a
         // statement, but `current_stmt_bound` describes only the
@@ -2264,8 +2311,7 @@ impl Synthesizer for NoirEmitter<'_> {
         noop_unsupported!(self, "pow_i")
     }
     fn abs_i(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
-        let (_negative, mag) = self.sign_abs(a);
-        Ok(mag)
+        Ok(self.abs_int64(a))
     }
     fn sign_i(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         let (negative, mag) = self.sign_abs(a);
@@ -2407,7 +2453,7 @@ impl Synthesizer for NoirEmitter<'_> {
         Ok(self.bind(&format!("qpow_int_q32({}, {} as u64)", af, e)))
     }
     fn abs_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
-        let (_negative, v) = self.sign_abs(a);
+        let v = self.abs_int64(a);
         // Literal propagation: |literal| is itself a compile-time
         // constant. Fold the structural value and carry `literal_vals`
         // membership so downstream fast paths (e.g. the select
@@ -2655,8 +2701,10 @@ impl Synthesizer for NoirEmitter<'_> {
     }
     fn logical_or(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let (a, b) = (self.booleanize(a), self.booleanize(b));
-        let (af, bf) = (&a, &b);
-        Ok(self.bind_flag(&format!("{} + {} - {} * {}", af, bf, af, bf)))
+        // `a + (1 - a) * b`, the same polynomial as `a + b - a * b`: in a
+        // chain of ORs (an `any` over a mask) Noir lowers this form with
+        // fewer gates (measured with nargo 1.0.0-beta.20 / bb 5.0.0).
+        Ok(self.bind_flag(&format!("{a} + (1 - {a}) * {b}")))
     }
     fn logical_not(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         let a = self.booleanize(a);
@@ -2669,10 +2717,18 @@ impl Synthesizer for NoirEmitter<'_> {
         if_true: &CellRef,
         if_false: &CellRef,
     ) -> Result<CellRef, ProvingError> {
-        // `c * t + (1 - c) * f` picks a branch only for c in {0, 1}; any
+        // `f - c * f + c * t` picks a branch only for c in {0, 1}; any
         // other condition is reduced to 0/1 first (Python truthiness, as the
         // mock). When `f == 0` (the common dyn-slice / mask-then-default-zero
         // pattern) the second half is dead and the binding is `c * t`.
+        // When c is the cast of one bool (a comparison result), the select
+        // is written `f - c * f + c * t`, without a `1 - c` factor: for a
+        // chain of selects (a running argmax) Noir binds `1 - c` to a witness
+        // of its own, one more gate per select. For any other condition (a
+        // product, `1 - x`, a sum) that form costs more gates than the
+        // `(1 - c)` form on the DS-1000 set, so it keeps that form. Both are
+        // the same polynomial; only Noir's lowering of the text differs (the
+        // gate counts were measured with nargo 1.0.0-beta.20 / bb 5.0.0).
         let c = self.booleanize(cond);
         let is_zero_int = self.s_int_of(if_false) == Some(0);
         let is_zero_flt = self.s_float_of(if_false) == Some(0.0);
@@ -2694,6 +2750,9 @@ impl Synthesizer for NoirEmitter<'_> {
         } else if let Some(x) = difference(if_false, if_true) {
             // f = t + x: t + (1 - c) * x.
             format!("{if_true} + (1 - {c}) * {x}")
+        } else if self.cast_cells.contains(&c) {
+            // c is one witness: no `1 - c` factor (see above).
+            format!("{if_false} - {c} * {if_false} + {c} * {if_true}")
         } else {
             format!("{} * {} + (1 - {}) * {}", c, if_true, c, if_false)
         };
@@ -3351,6 +3410,14 @@ fn render_main_nr(inputs: &[EmittedInput], emitter: &NoirEmitter) -> String {
     out
 }
 
+/// Whether `expr` is `x as Field` for one identifier or one indexed
+/// identifier `x`.
+fn is_single_cast(expr: &str) -> bool {
+    expr.strip_suffix(" as Field").is_some_and(|x| {
+        !x.is_empty() && x.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '[' | ']'))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3683,3 +3750,4 @@ mod tests {
         assert_eq!(em.bound_of(&result1), Some(1));
     }
 }
+

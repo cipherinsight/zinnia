@@ -185,23 +185,38 @@ use super::base::{index_equals_coord, normalize_dynamic_index};
 /// wrap — so the discharged window and the written address agree.
 fn discharge_dynamic_write_indices(b: &mut IRBuilder, shape: &[usize], idx_vals: &[Value]) {
     for (ax, idx) in idx_vals.iter().enumerate() {
-        let axis_len = shape[ax] as i64;
-        // Literal indices: compile-time checked against [0, n) after numpy
-        // wrap (negative literals are valid down to -n). `int_val()` is the
-        // post-wrap-agnostic raw literal, so use the [-n, n) window.
-        let non_negative = idx
-            .int_val()
-            .map(|v| v >= 0)
-            .or_else(|| b.ask_bounds(idx).map(|(min, _)| min >= 0))
-            .unwrap_or(false);
-        let lo = if non_negative { 0 } else { -axis_len };
-        crate::optim::resolver::discharge_index_in_range(
-            b,
-            idx,
-            lo,
-            axis_len,
-            "static_array_setitem",
-        );
+        discharge_write_index(b, idx, shape[ax]);
+    }
+}
+
+/// Discharge NumPy's validity window for one index of a write into an axis
+/// of length `axis_len` (see [`discharge_dynamic_write_indices`]). Literal
+/// indices are compile-time checked against the `[-n, n)` window; a runtime
+/// index is checked in-circuit (under the execution predicate, see
+/// `builder/guard.rs`) unless the facts prove it.
+fn discharge_write_index(b: &mut IRBuilder, idx: &Value, axis_len: usize) {
+    let axis_len = axis_len as i64;
+    let non_negative = idx
+        .int_val()
+        .map(|v| v >= 0)
+        .or_else(|| b.ask_bounds(idx).map(|(min, _)| min >= 0))
+        .unwrap_or(false);
+    let lo = if non_negative { 0 } else { -axis_len };
+    crate::optim::resolver::discharge_index_in_range(b, idx, lo, axis_len, "static_array_setitem");
+}
+
+/// A slice assignment `a[..., i, ...] = v` with a runtime integer `i` on
+/// some axes raises `IndexError` in NumPy unless `-n <= i < n`. Every
+/// slice-assignment lowering selects the written cells by `i == coord`,
+/// which matches nothing for an out-of-range `i`; without this check such
+/// an `i` would prove the unchanged array.
+fn discharge_runtime_single_indices(b: &mut IRBuilder, shape: &[usize], indices: &[SliceIndex]) {
+    for (ax, idx) in indices.iter().enumerate() {
+        if let SliceIndex::Single(v) = idx {
+            if v.int_val().is_none() {
+                discharge_write_index(b, v, shape[ax]);
+            }
+        }
     }
 }
 
@@ -430,6 +445,10 @@ pub fn static_array_setitem(
         // `a[:, :] = b` on a 40x40 `a` made `2 * a` repeat the list, and
         // large arrays with runtime bounds had them resolved to the full
         // axis, so `a[i:i + 2] = 5.0` wrote all of `a`.)
+        // A runtime single index (`a[i, :] = v`) is checked here: both
+        // lowerings below select the written cells by `i == coord`, which
+        // matches nothing for an out-of-range `i`.
+        discharge_runtime_single_indices(b, &shape, indices);
         if dtype == NumberType::Complex {
             return complex_slice_setitem_via_list(b, val, &shape, indices, value);
         }
