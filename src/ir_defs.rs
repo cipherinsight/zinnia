@@ -1562,6 +1562,7 @@ mod tests {
             IR::Hint { kind: HintKind::SortedValues, len: 1 },
             IR::Hint { kind: HintKind::MaskedSortedValues, len: 6 },
             IR::Hint { kind: HintKind::CountAtMost, len: 4 },
+            IR::Hint { kind: HintKind::RoutingBits, len: 100 },
             IR::ArrayOp(crate::lower::ArrayOp {
                 kind: crate::lower::OpKind::Sort,
                 shared: 5,

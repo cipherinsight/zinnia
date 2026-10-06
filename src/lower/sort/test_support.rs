@@ -304,3 +304,13 @@ pub(crate) fn tampered_inputs(sort: &SortGraph, sites: &[HintSite], site: usize,
     }
     inputs
 }
+
+/// The inputs of the hinted graph with hint `k` set to `hints[k]` (every
+/// hint chosen by the prover at once, e.g. a whole setting of a routing
+/// network's switches).
+pub(crate) fn inputs_with_hints(sort: &SortGraph, sites: &[HintSite], hints: &[i64]) -> Vec<(String, i64)> {
+    assert_eq!(sites.len(), hints.len(), "one value per hint");
+    let mut inputs = sort.inputs.clone();
+    inputs.extend(sites.iter().zip(hints).map(|(s, &v)| (s.input.clone(), v)));
+    inputs
+}

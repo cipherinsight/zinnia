@@ -42,6 +42,8 @@ pub mod waksman;
 pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod routed_tests;
 
 pub(crate) use emit::masked_order_statistic;
 pub use search::SearchSortedSemantics;

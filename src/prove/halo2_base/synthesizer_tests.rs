@@ -1740,6 +1740,65 @@ fn sort_hints_are_pinned() {
     }
 }
 
+/// The routed Waksman sort (`lower::sort::routed`) on halo2-base, its switch
+/// bits played by a prover that chooses them freely (each bit a free private
+/// input, as `hints_as_inputs` makes it): every one of the `2^W(n)` settings
+/// is either rejected or accepted with NumPy's outputs (sorted values,
+/// stable argsort, payload), and some input has two accepted settings, so
+/// the bits' freedom is exercised and changes no output. All keys equal,
+/// ties, sorted and reversed inputs; a non-bit setting (2, -1, 1/2, which
+/// would make a switch output the average of its wires twice) is rejected
+/// (`sort_hints_are_pinned` moves every bit by each of `deltas`, 1/2 among
+/// them).
+#[test]
+fn routing_settings_are_rejected_or_give_numpys_outputs() {
+    use crate::lower::sort::test_support::{hints_as_inputs, inputs_with_hints, sort_graph, witness, Forced, Output};
+    use crate::lower::sort::waksman;
+    let inputs: Vec<Vec<i64>> = vec![vec![7, 7, 7, 7], vec![3, 1, 3, 0], vec![0, 1, 2, 3], vec![3, 2, 1, 0], vec![2, 2, 1, 2, 1]];
+    let mut free_inputs = 0;
+    for values in inputs {
+        let n = values.len() as u32;
+        let outputs: Vec<Output> =
+            (0..n).map(Output::Payload).chain((0..n).flat_map(|r| [Output::Value(r), Output::Index(r)])).collect();
+        let sort = sort_graph(&values, &outputs, Forced::Routed);
+        let expected: Vec<Fp> = sort.expected.as_ref().expect("every output exists").iter().map(|&v| int(v)).collect();
+        let (graph, sites) = hints_as_inputs(&sort);
+        let switches = waksman::switch_count(values.len());
+        assert_eq!(sites.len(), switches);
+        let mut accepted = 0;
+        for setting in 0u32..(1 << switches) {
+            let bits: Vec<i64> = (0..switches).map(|t| i64::from(setting >> t & 1)).collect();
+            let outcome = synthesize_graph(&graph, &witness(&inputs_with_hints(&sort, &sites, &bits)), &[]);
+            if outcome.accepted {
+                accepted += 1;
+                assert_eq!(outcome.outputs, expected, "{values:?}: setting {setting:b} accepted with other outputs");
+            }
+        }
+        assert!(accepted >= 1, "{values:?}: no setting accepted");
+        // A wrong order is among the rejected settings: the network realizes
+        // every permutation, and only one arranges distinct keys ascending.
+        assert!(accepted < 1 << switches, "{values:?}: every setting accepted");
+        if accepted > 1 {
+            free_inputs += 1;
+        }
+        // The circuit's hints in synthesis order: the switch bits (the packs
+        // before them make none), then each unpacked index's two parts.
+        let honest_run = synthesize_graph(&sort.graph, &witness(&sort.inputs), &[]);
+        assert!(honest_run.accepted);
+        assert_eq!(honest_run.hints, switches + 2 * values.len(), "{values:?}: hint layout");
+        let honest: Vec<i64> = sites.iter().map(|s| s.honest).collect();
+        let half = Fp::from(2u64).invert().unwrap();
+        for t in 0..switches {
+            for wrong in [int(2), int(-1), half] {
+                let delta = wrong - int(honest[t]);
+                let outcome = synthesize_graph(&sort.graph, &witness(&sort.inputs), &[(t, delta)]);
+                assert!(!outcome.accepted, "{values:?}: switch {t} set to {wrong:?} accepted");
+            }
+        }
+    }
+    assert!(free_inputs > 0, "no input has two accepted settings: the freedom was not exercised");
+}
+
 /// `np.searchsorted` over a constant table by a hinted position
 /// (`lower::sort::search`), closed form (an ECDF table) and reads (a table
 /// with ties): NumPy's count, and every hint under it (the position, the

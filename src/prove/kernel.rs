@@ -1256,4 +1256,35 @@ mod tests {
         let masked_lane = |rank: i64| fp_to_i64(hint_lane(HintKind::MaskedSortedValues, &masked, i64_to_fp(rank)));
         assert_eq!((0..5).map(masked_lane).collect::<Vec<_>>(), vec![-40, 20, 30, 0, 0]);
     }
+
+    /// The memo of `hint_lane` never answers for other operands or another
+    /// kind, and the routing bits route the stable argsort.
+    #[test]
+    fn hint_lanes_are_remembered_per_kind_and_operands() {
+        use crate::ir_defs::HintKind;
+        let a = ints(&[30, 10, 20, 10, -40]);
+        let b = ints(&[1, 2, 3, 4, 5, 0]);
+        for _ in 0..2 {
+            for (kind, operands) in [
+                (HintKind::StableArgsort, &a),
+                (HintKind::SortedValues, &a),
+                (HintKind::StableArgsort, &b),
+                (HintKind::RoutingBits, &a),
+                (HintKind::RoutingBits, &b),
+            ] {
+                let fresh = hint_values(kind, operands);
+                for r in -1..10i64 {
+                    let want = usize::try_from(r).ok().and_then(|r| fresh.get(r).copied()).unwrap_or(Fp::zero());
+                    assert_eq!(hint_lane(kind, operands, i64_to_fp(r)), want, "{kind:?} lane {r}");
+                }
+            }
+        }
+        for operands in [&a, &b] {
+            let mut bits = hint_values(HintKind::RoutingBits, operands).into_iter();
+            let routed = crate::lower::sort::waksman::apply((0..operands.len()).collect(), &mut |x, y| {
+                if bits.next().expect("a bit per switch") == Fp::one() { (y, x) } else { (x, y) }
+            });
+            assert_eq!(routed, stable_argsort(operands));
+        }
+    }
 }
