@@ -328,17 +328,13 @@ fn powers_follow_the_mock_and_are_pinned() {
     }
     assert!(!synthesize(&*dynamic, &[q(1.25), int(9)], &[]).accepted, "an exponent above 8 has no witness");
     assert!(!synthesize(&*dynamic, &[q(1.25), int(-1)], &[]).accepted);
-    let float_exponent = with_constant_rhs(|s, a, b| s.pow_f(a, b), q(3.0));
-    assert_sound("1.5 ** 3.0", &*float_exponent, &[q(1.5)], &[mock_power(q(1.5), 3)], &[]);
-    let fractional = with_constant_rhs(|s, a, b| s.pow_f(a, b), q(0.5));
-    let mut builder = BaseCircuitBuilder::<Fp>::from_stage(CircuitBuilderStage::Keygen);
-    builder.set_k(K as usize);
-    builder.set_lookup_bits(LOOKUP_BITS as usize);
-    let provenance = ProvenanceTable::new();
-    let params = ProvingParams { k: K, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
-    let mut synth = Halo2BaseSynthesizer::new(&mut builder, None, params, &provenance);
-    let x = synth.cell(q(2.0));
-    assert!(fractional(&mut synth, &[x]).is_err(), "a fractional exponent must be rejected, not proved");
+    // A float exponent (`PowF`), constant or not, is `kernel::fp_pow`
+    // (exp/log), the mock's and Noir's value; fractional exponents included.
+    for (base, e) in [(1.5, 3.0), (2.0, 0.5), (2.0, -2.0)] {
+        let float_exponent = with_constant_rhs(|s, a, b| s.pow_f(a, b), q(e));
+        let expected = kernel::fp_pow(q(base), q(e), PRECISION_BITS).unwrap();
+        assert_eq!(synthesize(&*float_exponent, &[q(base)], &[]).outputs, vec![expected], "{base} ** {e}");
+    }
 }
 
 /// Quotients of dividends with a proven range are checked against the range
@@ -458,6 +454,65 @@ fn exp_is_pinned_and_equals_the_kernel() {
         assert!(kernel::fp_exp(q(x), PRECISION_BITS).is_none());
         assert!(!synthesize(&*exp, &[q(x)], &[]).accepted, "exp({x}) leaves the window but was accepted");
     }
+}
+
+/// `log` proves `kernel::fp_log`'s value with every hint pinned (the mantissa
+/// decomposition included); `x <= 0` has no witness.
+#[test]
+fn log_is_pinned_and_equals_the_kernel() {
+    let log = unary(|s, a| s.log_f(a));
+    for x in [1.0, 0.5, 3.0, 1e-9, 1.5e9] {
+        let expected = kernel::fp_log(q(x), PRECISION_BITS).expect("inside the domain");
+        assert_sound(&format!("log({x})"), &*log, &[q(x)], &[expected], &[(1u128 << 33) + 7]);
+    }
+    for raw in [1i128, 2, (1 << 32) - 1, 1 << 33, (1i128 << 63) - 1] {
+        let x = kernel::i128_to_fp(raw);
+        let honest = synthesize(&*log, &[x], &[]);
+        assert!(honest.accepted, "log(raw {raw}): honest witness rejected");
+        assert_eq!(honest.outputs, vec![kernel::fp_log(x, PRECISION_BITS).unwrap()], "log(raw {raw})");
+    }
+    for x in [0.0, -1.0, -1e-9] {
+        assert!(!synthesize(&*log, &[q(x)], &[]).accepted, "log({x}) has no real value but was accepted");
+    }
+}
+
+/// `a ** b` proves `kernel::fp_pow`'s value with every hint pinned; NumPy's
+/// `nan` (negative base, fractional exponent) and `inf` (zero to a negative
+/// power) have no witness.
+#[test]
+fn pow_is_pinned_and_follows_numpy_domains() {
+    let pow = binary(|s, a, b| s.pow_f(a, b));
+    for (a, b) in [(2.0, 0.5), (-2.0, 3.0), (0.0, 2.5), (0.0, 0.0)] {
+        let expected = kernel::fp_pow(q(a), q(b), PRECISION_BITS).expect("inside the domain");
+        assert_sound(&format!("{a} ** {b}"), &*pow, &[q(a), q(b)], &[expected], &[(1u128 << 33) + 7]);
+    }
+    for (a, b) in [(0.3, 7.5), (-2.0, -2.0), (10.0, 9.0), (5.0, 0.0), (-0.5, 1.0)] {
+        let honest = synthesize(&*pow, &[q(a), q(b)], &[]);
+        assert!(honest.accepted, "{a} ** {b}: honest witness rejected");
+        assert_eq!(honest.outputs, vec![kernel::fp_pow(q(a), q(b), PRECISION_BITS).unwrap()], "{a} ** {b}");
+    }
+    for (a, b) in [(-2.0, 0.5), (0.0, -1.0), (10.0, 10.0)] {
+        assert!(kernel::fp_pow(q(a), q(b), PRECISION_BITS).is_none());
+        assert!(!synthesize(&*pow, &[q(a), q(b)], &[]).accepted, "{a} ** {b} has no value but was accepted");
+    }
+}
+
+/// `sinh`, `cosh`, `tanh` prove the kernel's values (built from `exp`) with
+/// every hint pinned; beyond `exp`'s window there is no witness.
+#[test]
+fn hyperbolic_functions_are_pinned_and_equal_the_kernel() {
+    let sinh = unary(|s, a| s.sinh_f(a));
+    let cosh = unary(|s, a| s.cosh_f(a));
+    let tanh = unary(|s, a| s.tanh_f(a));
+    for x in [0.0, 0.75, -3.5] {
+        assert_sound(&format!("sinh({x})"), &*sinh, &[q(x)], &[kernel::fp_sinh(q(x), PRECISION_BITS).unwrap()], &[]);
+        assert_sound(&format!("cosh({x})"), &*cosh, &[q(x)], &[kernel::fp_cosh(q(x), PRECISION_BITS).unwrap()], &[]);
+    }
+    for x in [0.0, 1.25, -20.0] {
+        assert_sound(&format!("tanh({x})"), &*tanh, &[q(x)], &[kernel::fp_tanh(q(x), PRECISION_BITS).unwrap()], &[]);
+    }
+    assert!(kernel::fp_tanh(q(30.0), PRECISION_BITS).is_none());
+    assert!(!synthesize(&*tanh, &[q(30.0)], &[]).accepted, "tanh(30) uses exp(30), beyond the window");
 }
 
 #[test]
@@ -1221,6 +1276,8 @@ fn new_lowerings_are_witness_independent() {
         ("sqrt", unary(|s, a| s.sqrt_f(a)), vec![q(2.0)]),
         ("arcsin", unary(|s, a| s.arcsin_f(a)), vec![q(0.3)]),
         ("exp", unary(|s, a| s.exp_f(a)), vec![q(-3.5)]),
+        ("log", unary(|s, a| s.log_f(a)), vec![q(7.25)]),
+        ("pow_f", binary(|s, a, b| s.pow_f(a, b)), vec![q(-1.5), q(3.0)]),
         ("pow", binary(|s, a, b| s.pow_i(a, b)), vec![int(3), int(5)]),
         ("int_cast", unary(|s, a| s.int_cast(a)), vec![q(-2.5)]),
     ];
@@ -1805,24 +1862,96 @@ fn prover_hints_are_kernel_lanes_and_constrain_nothing() {
 /// Synthesize a whole IR graph on `witness`, perturbing hints as in
 /// [`synthesize`].
 fn synthesize_graph(graph: &crate::ir::IRGraph, witness: &ResolvedWitness, tamper: &[(usize, Fp)]) -> Outcome {
+    synthesize_graph_with(graph, witness, tamper, false)
+}
+
+/// [`synthesize_graph`], every segment written at a runtime address in RAM
+/// mode when `force_ram`.
+fn synthesize_graph_with(graph: &crate::ir::IRGraph, witness: &ResolvedWitness, tamper: &[(usize, Fp)], force_ram: bool) -> Outcome {
     let mut builder = BaseCircuitBuilder::<Fp>::from_stage(CircuitBuilderStage::Mock);
     builder.set_k(K as usize);
     builder.set_lookup_bits(LOOKUP_BITS as usize);
     builder.set_instance_columns(1);
     let params = ProvingParams { k: K, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
-    let (outputs, hints) = {
+    let (outputs, hints, (second_phase, tables, ram)) = {
         let mut synth = Halo2BaseSynthesizer::new(&mut builder, Some(witness.clone()), params, &graph.provenance);
         synth.plan_ahead(graph);
         synth.tamper = tamper::HintTamper::targeting(tamper);
+        synth.memory.force_ram = force_ram;
         crate::prove::interpreter::interpret_ir(graph, &mut synth).expect("synthesis failed");
-        (synth.public_values().to_vec(), synth.tamper.hints_seen())
+        let parts = (std::mem::take(&mut synth.second_phase), std::mem::take(&mut synth.tables), std::mem::take(&mut synth.ram));
+        (synth.public_values().to_vec(), synth.tamper.hints_seen(), parts)
     };
-    builder.calculate_params(Some(20));
-    let accepted = MockProver::run(K, &builder, vec![outputs.clone()])
+    // The backend's circuit (memory tables and second-phase checks included).
+    let mut circuit = super::super::circuit::Halo2BaseCircuit::new(builder, second_phase, tables, ram);
+    super::super::circuit::layout(&mut circuit).expect("layout");
+    let accepted = MockProver::run(K, &circuit, vec![outputs.clone()])
         .expect("MockProver::run")
         .verify()
         .is_ok();
     Outcome { outputs, hints, accepted }
+}
+
+/// `IR::ReadTable` (a dynamic lookup into the segment's table): the honest
+/// read of every slot of a segment of `n` input cells is accepted with the
+/// slot's value; an index outside `[-2, n + 1]`'s valid part has no
+/// witness; the read's value (a hint pinned by the lookup) moved by any
+/// delta is rejected; and a second table of the same segment after a
+/// constant write is read at its own version.
+#[test]
+fn table_reads_are_pinned_and_in_bounds() {
+    use crate::ir_defs::IR;
+    use graphs::*;
+    let mut shifts: Vec<Fp> = vec![int(1), int(-1), int(7)];
+    shifts.extend(deltas(&[]));
+    for n in [1usize, 2, 5] {
+        let values: Vec<i64> = (0..n as i64).map(|k| 10 * k - 3).collect();
+        let build = || {
+            let mut g = Graph::default();
+            let cells: Vec<u32> = (0..n).map(|k| g.read(&format!("x{k}"))).collect();
+            let index = g.read("i");
+            g.push(IR::AllocateMemory { segment_id: 0, size: n as u32, init_value: 0 }, &[]);
+            for (k, cell) in cells.iter().enumerate() {
+                let address = g.int(k as i64);
+                g.push(IR::WriteMemory { segment_id: 0 }, &[address, *cell]);
+            }
+            let read = g.push(IR::ReadTable { segment_id: 0 }, &[index]);
+            g.push(IR::ExposePublicI, &[read]);
+            g.finish()
+        };
+        let ir = build();
+        for i in -2..=n as i64 + 1 {
+            let mut ints: Vec<(String, i64)> = values.iter().enumerate().map(|(k, v)| (format!("x{k}"), *v)).collect();
+            ints.push(("i".to_string(), i));
+            let w = witness_of(&ints);
+            let honest = synthesize_graph(&ir, &w, &[]);
+            if !(0..n as i64).contains(&i) {
+                assert!(!honest.accepted, "n={n} i={i}: accepted, NumPy raises");
+                continue;
+            }
+            assert!(honest.accepted, "n={n} i={i}: honest read rejected");
+            assert_eq!(honest.outputs, vec![int(values[i as usize])], "n={n} i={i}");
+            assert_eq!(honest.hints, 1, "the read value is the only hint");
+            for shift in &shifts {
+                assert!(!synthesize_graph(&ir, &w, &[(0, *shift)]).accepted, "n={n} i={i}: read moved by {shift:?}");
+            }
+        }
+    }
+}
+
+/// Integer inputs by name, as a witness.
+fn witness_of(ints: &[(String, i64)]) -> ResolvedWitness {
+    use crate::circuit_input::{InputNode, InputParam};
+    let mut inputs = CircuitInputs::new();
+    for (name, value) in ints {
+        inputs.params.push(InputParam {
+            name: name.clone(),
+            is_public: false,
+            dtype: serde_json::Value::Null,
+            value: InputNode::Int(*value),
+        });
+    }
+    ResolvedWitness::new(inputs, PRECISION_BITS)
 }
 
 /// Each sort lowering with hints, on values with ties: the honest witness
@@ -2125,20 +2254,30 @@ fn index_write_hints_are_pinned() {
 #[test]
 fn index_wrap_sign_is_pinned_on_halo2_base() {
     use crate::lower::scatter::test_support::{witness, wrap_graph};
+    use crate::lower::memory::wrap::{WrapByPinnedSign, WrapByPositionHits};
     let mut shifts: Vec<Fp> = vec![int(1), int(-1), int(2)];
     shifts.extend(deltas(&[]));
-    for x in -6..=5 {
-        let case = wrap_graph(x, 5);
-        let w = witness(&case.inputs);
-        let honest = synthesize_graph(&case.graph, &w, &[]);
-        let Some(expected) = &case.expected else {
-            assert!(!honest.accepted, "index {x}: accepted, NumPy raises");
-            continue;
-        };
-        assert!(honest.accepted && honest.outputs == vec![int(expected[0])], "index {x}");
-        assert_eq!(honest.hints, 1);
-        for shift in &shifts {
-            assert!(!synthesize_graph(&case.graph, &w, &[(0, *shift)]).accepted, "index {x}: sign moved by {shift:?}");
+    let constructions: [(&dyn crate::lower::Construction, usize); 2] = [(&WrapByPinnedSign, 1), (&WrapByPositionHits, 5)];
+    for (construction, hints) in constructions {
+        for x in -6..=5 {
+            let case = wrap_graph(x, 5, construction);
+            let w = witness(&case.inputs);
+            let honest = synthesize_graph(&case.graph, &w, &[]);
+            let Some(expected) = &case.expected else {
+                assert!(!honest.accepted, "{} index {x}: accepted, NumPy raises", construction.name());
+                continue;
+            };
+            assert!(honest.accepted && honest.outputs == vec![int(expected[0])], "{} index {x}", construction.name());
+            assert_eq!(honest.hints, hints, "{}", construction.name());
+            for hint in 0..hints {
+                for shift in &shifts {
+                    assert!(
+                        !synthesize_graph(&case.graph, &w, &[(hint, *shift)]).accepted,
+                        "{} index {x}: hint #{hint} moved by {shift:?}",
+                        construction.name()
+                    );
+                }
+            }
         }
     }
 }
@@ -2176,3 +2315,175 @@ fn reverse_orders_use_the_trichotomy() {
     assert!(run(&graph, &[("x", 1), ("y", 2)], None).advice < one_order_and_a_sign, "the reverse order paid a range check");
 }
 
+/// Table reads through the backend's own key generation (no witness),
+/// pinned prover and verifier: the honest proof verifies, a proof whose
+/// public read value is changed does not, and an index outside the table
+/// cannot be proved.
+#[test]
+fn table_reads_prove_and_verify_with_real_keys() {
+    use crate::ir_defs::IR;
+    use crate::prove::halo2_base::keys::{keygen, prove_with_keys, verify_with_keys};
+    use graphs::*;
+    let n = 6;
+    let mut g = Graph::default();
+    let cells: Vec<u32> = (0..n).map(|k| g.read(&format!("x{k}"))).collect();
+    let (i, j) = (g.read("i"), g.read("j"));
+    g.push(IR::AllocateMemory { segment_id: 3, size: n as u32, init_value: 0 }, &[]);
+    for (k, cell) in cells.iter().enumerate() {
+        let address = g.int(k as i64);
+        g.push(IR::WriteMemory { segment_id: 3 }, &[address, *cell]);
+    }
+    for index in [i, j] {
+        let read = g.push(IR::ReadTable { segment_id: 3 }, &[index]);
+        g.push(IR::ExposePublicI, &[read]);
+    }
+    let ir = g.finish();
+    let inputs = |i: i64, j: i64| {
+        let mut ints: Vec<(String, i64)> = (0..n).map(|k| (format!("x{k}"), 100 + k as i64)).collect();
+        ints.push(("i".to_string(), i));
+        ints.push(("j".to_string(), j));
+        witness_of(&ints)
+    };
+    let params = ProvingParams { k: 9, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
+    let keys = keygen(&ir, &params).expect("keygen");
+    assert_eq!(keys.pinning.table_layout, vec![1], "one table group with one key set");
+    let proof = prove_with_keys(&ir, &inputs(4, 0), &keys).expect("prove");
+    assert_eq!(proof.public_values, vec![int(104), int(100)]);
+    assert!(verify_with_keys(&keys, &proof.proof, &proof.public_values).valid, "honest proof rejected");
+    let tampered = vec![int(105), int(100)];
+    assert!(!verify_with_keys(&keys, &proof.proof, &tampered).valid, "changed read value verified");
+    assert!(prove_with_keys(&ir, &inputs(6, 0), &keys).is_err(), "an index past the table was proved");
+}
+
+
+/// A segment of `n` input cells, written at runtime addresses `a0`, `a1`
+/// (values `v0`, `v1`), then a constant write at 2, then read at runtime
+/// addresses `b0`, `b1`, `b2` and at the constant 2 (reads exposed).
+fn ram_graph(n: usize) -> crate::ir::IRGraph {
+    use crate::ir_defs::IR;
+    use graphs::*;
+    let mut g = Graph::default();
+    let cells: Vec<u32> = (0..n).map(|k| g.read(&format!("x{k}"))).collect();
+    let names = ["a0", "v0", "a1", "v1", "b0", "b1", "b2"];
+    let inputs: Vec<u32> = names.iter().map(|name| g.read(name)).collect();
+    g.push(IR::AllocateMemory { segment_id: 0, size: n as u32, init_value: 0 }, &[]);
+    for (k, cell) in cells.iter().enumerate() {
+        let address = g.int(k as i64);
+        g.push(IR::WriteMemory { segment_id: 0 }, &[address, *cell]);
+    }
+    g.push(IR::WriteMemory { segment_id: 0 }, &[inputs[0], inputs[1]]);
+    g.push(IR::WriteMemory { segment_id: 0 }, &[inputs[2], inputs[3]]);
+    let (two, seventy) = (g.int(2), g.int(70));
+    g.push(IR::WriteMemory { segment_id: 0 }, &[two, seventy]);
+    for b in &inputs[4..] {
+        let read = g.push(IR::ReadMemory { segment_id: 0 }, &[*b]);
+        g.push(IR::ExposePublicI, &[read]);
+    }
+    let read = g.push(IR::ReadMemory { segment_id: 0 }, &[two]);
+    g.push(IR::ExposePublicI, &[read]);
+    g.finish()
+}
+
+/// The RAM trace (`circuit/ram.rs`) on the program-order semantics: every
+/// read returns the last earlier write at its address (the initial cells
+/// otherwise); an access outside the segment has no witness; every read
+/// value (a hint) moved by any delta is rejected; and the overlay lowering
+/// gives the same outputs.
+#[test]
+fn ram_reads_see_the_last_write_and_are_pinned() {
+    let n = 5usize;
+    let ir = ram_graph(n);
+    let mut shifts: Vec<Fp> = vec![int(1), int(-1), int(70)];
+    shifts.extend(deltas(&[]));
+    let cases = [
+        [1i64, 3, 1, 4, 1, 0, 2],
+        [0, 3, 4, 9, 4, 0, 3],
+        [3, 5, 3, 6, 3, 2, 1],
+        [2, 8, 2, 9, 2, 2, 2],
+        [5, 1, 0, 2, 0, 1, 2],
+        [0, 1, 1, 2, 0, -1, 2],
+        [0, 1, 1, 2, 0, 1, 5],
+    ];
+    for [a0, v0, a1, v1, b0, b1, b2] in cases {
+        let mut ints: Vec<(String, i64)> = (0..n).map(|k| (format!("x{k}"), 100 + k as i64)).collect();
+        for (name, v) in ["a0", "v0", "a1", "v1", "b0", "b1", "b2"].iter().zip([a0, v0, a1, v1, b0, b1, b2]) {
+            ints.push((name.to_string(), v));
+        }
+        let w = witness_of(&ints);
+        let in_range = |a: i64| (0..n as i64).contains(&a);
+        let mut memory: Vec<i64> = (0..n as i64).map(|k| 100 + k).collect();
+        let valid = [a0, a1, b0, b1, b2].iter().all(|&a| in_range(a));
+        let honest = synthesize_graph_with(&ir, &w, &[], true);
+        if !valid {
+            assert!(!honest.accepted, "{ints:?}: accepted, NumPy raises");
+            continue;
+        }
+        memory[a0 as usize] = v0;
+        memory[a1 as usize] = v1;
+        memory[2] = 70;
+        let expected: Vec<Fp> = [b0, b1, b2, 2].iter().map(|&b| int(memory[b as usize])).collect();
+        assert!(honest.accepted, "{ints:?}: honest witness rejected");
+        assert_eq!(honest.outputs, expected, "{ints:?}");
+        assert_eq!(honest.hints, 4, "one hint per read");
+        let overlay = synthesize_graph_with(&ir, &w, &[], false);
+        assert!(overlay.accepted && overlay.outputs == expected, "overlay {ints:?}");
+        for hint in 0..honest.hints {
+            for shift in &shifts {
+                assert!(!synthesize_graph_with(&ir, &w, &[(hint, *shift)], true).accepted, "{ints:?}: read #{hint} moved by {shift:?}");
+            }
+        }
+    }
+}
+
+/// The plan puts a segment in RAM mode when the overlay would cost more
+/// (many reads after many runtime-address writes), and the RAM circuit
+/// proves and verifies through the backend's real keys; a changed public
+/// read does not verify.
+#[test]
+fn ram_is_chosen_by_cost_and_proves_with_real_keys() {
+    use crate::ir_defs::IR;
+    use crate::prove::halo2_base::keys::{keygen, prove_with_keys, verify_with_keys};
+    use graphs::*;
+    let (n, writes, reads) = (32usize, 24usize, 24usize);
+    let mut g = Graph::default();
+    let cells: Vec<u32> = (0..n).map(|k| g.read(&format!("x{k}"))).collect();
+    g.push(IR::AllocateMemory { segment_id: 0, size: n as u32, init_value: 0 }, &[]);
+    for (k, cell) in cells.iter().enumerate() {
+        let address = g.int(k as i64);
+        g.push(IR::WriteMemory { segment_id: 0 }, &[address, *cell]);
+    }
+    for t in 0..writes {
+        let (a, v) = (g.read(&format!("a{t}")), g.read(&format!("v{t}")));
+        g.push(IR::WriteMemory { segment_id: 0 }, &[a, v]);
+    }
+    for t in 0..reads {
+        let b = g.read(&format!("b{t}"));
+        let read = g.push(IR::ReadMemory { segment_id: 0 }, &[b]);
+        g.push(IR::ExposePublicI, &[read]);
+    }
+    let ir = g.finish();
+    assert!(super::plan::Plan::of(&ir).ram_segments.contains(&0), "RAM not chosen");
+    let mut ints: Vec<(String, i64)> = (0..n).map(|k| (format!("x{k}"), 1000 + k as i64)).collect();
+    let mut memory: Vec<i64> = (0..n as i64).map(|k| 1000 + k).collect();
+    for t in 0..writes {
+        let (a, v) = ((7 * t + 3) % n, t as i64 * 11);
+        ints.push((format!("a{t}"), a as i64));
+        ints.push((format!("v{t}"), v));
+        memory[a] = v;
+    }
+    let mut expected = Vec::new();
+    for t in 0..reads {
+        let b = (5 * t + 1) % n;
+        ints.push((format!("b{t}"), b as i64));
+        expected.push(int(memory[b]));
+    }
+    let params = ProvingParams { k: 10, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
+    let keys = keygen(&ir, &params).expect("keygen");
+    assert_eq!(keys.pinning.ram_traces, 1);
+    let proof = prove_with_keys(&ir, &witness_of(&ints), &keys).expect("prove");
+    assert_eq!(proof.public_values, expected);
+    assert!(verify_with_keys(&keys, &proof.proof, &proof.public_values).valid, "honest proof rejected");
+    let mut tampered = proof.public_values.clone();
+    tampered[3] += Fp::one();
+    assert!(!verify_with_keys(&keys, &proof.proof, &tampered).valid, "changed read verified");
+}

@@ -55,6 +55,7 @@ pub fn program_checks(graph: &IRGraph) -> Vec<ProgramCheck> {
 /// `s = 0`, `x = w` lies in `[0, h)`. (It does not imply the check back:
 /// that also pins `s`.) The same index's write window `-n <= x < n`
 /// (`AssertU128Lt(x + n, 2n)`) is then redundant after the read's check.
+/// The wrap may also be a placeholder (`OpKind::Wrap`, position output).
 fn check_consequences(graph: &IRGraph, bits: &HashSet<StmtId>, ir: &IR, args: &[StmtId]) -> Vec<Fact> {
     let stmt = |s: StmtId| &graph.stmts[s as usize];
     let constant = |s: StmtId| match stmt(s).ir {
@@ -62,6 +63,17 @@ fn check_consequences(graph: &IRGraph, bits: &HashSet<StmtId>, ir: &IR, args: &[
         _ => None,
     };
     let (IR::AssertU128Lt, &[w, hi]) = (ir, args) else { return Vec::new() };
+    // The same wrap as an operator placeholder (`lower::memory::wrap`): its
+    // position `w` of `x` on an axis of `n`, checked below `h <= n`, is
+    // `x` or `x + n`, so `-n <= x < h` whatever construction lowers it.
+    if let (IR::ArrayOp(op), Some(h)) = (&stmt(w).ir, constant(hi)) {
+        if let (crate::lower::OpKind::Wrap { len }, 0, Some(&x)) = (op.kind, op.output, stmt(w).arguments.first()) {
+            if h <= i64::from(len) {
+                return vec![Fact::everywhere(Claim::InRange { x, lo: -i64::from(len), hi: Bound::Const(h) })];
+            }
+        }
+        return Vec::new();
+    }
     let (Some(h), (IR::SelectI, &[s, shifted, x])) = (constant(hi), (&stmt(w).ir, stmt(w).arguments.as_slice())) else {
         return Vec::new();
     };
@@ -200,6 +212,7 @@ pub fn cost(claim: &Claim, target: Target) -> u64 {
         (Claim::Equal(..), _) => 1,
         (Claim::Within { .. }, Target::Halo2Base) => 17,
         (Claim::Within { .. }, Target::Noir) => 3,
+        (&Claim::Permutation(a, _), target) => super::permutation::hit_count_cost(a.entries().len() as u64, target, false),
     }
 }
 
@@ -243,6 +256,19 @@ fn emit_claim(b: &mut IRBuilder, claim: &Claim, lookup: &HashMap<StmtId, Value>)
         Claim::Equal(x, y) => {
             let equal = b.ir_equal_i(&v(x), &v(y));
             b.ir_assert(&equal);
+        }
+        Claim::Permutation(values_list, targets_list) => {
+            let mut values = |list: super::ListId| -> Vec<Value> {
+                list.entries()
+                    .iter()
+                    .map(|entry| match *entry {
+                        super::ListEntry::Stmt(s) => v(s),
+                        super::ListEntry::Int(c) => b.ir_constant_int(c),
+                    })
+                    .collect()
+            };
+            let (values, targets) = (values(values_list), values(targets_list));
+            super::permutation::emit_hit_counts(b, &values, &targets);
         }
         Claim::Within { x, lo, hi } => {
             if let Some(lo) = lo {

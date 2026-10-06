@@ -323,3 +323,101 @@ fn the_index_wrap_check_implies_the_write_window() {
         }
     }
 }
+
+// ── The program-wide challenge requirement ──────────────────────────────
+
+/// `groups` independent sorts of two elements, each lane exposed.
+fn independent_sorts(groups: usize) -> IRGraph {
+    let mut b = IRBuilder::new();
+    for g in 0..groups {
+        let elements: Arc<[Value]> =
+            (0..2).map(|j| b.ir_read_integer(InputPath::new(format!("a{g}_{j}"), vec![]), false)).collect();
+        let out = b.ir_sorted(&elements, 0, false);
+        b.ir_expose_public_i(&out);
+    }
+    b.export_ir_graph()
+}
+
+/// A test construction: the lane is element `element` of its group, at
+/// `cost`, needing the verifier challenge when `challenged`.
+struct ElementAt {
+    element: usize,
+    cost: u64,
+    challenged: bool,
+}
+
+impl Construction for ElementAt {
+    fn name(&self) -> &'static str {
+        if self.challenged {
+            "test: challenged"
+        } else {
+            "test: plain"
+        }
+    }
+
+    fn candidates(&self, group: &Group, _cx: &Context) -> Vec<Candidate> {
+        let pre = if self.challenged { vec![super::challenge::CHALLENGE] } else { Vec::new() };
+        vec![Candidate {
+            pre,
+            post: group.lanes.iter().map(|l| Requirement::Lane(l.stmt)).collect(),
+            cost: self.cost,
+            emitter: Box::new(FirstElementEmitter(group.shared[self.element])),
+        }]
+    }
+}
+
+/// How many exposed values are the second element of their sort (the
+/// challenged construction's choice).
+fn challenged_groups(graph: &IRGraph) -> usize {
+    graph
+        .stmts
+        .iter()
+        .filter(|s| matches!(s.ir, IR::ExposePublicI))
+        .filter(|s| match &graph.stmts[s.arguments[0] as usize].ir {
+            IR::ReadInteger { path, .. } => path.param.ends_with("_1"),
+            _ => false,
+        })
+        .count()
+}
+
+/// The challenge costs `C` once. A construction needing it saves `0.6 C`
+/// per group: one group alone does not pay for it, two together do, and
+/// then both use it (it is paid once). On Noir it has no producer.
+#[test]
+fn the_challenge_is_paid_once_when_the_groups_together_justify_it() {
+    let c = super::challenge::HALO2_BASE_CHALLENGE_COST;
+    let plain = ElementAt { element: 0, cost: c * 7 / 10, challenged: false };
+    let challenged = ElementAt { element: 1, cost: c / 10, challenged: true };
+    let lowered = |groups, target| super::emit::lower(&independent_sorts(groups), target, &[&plain, &challenged]).unwrap();
+    assert_eq!(challenged_groups(&lowered(1, Target::Halo2Base)), 0, "one group alone pays the challenge");
+    assert_eq!(challenged_groups(&lowered(2, Target::Halo2Base)), 2, "two groups do not share the challenge");
+    assert_eq!(challenged_groups(&lowered(3, Target::Halo2Base)), 3);
+    assert_eq!(challenged_groups(&lowered(3, Target::Noir)), 0, "a challenge on Noir");
+}
+
+/// A challenged construction that is the only producer of a lane cannot be
+/// selected on Noir: the lowering has no selection there.
+#[test]
+fn a_challenged_construction_alone_has_no_selection_on_noir() {
+    let challenged = ElementAt { element: 1, cost: 1, challenged: true };
+    let graph = independent_sorts(1);
+    assert_eq!(challenged_groups(&super::emit::lower(&graph, Target::Halo2Base, &[&challenged]).unwrap()), 1);
+    let noir = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| super::emit::lower(&graph, Target::Noir, &[&challenged])));
+    assert!(noir.is_err(), "selected without a challenge");
+}
+
+/// Claims' value lists are numbered per lowering: an id does not depend on
+/// what was interned before the lowering started.
+#[test]
+fn list_ids_are_numbered_per_lowering() {
+    use super::graph::{ListEntry, ListId};
+    let first = |earlier: usize| {
+        for k in 0..earlier {
+            ListId::intern(&[ListEntry::Int(k as i64 + 100)]);
+        }
+        let graph = independent_sorts(1);
+        super::emit::lower(&graph, Target::Halo2Base, &super::registry()).expect("a lane");
+        ListId::range(3)
+    };
+    assert_eq!(first(0), first(5));
+}

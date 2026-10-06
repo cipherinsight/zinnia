@@ -481,6 +481,7 @@ impl IROp for IR {
             | IR::AllocateMemory { .. }
             | IR::WriteMemory { .. }
             | IR::ReadMemory { .. }
+            | IR::ReadTable { .. }
             | IR::MemoryTraceEmit { .. }
             | IR::MemoryTraceSeal
             | IR::AllocateDynamicNDArrayMeta { .. }
@@ -505,7 +506,9 @@ impl IROp for IR {
             | IR::KeyLess { .. }
             | IR::PackKey { .. }
             | IR::PackedKeyLess { .. }
-            | IR::PackedKeyIndex { .. } => ctx.fresh_unconstrained(),
+            | IR::PackedKeyIndex { .. }
+            | IR::IdentityCheck(_)
+            | IR::RescaleRawF => ctx.fresh_unconstrained(),
         }
     }
 }

@@ -15,7 +15,7 @@ use super::cost;
 
 /// The family's constructions, in the order the selection breaks ties.
 pub fn constructions() -> Vec<&'static dyn Construction> {
-    vec![&ElementByIndexBits, &IndexBitsNode]
+    vec![&ElementByIndexBits, &IndexBitsNode, &ElementByTable, &super::wrap::WrapByPinnedSign, &super::wrap::WrapByPositionHits]
 }
 
 /// `0 <= i < n` on every path. The index operand is the frontend's guarded
@@ -180,6 +180,85 @@ impl Emitter for BitsEmitter {
         let bits: Rc<Vec<Value>> =
             if cells.len() == 2 { Rc::new(Vec::new()) } else { cx.shared_at(b, lane.own[0], INDEX_BITS) };
         read_by_index_bits(b, &cells, &index, &bits, dtype)
+    }
+}
+
+// ── Memory argument (read-only table) ─────────────────────────────────
+
+/// `x[i]` by a memory-argument read: the line written once to a memory
+/// segment (constant addresses: wiring), every read an `IR::ReadTable`.
+/// halo2-base looks the read up in the segment's table (a dynamic lookup,
+/// `prove/halo2_base/circuit/tables.rs`); Noir reads a native array at an
+/// index `array_index` checks (bb's ROM table); the mock reads the slot and
+/// rejects an address outside the segment.
+///
+/// **Preconditions.** None.
+///
+/// **Postconditions.** Every lane; `0 <= i < n` for every index read.
+///
+/// **Soundness and completeness.** On every backend a table read has a
+/// witness exactly when the address is one of the segment's `n` addresses,
+/// and its value is then the slot's (halo2-base: the lookup argument against
+/// rows `(tag, j, x_j)` with `j` fixed; Noir: `array_index` bounds the index
+/// and the ROM read returns the element; their arguments are in those
+/// modules). The read value on halo2-base is a hint the lookup pins (tamper
+/// test `table_reads_are_pinned_and_in_bounds`). The segment is never written
+/// after its reads (it holds this group's line only).
+///
+/// **Cost** (`cost::table`): halo2-base one cell per slot and three per
+/// read, plus a share of the table groups' fixed columns and lookup
+/// arguments (amortized over the groups offered a table read, as if all of
+/// them took it: the selection is per group, the columns per circuit);
+/// Noir three gates per element of the native array and a read with its
+/// index check.
+pub struct ElementByTable;
+
+impl Construction for ElementByTable {
+    fn name(&self) -> &'static str {
+        "memory: element by table read"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        let n = group.shared.len();
+        if group.kind != OpKind::Element || n < 2 {
+            return Vec::new();
+        }
+        let offered: Vec<usize> =
+            cx.groups.iter().filter(|g| g.kind == OpKind::Element && g.shared.len() >= 2).map(|g| g.shared.len()).collect();
+        let offered_rows: usize = offered.iter().sum();
+        let indices: Vec<StmtId> = group.lanes.iter().map(|l| l.own[0]).collect();
+        let index_reads = cost::index_reads(cx, &indices);
+        let cost = cost::table(n as u64, &index_reads, offered.len() as u64, offered_rows as u64, cx.target);
+        let post = group
+            .lanes
+            .iter()
+            .map(|l| Requirement::Lane(l.stmt))
+            .chain(distinct_indices(group).into_iter().map(|i| in_bounds(i, n)));
+        vec![Candidate {
+            pre: Vec::new(),
+            post: post.collect(),
+            cost,
+            emitter: Box::new(TableEmitter { cells: group.shared.clone(), segment: None }),
+        }]
+    }
+}
+
+struct TableEmitter {
+    cells: Vec<StmtId>,
+    segment: Option<(u32, NumberType)>,
+}
+
+impl Emitter for TableEmitter {
+    fn begin(&mut self, b: &mut IRBuilder, cx: &mut EmitCx) {
+        let cells = cx.values(&self.cells);
+        let dtype = dtype_of(&cells);
+        self.segment = Some((crate::helpers::segment::alloc_and_write_values(b, &cells, dtype), dtype));
+    }
+
+    fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, lane: &Lane) -> Value {
+        let (segment, dtype) = self.segment.expect("begin ran");
+        let index = cx.value(lane.own[0]);
+        crate::helpers::segment::read_table_typed(b, segment, &index, dtype)
     }
 }
 

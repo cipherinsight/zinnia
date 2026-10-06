@@ -142,14 +142,17 @@ def test_argsort_halo2_base_matches_mock():
                           _with_ties(40, 7))
 
 
-def test_sort_of_60_is_routed():
-    # 60 keys on halo2-base: the routed Waksman network (297 switches, 59
-    # asserted increases of packed keys) instead of Batcher's merge exchange
-    # (505 comparators; its size is checked in `lower::sort::tests`) or the
-    # adjacent-swap network (1,770).
+def test_sort_of_60_is_a_grand_product():
+    # 60 keys on halo2-base: hinted sorted packed keys and values checked by
+    # one grand product at a verifier challenge (lower/sort/grand_product.rs:
+    # 60 key and 60 value hints, 59 asserted increases of packed keys)
+    # instead of the routed Waksman network (297 switches), Batcher's merge
+    # exchange (505 comparators; its size is checked in `lower::sort::tests`)
+    # or the adjacent-swap network (1,770).
     program = compile_kernel('def kernel(a: Float[Array, "60"]):\n    return np.sort(a)\n')
     classes = ir_classes(program)
-    assert classes.count("HintIR") == 297 and classes.count("AssertBitIR") == 297
+    assert classes.count("HintIR") == 120 and classes.count("IdentityCheckIR") == 1
+    assert "AssertBitIR" not in classes
     assert classes.count("PackedKeyLessIR") == 59 and "LessThanFIR" not in classes
 
 
@@ -312,12 +315,14 @@ def test_mixed_runtime_index_read_out_of_range_is_rejected(i, j):
 
 
 def test_mixed_runtime_index_read_selects_one_axis_at_a_time():
-    # Each output a[i, r, j] selects along j within row (r, c) planes shared by
-    # nothing else, then along i: (5 - 1) + (3 - 1) selects, no conjunction of
-    # the two axes' tests per candidate.
+    # Each output a[i, r, j] reads along j within each of the 3 rows (i', r)
+    # by a select chain (5 - 1 selects per row), then along i by an inner
+    # product with i's equality indicators (3 of them, shared by all four
+    # outputs; cheaper than 3 - 1 selects per output): 3 * 4 selects per
+    # output and no conjunction of the two axes' tests per candidate.
     classes = ir_classes(compile_kernel(GATHER_3D))
     assert "LogicalAndIR" not in classes
-    assert classes.count("SelectFIR") == 4 * (3 * 4 + 2)
+    assert classes.count("SelectFIR") == 4 * (3 * 4)
 
 
 def test_mixed_runtime_index_read_halo2_base_matches_mock():

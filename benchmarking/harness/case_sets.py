@@ -9,11 +9,22 @@ Shape of the performance set (`ds1000_perf.json`, written by `datasets/tools`):
 ```
 
 Only `status == "perf"` cases run; any other status (`duplicate`, `degenerate`,
-`out_of_scope`, `zinnia_rejects`) excludes the case and its `reason` is recorded.
-`fixture` is relative to the case folder. `float_tolerance` applies to float
-outputs: |actual - expected| <= atol + rtol*|expected|; a case without one uses
-`DEFAULT_TOLERANCE`, and the record says so. `data_movement_only` cases only copy
-inputs; the analysis reports them apart from the headline.
+`out_of_scope`, `zinnia_rejects`, ...) excludes the case and its `reason` is
+recorded. `fixture` is relative to the case folder. `float_tolerance` applies to
+float outputs: |actual - expected| <= atol + rtol*|expected|; a case without one
+uses `DEFAULT_TOLERANCE`, and the record says so. `data_movement_only` cases only
+copy inputs; the analysis reports them apart from the headline.
+
+Optional fields, used by the NPBench/Pythran set (`npbench_pythran_perf.json`,
+written by `datasets/tools/npbench_pythran_perf.py`):
+
+- `path`: the case folder relative to `benchmarking/` (default
+  `datasets/ds1000/<case>`); `function`: the kernel function (default `kernel`).
+- `shape_generic: true`: the folder holds a program with named entry functions
+  (one case per function); the zkVM hosts get `--function <function>`.
+- `mutated_outputs: [names]`: for a function that returns `None`, the array
+  arguments it writes, in parameter order: they are its outputs.
+- `group`: a label (e.g. the corpus); the analysis also compares per group.
 
 Shape of the acceptance set (`acceptance.json`):
 
@@ -79,6 +90,11 @@ class PerfCase:
     included: bool
     reason: str | None
     data_movement_only: bool = False
+    #: The case folder holds a program with several named entry functions.
+    shape_generic: bool = False
+    #: A function returning `None` outputs these written array arguments.
+    mutated_outputs: tuple[str, ...] = ()
+    group: str | None = None
 
     @property
     def kernel_path(self) -> Path:
@@ -88,7 +104,9 @@ class PerfCase:
         return {"case": self.case, "directory": str(self.directory),
                 "fixture": str(self.fixture_path), "function": self.function,
                 "tolerance": vars(self.tolerance), "included": self.included,
-                "reason": self.reason, "data_movement_only": self.data_movement_only}
+                "reason": self.reason, "data_movement_only": self.data_movement_only,
+                "shape_generic": self.shape_generic,
+                "mutated_outputs": list(self.mutated_outputs), "group": self.group}
 
     @staticmethod
     def from_json(raw: dict) -> "PerfCase":
@@ -96,7 +114,10 @@ class PerfCase:
                         fixture_path=Path(raw["fixture"]), function=raw["function"],
                         tolerance=Tolerance(**raw["tolerance"]), included=raw["included"],
                         reason=raw["reason"],
-                        data_movement_only=raw.get("data_movement_only", False))
+                        data_movement_only=raw.get("data_movement_only", False),
+                        shape_generic=raw.get("shape_generic", False),
+                        mutated_outputs=tuple(raw.get("mutated_outputs", ())),
+                        group=raw.get("group"))
 
 
 def file_sha256(path: Path) -> str:
@@ -119,7 +140,10 @@ def _perf_case(entry: Any, fixtures_dir: Path | None) -> PerfCase:
                     tolerance=parse_tolerance(tolerance, "case set"),
                     included=status == INCLUDED,
                     reason=None if status == INCLUDED else entry.get("reason", status),
-                    data_movement_only=bool(entry.get("data_movement_only", False)))
+                    data_movement_only=bool(entry.get("data_movement_only", False)),
+                    shape_generic=bool(entry.get("shape_generic", False)),
+                    mutated_outputs=tuple(entry.get("mutated_outputs", ())),
+                    group=entry.get("group"))
 
 
 def load_perf_cases(case_set: Path | None, case_ids: list[str] | None,
@@ -145,6 +169,30 @@ def load_perf_cases(case_set: Path | None, case_ids: list[str] | None,
     if not case_ids:
         raise ValueError("give a case set or explicit cases")
     return [_perf_case(case, fixtures_dir) for case in case_ids]
+
+
+def parse_shard(text: str) -> tuple[int, int]:
+    """`K/N` -> (K, N): shard K (counting from 0) of N."""
+    try:
+        index, count = (int(part) for part in text.split("/"))
+    except ValueError:
+        raise ValueError(f"shard {text!r} is not K/N") from None
+    if not 0 <= index < count:
+        raise ValueError(f"shard {text!r}: need 0 <= K < N")
+    return index, count
+
+
+def shard_cases(cases: list[PerfCase], index: int, count: int) -> list[PerfCase]:
+    """The cases of shard `index` of `count`.
+
+    The included cases, sorted by id, are dealt out in turn: case number `i`
+    goes to shard `i % count`. The assignment depends only on the case ids, so
+    the shards of one case set are disjoint and cover it whatever the seed.
+    Excluded cases stay in every shard (they are records, not runs).
+    """
+    included = sorted((c for c in cases if c.included), key=lambda c: c.case)
+    mine = {c.case for position, c in enumerate(included) if position % count == index}
+    return [c for c in cases if not c.included or c.case in mine]
 
 
 @dataclass(frozen=True)

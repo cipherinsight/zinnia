@@ -614,19 +614,123 @@ impl Halo2BaseSynthesizer<'_> {
         Ok(power)
     }
 
-    /// Float base and float exponent: supported for a constant exponent
-    /// with an integer value (then the integer-exponent lowering); any other
-    /// exponent is rejected with an error naming the operation.
-    pub(super) fn fixed_pow(&mut self, base: &Halo2BaseCell, exp: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
-        match self.factor_of(exp) {
-            Factor::Constant { m, s } if s == self.params.precision_bits => {
-                let e = self.constant_int(m as i64)?;
-                self.fixed_pow_int(base, &e)
-            }
-            _ => Err(ProvingError::synthesis(
-                "halo2-base backend does not support `**` with a runtime or fractional float exponent",
-            )),
+    /// Natural `log`, by `kernel::fp_log`'s algorithm (Noir's `qlog` is the
+    /// same): `x = (m / 2^P)·2^k` with `m` in `[2^P, 2^(P+1))`,
+    /// `s = floor((m - 2^P)·2^P / (m + 2^P))`, `ln m' = 2·s·A(s^2)` by Horner,
+    /// plus `k ln 2` rounded from Q64.
+    ///
+    /// Soundness. `x - 1` is range-checked to 64 bits: `1 <= x < 2^64`, and
+    /// there is no witness for `x <= 0` (NumPy's `-inf`/`nan`). The hints
+    /// `j = k + P` and `m` are pinned by `x·2^P = m·2^j + r` with `m - 2^P`
+    /// checked to `P` bits, `j` decomposed into 6 bits (`power_of_two`) and
+    /// `0 <= r < 2^j` (`assert_below_cell`): every term is below `2^97`, so the
+    /// identity holds over the integers and says `m = floor(x·2^P / 2^j)`;
+    /// exactly one `j` puts that floor in `[2^P, 2^(P+1))` (each step of `j`
+    /// halves it), so `j` and `m` are functions of `x`. The division by the
+    /// positive `m + 2^P`, the `mul_f`s, Horner and the final rescale pin
+    /// their quotients. The output is the kernel's value.
+    pub(super) fn fixed_log(&mut self, x: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        let precision_bits = self.params.precision_bits;
+        let q = 1i128 << precision_bits;
+        if kernel::fp_log(x.value, precision_bits).is_none() {
+            let v = kernel::dequantize_from_fp(x.value, precision_bits);
+            self.note_unsat(move || format!("log({v}) is outside the domain (x <= 0)"));
         }
+        let below = self.add_constant(x, -1);
+        self.range_check(&below, 64);
+        self.prove_range(x, Interval { lo: 1, hi: (1i128 << 64) - 1 });
+
+        let (k, m) = kernel::fp_to_i128(x.value)
+            .filter(|v| (1..1i128 << 64).contains(v))
+            .map_or((0, q), |v| kernel::log2_decompose(v, precision_bits));
+        let j = self.hint(kernel::i128_to_fp(k + precision_bits as i128));
+        let m = self.hint(kernel::i128_to_fp(m));
+        let mantissa_offset = self.add_constant(&m, -q);
+        self.range_check(&mantissa_offset, precision_bits as usize);
+        self.prove_range(&m, Interval { lo: q, hi: 2 * q - 1 });
+        let scale = self.power_of_two(&j, 6);
+        let q_fp = kernel::i128_to_fp(q);
+        let shifted_x = self.gate_cell(x.value * q_fp, |gate, ctx| gate.mul(ctx, x.quantum(), QuantumCell::Constant(q_fp)));
+        let remainder = self.gate_cell(shifted_x.value - m.value * scale.value, |gate, ctx| {
+            gate.sub_mul(ctx, shifted_x.quantum(), m.quantum(), scale.quantum())
+        });
+        self.assert_below_cell(&remainder, &scale);
+
+        let numerator = self.gate_cell((m.value - q_fp) * q_fp, |gate, ctx| {
+            gate.mul_add(ctx, m.quantum(), QuantumCell::Constant(q_fp), QuantumCell::Constant(-q_fp * q_fp))
+        });
+        let denominator = self.add_constant(&m, q);
+        let (s, _) = self.div_rem_nonzero(&numerator, Divisor::Positive(denominator), Rounding::Euclid)?;
+        let u = self.fixed_mul(&s, &s)?;
+        let series = self.poly_eval_horner(&u, &kernel::atanh_series_q(precision_bits))?;
+        let half = self.fixed_mul(&s, &series)?;
+
+        let ln2 = kernel::i128_to_fp(kernel::LN2_Q64);
+        let rounding = kernel::i128_to_fp((1i128 << (63 - precision_bits)) - precision_bits as i128 * kernel::LN2_Q64);
+        // (j - P)·LN2_Q64 + 2^(63-P), with k = j - P.
+        let raw = self.gate_cell(j.value * ln2 + rounding, |gate, ctx| {
+            gate.mul_add(ctx, j.quantum(), QuantumCell::Constant(ln2), QuantumCell::Constant(rounding))
+        });
+        let k_ln2 = self.rescale_by(&raw, 64 - precision_bits)?;
+        let ln_m = self.add_i(&half, &half)?;
+        self.add_i(&k_ln2, &ln_m)
+    }
+
+    /// `floor((exp x ± exp -x) / 2)` (`sinh`, `cosh` of `kernel`): two
+    /// pinned `exp`s and a pinned floor division by 2 (`rescale_by`).
+    pub(super) fn half_exp_combination(&mut self, x: &Halo2BaseCell, sum: bool) -> Result<Halo2BaseCell, ProvingError> {
+        let up = self.exp_f(x)?;
+        let negated = self.negate(x);
+        let down = self.exp_f(&negated)?;
+        let combined = if sum { self.add_i(&up, &down)? } else { self.sub_i(&up, &down)? };
+        self.rescale_by(&combined, 1)
+    }
+
+    /// `a ** b` for float `a`, `b`, by `kernel::fp_pow`'s rules (Noir's
+    /// `qpow` is the same): `exp(b·log |a|)`, negated for a negative `a` and
+    /// an odd `b`; for `a == 0`, 1 when `b == 0` and 0 otherwise.
+    ///
+    /// Soundness. Every value is a function of `(a, b)`: the sign, magnitude
+    /// and zero bit of `a` are pinned (`sign_and_abs`, `is_zero_bit`); `log`
+    /// takes `|a|`, or 1 when `a == 0` (so its domain holds); the integer
+    /// part `w` and fraction `f` of `b` come from a pinned rescale by `2^P`
+    /// and `w`'s parity from a pinned rescale by 2. NumPy's `nan`/`inf` cases
+    /// have no witness: `a < 0` requires `f == 0`, and `a == 0` requires
+    /// `b >= 0` (asserted bits). `exp` has no witness where the result leaves
+    /// the window, as the kernel's `None`.
+    pub(super) fn fixed_pow(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        let precision_bits = self.params.precision_bits;
+        if kernel::fp_pow(a.value, b.value, precision_bits).is_none() {
+            let (x, y) = (kernel::dequantize_from_fp(a.value, precision_bits), kernel::dequantize_from_fp(b.value, precision_bits));
+            self.note_unsat(move || format!("{x} ** {y} has no real value inside the fixed-point window"));
+        }
+        let one = self.constant_float(1.0)?;
+        let zero = self.constant_float(0.0)?;
+        let (negative, magnitude) = self.sign_and_abs(a)?;
+        let a_is_zero = self.is_zero_bit(a);
+        let log_input = self.select_bit(&a_is_zero, &one, &magnitude)?;
+        let log = self.fixed_log(&log_input)?;
+        let exponent = self.fixed_mul(b, &log)?;
+        let power = self.exp_f(&exponent)?;
+
+        let (whole, fraction) = self.rescale_with_remainder(b, precision_bits)?;
+        let (_, odd) = self.rescale_with_remainder(&whole, 1)?;
+        self.mark_bit(&odd);
+        let integral = self.is_zero_bit(&fraction);
+        let positive = self.logical_not(&negative)?;
+        let real = self.logical_or(&positive, &integral)?;
+        self.assert_true(&real)?;
+        let b_negative = self.less_than(Operand::Cell(*b), Operand::Constant(0), Some(Interval::SIGNED64))?;
+        let nonzero = self.logical_not(&a_is_zero)?;
+        let b_non_negative = self.logical_not(&b_negative)?;
+        let finite = self.logical_or(&nonzero, &b_non_negative)?;
+        self.assert_true(&finite)?;
+
+        let flip = self.logical_and(&negative, &odd)?;
+        let signed = self.negate_if(&power, &flip)?;
+        let b_is_zero = self.is_zero_bit(b);
+        let zero_base_value = self.select_bit(&b_is_zero, &one, &zero)?;
+        self.select_bit(&a_is_zero, &zero_base_value, &signed)
     }
 
     pub(super) fn sqrt_nonneg(&mut self, x: &Halo2BaseCell, x_bits: usize) -> Result<Halo2BaseCell, ProvingError> {

@@ -12,6 +12,7 @@ use halo2_base::{
 
 mod bitwise;
 mod fixed_point;
+mod identities;
 mod keys;
 mod memory;
 mod plan;
@@ -58,6 +59,12 @@ pub struct Halo2BaseSynthesizer<'a> {
     /// Checks laid out after the verifier's challenges (`circuit.rs`),
     /// registered by the lowerings that need them.
     pub(crate) second_phase: super::circuit::SecondPhase,
+    /// Read-only memory tables and the reads looked up in them
+    /// (`IR::ReadTable`, `circuit/tables.rs`).
+    pub(crate) tables: super::circuit::Tables,
+    /// Read-write memory traces (`circuit/ram.rs`) of the segments the plan
+    /// puts in RAM mode.
+    pub(crate) ram: super::circuit::Ram,
     witness: Option<ResolvedWitness>,
     params: ProvingParams,
     public_values: Vec<Fp>,
@@ -176,6 +183,8 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         Self {
             builder,
             second_phase: super::circuit::SecondPhase::default(),
+            tables: super::circuit::Tables::default(),
+            ram: super::circuit::Ram::default(),
             witness,
             params,
             public_values: Vec::new(),
@@ -1347,15 +1356,24 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         self.mark_bit(&flip);
         self.negate_if(&value, &flip)
     }
-    fn sinh_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("sinh_f") }
+    /// `sinh x = floor((exp x - exp -x) / 2)`, as `kernel::fp_sinh`: two
+    /// pinned `exp`s and a pinned rescale by one bit.
+    fn sinh_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.half_exp_combination(a, false) }
     /// `cos(a) = sin(a + pi/2)`, as `kernel::fp_cos`.
     fn cos_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         let shifted = self.add_constant(a, kernel::half_pi_q(self.params.precision_bits));
         self.sin_f(&shifted)
     }
-    fn cosh_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("cosh_f") }
+    /// `cosh x = floor((exp x + exp -x) / 2)`, as `kernel::fp_cosh`.
+    fn cosh_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.half_exp_combination(a, true) }
     fn tan_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("tan_f") }
-    fn tanh_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("tanh_f") }
+    /// `tanh x = sinh x / cosh x` (the fixed-point quotient), as
+    /// `kernel::fp_tanh`; the division pins its quotient.
+    fn tanh_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        let sinh = self.sinh_f(a)?;
+        let cosh = self.cosh_f(a)?;
+        self.fixed_div(&sinh, &cosh)
+    }
     /// `sqrt` as `kernel::fp_sqrt`: `floor(sqrt(a * 2^P))`, and 0 for a
     /// negative input. The pinned sign bit of `sign_and_abs` zeroes a
     /// negative input; `sqrt_nonneg` pins the root.
@@ -1415,7 +1433,8 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         self.prove_range(&out, Interval { lo: 0, hi: (1i128 << 63) - 1 });
         Ok(out)
     }
-    fn log_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("log_f") }
+    /// `log`, as `kernel::fp_log` (see `fixed_log`).
+    fn log_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.fixed_log(a) }
     /// `arcsin(x) = 2 * atan(x / (1 + sqrt(1 - x^2)))`, as `kernel::fp_arcsin`
     /// (0 outside `[-1, 1]`).
     ///
@@ -1635,6 +1654,10 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn assert_u128_lt_bit(&mut self, idx: &Self::CellRef, hi: u64, bit: u32, bits: u32) -> Result<Self::CellRef, ProvingError> {
         let key = (idx.id, hi, bits);
         if !self.u128_lt_bit_cache.contains_key(&key) {
+            if !kernel::fp_to_i128(idx.value).is_some_and(|i| 0 <= i && i < hi as i128) {
+                let i = kernel::fp_to_i64(idx.value);
+                self.note_unsat(move || format!("Witness does not satisfy circuit constraints: index {i} is not below {hi}"));
+            }
             self.assert_less(idx, Operand::Constant(hi as i128))?;
             let idx_cell = self.assigned(idx);
             let decomposed = self.gate.num_to_bits(self.builder.main(0), idx_cell, bits as usize);
@@ -1690,6 +1713,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
     fn read_memory(&mut self, segment_id: u32, addr: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         self.memory_read(segment_id, addr)
+    }
+    fn read_table(&mut self, segment_id: u32, addr: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        self.memory_read_table(segment_id, addr)
     }
     fn memory_trace_emit(&mut self, _: u32, _: bool, _: &[Self::CellRef]) -> Result<(), ProvingError> { Ok(()) }
     fn memory_trace_seal(&mut self) -> Result<(), ProvingError> { Ok(()) }
@@ -1751,6 +1777,15 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         self.index_of_packed_key(key, index_bits)
     }
 
+    fn identity_check(&mut self, identity: crate::ir_defs::Identity, operands: &[Self::CellRef]) -> Result<(), ProvingError> {
+        self.check_identity(identity, operands)
+    }
+
+    /// `floor(raw / 2^P)`: the rescale of `fixed_product_sum`.
+    fn rescale_raw_f(&mut self, raw: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        self.rescale_by(raw, self.params.precision_bits)
+    }
+
     /// A free cell holding the hint's lane (`kernel::hint_lane` of the
     /// operands' values; placeholder values at key generation). Loaded by
     /// [`Self::hint`], so the tamper tests reach it; the IR pins it.
@@ -1800,3 +1835,6 @@ mod tamper {
 #[cfg(test)]
 #[path = "synthesizer_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+pub(crate) mod two_phase_tests;

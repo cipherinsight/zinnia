@@ -101,6 +101,9 @@ fn constant_of(graph: &IRGraph, s: StmtId) -> Option<i64> {
 fn other_access(ir: &IR) -> Option<u32> {
     match *ir {
         IR::MemoryTraceEmit { segment_id, .. }
+        // A table read may read any slot (and its segment is not written
+        // after it).
+        | IR::ReadTable { segment_id }
         | IR::DynamicNDArrayGetItem { segment_id, .. }
         | IR::DynamicNDArraySetItem { segment_id, .. } => Some(segment_id),
         _ => None,

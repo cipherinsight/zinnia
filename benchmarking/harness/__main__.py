@@ -7,8 +7,8 @@
                                        [--cases ID,..] [--fixtures-dir DIR] [--repeats N]
                                        [--timeout S] [--memory-max 16G|none] [--threads N]
                                        [--seed N] [--halo2-k K --halo2-lookup-bits L]
-                                       [--results-dir DIR]
-    python -m benchmarking.harness analyze EPOCH_DIR
+                                       [--shard K/N] [--results-dir DIR]
+    python -m benchmarking.harness analyze EPOCH_DIR [EPOCH_DIR ...] [--out DIR]
     python -m benchmarking.harness accept --label L [--case-set FILE] [--programs P,..]
                                           [--timeout S] [--memory-max 8G|none]
 
@@ -33,7 +33,9 @@ def _list(text: str | None) -> list[str]:
 
 
 def _case_id(text: str) -> str:
-    return text if text.startswith("ds1000_case") else f"ds1000_case{int(text):04d}"
+    """A bare number names a DS-1000 case (`309` -> `ds1000_case0309`); any
+    other text is a case id as the case set writes it."""
+    return f"ds1000_case{int(text):04d}" if text.isdigit() else text
 
 
 def _memory(text: str) -> str | None:
@@ -67,7 +69,7 @@ def cmd_build(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    from benchmarking.harness.case_sets import load_perf_cases
+    from benchmarking.harness.case_sets import load_perf_cases, parse_shard, shard_cases
     from benchmarking.harness.protocol import RunConfig
     from benchmarking.harness.run import RunRefused, run_epoch
 
@@ -75,6 +77,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         paths.PERF_CASE_SET if paths.PERF_CASE_SET.exists() and not args.cases else None)
     cases = load_perf_cases(case_set, [_case_id(c) for c in _list(args.cases)],
                             Path(args.fixtures_dir).resolve() if args.fixtures_dir else None)
+    shard = parse_shard(args.shard) if args.shard else None
+    if shard is not None:
+        cases = shard_cases(cases, *shard)
     halo2_params = None
     if args.halo2_k is not None or args.halo2_lookup_bits is not None:
         if args.halo2_k is None or args.halo2_lookup_bits is None:
@@ -82,7 +87,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         halo2_params = {"k": args.halo2_k, "lookup_bits": args.halo2_lookup_bits}
     config = RunConfig(systems=_systems(args.systems), repeats=args.repeats,
                        step_timeout_s=args.timeout, memory_max=_memory(args.memory_max),
-                       threads=args.threads, seed=args.seed, halo2_params=halo2_params)
+                       threads=args.threads, seed=args.seed, halo2_params=halo2_params,
+                       shard=list(shard) if shard else None)
     try:
         root = run_epoch(args.label, cases, config, case_set, Path(args.results_dir))
     except RunRefused as exc:
@@ -96,9 +102,12 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def cmd_analyze(args: argparse.Namespace) -> int:
     from benchmarking.harness.analysis.aggregate import summarize
-    root = Path(args.epoch)
-    summarize(root)
-    print((root / "summary" / "summary.md").read_text())
+    epochs = [Path(e) for e in args.epochs]
+    if len(epochs) > 1 and not args.out:
+        raise SystemExit("several epochs (the shards of one run) need --out DIR")
+    out = Path(args.out) if args.out else epochs[0] / "summary"
+    summarize(epochs, out)
+    print((out / "summary.md").read_text())
     return 0
 
 
@@ -149,10 +158,14 @@ def parser() -> argparse.ArgumentParser:
                      help="parent of the epoch directory (default: benchmarking/results)")
     run.add_argument("--halo2-k", type=int, help="fixed k for both halo2 sides (sensitivity)")
     run.add_argument("--halo2-lookup-bits", type=int)
+    run.add_argument("--shard", help="K/N: run only shard K (from 0) of N of the case set's "
+                                     "cases (sorted by id, dealt out in turn)")
     run.set_defaults(func=cmd_run)
 
-    analyze = sub.add_parser("analyze", help="summaries of an epoch directory")
-    analyze.add_argument("epoch")
+    analyze = sub.add_parser("analyze", help="summaries of an epoch (or of the shards of one)")
+    analyze.add_argument("epochs", nargs="+", metavar="EPOCH_DIR")
+    analyze.add_argument("--out", help="summary directory (default: <EPOCH_DIR>/summary; "
+                                       "required for several epochs)")
     analyze.set_defaults(func=cmd_analyze)
 
     accept = sub.add_parser("accept", help="compile + mock-run + reference compare")

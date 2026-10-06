@@ -8,8 +8,11 @@ any failure. Two command-line styles exist:
 
     halo2_hw <mode> --case DIR --fixture F --input A|B --workdir W --out J
              [--k K --lookup-bits L] [--tamper-index I]
-    <host>   --case-dir DIR --mode <mode> --work-dir W --fixture F --input A|B
-             --out J [--proof-mode M] [--tamper]                (SP1, RISC Zero, Cairo)
+    <host>   --case-dir DIR [--function F] --mode <mode> --work-dir W --fixture F
+             --input A|B --out J [--proof-mode M] [--tamper]     (SP1, RISC Zero, Cairo)
+
+`--function` names the entry function of a shape-generic case (NPBench,
+Pythran: one folder, one program per entry function).
 
 Every program keeps keys and the proof in its work directory and overwrites the
 proof on each prove. So the harness gives setup its own directory and every
@@ -163,8 +166,11 @@ class ContractProgramAdapter(Adapter):
         if self.program.style == HALO2_HW_STYLE:
             return [*self.program.argv(), mode, "--case", str(ctx.case.directory),
                     "--workdir", str(work), *common, *self.program.extra_args, *extra]
-        return [*self.program.argv(), "--case-dir", str(ctx.case.directory), "--mode", mode,
-                "--work-dir", str(work), *common, *self.program.extra_args, *extra]
+        # A shape-generic folder (NPBench, Pythran) holds one program per entry function.
+        function = ["--function", ctx.case.function] if ctx.case.shape_generic else []
+        return [*self.program.argv(), "--case-dir", str(ctx.case.directory), *function,
+                "--mode", mode, "--work-dir", str(work), *common, *self.program.extra_args,
+                *extra]
 
     def _invoke(self, ctx: StepContext, mode: str, input_name: str, work: Path,
                 extra: list[str]) -> dict:

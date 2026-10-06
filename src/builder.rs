@@ -1473,7 +1473,7 @@ impl IRBuilder {
                     self.provenance.set_interval(vid, iv);
                 }
             }
-            IR::ReadMemory { segment_id } | IR::DynamicNDArrayGetItem { segment_id, .. } => {
+            IR::ReadMemory { segment_id } | IR::ReadTable { segment_id } | IR::DynamicNDArrayGetItem { segment_id, .. } => {
                 if let (Some(vid), Some(hull)) =
                     (out.value_id(), self.provenance.segment_hull(*segment_id))
                 {
@@ -2793,6 +2793,18 @@ impl IRBuilder {
     /// Read a memory cell. Under a runtime execution predicate a dynamic
     /// address that is not in the segment on every path is guarded (see
     /// `guard_address`): where the code does not run it reads cell 0.
+    /// `IR::ReadTable`: the segment's slot at `address`, with no witness for
+    /// an address outside the segment (the caller passes an index that is in
+    /// range wherever the read does not run, as the frontend's guarded
+    /// indices are). The segment must not be written afterwards.
+    pub fn ir_read_table(&mut self, segment_id: u32, address: &Value) -> Value {
+        let out = self.create_ir(&IR::ReadTable { segment_id }, &[address.clone()]);
+        if self.is_bool_segment(segment_id) {
+            self.record_bool_cell(&out);
+        }
+        out
+    }
+
     pub fn ir_read_memory(&mut self, segment_id: u32, address: &Value) -> Value {
         let capacity = self.segment_capacity.get(&segment_id).copied();
         let address = &self.guard_address(address, capacity);
@@ -3065,6 +3077,18 @@ impl IRBuilder {
     /// `IR::PackedKeyIndex`: the index a packed key was packed from.
     pub fn ir_packed_key_index(&mut self, key: &Value, index_bits: u32) -> Value {
         self.create_ir(&IR::PackedKeyIndex { index_bits }, std::slice::from_ref(key))
+    }
+
+    /// `IR::IdentityCheck`: assert `identity` among `operands` (checked at
+    /// verifier challenges on halo2-base; see `lower::challenge`).
+    pub fn ir_identity_check(&mut self, identity: crate::ir_defs::Identity, operands: &[Value]) {
+        assert_eq!(operands.len(), identity.operands(), "{} operands", identity.describe());
+        self.create_ir(&IR::IdentityCheck(identity), operands);
+    }
+
+    /// `IR::RescaleRawF`: `floor(raw / 2^P)` of a raw product sum.
+    pub fn ir_rescale_raw_f(&mut self, raw: &Value) -> Value {
+        self.create_ir(&IR::RescaleRawF, std::slice::from_ref(raw))
     }
 
     /// Start allocating memory segment ids at `next` (a pass that rebuilds a
@@ -3426,7 +3450,7 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
         // ── Memory operations (fixed) ─────────────────────────────
         IR::AllocateMemory { .. } => Value::None,
         IR::WriteMemory { .. } => Value::None,
-        IR::ReadMemory { .. } => Value::Integer(ScalarValue::new(None, Some(ir_id))),
+        IR::ReadMemory { .. } | IR::ReadTable { .. } => Value::Integer(ScalarValue::new(None, Some(ir_id))),
         IR::MemoryTraceEmit { .. } => Value::None,
         IR::MemoryTraceSeal => Value::None,
 
@@ -3461,7 +3485,14 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
             crate::ir_defs::HintKind::MaskedSortedValues => {
                 unknown_like_elements(&args[..*len as usize / 2], ir_id)
             }
+            crate::ir_defs::HintKind::OrderedBy => {
+                unknown_like_elements(&args[*len as usize / 2..*len as usize], ir_id)
+            }
+            // A raw product sum is not an int64 value: never folded.
+            crate::ir_defs::HintKind::ProductSum => Value::Integer(ScalarValue::new(None, Some(ir_id))),
         },
+        IR::IdentityCheck(_) => Value::None,
+        IR::RescaleRawF => Value::Float(ScalarValue::new(None, Some(ir_id))),
         // A packed key is not an int64 value: never folded.
         IR::PackKey { .. } | IR::PackedKeyIndex { .. } => {
             Value::Integer(ScalarValue::new(None, Some(ir_id)))
@@ -3545,6 +3576,7 @@ fn min_required_arity(ir: &IR) -> usize {
         | IR::ExposePublicI
         | IR::ExposePublicF
         | IR::ReadMemory { .. }
+        | IR::ReadTable { .. }
         | IR::MemoryTraceEmit { .. }
         | IR::WitnessDynamicNDArrayMeta { .. }
         | IR::AssertDynamicNDArrayMeta { .. }
@@ -3605,7 +3637,8 @@ fn min_required_arity(ir: &IR) -> usize {
         IR::Hint { len, .. } => *len as usize + 1,
         IR::KeyLess { .. } => 4,
         IR::PackKey { .. } | IR::PackedKeyLess { .. } => 2,
-        IR::PackedKeyIndex { .. } => 1,
+        IR::PackedKeyIndex { .. } | IR::RescaleRawF => 1,
+        IR::IdentityCheck(identity) => identity.operands(),
         IR::ArrayOp(op) => op.shared as usize,
     }
 }
@@ -3624,6 +3657,7 @@ fn unknown_value_for_ir(ir: &IR, ir_id: StmtId) -> Value {
         | IR::SubF
         | IR::MulF
         | IR::ProductSumF { .. }
+        | IR::RescaleRawF
         | IR::DivF
         | IR::FloorDivF
         | IR::ModF
@@ -3688,6 +3722,7 @@ fn unknown_value_for_ir(ir: &IR, ir_id: StmtId) -> Value {
         | IR::AssertDynamicNDArrayMeta { .. }
         | IR::DynamicNDArraySetItem { .. }
         | IR::InvokeExternal { .. }
+        | IR::IdentityCheck(_)
         | IR::ExportExternalI { .. } => Value::None,
         IR::AddStr | IR::StrI | IR::StrF => Value::String(StringValue {
             val: String::new(),

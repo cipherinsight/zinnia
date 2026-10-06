@@ -12,6 +12,10 @@
 //! Statement ids in this module refer to the graph being lowered (the input
 //! of the pass).
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use crate::types::StmtId;
 
 use super::op::OpKind;
@@ -71,6 +75,12 @@ pub enum Requirement {
     /// say) that nodes of several groups may share, produced once, named by
     /// its family.
     SharedAt { at: StmtId, name: &'static str },
+    /// A capability of the whole program, produced at most once whatever
+    /// groups use it: the verifier challenge (`challenge::CHALLENGE`). Its
+    /// producer is the framework's (`challenge::producer_cost`), with a
+    /// one-time cost per target, or none where the target cannot provide
+    /// it; the selection pays it once, for every part of the graph together.
+    Program { name: &'static str },
     /// A fact.
     Fact(Fact),
 }
@@ -112,6 +122,70 @@ pub enum Claim {
     /// an open end (an asserted `x >= c` or `x <= c`, such as one side of an
     /// input's int64 window, bounds one side only).
     Within { x: StmtId, lo: Option<i64>, hi: Option<i64> },
+    /// The two lists of values are equal as multisets (`is_permutation(p)`
+    /// is `Permutation(p, [0, 1, ..., n - 1])`).
+    Permutation(ListId, ListId),
+}
+
+/// A list of values a claim is about, interned (claims are small `Copy`
+/// values): equal lists have equal ids, so comparing ids compares lists.
+///
+/// The interner belongs to one lowering: [`ListId::reset`] empties it when
+/// `emit::lower` starts, and it is per thread (a lowering runs on one).
+/// Ids are therefore numbered in the order one compilation creates its
+/// lists, whatever the process compiled before, so the order of claims
+/// (`ListId` is `Ord`) is reproducible, and the table does not grow across
+/// compilations. An id is meaningful only within the lowering that made it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ListId(u32);
+
+/// One value of a [`ListId`]'s list: a statement's value or an integer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ListEntry {
+    Stmt(StmtId),
+    Int(i64),
+}
+
+type Interned = (Vec<Arc<[ListEntry]>>, HashMap<Arc<[ListEntry]>, u32>);
+
+thread_local! {
+    static LISTS: RefCell<Interned> = RefCell::new(Default::default());
+}
+
+impl ListId {
+    /// Forget every list (the start of a lowering, `emit::lower`).
+    pub(super) fn reset() {
+        LISTS.with(|lists| *lists.borrow_mut() = Default::default());
+    }
+
+    pub fn intern(entries: &[ListEntry]) -> ListId {
+        LISTS.with(|lists| Self::intern_in(&mut lists.borrow_mut(), entries))
+    }
+
+    fn intern_in(lists: &mut Interned, entries: &[ListEntry]) -> ListId {
+        if let Some(&id) = lists.1.get(entries) {
+            return ListId(id);
+        }
+        let list: Arc<[ListEntry]> = entries.into();
+        let id = lists.0.len() as u32;
+        lists.0.push(list.clone());
+        lists.1.insert(list, id);
+        ListId(id)
+    }
+
+    /// The statements of a list of statements.
+    pub fn of_stmts(stmts: &[StmtId]) -> ListId {
+        ListId::intern(&stmts.iter().map(|&s| ListEntry::Stmt(s)).collect::<Vec<_>>())
+    }
+
+    /// `[0, 1, ..., n - 1]`.
+    pub fn range(n: usize) -> ListId {
+        ListId::intern(&(0..n as i64).map(ListEntry::Int).collect::<Vec<_>>())
+    }
+
+    pub fn entries(self) -> Arc<[ListEntry]> {
+        LISTS.with(|lists| lists.borrow().0[self.0 as usize].clone())
+    }
 }
 
 impl Fact {
@@ -158,6 +232,7 @@ impl Claim {
             (InRange { x, lo, .. }, NonNegative(y)) => x == y && lo >= 0,
             (InRange { x, lo, .. }, NonZero(y)) => x == y && lo >= 1,
             (Equal(a, b), Equal(c, d)) => (a, b) == (c, d) || (a, b) == (d, c),
+            (Permutation(a, b), Permutation(c, d)) => (a, b) == (c, d) || (a, b) == (d, c),
             (a, b) => a == b,
         }
     }
@@ -168,6 +243,14 @@ impl Claim {
             Claim::InRange { x, hi: Bound::Stmt(h), .. } => vec![x, h],
             Claim::InRange { x, .. } | Claim::NonNegative(x) | Claim::NonZero(x) | Claim::Within { x, .. } => vec![x],
             Claim::Equal(a, b) => vec![a, b],
+            Claim::Permutation(a, b) => [a, b]
+                .iter()
+                .flat_map(|list| list.entries().to_vec())
+                .filter_map(|entry| match entry {
+                    ListEntry::Stmt(s) => Some(s),
+                    ListEntry::Int(_) => None,
+                })
+                .collect(),
         }
     }
 }

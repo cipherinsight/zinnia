@@ -502,6 +502,9 @@ pub trait Synthesizer {
         segment_id: u32,
         addr: &Self::CellRef,
     ) -> Result<Self::CellRef, ProvingError>;
+    /// `IR::ReadTable`: the slot at `addr`, with no witness for an address
+    /// outside the segment; the segment is not written afterwards.
+    fn read_table(&mut self, segment_id: u32, addr: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
     fn memory_trace_emit(
         &mut self,
         segment_id: u32,
@@ -664,6 +667,29 @@ pub trait Synthesizer {
         operands: &[Self::CellRef],
         rank: &Self::CellRef,
     ) -> Result<Self::CellRef, ProvingError>;
+
+    // ── Identities checked at verifier challenges ─────────────────────
+
+    /// `IR::IdentityCheck`: assert `identity` among `operands`. The mock
+    /// checks it exactly; halo2-base at verifier challenges in its second
+    /// phase. A backend without verifier challenges rejects it (the array
+    /// lowering never emits it for such a target, `lower::challenge`).
+    fn identity_check(
+        &mut self,
+        identity: crate::ir_defs::Identity,
+        _operands: &[Self::CellRef],
+    ) -> Result<(), ProvingError> {
+        Err(ProvingError::synthesis(format!(
+            "identity checks at verifier challenges ({}) are not supported by this backend",
+            identity.describe()
+        )))
+    }
+
+    /// `IR::RescaleRawF`: `floor(raw / 2^P)` of a raw fixed-point sum, with
+    /// the rescale checks of `ProductSumF`.
+    fn rescale_raw_f(&mut self, _raw: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        Err(ProvingError::synthesis("rescaling a raw product sum is not supported by this backend"))
+    }
 
     // ── Hash ──────────────────────────────────────────────────────────
 

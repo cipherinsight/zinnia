@@ -271,6 +271,15 @@ pub enum IR {
     ReadMemory {
         segment_id: u32,
     },
+    /// The segment's slot at the runtime address operand, read as a
+    /// memory-argument read: there is no witness for an address outside
+    /// `[0, len)` on any backend (the mock rejects it too), and the segment
+    /// is not written after its first `ReadTable` (the slots form a fixed
+    /// table). halo2-base: a dynamic lookup into the segment's table; Noir:
+    /// a native array read at a checked index (`lower::memory`).
+    ReadTable {
+        segment_id: u32,
+    },
     MemoryTraceEmit {
         segment_id: u32,
         is_write: bool,
@@ -393,6 +402,77 @@ pub enum IR {
     PackedKeyIndex {
         index_bits: u32,
     },
+    /// An exact identity among the operands (see [`Identity`]); no value.
+    ///
+    /// The mock checks it exactly, in field arithmetic. halo2-base checks
+    /// it at verifier challenges drawn after every operand is committed, in
+    /// the circuit's second phase (`prove/halo2_base/circuit.rs`): sound
+    /// except with probability `degree / |F|` (`Identity::degree`,
+    /// Schwartz-Zippel). Noir has no verifier challenge and rejects it; the
+    /// layer never emits it there (`lower::challenge`). Producers state why
+    /// the identity pins the values they rely on.
+    IdentityCheck(Identity),
+    /// `floor(x / 2^P)` of a raw fixed-point product sum `x` (a value with
+    /// `2P` fractional bits, e.g. `Σ a_i·b_i` of Q values: a field element
+    /// whose signed reading is that integer), as a Q value: exactly the
+    /// rescale `ProductSumF` applies to its raw sum, with its remainder and
+    /// window checks (a quotient outside the signed 64-bit window has no
+    /// witness). Only constructions whose `x` is pinned by an
+    /// [`IR::IdentityCheck`] emit it (`lower::linear`).
+    RescaleRawF,
+}
+
+/// An identity [`IR::IdentityCheck`] asserts, over field elements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Identity {
+    /// The operands are `len` tuples of `width` values and then `len` more:
+    /// the two lists are equal as multisets of tuples.
+    MultisetEqual { len: u32, width: u32 },
+    /// The operands are `a` (`n` values), `b` (`m`) and `c` (`n + m - 1`):
+    /// `c_k = Σ_{i + j = k} a_i·b_j` for every `k`, i.e. the polynomials
+    /// satisfy `a(x)·b(x) = c(x)`.
+    PolynomialProduct { n: u32, m: u32 },
+    /// The operands are `A` (`rows × inner`, row-major), `B` (`inner ×
+    /// cols`) and `C` (`rows × cols`): `C = A·B`.
+    MatrixProduct { rows: u32, inner: u32, cols: u32 },
+}
+
+impl Identity {
+    /// The number of operands.
+    pub fn operands(self) -> usize {
+        match self {
+            Identity::MultisetEqual { len, width } => 2 * len as usize * width as usize,
+            Identity::PolynomialProduct { n, m } => 2 * (n + m) as usize - 1,
+            Identity::MatrixProduct { rows, inner, cols } => {
+                (rows * inner + inner * cols + rows * cols) as usize
+            }
+        }
+    }
+
+    /// The degree, in the challenges, of the polynomial whose vanishing the
+    /// randomized check tests: a false identity passes with probability at
+    /// most `degree / |F|` (Schwartz-Zippel).
+    ///
+    /// * Multiset equality: `Π (γ - t_j(α))` over `len` tuples compressed
+    ///   with the powers of `α` (`t(α) = Σ_l c_l α^l`): each factor has
+    ///   degree `max(1, width - 1)`.
+    /// * Polynomial product: `a(γ)·b(γ) - c(γ)`, degree `n + m - 2`.
+    /// * Matrix product: per row, `Σ_j (A·B - C)_ij γ^j`, degree `cols - 1`.
+    pub fn degree(self) -> u64 {
+        match self {
+            Identity::MultisetEqual { len, width } => u64::from(len) * u64::from(width.saturating_sub(1).max(1)),
+            Identity::PolynomialProduct { n, m } => u64::from(n + m).saturating_sub(2),
+            Identity::MatrixProduct { cols, .. } => u64::from(cols.saturating_sub(1)),
+        }
+    }
+
+    pub fn describe(self) -> String {
+        match self {
+            Identity::MultisetEqual { len, width } => format!("multiset_equal[{len}][{width}]"),
+            Identity::PolynomialProduct { n, m } => format!("polynomial_product[{n}][{m}]"),
+            Identity::MatrixProduct { rows, inner, cols } => format!("matrix_product[{rows}][{inner}][{cols}]"),
+        }
+    }
 }
 
 /// The deterministic function an [`IR::Hint`] takes a lane of. Both order
@@ -433,6 +513,18 @@ pub enum HintKind {
     /// checks; its one user (`lower::sort::routed`) asserts it a bit and
     /// checks the routed keys, which every accepted setting leaves the same.
     RoutingBits,
+    /// The operands reordered by the stable ascending order of others: the
+    /// operands are `n` sort keys and then `n` entries (`len = 2n`); lane
+    /// `r` is the entry of the key of rank `r` (NumPy's
+    /// `entries[np.argsort(keys, kind="stable")][r]`). Pinned by a multiset
+    /// check against the unordered entries (`lower::sort::grand_product`).
+    OrderedBy,
+    /// The exact sum `Σ_i a_i·b_i` of the operand pairs `[a_0, b_0, a_1,
+    /// b_1, ...]` in field arithmetic (for values in the signed 64-bit
+    /// window, the integer sum: a raw fixed-point sum before its rescale);
+    /// one lane (rank 0). Pinned by an identity check
+    /// (`lower::linear`).
+    ProductSum,
 }
 
 impl HintKind {
@@ -445,6 +537,8 @@ impl HintKind {
             HintKind::Negative => "negative",
             HintKind::CountAtMost => "count_at_most",
             HintKind::RoutingBits => "routing_bits",
+            HintKind::OrderedBy => "ordered_by",
+            HintKind::ProductSum => "product_sum",
         }
     }
 
@@ -457,6 +551,8 @@ impl HintKind {
             "negative" => Some(HintKind::Negative),
             "count_at_most" => Some(HintKind::CountAtMost),
             "routing_bits" => Some(HintKind::RoutingBits),
+            "ordered_by" => Some(HintKind::OrderedBy),
+            "product_sum" => Some(HintKind::ProductSum),
             _ => None,
         }
     }
@@ -634,6 +730,7 @@ impl IR {
             } => format!("allocate_memory[{}][{}][{}]", segment_id, size, init_value),
             IR::WriteMemory { segment_id } => format!("write_memory[{}]", segment_id),
             IR::ReadMemory { segment_id } => format!("read_memory[{}]", segment_id),
+            IR::ReadTable { segment_id } => format!("read_table[{}]", segment_id),
             IR::MemoryTraceEmit {
                 segment_id,
                 is_write,
@@ -719,6 +816,8 @@ impl IR {
             IR::PackedKeyLess { index_bits } => format!("packed_key_less[{}]", index_bits),
             IR::PackedKeyIndex { index_bits } => format!("packed_key_index[{}]", index_bits),
             IR::ArrayOp(op) => op.describe(),
+            IR::IdentityCheck(identity) => format!("identity_check[{}]", identity.describe()),
+            IR::RescaleRawF => "rescale_raw_f".to_string(),
         }
     }
 
@@ -742,6 +841,7 @@ impl IR {
             // Returns a bit but also asserts `0 <= idx < hi`; without being
             // fixed, DCE deleted the range check whenever the bit was unused.
             | IR::AssertU128LtBit { .. }
+            | IR::IdentityCheck(_)
             | IR::StructuralPredicate { .. }
             | IR::ScalarPrecondition { .. }
             | IR::Print
@@ -751,6 +851,7 @@ impl IR {
             | IR::AllocateMemory { .. }
             | IR::WriteMemory { .. }
             | IR::ReadMemory { .. }
+            | IR::ReadTable { .. }
             | IR::MemoryTraceEmit { .. }
             | IR::MemoryTraceSeal
             | IR::AllocateDynamicNDArrayMeta { .. }
@@ -865,6 +966,7 @@ impl IR {
             IR::AllocateMemory { .. } => "AllocateMemoryIR",
             IR::WriteMemory { .. } => "WriteMemoryIR",
             IR::ReadMemory { .. } => "ReadMemoryIR",
+            IR::ReadTable { .. } => "ReadTableIR",
             IR::MemoryTraceEmit { .. } => "MemoryTraceEmitIR",
             IR::MemoryTraceSeal => "MemoryTraceSealIR",
             IR::AllocateDynamicNDArrayMeta { .. } => "AllocateDynamicNDArrayMetaIR",
@@ -879,6 +981,8 @@ impl IR {
             IR::EqHash => "EqualHashIR",
             IR::Hint { .. } => "HintIR",
             IR::ArrayOp(_) => "ArrayOpIR",
+            IR::IdentityCheck(_) => "IdentityCheckIR",
+            IR::RescaleRawF => "RescaleRawFIR",
             IR::KeyLess { .. } => "KeyLessIR",
             IR::PackKey { .. } => "PackKeyIR",
             IR::PackedKeyLess { .. } => "PackedKeyLessIR",
@@ -960,6 +1064,7 @@ impl IR {
             }),
             IR::WriteMemory { segment_id } => serde_json::json!({ "segment_id": segment_id }),
             IR::ReadMemory { segment_id } => serde_json::json!({ "segment_id": segment_id }),
+            IR::ReadTable { segment_id } => serde_json::json!({ "segment_id": segment_id }),
             IR::IndexInBox { rank } => serde_json::json!({ "rank": rank }),
             IR::MemoryTraceEmit {
                 segment_id,
@@ -1052,6 +1157,7 @@ impl IR {
 
             IR::Hint { kind, len } => serde_json::json!({ "kind": kind.name(), "len": len }),
             IR::ArrayOp(op) => serde_json::to_value(op).expect("an ArrayOp serializes"),
+            IR::IdentityCheck(identity) => serde_json::to_value(identity).expect("an Identity serializes"),
             IR::KeyLess { index_bits }
             | IR::PackKey { index_bits }
             | IR::PackedKeyLess { index_bits }
@@ -1273,6 +1379,9 @@ impl IR {
             "ReadMemoryIR" => Ok(IR::ReadMemory {
                 segment_id: data["segment_id"].as_u64().unwrap_or(0) as u32,
             }),
+            "ReadTableIR" => Ok(IR::ReadTable {
+                segment_id: data["segment_id"].as_u64().unwrap_or(0) as u32,
+            }),
             "MemoryTraceEmitIR" => Ok(IR::MemoryTraceEmit {
                 segment_id: data["segment_id"].as_u64().unwrap_or(0) as u32,
                 is_write: data["is_write"].as_bool().unwrap_or(false),
@@ -1377,6 +1486,10 @@ impl IR {
             "ArrayOpIR" => serde_json::from_value(data.clone())
                 .map(IR::ArrayOp)
                 .map_err(|e| format!("ArrayOp: {e}")),
+            "IdentityCheckIR" => serde_json::from_value(data.clone())
+                .map(IR::IdentityCheck)
+                .map_err(|e| format!("IdentityCheck: {e}")),
+            "RescaleRawFIR" => Ok(IR::RescaleRawF),
 
             other => Err(format!("Unknown IR class: {}", other)),
         }

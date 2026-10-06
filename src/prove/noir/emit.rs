@@ -3450,6 +3450,22 @@ impl Synthesizer for NoirEmitter<'_> {
         // Otherwise the slot holds a literal (the segment's init value).
         Ok(self.bind(&expr))
     }
+    /// A native array read at an index `array_index` checks into the
+    /// segment (an address outside fails the proof); a constant address must
+    /// be in bounds at compile time.
+    fn read_table(&mut self, segment_id: u32, addr: &CellRef) -> Result<CellRef, ProvingError> {
+        let len = self.memories.get(&segment_id).map_or(0, |m| m.len());
+        if let Some(a) = self.s_int_of(addr) {
+            return match usize::try_from(a).ok().filter(|&a| a < len) {
+                Some(_) => self.read_memory(segment_id, addr),
+                None => Err(ProvingError::synthesis(format!("table read out of bounds: segment {segment_id} address {a}"))),
+            };
+        }
+        if len == 0 {
+            return Err(ProvingError::synthesis("table read from an empty segment"));
+        }
+        Ok(self.native_read(segment_id, addr))
+    }
     fn memory_trace_emit(
         &mut self,
         _segment_id: u32,
@@ -3619,6 +3635,13 @@ impl Synthesizer for NoirEmitter<'_> {
                 return Err(ProvingError::synthesis(
                     "routing-bit hints (the routed Waksman sort) are not emitted for Noir; the sort family offers that plan on halo2-base only",
                 ));
+            }
+            HintKind::OrderedBy | HintKind::ProductSum => {
+                return Err(ProvingError::synthesis(format!(
+                    "{} hints are pinned by identity checks at verifier challenges, which Noir has not; \
+                     the array lowering offers those constructions on halo2-base only",
+                    kind.name()
+                )));
             }
             HintKind::CountAtMost => {
                 self.use_lib("count_at_most_hint");

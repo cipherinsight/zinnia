@@ -66,6 +66,13 @@ use halo2_base::halo2_proofs::{
 use halo2_base::virtual_region::copy_constraints::SharedCopyConstraintManager;
 use halo2_base::virtual_region::manager::VirtualRegionManager;
 use halo2_base::{AssignedValue, Context};
+
+use crate::prove::error::ProvingError;
+
+pub mod ram;
+pub mod tables;
+pub use ram::{Ram, RamConfig};
+pub use tables::{TableConfig, Tables};
 use serde::{Deserialize, Serialize};
 
 /// Rows reserved for blinding factors when packing cells into columns (the
@@ -77,6 +84,12 @@ pub trait SecondPhaseCheck: Send + Sync {
     /// How many independent challenges it reads (`challenges[..n]` in
     /// [`Self::build`]).
     fn challenges(&self) -> usize;
+
+    /// The cells it reads: first-phase cells only. A second-phase cell is
+    /// never an input of anything but a second-phase check, so no
+    /// first-phase value depends on a challenge ([`SecondPhase::push`]
+    /// asserts this).
+    fn reads(&self) -> Vec<AssignedValue<Fp>>;
 
     /// Adds the check's cells and constraints to `ctx` (a second-phase
     /// context), reading the first-phase cells it captured and the challenge
@@ -97,8 +110,20 @@ pub struct PhaseShape {
     pub constants: usize,
 }
 
+/// The virtual region of first-phase gate cells (halo2-base's tag).
+const FIRST_PHASE_REGION: &str = "halo2-base:SinglePhaseCoreManager:FirstPhase";
+
 impl SecondPhase {
+    /// Registers `check`. Phase discipline: it reads first-phase cells only
+    /// (asserted; a cell of a witness-only build carries no position and is
+    /// not checked, its keygen twin was). The first phase is complete when
+    /// the checks are built (`synthesize`), so nothing in it can read a
+    /// second-phase cell; this keeps checks from chaining on one another.
     pub fn push(&mut self, check: Arc<dyn SecondPhaseCheck>) {
+        assert!(
+            check.reads().iter().filter_map(|v| v.cell).all(|cell| cell.type_id == FIRST_PHASE_REGION),
+            "a second-phase check reads a cell outside the first phase"
+        );
         self.checks.push(check);
     }
 
@@ -160,6 +185,13 @@ pub struct CircuitParams {
     pub base: BaseCircuitParams,
     #[serde(default)]
     pub challenges: usize,
+    /// Key column sets of each memory-table group (`tables.rs`); empty: no
+    /// tables.
+    #[serde(default)]
+    pub table_layout: Vec<usize>,
+    /// RAM traces (`ram.rs`), each with its own columns; 0: none.
+    #[serde(default)]
+    pub ram_traces: usize,
 }
 
 /// The challenges and the second-phase cells pinned to them.
@@ -192,6 +224,8 @@ impl ChallengeConfig {
 pub struct Halo2BaseConfig {
     pub base: BaseConfig<Fp>,
     pub challenges: Option<ChallengeConfig>,
+    pub tables: Option<TableConfig>,
+    pub ram: Option<RamConfig>,
 }
 
 /// halo2-base's first-phase virtual regions plus the second-phase checks
@@ -199,6 +233,12 @@ pub struct Halo2BaseConfig {
 pub struct Halo2BaseCircuit {
     pub builder: BaseCircuitBuilder<Fp>,
     pub second_phase: SecondPhase,
+    /// Read-only memory tables and their reads (`tables.rs`).
+    pub tables: Tables,
+    /// Key column sets per table group (set by [`layout`] or the pinning).
+    pub table_layout: Vec<usize>,
+    /// Read-write memory traces (`ram.rs`).
+    pub ram: Ram,
     /// The second phase's break points, recorded when a non-prover stage
     /// lays it out (see [`Self::break_points`]).
     second_break_points: Mutex<Option<ThreadBreakPoints>>,
@@ -209,10 +249,13 @@ pub struct Halo2BaseCircuit {
 }
 
 impl Halo2BaseCircuit {
-    pub fn new(builder: BaseCircuitBuilder<Fp>, second_phase: SecondPhase) -> Self {
+    pub fn new(builder: BaseCircuitBuilder<Fp>, second_phase: SecondPhase, tables: Tables, ram: Ram) -> Self {
         Halo2BaseCircuit {
             builder,
             second_phase,
+            tables,
+            table_layout: Vec::new(),
+            ram,
             second_break_points: Mutex::new(None),
             #[cfg(test)]
             challenge_offset: Fp::zero(),
@@ -267,7 +310,12 @@ impl Circuit<Fp> for Halo2BaseCircuit {
     type Params = CircuitParams;
 
     fn params(&self) -> CircuitParams {
-        CircuitParams { base: self.builder.config_params.clone(), challenges: self.second_phase.challenges() }
+        CircuitParams {
+            base: self.builder.config_params.clone(),
+            challenges: self.second_phase.challenges(),
+            table_layout: self.table_layout.clone(),
+            ram_traces: self.ram.traces.len(),
+        }
     }
 
     fn without_witnesses(&self) -> Self {
@@ -282,9 +330,12 @@ impl Circuit<Fp> for Halo2BaseCircuit {
         let k = params.base.k;
         let mut base = BaseConfig::configure(meta, params.base);
         let challenges = (params.challenges > 0).then(|| ChallengeConfig::configure(meta, params.challenges));
-        // The challenge column may add blinding rows.
+        let tables = (!params.table_layout.is_empty()).then(|| TableConfig::configure(meta, &params.table_layout));
+        let ram = (params.ram_traces > 0).then(|| RamConfig::configure(meta, params.ram_traces));
+        // The challenge column, the tables' lookups and the RAM's arguments
+        // may add blinding rows.
         base.set_usable_rows((1 << k) - meta.minimum_rows());
-        Halo2BaseConfig { base, challenges }
+        Halo2BaseConfig { base, challenges, tables, ram }
     }
 
     fn synthesize(&self, config: Halo2BaseConfig, mut layouter: impl Layouter<Fp>) -> Result<(), Error> {
@@ -301,6 +352,16 @@ impl Circuit<Fp> for Halo2BaseCircuit {
                 Ok(())
             },
         )?;
+
+        if let Some(table_config) = &config.tables {
+            let copy = (!builder.witness_gen_only()).then(|| &builder.core().copy_manager);
+            let packing = self.tables.packing(table_rows(builder.config_params.k));
+            table_config.assign(&self.tables, &packing, &mut layouter, copy)?;
+        }
+        if let Some(ram_config) = &config.ram {
+            let copy = (!builder.witness_gen_only()).then(|| &builder.core().copy_manager);
+            ram_config.assign(&self.ram, &mut layouter, copy)?;
+        }
 
         // The second phase keeps its own copy manager: it is rebuilt on every
         // call of `synthesize` and must not accumulate in the first phase's.
@@ -357,11 +418,39 @@ impl Circuit<Fp> for Halo2BaseCircuit {
     }
 }
 
-/// Sets the circuit's column layout at its `k`: halo2-base's for the first
-/// phase (`calculate_params`, reserving `UNUSABLE_ROWS` rows per column, the
+/// Rows a table column (and a key set) may use at `k`: the backend's sizing
+/// rule (`UNUSABLE_ROWS` reserved), the same at layout and assignment.
+pub fn table_rows(k: usize) -> usize {
+    (1usize << k).saturating_sub(UNUSABLE_ROWS)
+}
+
+/// Sets the circuit's column layout at its `k` (an error when the memory
+/// tables do not fit its rows): halo2-base's for the first phase (`calculate_params`, reserving `UNUSABLE_ROWS` rows per column, the
 /// constants' fixed columns sized like the others), plus the second phase's
 /// gate columns and constants from [`SecondPhase::shape`].
-pub fn layout(circuit: &mut Halo2BaseCircuit) {
+pub fn layout(circuit: &mut Halo2BaseCircuit) -> Result<(), ProvingError> {
+    let usable_rows = table_rows(circuit.builder.config_params.k);
+    if circuit.ram.rows_needed() > usable_rows {
+        return Err(ProvingError::ProvingFailed {
+            detail: format!(
+                "halo2-base layout failed at k={}: a RAM trace needs {} rows, {} are usable",
+                circuit.builder.config_params.k,
+                circuit.ram.rows_needed(),
+                usable_rows
+            ),
+        });
+    }
+    if circuit.tables.rows_needed() > usable_rows {
+        return Err(ProvingError::ProvingFailed {
+            detail: format!(
+                "halo2-base layout failed at k={}: the memory tables need {} rows, {} are usable",
+                circuit.builder.config_params.k,
+                circuit.tables.rows_needed(),
+                usable_rows
+            ),
+        });
+    }
+    circuit.table_layout = circuit.tables.packing(usable_rows).key_sets();
     let builder = &mut circuit.builder;
     let mut params = builder.calculate_params(Some(UNUSABLE_ROWS));
     let usable = (1usize << params.k).saturating_sub(UNUSABLE_ROWS).max(1);
@@ -384,6 +473,7 @@ pub fn layout(circuit: &mut Halo2BaseCircuit) {
         num_fixed
     };
     builder.set_params(params);
+    Ok(())
 }
 
 #[cfg(test)]

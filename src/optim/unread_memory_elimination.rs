@@ -58,7 +58,9 @@ fn eliminate_round(ir_graph: IRGraph) -> (IRGraph, bool) {
             used.insert(*arg);
         }
         match stmt.ir {
-            IR::ReadMemory { segment_id } => {
+            // A table read is kept even when its value is unused: it proves
+            // its address in bounds.
+            IR::ReadMemory { segment_id } | IR::ReadTable { segment_id } => {
                 *read_count.entry(segment_id).or_insert(0) += 1;
             }
             IR::WriteMemory { segment_id } => {

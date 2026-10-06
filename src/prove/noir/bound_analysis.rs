@@ -216,7 +216,7 @@ pub fn run(graph: &IRGraph) -> BoundMap {
             | IR::ExportExternalF { .. } => None,
 
             // Memory / dynamic-NDArray reads return witness values — unknown bound.
-            IR::ReadMemory { .. } | IR::DynamicNDArrayGetItem { .. } => None,
+            IR::ReadMemory { .. } | IR::ReadTable { .. } | IR::DynamicNDArrayGetItem { .. } => None,
 
             // ── Hash ──────────────────────────────────────────────────
             IR::PoseidonHash | IR::EqHash => None,
@@ -225,6 +225,8 @@ pub fn run(graph: &IRGraph) -> BoundMap {
             IR::Hint { .. } | IR::ArrayOp(_) => None,
             IR::KeyLess { .. } | IR::PackedKeyLess { .. } => Some(1),
             IR::PackKey { .. } | IR::PackedKeyIndex { .. } => None,
+            // Never emitted for Noir (`lower::challenge`); the emitter rejects them.
+            IR::IdentityCheck(_) | IR::RescaleRawF => None,
         };
 
         // Provenance fallback / tightening: the ProvenanceTable carries

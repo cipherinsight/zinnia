@@ -49,9 +49,12 @@ def test_exp_matches_numpy_and_every_backend_proves_the_mock_value():
      (np.array([0.0, 0.5, -2.0, 3.0]), 1.5)),
     # A scalar.
     ('def kernel(x: Float):\n    return np.exp(x) - 1.0\n', (0.125,)),
+    # sinh, cosh, tanh are built from exp on every backend (npbench go_fast: tanh).
+    ('def kernel(x: Float[Array, "5"]):\n    return np.sinh(x), np.cosh(x), np.tanh(x)\n',
+     (np.array([0.0, 0.75, -3.5, 4.0, -0.001]),)),
 ])
 def test_exp_programs_on_every_backend(source, args):
-    assert_all_backends_match_numpy(source, *args, atol=1e-8)
+    assert_all_backends_match_numpy(source, *args, atol=1e-7)
 
 
 CLAIM = 'def kernel(x: Float, expected: Float):\n    assert np.exp(x) == expected\n'

@@ -37,13 +37,16 @@ def _context(request: dict) -> StepContext:
 
 
 def run_reference(ctx: StepContext) -> dict:
-    """The NumPy reference outputs for one input."""
-    from benchmarking.harness.outputs import leaves_to_json, reference_leaves
-    from benchmarking.harness.reference import run_kernel_as_numpy
+    """The NumPy reference outputs for one input: the returned value, or for a
+    kernel that returns `None` the arguments the case set lists as written."""
+    from benchmarking.harness.outputs import call_outputs, leaves_to_json
+    from benchmarking.harness.reference import run_kernel_with_arguments
 
     try:
-        result = run_kernel_as_numpy(ctx.case.kernel_path, ctx.case.function, ctx.arguments())
-        leaves, shapes = reference_leaves(result)
+        arguments = ctx.arguments()
+        result, after = run_kernel_with_arguments(ctx.case.kernel_path, ctx.case.function,
+                                                  arguments)
+        leaves, shapes = call_outputs(result, after, arguments, ctx.case.mutated_outputs)
     except Exception as exc:  # noqa: BLE001 - any failure means "no reference"
         raise StepFailure("reference_failed", f"{type(exc).__name__}: {exc}") from None
     return {"leaves": leaves_to_json(leaves), "shapes": shapes}

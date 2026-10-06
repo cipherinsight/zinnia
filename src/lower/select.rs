@@ -100,6 +100,9 @@ pub fn select_exact(problem: &Problem) -> Option<Selection> {
 
 fn select_exact_in_context(problem: &Problem) -> Option<Selection> {
     let n = problem.nodes.len();
+    if n == 0 {
+        return problem.roots.is_empty().then(|| Selection { nodes: Vec::new(), cost: 0 });
+    }
     let chosen: Vec<Bool> = (0..n).map(|i| Bool::new_const(format!("x{i}"))).collect();
     let rank: Vec<Int> = (0..n).map(|i| Int::new_const(format!("r{i}"))).collect();
     let constraints = justification(problem, &chosen, &rank);

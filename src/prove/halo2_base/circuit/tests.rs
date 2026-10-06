@@ -50,6 +50,10 @@ impl SecondPhaseCheck for Permutation {
         1
     }
 
+    fn reads(&self) -> Vec<AssignedValue<Fp>> {
+        self.xs.iter().chain(&self.ys).copied().collect()
+    }
+
     fn build(&self, ctx: &mut Context<Fp>, gate: &GateChip<Fp>, challenges: &[AssignedValue<Fp>]) {
         let gamma = challenges[0];
         let product = |ctx: &mut Context<Fp>, values: &[AssignedValue<Fp>]| {
@@ -95,11 +99,14 @@ fn circuit(
     let publics = vec![*sum.value()];
     let mut second_phase = SecondPhase::default();
     second_phase.push(Arc::new(Permutation { xs: x, ys: y }));
-    let mut circuit = Halo2BaseCircuit::new(builder, second_phase);
+    let mut circuit = Halo2BaseCircuit::new(builder, second_phase, Default::default(), Default::default());
     match pinning {
-        Some((params, _)) if stage != CircuitBuilderStage::Prover => circuit.builder.set_params(params.base),
-        Some(_) => {}
-        None => layout(&mut circuit),
+        Some((params, _)) if stage != CircuitBuilderStage::Prover => {
+            circuit.table_layout = params.table_layout.clone();
+            circuit.builder.set_params(params.base)
+        }
+        Some((params, _)) => circuit.table_layout = params.table_layout,
+        None => layout(&mut circuit).expect("layout"),
     }
     (circuit, publics)
 }
@@ -139,8 +146,8 @@ fn a_circuit_without_checks_is_one_phase() {
     let ctx = builder.main(0);
     let x = ctx.load_witness(Fp::from(7u64));
     range.range_check(ctx, x, 16);
-    let mut circuit = Halo2BaseCircuit::new(builder, SecondPhase::default());
-    layout(&mut circuit);
+    let mut circuit = Halo2BaseCircuit::new(builder, SecondPhase::default(), Default::default(), Default::default());
+    layout(&mut circuit).expect("layout");
     assert_eq!(circuit.params().challenges, 0);
     assert_eq!(circuit.builder.config_params.num_advice_per_phase.len(), 1);
     assert!(mock_accepts(&circuit, &[]));
@@ -184,4 +191,16 @@ fn prove_and_verify(ys: &[u64]) -> bool {
 fn real_proofs_verify_for_a_permutation_only() {
     assert!(prove_and_verify(&[1, 9, 4, 1, 3, 5]), "honest proof rejected");
     assert!(!prove_and_verify(&[1, 9, 4, 1, 3, 6]), "proof for a non-permutation verified");
+}
+
+/// Phase discipline: a check that reads a second-phase cell is refused when
+/// it is registered.
+#[test]
+#[should_panic(expected = "outside the first phase")]
+fn a_check_reading_a_second_phase_cell_is_refused() {
+    let second = AssignedValue {
+        value: halo2_base::halo2_proofs::plonk::Assigned::Trivial(Fp::one()),
+        cell: Some(halo2_base::ContextCell::new("halo2-base:SinglePhaseCoreManager:SecondPhase", 0, 0)),
+    };
+    SecondPhase::default().push(Arc::new(Permutation { xs: vec![second], ys: vec![second] }));
 }
