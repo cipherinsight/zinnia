@@ -891,9 +891,27 @@ pub fn qlog(x: Field) -> Field {
     k_ln2 + ln_m
 }
 
-/// a^b = exp(b * log a) for a > 0.
+/// Q32 a ** b for float a and b, bit for bit kernel::fp_pow, with NumPy's
+/// rules: exp(b * log |a|), negated for a < 0 and an odd b; for a == 0, 1 when
+/// b == 0 and 0 when b > 0. No proof where NumPy gives nan (a < 0 with a
+/// fractional b) or inf (a == 0 with b < 0), or the result leaves the window.
+/// The parity and fraction of b come from divmod_by_pow2 (pinned quotients).
 pub fn qpow(base: Field, exp_q: Field) -> Field {
-    qexp(qmul(exp_q, qlog(base)))
+    let (negative, magnitude) = sign_abs(base);
+    let zero = magnitude == 0;
+    let (whole, fraction) = divmod_by_pow2::<32>(exp_q);
+    let (_half, odd) = divmod_by_pow2::<1>(whole);
+    assert(!negative | (fraction == 0), "qpow: negative base with a fractional exponent");
+    let (exp_negative, _) = sign_abs(exp_q);
+    assert(!zero | !exp_negative, "qpow: zero to a negative power");
+    let power = qexp(qmul(exp_q, qlog(if zero { Q } else { magnitude })));
+    if zero {
+        if exp_q == 0 { Q } else { 0 }
+    } else if negative & (odd == 1) {
+        -power
+    } else {
+        power
+    }
 }
 
 /// Float base raised to a non-negative integer exponent below 2^32 (not
@@ -1623,6 +1641,37 @@ fn test_qsinh_qcosh() {
     // round(sinh(1) * 2^32), round(cosh(1) * 2^32).
     assert_close(qsinh(Q), 5047450693, 64);
     assert_close(qcosh(Q), 6627480862, 64);
+}
+
+#[test]
+fn test_qlog_qpow_match_the_kernel() {
+    // kernel::fp_log / kernel::fp_pow at the same inputs (src/prove/kernel.rs).
+    assert(qlog(Q) == 0);
+    assert(qlog(Q / 2) == -2977044472);
+    assert(qlog(q_from_int(3)) == 4718503850);
+    assert(qlog(1) == -95265423098);
+    assert(qlog(18446744073709551615) == 95265423096);
+    assert(qpow(q_from_int(2), q_from_int(3)) == 34359738368);
+    assert(qpow(-q_from_int(2), q_from_int(3)) == -34359738368);
+    assert(qpow(-q_from_int(2), -q_from_int(2)) == 1073741822);
+    assert(qpow(q_from_int(2), -(Q / 2)) == 3037000499);
+    assert(qpow(0, 0) == Q);
+    assert(qpow(0, 10737418240) == 0);
+}
+
+#[test(should_fail)]
+fn test_qpow_negative_base_fractional_exponent_has_no_proof() {
+    let _ = qpow(-q_from_int(2), Q / 2);
+}
+
+#[test(should_fail)]
+fn test_qpow_zero_to_a_negative_power_has_no_proof() {
+    let _ = qpow(0, -Q);
+}
+
+#[test(should_fail)]
+fn test_qlog_of_zero_has_no_proof() {
+    let _ = qlog(0);
 }
 
 #[test]

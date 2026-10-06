@@ -686,10 +686,100 @@ pub fn fp_exp(x: Fp, precision_bits: u32) -> Option<Fp> {
     Some(i128_to_fp(value))
 }
 
-/// Compute ln(x) using native f64 math on the dequantized value.
-pub fn fp_log(x: Fp, precision_bits: u32) -> Fp {
-    let v = dequantize_from_fp(x, precision_bits);
-    quantize_to_fp(v.ln(), precision_bits)
+/// `round(ln 2 * 2^64)`: `k ln 2` is formed in Q64 and rounded once to Q
+/// (noir_fpc's `LN2_Q64`).
+pub const LN2_Q64: i128 = 12786308645202655660;
+
+/// Terms of the series `atanh(s) / s = sum_j s^(2j) / (2j + 1)` through
+/// `s^22`, as `round(2^P / (2j + 1))` for `j` = 11 down to 0 (leading-first,
+/// for [`horner_eval`] in `u = s^2`; noir_fpc's `ATANH_SERIES_Q`).
+pub fn atanh_series_q(precision_bits: u32) -> Vec<Fp> {
+    let scale = 1i128 << precision_bits;
+    (0..12i128)
+        .rev()
+        .map(|j| {
+            let d = 2 * j + 1;
+            i128_to_fp((2 * scale + d).div_euclid(2 * d))
+        })
+        .collect()
+}
+
+/// The decomposition `x = (m / 2^P) * 2^k` of a raw value `1 <= x < 2^64`
+/// with `m` in `[2^P, 2^(P+1))`: `m = floor(x / 2^k)` for `k >= 0` and
+/// `x * 2^-k` (exact) for `k < 0`, i.e. `m = floor(x * 2^P / 2^(k+P))` with
+/// `0 <= k + P < 64`. Returns `(k, m)`.
+pub fn log2_decompose(x: i128, precision_bits: u32) -> (i128, i128) {
+    let bits = 128 - (x as u128).leading_zeros() as i128;
+    let k = bits - 1 - precision_bits as i128;
+    let m = if k >= 0 { x >> k } else { x << -k };
+    (k, m)
+}
+
+/// Natural `log` on Q-encoded values, by the circuits' algorithm
+/// (halo2-base `log_f`, Noir `qlog`), so every backend computes the same
+/// value:
+///
+/// 1. `x = (m / 2^P) * 2^k` with `m` in `[2^P, 2^(P+1))` ([`log2_decompose`]);
+/// 2. `s = floor((m - 2^P) * 2^P / (m + 2^P))`, the Q value of
+///    `(m' - 1) / (m' + 1)` for `m' = m / 2^P` in `[1, 2)`, so `s < 1/3`;
+/// 3. `ln m' = 2 atanh(s) = 2 * s * A(s^2)` with [`atanh_series_q`]
+///    (Horner, every product rounded down, as `mul_f`);
+/// 4. `k ln 2 = floor((k * LN2_Q64 + 2^(63-P)) / 2^(64-P))` (rounded to
+///    nearest), and the result is `k ln 2 + ln m'`.
+///
+/// `None` (no proof on any backend) for `x <= 0`, where NumPy gives `-inf`
+/// or `nan`, and for raw `x >= 2^64`, outside the fixed-point window.
+///
+/// Measured maximum error against libm at `P = 32`: 1.3e-9 absolute (about
+/// 6 Q units) on `[2^-32, 2^31)` (`fixed_point_log_is_accurate`).
+pub fn fp_log(x: Fp, precision_bits: u32) -> Option<Fp> {
+    let v = fp_to_i128(x).filter(|v| (1..1i128 << 64).contains(v))?;
+    let q = 1i128 << precision_bits;
+    let (k, m) = log2_decompose(v, precision_bits);
+    let s = ((m - q) * q).div_euclid(m + q);
+    let s_fp = i128_to_fp(s);
+    let (u, _) = fp_mul_rescale(s_fp, s_fp, precision_bits);
+    let series = horner_eval(u, &atanh_series_q(precision_bits), precision_bits);
+    let (half, _) = fp_mul_rescale(s_fp, series, precision_bits);
+    let k_ln2 = (k * LN2_Q64 + (1i128 << (63 - precision_bits))).div_euclid(1i128 << (64 - precision_bits));
+    Some(i128_to_fp(k_ln2) + half + half)
+}
+
+/// `a ** b` for float `a` and `b` (`IR::PowF`), by NumPy's rules on the
+/// circuits' algorithm (halo2-base `pow_f`, Noir `qpow`):
+///
+/// * `a > 0`: `exp(b * log a)` ([`fp_log`], one `mul_f`, [`fp_exp`]);
+/// * `a < 0`: only an integer-valued `b` (NumPy gives `nan` otherwise):
+///   `exp(b * log |a|)`, negated when `b` is odd;
+/// * `a == 0`: 0 for `b > 0`, 1 for `b == 0`; `b < 0` is NumPy's `inf`.
+///
+/// `None` (no proof on any backend) where NumPy gives `nan` or `inf`, and
+/// where `b * log |a|` or the result leaves the signed 64-bit window.
+/// Error against libm: relative about `1e-9 + |b| * 1.3e-9` (exp's relative
+/// error plus `b` times log's absolute error).
+pub fn fp_pow(a: Fp, b: Fp, precision_bits: u32) -> Option<Fp> {
+    let window = -(1i128 << 63)..(1i128 << 63);
+    let q = 1i128 << precision_bits;
+    let av = fp_to_i128(a).filter(|v| window.contains(v))?;
+    let bv = fp_to_i128(b).filter(|v| window.contains(v))?;
+    if av == 0 {
+        return match bv.signum() {
+            1 => Some(Fp::zero()),
+            0 => Some(i128_to_fp(q)),
+            _ => None,
+        };
+    }
+    let (whole, fraction) = (bv.div_euclid(q), bv.rem_euclid(q));
+    if av < 0 && fraction != 0 {
+        return None;
+    }
+    let log = fp_to_i128(fp_log(i128_to_fp(av.abs()), precision_bits)?)?;
+    let exponent = (bv * log).div_euclid(q);
+    if !window.contains(&exponent) {
+        return None;
+    }
+    let power = fp_exp(i128_to_fp(exponent), precision_bits)?;
+    Some(if av < 0 && whole.rem_euclid(2) == 1 { -power } else { power })
 }
 
 /// Compute sinh: (exp(x) - exp(-x)) / 2 (`None` where an `exp` is outside
@@ -977,6 +1067,71 @@ mod tests {
                 "horner_eval(log2 polynomial, x={x}) = {got}, expected {expected}",
             );
         }
+    }
+
+    #[test]
+    fn fixed_point_log_and_pow_match_noir() {
+        // noir_fpc's ATANH_SERIES_Q and LN2_Q64.
+        let series: Vec<i128> = atanh_series_q(32).into_iter().map(|c| fp_to_i128(c).unwrap()).collect();
+        assert_eq!(series, vec![
+            186737709, 204522252, 226050910, 252645135, 286331153, 330382100, 390451572, 477218588,
+            613566757, 858993459, 1431655765, 4294967296,
+        ]);
+        assert!((LN2_Q64 as f64 / 18446744073709551616.0 - std::f64::consts::LN_2).abs() < 1e-16);
+        let q = 1i128 << 32;
+        let log = |x: i128| fp_log(i128_to_fp(x), 32).map(|v| fp_to_i128(v).unwrap());
+        assert_eq!(log(q), Some(0));
+        assert_eq!(log(q / 2), Some(-2977044472));
+        assert_eq!(log(3 * q), Some(4718503850));
+        assert_eq!(log(1), Some(-95265423098));
+        assert_eq!(log((1i128 << 64) - 1), Some(95265423096));
+        let pow = |a: i128, b: i128| fp_pow(i128_to_fp(a), i128_to_fp(b), 32).map(|v| fp_to_i128(v).unwrap());
+        assert_eq!(pow(2 * q, 3 * q), Some(34359738368));
+        assert_eq!(pow(-2 * q, 3 * q), Some(-34359738368));
+        assert_eq!(pow(-2 * q, -2 * q), Some(1073741822));
+        assert_eq!(pow(2 * q, -q / 2), Some(3037000499));
+        assert_eq!(log(0), None);
+        assert_eq!(log(-q), None);
+        assert_eq!(log(1i128 << 64), None);
+        assert!(log(1).is_some());
+        assert!(log((1i128 << 64) - 1).is_some());
+    }
+
+    #[test]
+    fn fixed_point_log_is_accurate() {
+        let mut worst = 0f64;
+        // Log-spaced over [2^-32, 2^31), plus every power of two (k boundaries).
+        let points = (0..=63 * 512).map(|i| 2f64.powf(-32.0 + i as f64 / 512.0)).chain((-32..31).map(|e| 2f64.powi(e)));
+        for x in points {
+            let xq = quantize_to_fp(x, 32);
+            if fp_to_i128(xq).unwrap() >= 1i128 << 63 {
+                continue;
+            }
+            let exact = dequantize_from_fp(xq, 32).ln();
+            let got = dequantize_from_fp(fp_log(xq, 32).expect("inside the domain"), 32);
+            worst = worst.max((got - exact).abs());
+        }
+        assert!(worst < 1.5e-9, "log error {worst}");
+    }
+
+    #[test]
+    fn fixed_point_pow_follows_numpy_domains() {
+        let q = 1i128 << 32;
+        let pow = |a: f64, b: f64| fp_pow(quantize_to_fp(a, 32), quantize_to_fp(b, 32), 32).map(|v| dequantize_from_fp(v, 32));
+        assert_eq!(pow(0.0, 2.5), Some(0.0));
+        assert_eq!(pow(0.0, 0.0), Some(1.0));
+        assert_eq!(pow(0.0, -1.0), None);
+        assert_eq!(pow(-2.0, 0.5), None);
+        assert_eq!(pow(5.0, 0.0), Some(1.0));
+        for (a, b) in [(2.0, 0.5), (2.0, -3.25), (-2.0, 3.0), (-2.0, -2.0), (0.3, 7.5), (10.0, 9.0)] {
+            let exact = f64::powf(a, b);
+            let got = pow(a, b).expect("inside the domain");
+            // exp's relative error plus |b| times log's absolute error.
+            let bound = (1e-9 + 1.5e-9 * f64::abs(b)) * exact.abs().max(1.0);
+            assert!((got - exact).abs() <= bound, "{a} ** {b}: {got} vs {exact}");
+        }
+        assert_eq!(pow(10.0, 10.0), None); // 1e10 leaves the window
+        assert!(fp_pow(i128_to_fp(q), i128_to_fp(q), 32).is_some());
     }
 
     #[test]

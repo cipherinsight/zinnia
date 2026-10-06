@@ -1415,7 +1415,8 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         self.prove_range(&out, Interval { lo: 0, hi: (1i128 << 63) - 1 });
         Ok(out)
     }
-    fn log_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("log_f") }
+    /// `log`, as `kernel::fp_log` (see `fixed_log`).
+    fn log_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.fixed_log(a) }
     /// `arcsin(x) = 2 * atan(x / (1 + sqrt(1 - x^2)))`, as `kernel::fp_arcsin`
     /// (0 outside `[-1, 1]`).
     ///
