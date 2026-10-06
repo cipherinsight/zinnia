@@ -34,5 +34,5 @@
    "softening": 0.08899663597585017
   }
  },
- "notes": "A is NPBench's initialize() data at preset T {'N': 13, 'tEnd': 0.8, 'dt': 0.05, 'softening': 0.1, 'G': 1.0}. B is a seeded perturbation of A (numpy RandomState(2613310)): noise 10 % of the largest magnitude; integer arrays redrawn in their range."
+ "notes": "A is NPBench's initialize() data at preset T {'N': 13, 'tEnd': 0.8, 'dt': 0.05, 'softening': 0.1, 'G': 1.0}. B is a seeded perturbation of A (numpy RandomState(2613310)): noise 10 % of the largest magnitude; integer arrays redrawn in their range. Float tolerance: atol = 0.002 instead of the default 1e-6, rtol = 1e-06. Why: the 16-step n-body integration is chaotic: rounding only the inputs to Q32 moves NumPy's own float64 output by up to 1e-3, so no Q32 implementation can be closer; atol is twice that (measured on A and B: 0.00099)."
 }

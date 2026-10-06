@@ -36,6 +36,23 @@ impl IRGenerator {
                 self.ctx.set(var, lst);
             }
         }
+        if matches!(
+            ctx.member,
+            "append" | "extend" | "pop" | "remove" | "clear" | "reverse" | "insert"
+        ) {
+            if self.expression_guard_depth > 0 {
+                panic!(
+                    "`{}.{}(...)` inside a comprehension filter or one arm of a conditional \
+                     expression is not supported: the change would happen on some paths only, \
+                     and Zinnia does not carry it out of the expression. Write a `for` loop \
+                     with an `if` statement instead",
+                    var, ctx.member
+                );
+            }
+            if let Some(list) = self.ctx.get(var) {
+                self.ensure_list_not_shared(var, &list);
+            }
+        }
         let visited_args = ctx.args;
         let v = match ctx.member {
             "append" => self.list_method_append(var, visited_args),
@@ -49,18 +66,21 @@ impl IRGenerator {
                 // segment so subsequent mutations don't alias back to the
                 // source. Without this, P3 segment-shared writes would
                 // mutate both the original and the copy.
-                if let Value::StaticArray { .. } = &v {
-                    let lst =
-                        crate::helpers::static_array::base::to_value_list(&mut self.builder, &v);
-                    if let Some(sa) =
+                match &v {
+                    Value::StaticArray { .. } => {
+                        let lst = crate::helpers::static_array::base::to_value_list(
+                            &mut self.builder,
+                            &v,
+                        );
                         crate::helpers::static_array::base::to_static_array(&mut self.builder, &lst)
-                    {
-                        sa
-                    } else {
-                        lst
+                            .unwrap_or(lst)
                     }
-                } else {
-                    v
+                    // `lst.copy()` is a new (shallow) list, not `lst` itself.
+                    Value::List(data) => Value::List(crate::types::CompositeData {
+                        value_id: crate::types::ValueId::next(),
+                        ..data.clone()
+                    }),
+                    _ => v,
                 }
             }
             "reverse" => self.list_method_reverse(var),

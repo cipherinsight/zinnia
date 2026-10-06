@@ -1,5 +1,6 @@
 import ast
 
+from zinnia.compile.import_scope import OutOfScopeImportError, check_import_statement
 from zinnia.debug.exception import InvalidCircuitStatementException, \
     InvalidProgramException, InvalidAssignStatementException, InvalidAnnotationException, UnsupportedOperatorException, \
     UnsupportedConstantLiteralException, \
@@ -107,6 +108,31 @@ def _shape_expr_to_string(expr) -> str:
     if kind == "neg":
         return f"-{_shape_expr_to_string(expr[1])}"
     return f"{_shape_expr_to_string(expr[1])}{kind}{_shape_expr_to_string(expr[2])}"
+
+
+_BOOLEAN_NAMES = {"Boolean", "bool", "Bool", "boolean"}
+_ARRAY_HEADS = {"NDArray", "DynamicNDArray", "SymbolicNDArray"}
+
+
+def declares_boolean_elements(node) -> bool:
+    """Whether a parameter annotation declares Boolean elements: a Boolean
+    scalar (`Boolean`, `bool`, ...), a Boolean-dtype tensor (`Bool[Array, "3"]`)
+    or an array of booleans (`NDArray[bool, 3]`). Booleans collapse to Integer
+    in the type descriptor; this flag keeps the {0, 1} domain for the input
+    check."""
+    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) \
+            and node.value.id in ("Public", "Private"):
+        node = node.slice
+    if isinstance(node, ast.Name):
+        return node.id in _BOOLEAN_NAMES
+    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+        head = node.value.id
+        if head in _BOOLEAN_NAMES:
+            return True
+        if head in _ARRAY_HEADS:
+            items = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+            return bool(items) and isinstance(items[0], ast.Name) and items[0].id in _BOOLEAN_NAMES
+    return False
 
 
 def make_type_dict(dbg, typename, args=None):
@@ -481,8 +507,11 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
             expr = self.visit_expr(node.value)
             lhs = {"__class__": "ASTLoad", "name": identifier_name}
             bin_op = {"__class__": "ASTBinaryOperator", "operator": op_type, "lhs": lhs, "rhs": expr}
+            # `augmented` tells the IR generator that Python updates a
+            # mutable target (array, list) in place rather than rebinding it.
             return {"__class__": "ASTAssignStatement",
-                    "targets": [self.visit_assign_target(node.target)], "value": bin_op}
+                    "targets": [self.visit_assign_target(node.target)], "value": bin_op,
+                    "augmented": True}
         elif isinstance(node.target, ast.Subscript):
             # Desugar `a[i] op= v` to `a[i] = a[i] op v` so the augmented
             # form routes through the same well-tested code path as the
@@ -763,10 +792,13 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
             elif isinstance(stmt, ast.Expr):
                 parsed_stmt = {"__class__": "ASTExprStatement", "expr": self.visit_expr(stmt.value)}
             elif isinstance(stmt, ast.Import) or isinstance(stmt, ast.ImportFrom):
-                # In-circuit imports are runtime no-ops once the module-level
-                # Python function has loaded. Keep them so generated benchmark
-                # snippets like `import copy; copy.deepcopy(x)` can lower to
-                # their supported call semantics.
+                # An allowed import is a no-op once the module has loaded
+                # (function_lowering already resolved circuit-level aliases);
+                # any other module is out of scope (import_scope).
+                try:
+                    check_import_statement(stmt)
+                except OutOfScopeImportError as error:
+                    raise UnsupportedLangFeatureException(dbg_info, str(error)) from None
                 parsed_stmt = {"__class__": "ASTPassStatement"}
             elif isinstance(stmt, ast.Raise):
                 parsed_stmt = self.visit_Raise(stmt)

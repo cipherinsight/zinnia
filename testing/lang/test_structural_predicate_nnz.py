@@ -99,7 +99,8 @@ def test_nnz_witness_emits_indicator_chain_and_assert():
     malicious prover supplying mismatched (x, k) would not be caught;
     `test_assumed_facts_enforced.py` proves honest and dishonest witnesses.
     """
-    stmts = _dump_ir(_nnz_witness_demo)
+    from testing.lang.input_checks import without_input_checks
+    stmts = without_input_checks(_dump_ir(_nnz_witness_demo))
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
     # The StructuralPredicate atom is the compile-time fact.
     assert "StructuralPredicateIR" in classes

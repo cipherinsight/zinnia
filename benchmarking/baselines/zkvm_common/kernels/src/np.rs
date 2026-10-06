@@ -1,17 +1,44 @@
-//! NumPy behaviours that several cases need: indexing, reductions over Q32
-//! values, `isclose`, `argsort`, matrix products and the bounding-box crop. Each function
+//! NumPy behaviours that several cases need: `linspace`, indexing and
+//! slicing, reductions over Q32 values, `isclose`, `argsort`, matrix products
+//! and the bounding-box crop. Each function
 //! follows NumPy's semantics and panics where NumPy raises.
 //!
 //! Cases reach this module through the prelude, as `np::argmax(&a)` etc.;
 //! `np_index` is also in the prelude on its own.
 
-use core::ops::RangeInclusive;
+use core::ops::{Range, RangeInclusive};
 
 use alloc::{vec, vec::Vec};
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 use q32::{dot, Q32};
 
 use crate::Shaped;
+
+// ---------------------------------------------------------------------------
+// Construction
+// ---------------------------------------------------------------------------
+
+/// `np.linspace(start, stop, num)`: `start + k * step` with
+/// `step = (stop - start) / (num - 1)`, and the last point exactly `stop`.
+/// For a step that rounds to zero, NumPy's other path `k / div * delta`.
+pub fn linspace(start: Q32, stop: Q32, num: i64) -> Array1<Q32> {
+    let len = usize::try_from(num).expect("Number of samples must be non-negative");
+    let (div, delta) = (num - 1, stop - start);
+    let mut y: Array1<Q32> = if div <= 0 {
+        Array1::from_elem(len, start)
+    } else {
+        let step = delta / div;
+        if step == Q32::ZERO {
+            (0..num).map(|k| Q32::from_int(k) / div * delta + start).collect()
+        } else {
+            (0..num).map(|k| step * k + start).collect()
+        }
+    };
+    if len > 1 {
+        y[len - 1] = stop;
+    }
+    y
+}
 
 // ---------------------------------------------------------------------------
 // Indexing
@@ -24,6 +51,16 @@ pub fn np_index(i: i64, len: usize) -> usize {
     let n = len as i64;
     assert!(-n <= i && i < n, "index out of range");
     (if i < 0 { i + n } else { i }) as usize
+}
+
+/// The indices of the Python slice `[start:stop]` (step 1) of a sequence of
+/// `len` items: negative bounds count from the end, and both bounds are
+/// clipped to `[0, len]`, so the range may be empty but never fails.
+pub fn slice_range(start: i64, stop: i64, len: usize) -> Range<usize> {
+    let n = len as i64;
+    let clip = |bound: i64| (if bound < 0 { bound + n } else { bound }).clamp(0, n) as usize;
+    let (start, stop) = (clip(start), clip(stop));
+    start..stop.max(start)
 }
 
 /// `np.insert`'s position on an axis of length `len`: anything in

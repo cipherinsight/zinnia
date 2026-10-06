@@ -74,12 +74,23 @@ def test_circuit_bare_tuple_return_is_flattened_to_public_outputs():
     assert any(v.endswith("=7") for v in proof.public_values)
 
 
-def test_circuit_without_return_has_no_public_outputs():
+def test_circuit_without_return_outputs_the_arguments_it_writes():
+    # A function that returns None outputs the array arguments it writes
+    # (see test_in_place_outputs.py); one that writes nothing outputs nothing.
     @zk_circuit
     def mutate_only(x: Integer[Array, "3"]):
         x[0] = x[1] + 1
 
     proof = ZKCircuit.from_method(mutate_only).prove([1, 2, 3], backend="mock")
+    assert proof.proof_bytes_hex == "mock_satisfied"
+    from testing.lang.mock_outputs import mock_publics
+    assert mock_publics(proof) == [3, 2, 3]
+
+    @zk_circuit
+    def read_only(x: Integer[Array, "3"]):
+        assert x[0] < 100
+
+    proof = ZKCircuit.from_method(read_only).prove([1, 2, 3], backend="mock")
     assert proof.proof_bytes_hex == "mock_satisfied"
     assert proof.public_values == []
 

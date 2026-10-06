@@ -9,6 +9,7 @@ harness reports that.
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from typing import Any
 
@@ -34,10 +35,20 @@ def kernel_namespace() -> dict[str, Any]:
 
 def run_kernel_as_numpy(kernel_path: Path, function: str, args: list[Any]) -> Any:
     """Execute the kernel file with the shims above and call `function(*args)`."""
+    return run_kernel_with_arguments(kernel_path, function, args)[0]
+
+
+def run_kernel_with_arguments(kernel_path: Path, function: str,
+                              args: list[Any]) -> tuple[Any, dict[str, Any]]:
+    """Like `run_kernel_as_numpy`, and also return the arguments after the call
+    by parameter name (a kernel that returns `None` outputs the arrays it wrote)."""
     source = kernel_path.read_text()
     # The real import would rebind the shims; Zinnia's names are already there.
     source = source.replace("from zinnia import *", "")
     namespace = kernel_namespace()
     exec(compile(source, str(kernel_path), "exec"), namespace)  # noqa: S102 - our own datasets
     call_args = [np.array(a, copy=True) if isinstance(a, np.ndarray) else a for a in args]
-    return namespace[function](*call_args)
+    kernel = namespace[function]
+    result = kernel(*call_args)
+    names = list(inspect.signature(kernel).parameters)
+    return result, dict(zip(names, call_args))

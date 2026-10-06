@@ -14,7 +14,9 @@ from zinnia.api.zk_circuit import ZKCircuit
 
 
 def _dump_ir(decorated):
-    return ZKCircuit.from_method(decorated).compile().get_ir_stmts()
+    """The compiled IR without the per-input domain checks (input_checks.py)."""
+    from testing.lang.input_checks import without_input_checks
+    return without_input_checks(ZKCircuit.from_method(decorated).compile().get_ir_stmts())
 
 
 def _scalar_atoms(stmts):

@@ -1,5 +1,6 @@
 import inspect
 
+from zinnia.compile.import_scope import check_module_level_imports
 from zinnia.compile.zinnia_compiler import ZinniaCompiler
 from zinnia.debug.exception import InternalZinniaException, ZinniaException
 from zinnia.debug.prettifier import prettify_exception
@@ -33,6 +34,7 @@ class ZKChip:
         if isinstance(method, ZKExternalFunc):
             raise ZinniaException('Cannot convert a ZKExternalFunc into ZKChip.')
         raw_source = inspect.getsource(method)
+        check_module_level_imports(method, raw_source)
         module_consts = extract_module_constants(method)
         source_code = substitute_module_constants(raw_source, module_consts)
         method_name = method.__name__
@@ -53,6 +55,7 @@ def zk_chip(method):
         extract_module_constants, substitute_module_constants,
     )
     raw_source = inspect.getsource(method)
+    check_module_level_imports(method, raw_source)
     module_consts = extract_module_constants(method)
     source_code = substitute_module_constants(raw_source, module_consts)
     method_name = method.__name__

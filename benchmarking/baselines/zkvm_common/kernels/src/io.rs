@@ -74,13 +74,16 @@ impl Element for C32 {
     }
 }
 
-/// Decodes a buffer of words into elements.
-fn elements<T: Element>(words: &[i64]) -> Vec<T> {
+/// Decodes a buffer of words into elements. A one-word element (Q32, i64)
+/// is mapped in place, reusing the buffer's allocation instead of copying it.
+fn elements<T: Element>(words: Vec<i64>) -> Vec<T> {
     assert_eq!(words.len() % T::WORDS, 0, "buffer is not a whole number of elements");
-    words
-        .chunks_exact(T::WORDS)
-        .map(|w| T::from_words(w).expect("buffer holds a value of the wrong type"))
-        .collect()
+    let decode = |w: &[i64]| T::from_words(w).expect("buffer holds a value of the wrong type");
+    if T::WORDS == 1 {
+        words.into_iter().map(|w| decode(&[w])).collect()
+    } else {
+        words.chunks_exact(T::WORDS).map(decode).collect()
+    }
 }
 
 /// The private input stream of a guest: the kernel parameters in signature
@@ -98,7 +101,7 @@ pub trait Input {
 
     /// A flattened array that must have exactly `len` elements.
     fn read_vec<T: Element>(&mut self, len: usize) -> Vec<T> {
-        let values = elements(&self.read_words());
+        let values = elements(self.read_words());
         assert_eq!(values.len(), len, "input array has the wrong length");
         values
     }
@@ -136,19 +139,21 @@ impl<'a, I: Input> Args<'a, I> {
         self.input.read()
     }
 
-    /// An array parameter of rank `D::NDIM`: its dimensions, then its
-    /// elements in row-major order.
+    /// An array parameter of rank `D::NDIM`: its elements in row-major order,
+    /// then its dimensions (last, so that dropping them leaves the elements
+    /// in place).
     pub fn array<T: Element, D: Dimension>(&mut self) -> Array<T, D> {
         let rank = D::NDIM.expect("arrays have a fixed rank");
-        let words = self.input.read_words();
-        assert!(words.len() >= rank, "array parameter lacks its shape");
-        let (dims, data) = words.split_at(rank);
+        let mut words = self.input.read_words();
+        let data_len = words.len().checked_sub(rank).expect("array parameter lacks its shape");
+        let dims = &words[data_len..];
         let mut shape = D::zeros(rank);
         for (axis, &extent) in dims.iter().enumerate() {
             shape[axis] = usize::try_from(extent).expect("negative array extent");
         }
         self.shapes.extend_from_slice(dims);
-        Array::from_shape_vec(shape, elements(data)).expect("array data does not fill its shape")
+        words.truncate(data_len);
+        Array::from_shape_vec(shape, elements(words)).expect("array data does not fill its shape")
     }
 
     pub fn array1<T: Element>(&mut self) -> Array<T, Ix1> {

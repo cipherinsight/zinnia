@@ -21,7 +21,9 @@ from zinnia.api.zk_circuit import ZKCircuit
 def test_dyn_chained_subscript_write_raises():
     """`a[i][j] = v` on a dynamic array used to drop the write silently.
 
-    It must now raise a clear error rather than miscompile.
+    It must raise a clear error rather than miscompile. (Chained writes into
+    static arrays are flattened to `a[i, j] = v`; dynamic arrays are not,
+    because their single-step writes are themselves pending a core fix.)
     """
     source = """
 @requires(lambda n: 0 <= n <= 5)

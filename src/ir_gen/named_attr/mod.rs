@@ -13,6 +13,17 @@ mod list_methods;
 mod ndarray_methods;
 mod numpy_funcs;
 
+/// Write `result` into the existing array `target` (element-wise, through
+/// views; shapes must match and a float result cannot go into an integer
+/// array). Returns `target`.
+pub(super) fn write_into(
+    b: &mut crate::builder::IRBuilder,
+    result: &Value,
+    target: &Value,
+) -> Value {
+    array_compat::write_output(b, result, target, None)
+}
+
 pub(super) fn kwarg_static_truthy(
     kwargs: &HashMap<String, Value>,
     name: &str,
@@ -40,6 +51,9 @@ pub(crate) struct DispatchCtx<'a> {
     pub args_orig: &'a [Value],
     pub kwargs_orig: &'a HashMap<String, Value>,
     pub ast_node: &'a ASTNamedAttribute,
+    /// A ufunc's output array passed positionally after its inputs
+    /// (`np.add(x, 1, y)`); removed from `args` so handlers see only inputs.
+    pub positional_out: Option<&'a Value>,
 }
 
 impl IRGenerator {
@@ -67,6 +81,7 @@ impl IRGenerator {
 
         let target = n.target.as_deref();
         let member = n.member.as_str();
+        let positional_out = split_positional_ufunc_out(target, member, &mut visited_args);
 
         // P1 segarr boundary: legacy ops still pattern-match `Value::List` /
         // `Value::Tuple` for numeric arrays. Materialise any segment-backed
@@ -139,6 +154,7 @@ impl IRGenerator {
             args_orig: &visited_args_orig,
             kwargs_orig: &visited_kwargs_orig,
             ast_node: n,
+            positional_out: positional_out.as_ref(),
         };
 
         // Category dispatch chain. Order is preserved from the pre-split
@@ -197,13 +213,21 @@ impl IRGenerator {
         )
     }
 
+    /// Honour NumPy's `out` argument: write the result into the given array
+    /// (through views) and return that array. Ufuncs also accept `out`
+    /// positionally, right after their inputs (`np.add(x, 1, y)`).
     fn finish_numpy_out(&mut self, ctx: &DispatchCtx, value: Value) -> Value {
-        if ctx.target == Some("np") && ctx.member != "clip" {
-            if let Some(target) = ctx.kwargs_orig.get("out") {
-                return array_compat::write_output(&mut self.builder, &value, target, ctx.kwargs_orig.get("where"));
-            }
+        if ctx.target != Some("np") || ctx.member == "clip" {
+            return value;
         }
-        value
+        let target = match (ctx.positional_out, ctx.kwargs_orig.get("out")) {
+            (Some(_), Some(_)) => panic!("np.{}: out given both positionally and as a keyword", ctx.member),
+            (Some(out), None) | (None, Some(out)) => out,
+            (None, None) => return value,
+        };
+        let written = array_compat::write_output(&mut self.builder, &value, target, ctx.kwargs_orig.get("where"));
+        self.note_array_write(&written);
+        written
     }
 
     pub(crate) fn visit_expr_attr(&mut self, n: &ASTExprAttribute) -> Value {
@@ -267,13 +291,16 @@ impl IRGenerator {
             .collect();
 
         // DynamicNDArray dispatch — route to dedicated handler
-        if matches!(target, Value::DynamicNDArray(_)) {
-            return self.dispatch_dyn_ndarray_method(
+        if let Value::DynamicNDArray(data) = &target {
+            let data = data.clone();
+            let result = self.dispatch_dyn_ndarray_method(
                 target,
                 n.member.as_str(),
                 &visited_args,
                 &visited_kwargs,
             );
+            self.note_metadata_bounds(&data, n.member.as_str(), &result);
+            return result;
         }
 
         // Complex .real / .imag / .conjugate accessors on any expression.
@@ -340,32 +367,25 @@ impl IRGenerator {
                 array_compat::clip(&mut self.builder, &args, &visited_kwargs_orig)
             }
             "copy" => array_compat::copy_array(&mut self.builder, &target_orig),
-            method @ ("sum" | "any" | "all" | "prod" | "min" | "max" | "mean") => {
-                // P4b: native StaticArray dispatch before the legacy boundary.
+            // `sum`/`prod`/`min`/`max`/`any`/`all` returned early through
+            // `array_compat::reduction` above.
+            "mean" => {
                 let axis_arg_orig = visited_kwargs_orig
                     .get("axis")
                     .or_else(|| visited_args_orig.first());
                 let keepdims = kwarg_static_truthy(&visited_kwargs_orig, "keepdims", false);
                 if let Some(out) = crate::helpers::static_array::reductions::try_apply_reduce(
                     &mut self.builder,
-                    method,
+                    "mean",
                     &target_orig,
                     axis_arg_orig,
                     keepdims,
                 ) {
                     return out;
                 }
-                if method == "mean" {
-                    let mut all_args = vec![target.clone()];
-                    all_args.extend(visited_args.iter().cloned());
-                    return crate::ops::static_ndarray_ops::np_mean(
-                        &mut self.builder,
-                        &all_args,
-                        &visited_kwargs,
-                    );
-                }
-                let axis_arg = visited_kwargs.get("axis").or_else(|| visited_args.first());
-                crate::helpers::array_ops::reduce(&mut self.builder, method, &target, axis_arg)
+                let mut all_args = vec![target.clone()];
+                all_args.extend(visited_args.iter().cloned());
+                crate::ops::static_ndarray_ops::np_mean(&mut self.builder, &all_args, &visited_kwargs)
             }
             method @ ("argmax" | "argmin") => {
                 // P4b: native StaticArray dispatch before the legacy boundary.
@@ -611,5 +631,52 @@ impl IRGenerator {
             ),
         };
         Some(out)
+    }
+}
+
+/// Remove and return the positional `out` argument of a NumPy ufunc call
+/// (`np.add(x, 1, y)`), so the handler sees only the inputs.
+fn split_positional_ufunc_out(target: Option<&str>, member: &str, args: &mut Vec<Value>) -> Option<Value> {
+    if target != Some("np") {
+        return None;
+    }
+    let inputs = ufunc_input_count(member)?;
+    if args.len() > inputs + 1 {
+        panic!(
+            "np.{}: takes {} input(s) and one output, got {} positional arguments",
+            member,
+            inputs,
+            args.len()
+        );
+    }
+    (args.len() == inputs + 1).then(|| args.pop().expect("length checked"))
+}
+
+/// Number of inputs of a NumPy ufunc called as `np.<name>`, or `None` when
+/// `name` is not a single-output ufunc. A ufunc takes its `out` array as the
+/// positional argument after its inputs.
+fn ufunc_input_count(name: &str) -> Option<usize> {
+    const BINARY: &[&str] = &[
+        "add", "subtract", "multiply", "divide", "true_divide", "floor_divide", "power",
+        "float_power", "mod", "remainder", "fmod", "maximum", "minimum", "fmax", "fmin",
+        "logical_and", "logical_or", "logical_xor", "bitwise_and", "bitwise_or", "bitwise_xor",
+        "left_shift", "right_shift", "greater", "greater_equal", "less", "less_equal", "equal",
+        "not_equal", "arctan2", "hypot", "copysign", "ldexp", "logaddexp", "logaddexp2",
+        "heaviside", "gcd", "lcm", "nextafter", "matmul",
+    ];
+    const UNARY: &[&str] = &[
+        "negative", "positive", "absolute", "abs", "fabs", "sign", "sqrt", "cbrt", "square",
+        "reciprocal", "exp", "exp2", "expm1", "log", "log2", "log10", "log1p", "sin", "cos",
+        "tan", "arcsin", "arccos", "arctan", "sinh", "cosh", "tanh", "arcsinh", "arccosh",
+        "arctanh", "deg2rad", "rad2deg", "degrees", "radians", "floor", "ceil", "trunc", "rint",
+        "conjugate", "conj", "logical_not", "invert", "bitwise_not", "isnan", "isinf",
+        "isfinite", "signbit", "spacing",
+    ];
+    if BINARY.contains(&name) {
+        Some(2)
+    } else if UNARY.contains(&name) {
+        Some(1)
+    } else {
+        None
     }
 }
