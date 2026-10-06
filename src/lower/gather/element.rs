@@ -24,6 +24,10 @@
 //! run, its value is not used (it is guarded), so the result for an index
 //! out of range (the chain gives `x[0]`, the sums 0) does not matter.
 //!
+//! **Range.** The indicator form may also assert that the indicators sum
+//! to 1 (`assert_one_hot`), which proves `0 <= i < n` and so can stand for
+//! the program's own check of the index.
+//!
 //! **Cost** (`cost.rs`). The equality tests of one index are shared by every
 //! read at that index (the lowering deduplicates them). Per read, the chain
 //! has `n - 1` selects of two variable branches, the inner products `n`
@@ -83,6 +87,22 @@ pub fn gather_by_indicators(b: &mut IRBuilder, cells: &[Value], index: &Value, d
         })
         .collect();
     sum_typed(b, terms, dtype)
+}
+
+/// Assert `sum_k [index == k] == 1` over `k` in `0..n`: exactly one
+/// indicator is 1, so `0 <= index < n`.
+///
+/// **Postcondition.** `0 <= index < n` on every accepted witness (the
+/// indicators are exact, so their sum is the number of `k` in `0..n` equal
+/// to `index`: 1 exactly when `index` is one of them). The indicators are
+/// the same statements as the read's (deduplicated after lowering), so the
+/// check costs only the sum and its assertion.
+pub fn assert_one_hot(b: &mut IRBuilder, index: &Value, n: usize) {
+    let bits: Vec<Value> = (0..n as i64).map(|k| equals(b, index, k)).collect();
+    let sum = bits[1..].iter().fold(bits[0].clone(), |acc, bit| b.ir_add_i(&acc, bit));
+    let one = b.ir_constant_int(1);
+    let exactly_one = b.ir_equal_i(&sum, &one);
+    b.ir_assert(&exactly_one);
 }
 
 /// `[index == k]`.

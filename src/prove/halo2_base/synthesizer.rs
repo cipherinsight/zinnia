@@ -97,6 +97,9 @@ pub struct Halo2BaseSynthesizer<'a> {
     proven: HashMap<u64, Interval>,
     /// Pinned sign bits `[x < 0]` by cell id (sign tests, `sign_and_abs`).
     sign_bits: HashMap<u64, Halo2BaseCell>,
+    /// The int64 window checks emitted so far, by the checked cell's id
+    /// (see `ranges::WindowCheck`): a later sign test reads the top limb.
+    windows: HashMap<u64, ranges::WindowCheck>,
     /// Signed-window order bits `[a < b]` of two cells, by `(a, b)` cell ids
     /// (see `ranges::less_than`: the reverse order then needs one equality).
     orders: HashMap<(u64, u64), Halo2BaseCell>,
@@ -184,6 +187,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             differences: HashMap::new(),
             comparisons: HashMap::new(),
             sign_bits: HashMap::new(),
+            windows: HashMap::new(),
             orders: HashMap::new(),
             nonzero: HashSet::new(),
             divisor_signs: HashMap::new(),
@@ -1070,6 +1074,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     /// Python floor division `a // b` (remainder has the divisor's sign);
     /// see `div_rem` for the constraints and the zero-divisor convention.
     fn floor_div_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        self.ensure_int64_divisor(b)?;
         Ok(self.div_rem(a, b, Rounding::Floor)?.0)
     }
 
@@ -1117,6 +1122,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
 
     /// Python remainder `a % b` (sign of the divisor).
     fn mod_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        self.ensure_int64_divisor(b)?;
         Ok(self.div_rem(a, b, Rounding::Floor)?.1)
     }
 

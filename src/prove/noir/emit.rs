@@ -63,6 +63,12 @@ pub struct EmitOutput {
     pub return_count: usize,
 }
 
+/// Sums of more terms than this are bound in chunks (`NoirEmitter::bind_sum`)
+/// before a library call reads them: nargo 1.0.0-beta.20 stops with
+/// "Reached the recursion limit during elaboration" on one expression of a
+/// few hundred terms. Shorter sums stay one expression (no change in gates).
+const LONG_SUM_TERMS: usize = 64;
+
 /// Top-level entry point: emit a complete Noir package source pair.
 pub fn emit_circuit(
     ir: &IRGraph,
@@ -95,6 +101,7 @@ pub fn emit_circuit(
     emitter.asserted_comparisons = asserted_comparisons(ir);
     emitter.implied_comparisons = implied_comparisons(ir, &emitter.asserted_comparisons);
     emitter.multiplied = multiplied(ir);
+    emitter.reads = reads(ir);
     emitter.root_guards = crate::prove::guards::root_guards(ir);
     emitter.divisor_guards = crate::prove::guards::divisor_guards(ir);
     interpret_ir(ir, &mut emitter)?;
@@ -165,6 +172,17 @@ fn multiplied(ir: &IRGraph) -> HashMap<u32, usize> {
         }
     }
     uses
+}
+
+/// How many statement operands each statement's value is.
+fn reads(ir: &IRGraph) -> HashMap<u32, usize> {
+    let mut reads: HashMap<u32, usize> = HashMap::new();
+    for stmt in &ir.stmts {
+        for arg in &stmt.arguments {
+            *reads.entry(*arg).or_insert(0) += 1;
+        }
+    }
+    reads
 }
 
 /// Asserted comparisons of a value with a constant that a bounds check of
@@ -793,6 +811,20 @@ pub struct NoirEmitter<'a> {
     low_bits_of: HashMap<String, (u32, String)>,
     /// `sign_abs(x)` pairs already emitted: x -> (negative: bool, |x|).
     sign_abs_of: HashMap<String, (String, String)>,
+    /// Offset windows an asserted comparison against a constant checked
+    /// (`asserted_compare`): x -> (t, c, W) with `t = x - c` a cell whose
+    /// `W`-bit range check (`W <= 64`) every accepted witness passes. Later
+    /// comparisons of x with a constant read t natively
+    /// (`compare_in_checked_window`).
+    window_of: HashMap<String, (String, i128, u32)>,
+    /// Flags bound to the product of two flags (`logical_and`) that Noir
+    /// still holds as a degree-2 expression (see `logical_or`).
+    product_flags: HashSet<String>,
+    /// How many statement operands each statement's value is.
+    reads: HashMap<u32, usize>,
+    /// How many statement operands each cell is: the reads of every
+    /// statement whose result it is (see `witness_shared_summands`).
+    var_reads: HashMap<String, usize>,
     /// Bit decompositions of bounded indices: (idx, width) -> name.
     index_bits_of: HashMap<(String, u32), String>,
     /// IR-level forward-dataflow bounds, keyed by stmt_id, from
@@ -885,6 +917,9 @@ impl<'a> NoirEmitter<'a> {
                     self.materialize_sum(factor);
                 }
             }
+        }
+        if op != '*' {
+            self.witness_shared_summands(a, b);
         }
         let v = self.bind(&format!("{a} {op} {b}"));
         if op == '+' {
@@ -1040,6 +1075,9 @@ impl<'a> NoirEmitter<'a> {
             self.asserted_compare(a, b, cmp);
             return self.literal_int(1);
         }
+        if let Some(v) = self.compare_in_checked_window(a, b, cmp) {
+            return v;
+        }
         if let Some(v) = self.compare_with_zero_by_sign(a, b, cmp) {
             return v;
         }
@@ -1067,6 +1105,47 @@ impl<'a> NoirEmitter<'a> {
         let ca = self.to_uint(a, UintWidth::U8);
         let cb = self.to_uint(b, UintWidth::U8);
         Some(self.bind_flag(&format!("if {} {} {} {{ 1 }} else {{ 0 }}", ca, cmp.op(), cb)))
+    }
+
+    /// `x cmp k` (or `k cmp x`) for a constant `k` and a cell `x` that an
+    /// asserted comparison already checked into a window: `t = x - c` with
+    /// `t` in `[0, 2^W)`, `W <= 64` (`window_of`; the input-domain check
+    /// `x >= i64::MIN` gives `t = x + 2^63`, the signed 64-bit window).
+    /// Then `x < k` exactly when `t < k - c` as integers, which Noir decides
+    /// natively on `t as u64`: the cast is exact because the range check of
+    /// `t` holds for every accepted witness (it was emitted unconditionally:
+    /// the comparison's only uses are asserts, see `asserted_comparisons`),
+    /// and Noir's own `u64` comparison is sound. This replaces the hinted
+    /// `qlt_bits` or `sign_abs` (a hint, a select and a range check of their
+    /// own) with the one comparison the baselines' `window(x) < K` make.
+    /// Applies when `0 < k - c` and `k - c + 1 < 2^W` (otherwise the range
+    /// of `t` already decides the comparison), and not when a `sign_abs`
+    /// pair of x already exists for a comparison with 0 (reading its sign
+    /// is free).
+    fn compare_in_checked_window(&mut self, a: &str, b: &str, cmp: Cmp) -> Option<String> {
+        let (x, k, cmp) = match (self.raw_constant(a), self.raw_constant(b)) {
+            (None, Some(k)) => (a, k, cmp),
+            (Some(k), None) => (b, k, cmp.mirrored()),
+            _ => return None,
+        };
+        if k == 0 && self.sign_abs_of.contains_key(x) {
+            return None;
+        }
+        let (t, c, width) = self.window_of.get(x).cloned()?;
+        let bound = k - c;
+        if bound <= 0 || bound + 1 >= 1i128 << width {
+            return None;
+        }
+        // x < k  <=>  t < bound;   x <= k  <=>  t < bound + 1.
+        let (limit, negate) = match cmp {
+            Cmp::Lt => (bound, false),
+            Cmp::Ge => (bound, true),
+            Cmp::Le => (bound + 1, false),
+            Cmp::Gt => (bound + 1, true),
+        };
+        let less = self.bind_typed(&format!("({t} as u64) < {limit}"), "bool");
+        let flag = if negate { format!("(!{less}) as Field") } else { format!("{less} as Field") };
+        Some(self.bind_flag(&flag))
     }
 
     /// `a cmp b` through `qlt_bits::<W>`, which pins its answer with one
@@ -1247,6 +1326,13 @@ impl<'a> NoirEmitter<'a> {
         let t = self.fresh();
         let _ = writeln!(self.body, "    let {t}: Field = {gap};");
         let _ = writeln!(self.body, "    {t}.assert_max_bit_size::<{width}>();");
+        // `x >= c` (or `x > c - 1`) checked as t = x - c in [0, 2^W): later
+        // comparisons of x with a constant read t (`compare_in_checked_window`).
+        if let (Some(c), None) = (self.raw_constant(low), self.raw_constant(high)) {
+            if width <= 64 && !self.window_of.contains_key(high) {
+                self.window_of.insert(high.to_string(), (t.clone(), c + strict as i128, width));
+            }
+        }
         // low + strict <= high < low + strict + 2^W: an operand with a known
         // range (a constant, or a range an earlier check proves) bounds the
         // other one, an integer then too.
@@ -1299,9 +1385,38 @@ impl<'a> NoirEmitter<'a> {
         }
         let terms = self.linear_terms(a) + self.linear_terms(b);
         self.sum_terms.insert(out.to_string(), terms);
-        let products = self.current_stmt.and_then(|id| self.multiplied.get(&id)).copied().unwrap_or(0);
-        if products > 0 && (terms > 2 || (terms == 2 && products > 1)) {
+        if self.needs_witness(terms) {
             self.materialize_sum(out);
+        }
+    }
+
+    /// Whether the sum of `terms` linear terms that the current statement
+    /// computes gets a witness: products read it, and it has three or more
+    /// terms, or two and more than one product reads it (`linear_terms`).
+    fn needs_witness(&self, terms: u32) -> bool {
+        let products = self.current_stmt.and_then(|id| self.multiplied.get(&id)).copied().unwrap_or(0);
+        products > 0 && (terms > 2 || (terms == 2 && products > 1))
+    }
+
+    /// Before `out = a ± b` is bound: when `out` would get a witness
+    /// (`needs_witness`), an operand that is itself a sum of three or more
+    /// terms read by several statements gets one first. A Barretenberg
+    /// arithmetic gate has four wires, so `out = x + s` fits one gate when
+    /// `s` has at most two terms; with three (`x + c0 + c1 + c2`, five
+    /// wires) every such `out` takes two, while with the operand's witness,
+    /// paid once, each is `x + s` (one gate): a sum of constants shared by
+    /// many elements (the Horner coefficients of a membership test) is the
+    /// typical case. `std::as_witness` only tells Noir where to cut an
+    /// expression; the constraints still say `out = a ± b`, so this changes
+    /// gates, never what is proved.
+    fn witness_shared_summands(&mut self, a: &str, b: &str) {
+        if !self.needs_witness(self.linear_terms(a) + self.linear_terms(b)) {
+            return;
+        }
+        for x in [a, b] {
+            if self.linear_terms(x) > 2 && self.var_reads.get(x).copied().unwrap_or(0) > 1 {
+                self.materialize_sum(x);
+            }
         }
     }
 
@@ -1608,6 +1723,7 @@ impl<'a> NoirEmitter<'a> {
         if let Some(d) = self.raw_constant(b).filter(|d| *d > 0) {
             return self.divide_by_positive_constant(a, d);
         }
+        self.witness_divisor(b);
         if self.nonzero.contains(b) {
             let (negative, mag) = self.sign_abs(b);
             self.use_lib("floor_divmod_nonzero_of");
@@ -1649,6 +1765,40 @@ impl<'a> NoirEmitter<'a> {
             format!("divmod_by_positive::<{width}>({n}, {d})")
         };
         self.divmod_call(call)
+    }
+
+    /// An integer divisor must be an int64: `b` in `[-2^63, 2^63)`, with no
+    /// proof otherwise (`assert_in_window`, one 64-bit check of `b + 2^63`;
+    /// nothing when a constant or an earlier check already proves the range,
+    /// e.g. an input's domain check).
+    ///
+    /// Why. The IR's integer `+ - *` are exact in the field, NumPy's int64
+    /// arithmetic wraps; the two agree modulo 2^64, so a value that left the
+    /// window (a row sum of `|x|` reaching 2^63) must not be observed by an
+    /// operation that does not commute with the wrap. The division gadgets
+    /// bound the divisor only by about 2^64 (`d - 1 - r` or `sign_abs`), so
+    /// `x / sum(|x|)` divided by the unwrapped 2^63 and proved `0.5` where
+    /// NumPy gives `-0.5`. Inside the window the field value's signed reading
+    /// is NumPy's int64, so the division is NumPy's.
+    /// A dynamic divisor that is a sum gets a witness before its first
+    /// division: the division gadgets read it in several constraints
+    /// (`q * d + r == n`, the remainder bound `d - 1 - r`, a window check),
+    /// and Noir would otherwise expand every term of the sum into each of
+    /// them (0452: two gates per remainder bound instead of one). The
+    /// constraints are unchanged; only where Noir cuts the expression.
+    fn witness_divisor(&mut self, b: &str) {
+        self.materialize_sum(b);
+    }
+
+    fn ensure_int64_divisor(&mut self, b: &str) {
+        self.witness_divisor(b);
+        let window = (-(1i128 << 63), (1i128 << 63) - 1);
+        if self.known_range(b).is_some_and(|(lo, hi)| lo >= window.0 && hi <= window.1) {
+            return;
+        }
+        self.use_lib("assert_in_window");
+        let _ = writeln!(self.body, "    assert_in_window({b});");
+        self.narrow_proven_range(b, window.0, window.1);
     }
 
     /// Bind `let (q, r) = <call>;` once per call text.
@@ -2037,6 +2187,10 @@ impl<'a> NoirEmitter<'a> {
             low_bits_of: HashMap::new(),
             index_bits_of: HashMap::new(),
             sign_abs_of: HashMap::new(),
+            window_of: HashMap::new(),
+            product_flags: HashSet::new(),
+            reads: HashMap::new(),
+            var_reads: HashMap::new(),
             stmt_bounds,
             current_stmt_bound: None,
         }
@@ -2269,12 +2423,14 @@ impl Synthesizer for NoirEmitter<'_> {
 
     fn on_stmt_result(
         &mut self,
-        _stmt_id: u32,
+        stmt_id: u32,
         value_id: crate::types::ValueId,
         cell: &CellRef,
     ) {
         // Name ↔ ValueId correspondence for live provenance-table reads.
         self.vid_of_var.insert(cell.clone(), value_id);
+        let reads = self.reads.get(&stmt_id).copied().unwrap_or(0);
+        *self.var_reads.entry(cell.clone()).or_insert(0) += reads;
         self.var_of_vid.insert(value_id, cell.clone());
         // Stamp the IR-analysis bound on the statement RESULT only, for
         // later interval queries. Doing it here (rather than inside `bind()`) keeps
@@ -2354,6 +2510,7 @@ impl Synthesizer for NoirEmitter<'_> {
         if let Some((q, _r)) = self.constant_floor_divmod(a, b) {
             return Ok(self.literal_int(q));
         }
+        self.ensure_int64_divisor(b);
         let (q, _r) = self.floor_divmod_cells(a, b);
         Ok(q)
     }
@@ -2381,6 +2538,7 @@ impl Synthesizer for NoirEmitter<'_> {
         if let Some((_q, r)) = self.constant_floor_divmod(a, b) {
             return Ok(self.literal_int(r));
         }
+        self.ensure_int64_divisor(b);
         let (_q, r) = self.floor_divmod_cells(a, b);
         Ok(r)
     }
@@ -2444,6 +2602,7 @@ impl Synthesizer for NoirEmitter<'_> {
 
     fn add_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qadd");
+        self.witness_shared_summands(a, b);
         let v = self.bind(&format!("qadd({}, {})", a, b));
         self.record_sum(&v, a, b);
         self.track_linear(&v, a, b);
@@ -2451,6 +2610,7 @@ impl Synthesizer for NoirEmitter<'_> {
     }
     fn sub_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qsub");
+        self.witness_shared_summands(a, b);
         let v = self.bind(&format!("qsub({}, {})", a, b));
         self.track_linear(&v, a, b);
         Ok(v)
@@ -2477,7 +2637,12 @@ impl Synthesizer for NoirEmitter<'_> {
         }
         if !raw.is_empty() {
             self.use_lib("qscale_down_raw");
-            let rescaled = self.bind(&format!("qscale_down_raw({})", raw.join(" + ")));
+            // A long sum is bound in chunks first (`bind_sum`): nargo's
+            // elaborator hits its recursion limit on one expression of a
+            // few hundred terms (`np.dot` of length 256), and the chunks are
+            // the same linear combination.
+            let sum = if raw.len() > LONG_SUM_TERMS { self.bind_sum(&raw) } else { raw.join(" + ") };
+            let rescaled = self.bind(&format!("qscale_down_raw({sum})"));
             exact.push(rescaled);
         }
         if let [single] = exact.as_slice() {
@@ -2501,8 +2666,11 @@ impl Synthesizer for NoirEmitter<'_> {
             // float `b = n * 2^32` cancels the scale, as halo2-base's
             // `fixed_div` does: the Euclidean quotient of `a` by `n` equals
             // that of `a * 2^32` by `b`.
-            let (numerator, divisor) = match self.integral_float.get(b.as_str()) {
-                Some(n) => (a.to_string(), n.clone()),
+            let (numerator, divisor) = match self.integral_float.get(b.as_str()).cloned() {
+                Some(n) => {
+                    self.ensure_int64_divisor(&n);
+                    (a.to_string(), n)
+                }
                 None => (format!("{a} * {Q_U64}"), b.clone()),
             };
             if self.known_non_negative(&divisor) {
@@ -2799,10 +2967,25 @@ impl Synthesizer for NoirEmitter<'_> {
     fn logical_and(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let (a, b) = (self.booleanize(a), self.booleanize(b));
         let (af, bf) = (&a, &b);
-        Ok(self.bind_flag(&format!("{} * {}", af, bf)))
+        let v = self.bind_flag(&format!("{} * {}", af, bf));
+        if self.literal_vals.get(&v).is_none() {
+            self.product_flags.insert(v.clone());
+        }
+        Ok(v)
     }
     fn logical_or(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let (a, b) = (self.booleanize(a), self.booleanize(b));
+        // An operand that is an AND (`p * q`, still an expression in Noir)
+        // gets a witness first: `a + (1 - a) * b` of two such expressions
+        // otherwise makes Noir bind `1 - p * q` and keep two product terms
+        // (four gates for `(p & q) | (r & s)`, against three with both ANDs
+        // as witnesses; measured on DS-1000 0444). `std::as_witness` changes
+        // only where Noir cuts the expression, not the constraints.
+        for x in [&a, &b] {
+            if self.product_flags.remove(x.as_str()) {
+                let _ = writeln!(self.body, "    std::as_witness({x});");
+            }
+        }
         // `a + (1 - a) * b`, the same polynomial as `a + b - a * b`: in a
         // chain of ORs (an `any` over a mask) Noir lowers this form with
         // fewer gates (measured with nargo 1.0.0-beta.20 / bb 5.0.0).

@@ -19,8 +19,11 @@
 //! a comparison or logical statement whose value the assumptions and the
 //! operands' intervals decide becomes that constant; a select whose
 //! condition is decided becomes its chosen branch; an integer addition,
-//! subtraction or multiplication whose operands changed is rebuilt on the
-//! new operands. Everything else is kept as it is. Intervals combine the
+//! subtraction or multiplication, or a floor division by a positive
+//! constant, whose operands changed is rebuilt on the new operands (each is
+//! total: defined on every operand value, on every backend, so the rebuilt
+//! statement has no domain the guard was keeping its operand inside).
+//! Everything else is kept as it is. Intervals combine the
 //! range engine's bounds (`optim::range`, read off the original statements)
 //! with the assumptions, through `+`, `-`, `*` and decided selects.
 //!
@@ -45,13 +48,13 @@
 //! select's value lies in `[0, n)`.
 //!
 //! **Cost.** Only decided selects and comparisons disappear; the rebuilt
-//! statements are integer `+`, `-`, `*` on the simplified operands, which
+//! statements are integer `+`, `-`, `*`, `//` on the simplified operands, which
 //! replace the originals when nothing else reads them.
 
 use std::collections::{HashMap, HashSet};
 
 use crate::builder::IRBuilder;
-use crate::ir::IRGraph;
+use crate::ir::{IRGraph, IRStatement};
 use crate::ir_defs::IR;
 use crate::optim::{RangeResolver, Resolver};
 use crate::types::{ScalarValue, StmtId, Value};
@@ -437,14 +440,9 @@ impl<'a, 'b> Walk<'a, 'b> {
                 };
                 Some(self.rewrite(b, chosen, depth + 1).unwrap_or_else(|| self.lookup[&chosen].clone()))
             }
-            (IR::AddI | IR::SubI | IR::MulI, &[x, y]) => {
-                let (nx, ny) = (self.rewrite(b, x, depth + 1), self.rewrite(b, y, depth + 1));
-                if nx.is_none() && ny.is_none() {
-                    return None;
-                }
-                let x = nx.unwrap_or_else(|| self.lookup[&x].clone());
-                let y = ny.unwrap_or_else(|| self.lookup[&y].clone());
-                Some(b.create_ir(&stmt.ir, &[x, y]))
+            (IR::AddI | IR::SubI | IR::MulI, &[x, y]) => self.rebuild(b, stmt, x, y, depth),
+            (IR::FloorDivI, &[x, d]) if constant_of(self.graph, d).is_some_and(|d| d > 0) => {
+                self.rebuild(b, stmt, x, d, depth)
             }
             (ir, _) if is_boolean_test(ir) => {
                 let value = self.decide(s, depth)?;
@@ -452,6 +450,18 @@ impl<'a, 'b> Walk<'a, 'b> {
             }
             _ => None,
         }
+    }
+
+    /// `stmt` (a binary operation on `x`, `y`) on its operands simplified,
+    /// or `None` when neither changes.
+    fn rebuild(&mut self, b: &mut IRBuilder, stmt: &IRStatement, x: StmtId, y: StmtId, depth: u32) -> Option<Value> {
+        let (nx, ny) = (self.rewrite(b, x, depth + 1), self.rewrite(b, y, depth + 1));
+        if nx.is_none() && ny.is_none() {
+            return None;
+        }
+        let x = nx.unwrap_or_else(|| self.lookup[&x].clone());
+        let y = ny.unwrap_or_else(|| self.lookup[&y].clone());
+        Some(b.create_ir(&stmt.ir, &[x, y]))
     }
 }
 
@@ -545,6 +555,36 @@ mod tests {
         assert_eq!(count(&narrower, |ir| matches!(ir, IR::AssertU128Lt)), 1);
         assert!(!run(&narrower, &[("c", 49)]).0);
         assert!(run(&narrower, &[("c", 48)]).0);
+    }
+
+    /// `select(p, (select(p, c - 1, 0) * 7 + 3) // 5, -1)` with `p = 1 <= c`:
+    /// the guarded index inside a floor division by a constant.
+    fn guarded_floor_division() -> IRGraph {
+        let mut b = IRBuilder::new();
+        let c = b.ir_read_integer(InputPath::new("c", vec![]), false);
+        let (zero, one) = (b.ir_constant_int(0), b.ir_constant_int(1));
+        let p = b.ir_greater_than_or_equal_i(&c, &one);
+        let index = b.ir_sub_i(&c, &one);
+        let guarded = b.ir_select_i(&p, &index, &zero);
+        let (seven, three, five, minus_one) =
+            (b.ir_constant_int(7), b.ir_constant_int(3), b.ir_constant_int(5), b.ir_constant_int(-1));
+        let scaled = b.ir_mul_i(&guarded, &seven);
+        let shifted = b.ir_add_i(&scaled, &three);
+        let quotient = b.ir_floor_div_i(&shifted, &five);
+        let out = b.ir_select_i(&p, &quotient, &minus_one);
+        b.ir_expose_public_i(&out);
+        b.export_ir_graph()
+    }
+
+    #[test]
+    fn a_guard_inside_a_floor_division_by_a_constant_is_removed() {
+        let graph = guarded_floor_division();
+        let out = simplified(&graph);
+        // Only the outer select remains; the guard is gone from the quotient.
+        assert_eq!(count(&out, |ir| matches!(ir, IR::SelectI)), 1);
+        for c in -4..=6 {
+            assert_eq!(run(&out, &[("c", c)]), run(&graph, &[("c", c)]), "c={c}");
+        }
     }
 
     /// `select(c > k, a, select(c > k, b, d))` and the same with an

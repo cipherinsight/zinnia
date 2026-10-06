@@ -21,7 +21,9 @@ use std::rc::Rc;
 
 use crate::builder::IRBuilder;
 use crate::ir_defs::IR;
-use crate::lower::{Candidate, Construction, Context, EmitCx, Emitter, Group, GroupId, Lane, OpKind, Requirement};
+use crate::lower::{
+    Bound, Candidate, Claim, Construction, Context, EmitCx, Emitter, Fact, Group, GroupId, Lane, OpKind, Requirement,
+};
 use crate::types::{NumberType, StmtId, Value};
 
 use super::cost::{self, AxisCost, MaskCost};
@@ -557,26 +559,50 @@ impl IndexedRead {
         }
     }
 
-    /// One candidate for every read of an element group: the sum of the
+    /// The candidates for every read of an element group: the sum of the
     /// per-read costs, each read sharing its index's equality tests with
-    /// every element read at that index in the program.
+    /// every element read at that index in the program. For indicators, a
+    /// second candidate also asserts that the indicators of each index sum
+    /// to 1 (`element::assert_one_hot`), which proves `0 <= index < n`: it
+    /// is offered only when the program checks exactly that unconditionally
+    /// (`AssertU128Lt(index, n)`), so it rejects nothing the program
+    /// accepts, and the selection may then drop the program's check.
     fn candidate(self, group: &Group, cx: &Context) -> Vec<Candidate> {
         if group.kind != OpKind::Element {
             return Vec::new();
         }
         let n = group.shared.len() as u64;
         let indices: Vec<StmtId> = group.lanes.iter().map(|l| l.own[0]).collect();
-        let cost = indices
+        let cost: u64 = indices
             .iter()
             .zip(index_reads(cx, &indices))
             .map(|(&index, reads)| self.cost(cx, n, index, reads))
             .sum();
-        vec![Candidate {
-            pre: Vec::new(),
-            post: lanes(group).collect(),
-            cost,
-            emitter: Box::new(IndexedReadEmitter { how: self, cells: group.shared.clone() }),
-        }]
+        let candidate = |proves: bool| {
+            let mut distinct = indices.clone();
+            distinct.sort_unstable();
+            distinct.dedup();
+            let facts: Vec<Requirement> = if proves {
+                distinct
+                    .iter()
+                    .map(|&x| Requirement::Fact(Fact::everywhere(Claim::InRange { x, lo: 0, hi: Bound::Const(n as i64) })))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let checks = if proves { distinct.len() as u64 * cost::one_hot_check(n, cx.target) } else { 0 };
+            Candidate {
+                pre: Vec::new(),
+                post: lanes(group).chain(facts).collect(),
+                cost: cost + checks,
+                emitter: Box::new(IndexedReadEmitter { how: self, cells: group.shared.clone(), proves, checked: Vec::new() }),
+            }
+        };
+        let mut out = vec![candidate(false)];
+        if matches!(self, IndexedRead::Indicators) && indices.iter().all(|&index| checked_below(cx, index, n)) {
+            out.push(candidate(true));
+        }
+        out
     }
 }
 
@@ -613,6 +639,10 @@ impl Construction for ElementByIndicators {
 struct IndexedReadEmitter {
     how: IndexedRead,
     cells: Vec<StmtId>,
+    /// Assert each index's one-hot (the candidate proves its range).
+    proves: bool,
+    /// The indices whose one-hot is asserted already.
+    checked: Vec<StmtId>,
 }
 
 impl Emitter for IndexedReadEmitter {
@@ -622,7 +652,13 @@ impl Emitter for IndexedReadEmitter {
         let dtype = dtype_of(&cells);
         match self.how {
             IndexedRead::SelectChain => super::element::gather_by_select_chain(b, &cells, &index, dtype),
-            IndexedRead::Indicators => super::element::gather_by_indicators(b, &cells, &index, dtype),
+            IndexedRead::Indicators => {
+                if self.proves && !self.checked.contains(&lane.own[0]) {
+                    self.checked.push(lane.own[0]);
+                    super::element::assert_one_hot(b, &index, cells.len());
+                }
+                super::element::gather_by_indicators(b, &cells, &index, dtype)
+            }
         }
     }
 }

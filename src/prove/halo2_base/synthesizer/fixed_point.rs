@@ -73,7 +73,7 @@ impl Halo2BaseSynthesizer<'_> {
             let sign = self.constant_bool(negative)?;
             let magnitude = self.const_cell(if negative { -x.value } else { x.value });
             (sign, magnitude)
-        } else if let Some(sign) = self.sign_bits.get(&x.id).copied() {
+        } else if let Some(sign) = self.sign_bits.get(&x.id).copied().or_else(|| self.sign_from_window(x)) {
             let neg_x = self.negate(x);
             let magnitude = self.select_bit(&sign, &neg_x, x)?;
             self.prove_range(&magnitude, magnitude_range);
@@ -92,28 +92,39 @@ impl Halo2BaseSynthesizer<'_> {
     }
 
 
-    /// `|x|` alone (no sign bit for later use).
+    /// `|x|` alone (no sign bit for later use): a hinted bit `s`,
+    /// `m = x·(1 - 2s)` (two gates) and one range check of `m` to `w` bits.
     ///
-    /// For an `x` already proven inside the signed 64-bit window `[lo, hi]`
-    /// (an input, a checked result): a hinted bit `s`, `m = x·(1 - 2s)` (two
-    /// gates) and `m` range-checked to the lookup-aligned width `w` of
-    /// `max(|lo|, |hi|)`. The right `s` gives `m = |x| < 2^w`; for `x != 0`
-    /// the wrong one gives `m = p - |x|`, far above `2^w`, so `m` is a
-    /// function of `x`. At `x = 0`, `m = 0` for either `s`: `s` is not
-    /// pinned there, which is why it is neither returned nor recorded as
-    /// `x`'s sign (a sign test reusing it would be unsound). Otherwise (the
-    /// window not yet proven, or a sign already known) `sign_and_abs`.
+    /// Soundness. `m` is `x` or `-x`. If `x` reads as an integer in
+    /// `(-2^w, 2^w)`, the right `s` gives `m = |x| < 2^w`, and for `x != 0`
+    /// the wrong one gives `m = p - |x|`, far above `2^w`; at `x = 0` both
+    /// give `m = 0`. Any other `x` has no witness (both `x` and `-x` are at
+    /// least `2^w`). So `m` is a function of `x`, and the check itself puts
+    /// `x` in `(-2^w, 2^w)`: no window proof of `x` is needed (`|a - b|` of
+    /// two window values, as in `np.isclose`, takes one range check, not
+    /// `sign_and_abs`'s two). `s` is not pinned at `x = 0`, which is why it
+    /// is neither returned nor recorded as `x`'s sign (a sign test reusing
+    /// it would be unsound).
+    ///
+    /// Width: `w = 63` in general, so the accepted `x` are exactly
+    /// `(-2^63, 2^63)`: `|i64::MIN| = 2^63` overflows int64 (NumPy wraps it
+    /// to i64::MIN) and, like every int64 overflow here, has no proof. When
+    /// an earlier check already proves `x` inside a narrower part of the
+    /// window `[lo, hi]`, `w` is the lookup-aligned width of
+    /// `max(|lo|, |hi|)`. A constant, or an `x` whose sign is already known
+    /// (then only a select is needed), goes through `sign_and_abs`.
     pub(super) fn magnitude(&mut self, x: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
         let known_sign = self.sign_abs_cache.contains_key(&x.id) || self.sign_bits.contains_key(&x.id);
-        let window = self.proven_range(x).filter(|r| r.within(&Interval::SIGNED64));
-        let (Some(range), false, false) = (window, known_sign, self.is_const_cell(x)) else {
+        if known_sign || self.is_const_cell(x) {
             let magnitude = self.sign_and_abs(x)?.1;
             return Ok(self.below_two_pow_63(magnitude));
-        };
-        // `|i64::MIN| = 2^63` overflows int64 (NumPy wraps it to i64::MIN):
-        // like every int64 overflow here it has no proof, so a 63-bit check
-        // when `x` may be `i64::MIN`, keeping `|x|` inside the window.
-        let max_abs = range.lo.unsigned_abs().max(range.hi.unsigned_abs()).min((1u128 << 63) - 1);
+        }
+        if let Some(window) = self.windows.get(&x.id).copied() {
+            return self.magnitude_from_window(x, &window);
+        }
+        let int64_max = (1u128 << 63) - 1;
+        let window = self.proven_range(x).filter(|r| r.within(&Interval::SIGNED64));
+        let max_abs = window.map_or(int64_max, |range| range.lo.unsigned_abs().max(range.hi.unsigned_abs()).min(int64_max));
         let bits = (128 - max_abs.leading_zeros()) as usize;
         let width = if bits >= 63 { 63 } else { self.lookup_aligned(bits.max(1)) };
         let sign = self.hint_bit(kernel::fp_is_negative(x.value));
@@ -124,7 +135,47 @@ impl Halo2BaseSynthesizer<'_> {
         let magnitude = self.gate_cell(x.value * factor.value, |gate, ctx| gate.mul(ctx, x.quantum(), factor.quantum()));
         self.range_check(&magnitude, width);
         self.prove_range(&magnitude, Interval { lo: 0, hi: max_abs as i128 });
+        if window.is_none() {
+            self.prove_range(x, Interval { lo: -(int64_max as i128), hi: int64_max as i128 });
+        }
         Ok(magnitude)
+    }
+
+    /// `|x|` of an `x` whose int64 window check kept its top limb: the sign
+    /// from that limb (`sign_from_window`, pinned there) and
+    /// `m = s ? -x : x`, which is `|x|` for that sign. `|i64::MIN| = 2^63`
+    /// overflows int64 and has no proof: when `x`'s proven range reaches
+    /// `-2^63`, `shifted = x + 2^63` (the window check's own cell) is
+    /// asserted non-zero by an inverse (`shifted · inv = 1`, unsatisfiable
+    /// for 0, and `inv` is unique otherwise), so `m <= 2^63 - 1`. The sign
+    /// bit is recorded as `x`'s, later sign tests reuse it.
+    fn magnitude_from_window(
+        &mut self,
+        x: &Halo2BaseCell,
+        window: &super::ranges::WindowCheck,
+    ) -> Result<Halo2BaseCell, ProvingError> {
+        let int64_max = (1i128 << 63) - 1;
+        let range = self.proven_range(x).unwrap_or(Interval::SIGNED64);
+        let sign = self.sign_from_window(x).expect("a kept window check has a sign");
+        let neg_x = self.negate(x);
+        let magnitude = self.select_bit(&sign, &neg_x, x)?;
+        if range.lo <= -(1i128 << 63) {
+            self.assert_nonzero_by_inverse(&window.shifted);
+        }
+        let max_abs = range.lo.unsigned_abs().max(range.hi.unsigned_abs()).min(int64_max as u128) as i128;
+        self.prove_range(&magnitude, Interval { lo: 0, hi: max_abs });
+        self.sign_abs_cache.insert(x.id, (sign, magnitude));
+        Ok(magnitude)
+    }
+
+    /// Constrain `x != 0`: a hinted inverse `inv` and `x · inv = 1`. No
+    /// `inv` satisfies it for `x = 0`; otherwise `inv` is the unique inverse.
+    fn assert_nonzero_by_inverse(&mut self, x: &Halo2BaseCell) {
+        let inverse = self.hint(x.value.invert().unwrap_or(Fp::zero()));
+        let product = self.gate_cell(x.value * inverse.value, |gate, ctx| gate.mul(ctx, x.quantum(), inverse.quantum()));
+        let product = self.assigned(&product);
+        self.gate.assert_is_const(self.builder.main(0), &product, &Fp::one());
+        self.nonzero.insert(x.id);
     }
 
     /// `|x|` from `sign_and_abs`, which allows `2^63` (`x = i64::MIN`),
@@ -207,6 +258,25 @@ impl Halo2BaseSynthesizer<'_> {
         }
     }
 
+
+    /// An integer divisor must be an int64: `b` in `[-2^63, 2^63)`, with no
+    /// proof otherwise (one 64-bit check of `b + 2^63`, free when `b`'s range
+    /// is already proven inside the window, e.g. an input).
+    ///
+    /// Why. The IR's `+ - *` on integers are exact in the field, while NumPy's
+    /// int64 arithmetic wraps; the two agree modulo 2^64, so a value that left
+    /// the window (a row sum of `|x|` reaching 2^63) must not be observed by an
+    /// operation that does not commute with the wrap. Division is one: the
+    /// remainder bound alone (`1 <= |b| <= 2^65`, `assert_below_cell`) let
+    /// `x / sum(|x|)` divide by the unwrapped `2^63` and prove `0.5` where
+    /// NumPy gives `-0.5`. Inside the window the field value's signed reading
+    /// is NumPy's int64, so the division is NumPy's.
+    pub(super) fn ensure_int64_divisor(&mut self, b: &Halo2BaseCell) -> Result<(), ProvingError> {
+        if self.is_const_cell(b) {
+            return Ok(());
+        }
+        self.ensure_signed64(b)
+    }
 
     /// Constrained division by a divisor that is non-zero by construction.
     ///
@@ -465,7 +535,10 @@ impl Halo2BaseSynthesizer<'_> {
     pub(super) fn fixed_div(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
         let precision_bits = self.params.precision_bits;
         match self.factor_of(b) {
-            Factor::Integer(n) => Ok(self.div_rem(a, &n, Rounding::Euclid)?.0),
+            Factor::Integer(n) => {
+                self.ensure_int64_divisor(&n)?;
+                Ok(self.div_rem(a, &n, Rounding::Euclid)?.0)
+            }
             Factor::Constant { m, .. } if m == 0 => self.constant_float(0.0),
             Factor::Constant { m, s } => {
                 let numerator = self.scaled_by_power_of_two(a, precision_bits - s)?;
