@@ -765,3 +765,47 @@ fn cast_to_dtype(b: &mut IRBuilder, v: &Value, dtype: NumberType) -> Value {
         }
     }
 }
+
+/// `target[idx] = value` for a runtime-shaped integer index array `idx`
+/// (e.g. `np.nonzero(m)[0]`) and a scalar `value`, on a static or a
+/// runtime-shaped array. Each slot `k` of `idx` in use (`k < len(idx)`) is an
+/// element write `target[idx[k]] = value`, wrapped and checked like a scalar
+/// index; it is emitted as code that runs only where the slot is in use
+/// (`IRBuilder::under_condition`), so the padding slots past the runtime
+/// length neither write nor fail a check. Repeated positions write the same
+/// value, so their order does not matter.
+pub fn setitem_runtime_positions(
+    b: &mut IRBuilder,
+    target: &Value,
+    idx: &DynamicNDArrayData,
+    value: &Value,
+) -> Value {
+    assert!(
+        value.is_number(),
+        "assigning an array through a runtime-shaped index array is not supported; \
+         assign a scalar"
+    );
+    assert!(
+        idx.envelope.rank() == 1,
+        "assigning through a runtime-shaped index array of rank {} is not supported",
+        idx.envelope.rank()
+    );
+    let idx = crate::ops::dyn_ndarray::force_contiguous(b, idx);
+    let positions =
+        crate::helpers::segment::read_all_typed(b, idx.segment_id, idx.max_length(), idx.dtype);
+    let len = super::indexing::scalar_i64_value(b, &idx.meta.runtime_length);
+    let mut current = target.clone();
+    for (k, position) in positions.iter().enumerate() {
+        let k_v = b.ir_constant_int(k as i64);
+        let in_use = b.ir_less_than_i(&k_v, &len);
+        let element = [SliceIndex::Single(position.clone())];
+        current = b.under_condition(&in_use, |b| match &current {
+            Value::StaticArray { .. } => {
+                crate::helpers::static_array::write::static_array_setitem(b, &current, &element, value)
+            }
+            Value::DynamicNDArray(d) => dyn_setitem(b, d, &element, value),
+            _ => unreachable!("an array-valued assignment target"),
+        });
+    }
+    current
+}

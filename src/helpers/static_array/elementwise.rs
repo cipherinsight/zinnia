@@ -240,6 +240,26 @@ pub fn try_apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value
     if !is_native_binary_op(op) {
         return None;
     }
+    let out = apply_native_binary_op(b, op, lhs, rhs)?;
+    if keeps_bool_dtype(b, op, lhs, rhs) {
+        b.mark_bool_array(&out);
+    }
+    Some(out)
+}
+
+/// Whether NumPy's result of `lhs op rhs` is a bool array although its cells
+/// are integers here: `+` and `*` of two bools are bool in NumPy (logical
+/// or and and). The values may differ (`True + True` is 2 here, NumPy's
+/// `True`), but as a mask they agree.
+fn keeps_bool_dtype(b: &IRBuilder, op: &str, lhs: &Value, rhs: &Value) -> bool {
+    let is_bool = |v: &Value| match v {
+        Value::StaticArray { .. } => crate::helpers::array_ops::is_bool_array(b, v),
+        _ => b.is_bool_cell(v),
+    };
+    matches!(op, "add" | "mul") && is_bool(lhs) && is_bool(rhs)
+}
+
+fn apply_native_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) -> Option<Value> {
 
     // P5a: Complex StaticArray support (dual-segment). Either side may be
     // Complex; promote to Complex output cells.

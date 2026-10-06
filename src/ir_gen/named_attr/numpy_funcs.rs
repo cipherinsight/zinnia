@@ -742,11 +742,13 @@ impl IRGenerator {
                         }
                     }
                     // Handle dtype kwarg for type casting
-                    let cast_val = if let Some(dtype) = _visited_kwargs.get("dtype") {
-                        let to_float = matches!(dtype, Value::Class(ZinniaType::Float));
-                        self.cast_composite(val, to_float)
-                    } else {
-                        val.clone()
+                    let cast_val = match _visited_kwargs.get("dtype") {
+                        Some(Value::Class(ZinniaType::Boolean)) => self.truth_composite(val),
+                        Some(dtype) => {
+                            let to_float = matches!(dtype, Value::Class(ZinniaType::Float));
+                            self.cast_composite(val, to_float)
+                        }
+                        None => val.clone(),
                     };
                     // P1 segarr-foundation: numeric Python list/tuple inputs
                     // become segment-backed `Value::StaticArray`. Falls back

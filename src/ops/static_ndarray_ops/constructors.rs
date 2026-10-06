@@ -82,6 +82,19 @@ fn scalar_fill_for_dtype(
     }
 }
 
+/// Whether `dtype` (a `dtype=` argument) is NumPy's `bool`.
+fn is_bool_dtype(dtype: Option<&Value>) -> bool {
+    matches!(dtype, Some(Value::Class(ZinniaType::Boolean)))
+}
+
+/// A fill value as a NumPy bool (its truth value).
+fn truth_value(b: &mut IRBuilder, fill: &Value) -> Value {
+    match fill {
+        Value::Boolean(_) => fill.clone(),
+        _ => b.ir_bool_cast(fill),
+    }
+}
+
 /// Resolve the requested dtype of a `np.zeros/ones/empty` call from the
 /// positional second argument or the `dtype=` kwarg. NumPy semantics:
 /// the DEFAULT is float64 — an unannotated `np.zeros(n)` accumulating
@@ -97,6 +110,21 @@ fn fill_dtype(args: &[Value], kwargs: &HashMap<String, Value>) -> ZinniaType {
 }
 
 pub fn np_fill(
+    b: &mut IRBuilder,
+    args: &[Value],
+    kwargs: &HashMap<String, Value>,
+    fill_value: i64,
+) -> Value {
+    let out = fill_array(b, args, kwargs, fill_value);
+    // `dtype=bool`: a bool array (static cells are booleans already; a
+    // runtime-shaped array stores the 0/1 fill as integers).
+    if fill_dtype(args, kwargs) == ZinniaType::Boolean {
+        b.mark_bool_array(&out);
+    }
+    out
+}
+
+fn fill_array(
     b: &mut IRBuilder,
     args: &[Value],
     kwargs: &HashMap<String, Value>,
@@ -334,6 +362,9 @@ pub fn np_full(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
     if matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Complex))) {
         panic!("np.full/full_like: Complex fill is not yet implemented");
     }
+    // NumPy's dtype: the `dtype=` argument, else the fill value's.
+    let to_bool = is_bool_dtype(kwargs.get("dtype"))
+        || (kwargs.get("dtype").is_none() && matches!(fill_arg, Value::Boolean(_)));
     let use_float = if let Some(Value::Class(ZinniaType::Float)) = kwargs.get("dtype") {
         true
     } else if matches!(kwargs.get("dtype"), Some(Value::Class(_))) {
@@ -341,7 +372,9 @@ pub fn np_full(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
     } else {
         matches!(fill_arg, Value::Float(_))
     };
-    let fill_value = if use_float {
+    let fill_value = if to_bool {
+        truth_value(b, fill_arg)
+    } else if use_float {
         scalar_fill_for_dtype(b, fill_arg, crate::types::NumberType::Float)
     } else {
         scalar_fill_for_dtype(b, fill_arg, crate::types::NumberType::Integer)
@@ -352,6 +385,9 @@ pub fn np_full(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
         crate::types::NumberType::Integer
     };
     let out = np_full_with_value(b, shape_arg, &fill_value, dtype);
+    if to_bool {
+        b.mark_bool_array(&out);
+    }
     fire_full_static_content_fact(b, &out, &fill_value);
     out
 }
@@ -553,7 +589,12 @@ pub fn np_fill_like(
                 .any(|v| matches!(v.zinnia_type(), ZinniaType::Float)),
         }
     };
-    let (fill, dtype) = if use_float {
+    // NumPy's dtype: the `dtype=` argument, else `x`'s.
+    let to_bool = is_bool_dtype(kwargs.get("dtype"))
+        || (kwargs.get("dtype").is_none() && crate::helpers::array_ops::is_bool_array(b, x));
+    let (fill, dtype) = if to_bool {
+        (b.ir_constant_bool(fill_value != 0), crate::types::NumberType::Integer)
+    } else if use_float {
         (
             b.ir_constant_float(fill_value as f64),
             crate::types::NumberType::Float,
@@ -582,9 +623,14 @@ pub fn np_full_like(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, 
     if matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Complex))) {
         panic!("np.full/full_like: Complex fill is not yet implemented");
     }
+    // NumPy's dtype: the `dtype=` argument, else `x`'s.
+    let to_bool = is_bool_dtype(kwargs.get("dtype"))
+        || (kwargs.get("dtype").is_none() && crate::helpers::array_ops::is_bool_array(b, x));
     let dtype = if let Some(Value::Class(ZinniaType::Float)) = kwargs.get("dtype") {
         crate::types::NumberType::Float
-    } else if let Some(Value::Class(ZinniaType::Integer)) = kwargs.get("dtype") {
+    } else if to_bool
+        || matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Integer)))
+    {
         crate::types::NumberType::Integer
     } else {
         match x {
@@ -601,7 +647,11 @@ pub fn np_full_like(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, 
             }
         }
     };
-    let fill_value = scalar_fill_for_dtype(b, fill_arg, dtype);
+    let fill_value = if to_bool {
+        truth_value(b, fill_arg)
+    } else {
+        scalar_fill_for_dtype(b, fill_arg, dtype)
+    };
     let shape_arg = match x {
         Value::StaticArray { shape, .. } => {
             let values = shape
@@ -641,6 +691,9 @@ pub fn np_full_like(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, 
         }
     };
     let out = np_full_with_value(b, &shape_arg, &fill_value, dtype);
+    if to_bool {
+        b.mark_bool_array(&out);
+    }
     fire_full_static_content_fact(b, &out, &fill_value);
     out
 }

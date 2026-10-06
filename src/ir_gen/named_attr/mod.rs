@@ -543,7 +543,9 @@ impl IRGenerator {
             "dtype" => {
                 let flat = crate::helpers::composite::flatten_composite(&target);
                 let has_float = flat.iter().any(|v| matches!(v, Value::Float(_)));
-                if has_float {
+                if crate::helpers::array_ops::is_bool_array(&self.builder, &target_orig) {
+                    Value::Class(ZinniaType::Boolean)
+                } else if has_float {
                     Value::Class(ZinniaType::Float)
                 } else {
                     Value::Class(ZinniaType::Integer)

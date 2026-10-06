@@ -5,16 +5,19 @@
 //! then routes to the appropriate implementation. Static operators can call
 //! dynamic counterparts directly — no centralized dispatcher needed.
 
+mod array_index;
 mod assignment;
-mod boolean_mask;
 mod bounded_axis;
 mod indexing;
 mod memory;
 mod reduce;
 mod shape;
 
-pub use assignment::{dyn_setitem, dyn_setitem_mask, dyn_setitem_slice};
-pub use boolean_mask::{is_boolean_mask, is_boolean_mask_with};
+pub use assignment::{dyn_setitem, dyn_setitem_mask, dyn_setitem_slice, setitem_runtime_positions};
+pub use array_index::{
+    array_index_kind, is_bool_array, leading_index_array, reject_unsupported_index_arrays,
+    ArrayIndexKind,
+};
 pub(crate) use bounded_axis::{select_stride_mode, StrideMode};
 pub use indexing::dyn_subscript;
 pub(crate) use indexing::python_slice_bounds;

@@ -74,8 +74,15 @@ pub fn dyn_binary_op(
         out_elements.push(result_val);
     }
 
-    // 6. Write to fresh segment.
+    // 6. Write to fresh segment. `+` and `*` of two bool arrays are bool in
+    // NumPy (the cells here are integers; see `elementwise::keeps_bool_dtype`).
     let segment_id = crate::helpers::segment::alloc_and_write_values(b, &out_elements, out_dtype);
+    if matches!(op, "add" | "mul")
+        && b.is_bool_segment(lhs.segment_id)
+        && b.is_bool_segment(rhs.segment_id)
+    {
+        b.mark_bool_segment(segment_id);
+    }
 
     // 7. Build runtime metadata.
     require_shared_axes_equal(b, &out_envelope, lhs, rhs);

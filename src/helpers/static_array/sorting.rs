@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use crate::builder::IRBuilder;
 use crate::helpers::shape_arith::{decode_coords, encode_coords, row_major_strides};
-use crate::types::{NumberType, Value};
+use crate::types::{NumberType, SliceIndex, Value};
 
 use super::base::build_static_array_from_flat;
 use super::elementwise::payload_cells;
@@ -115,6 +115,10 @@ pub fn try_apply_sort(
     }
 
     let result = build_static_array_from_flat(b, out, shape, out_dtype);
+    // A sort of a bool array is a bool array (the placeholders are integers).
+    if !argsort && crate::helpers::array_ops::is_bool_array(b, arr) {
+        b.mark_bool_array(&result);
+    }
     // The available `is_sorted` vocabulary is whole-array/flattened. Axis-local
     // N-D sort is only row/column-local, so do not claim that global fact.
     if !argsort && result_shape_is_globally_sorted(&result) {
@@ -165,6 +169,41 @@ fn flatten_static_indices(b: &mut IRBuilder, indices: &Value) -> (Vec<i64>, Vec<
     }
 }
 
+/// Whether every entry of a `np.take` index (a scalar, list or static array)
+/// is a compile-time constant.
+fn indices_are_constant(b: &mut IRBuilder, indices: &Value) -> bool {
+    let entries = match indices {
+        Value::StaticArray { .. } => payload_cells(b, indices),
+        Value::List(_) | Value::Tuple(_) => crate::helpers::composite::flatten_composite(indices),
+        _ => vec![indices.clone()],
+    };
+    entries.iter().all(|v| v.int_val().is_some())
+}
+
+/// `np.take(arr, indices, axis)` for runtime indices: NumPy's
+/// `arr[:, ..., :, indices]` with `indices` on `axis` (`mode="raise"`: each
+/// index wrapped once and checked, `checked_axis_index`). Bool entries are
+/// positions 0 and 1 (`take` reads its indices as integers).
+fn take_runtime_indices(b: &mut IRBuilder, arr: &Value, indices: &Value, axis: usize) -> Value {
+    let positions = match indices {
+        Value::StaticArray { .. } | Value::List(_) | Value::Tuple(_) => {
+            let list = super::base::to_value_list(b, indices);
+            let entries = crate::helpers::composite::flatten_composite(&list);
+            let shape = crate::helpers::composite::get_composite_shape(&list);
+            let entries: Vec<Value> = entries
+                .iter()
+                .map(|v| if matches!(v, Value::Boolean(_)) { b.ir_int_cast(v) } else { v.clone() })
+                .collect();
+            super::base::build_static_array_from_flat(b, entries, shape, NumberType::Integer)
+        }
+        Value::Boolean(_) => b.ir_int_cast(indices),
+        _ => indices.clone(),
+    };
+    let mut index = vec![SliceIndex::Range(None, None, None); axis];
+    index.push(SliceIndex::Single(positions));
+    super::read::static_array_subscript(b, arr, &index)
+}
+
 pub fn try_apply_take(
     b: &mut IRBuilder,
     arr: &Value,
@@ -202,6 +241,9 @@ pub fn try_apply_take(
         );
     }
 
+    if !indices_are_constant(b, indices) {
+        return Some(take_runtime_indices(b, arr, indices, axis));
+    }
     let (raw_indices, index_shape) = flatten_static_indices(b, indices);
     let axis_len = shape[axis] as i64;
     let normalized: Vec<usize> = raw_indices

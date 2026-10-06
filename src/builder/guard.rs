@@ -524,6 +524,22 @@ impl IRBuilder {
         self.guard_operand(idx, lo)
     }
 
+    /// Run `f` as code that executes only where `condition` holds as well:
+    /// the execution predicate becomes `p ∧ condition` (`condition` alone on
+    /// code that runs on every path), so the checks `f` emits hold only
+    /// there, and its memory accesses stay inside their segments elsewhere.
+    /// Writes `f` makes are predicated the same way.
+    pub(crate) fn under_condition<T>(&mut self, condition: &Value, f: impl FnOnce(&mut Self) -> T) -> T {
+        let narrowed = match self.write_predicate.clone() {
+            None => condition.clone(),
+            Some(p) => self.ir_logical_and(&p, condition),
+        };
+        let previous = self.swap_write_predicate(Some(narrowed));
+        let result = f(self);
+        self.swap_write_predicate(previous);
+        result
+    }
+
     /// Note that the current code must not run because a check reached here
     /// can never hold. Under a runtime predicate `p` this asserts `¬p` and
     /// returns `true`; on a path that always runs it returns `false` and the

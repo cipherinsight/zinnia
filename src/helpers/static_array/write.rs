@@ -349,37 +349,27 @@ pub fn static_array_setitem(
         .iter()
         .any(|i| matches!(i, SliceIndex::Range(_, _, _)));
 
-    // Fancy-index assignment: any axis indexed by an INTEGER StaticArray (or
-    // an integer List/Tuple) is a scatter. NumPy semantics:
-    //   for k in 0..len(idx): val[idx_axis_0[k], idx_axis_1[k], ...] = rhs[k]
-    // Pre-StaticArray, this came through `set_nested_value` on a materialised
-    // List; the segment-write fast-path above didn't recognise it and routed
-    // an array-shaped RHS straight into the scalar setitem, producing
-    // malformed zero-arg IR statements. Dispatch fancy here before falling
-    // through to the scalar / slice paths.
-    //
-    // Boolean StaticArrays are explicitly NOT fancy-index: they're boolean
-    // masks (handled at the visitor P5b path before reaching this dispatcher;
-    // see visitors.rs). Probe each Single-array index via
-    // `is_boolean_mask_static_array` — if any axis index is a bool mask, this
-    // call is NOT fancy-index and we let it fall through to the slice path
-    // (e.g. aug-assign desugar after the visitor's bool-mask attempt declined).
+    // An index array on any axis, read by its dtype
+    // (`array_ops::array_index_kind`): integer positions make this a
+    // scatter, `val[i0[k], i1[k], ...] = rhs[k]` (`static_array_fancy_setitem`).
+    // A boolean mask is written by the visitor's mask path
+    // (`mask::try_apply_boolean_mask_write`); one that reaches here (with
+    // other indices, or a value that path does not take) is rejected rather
+    // than read as positions. Runtime-shaped index arrays are written
+    // through the visitor too (`assignment::setitem_runtime_positions`).
     let mut any_fancy = false;
     for i in indices {
-        match i {
-            SliceIndex::Single(v @ Value::StaticArray { .. }) => {
-                if !crate::helpers::static_array::mask::is_boolean_mask_static_array(b, v) {
-                    any_fancy = true;
-                    break;
-                }
+        let SliceIndex::Single(v) = i else { continue };
+        match crate::helpers::array_ops::array_index_kind(b, v) {
+            Some(crate::helpers::array_ops::ArrayIndexKind::Mask) => {
+                panic!("this assignment through a boolean mask is not supported")
             }
-            SliceIndex::Single(Value::List(d) | Value::Tuple(d)) => {
-                if d.values.iter().any(|v| matches!(v, Value::Integer(_))) {
-                    any_fancy = true;
-                    break;
-                }
-            }
-            _ => {}
+            Some(_) if matches!(v, Value::DynamicNDArray(_)) => panic!(
+                "assigning through a runtime-shaped index array combined with other \
+                 indices is not supported"
+            ),
+            Some(crate::helpers::array_ops::ArrayIndexKind::Positions) => any_fancy = true,
+            None => {}
         }
     }
     if any_fancy {
@@ -861,7 +851,16 @@ fn static_array_fancy_setitem(
         let elems = match idx {
             SliceIndex::Single(v @ Value::StaticArray { .. })
             | SliceIndex::Single(v @ Value::List(_))
-            | SliceIndex::Single(v @ Value::Tuple(_)) => Some(read_index_array_elements(b, v)),
+            | SliceIndex::Single(v @ Value::Tuple(_)) => {
+                // NumPy reads the index list `[True, 2]` as positions `[1, 2]`.
+                let entries = read_index_array_elements(b, v);
+                Some(
+                    entries
+                        .iter()
+                        .map(|e| if matches!(e, Value::Boolean(_)) { b.ir_int_cast(e) } else { e.clone() })
+                        .collect::<Vec<_>>(),
+                )
+            }
             _ => None,
         };
         if let Some(ref es) = elems {
