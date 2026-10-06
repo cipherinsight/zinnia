@@ -269,9 +269,11 @@ pub fn keygen_or_next_k(ir: &IRGraph, params: &ProvingParams) -> Result<Halo2Bas
 /// Prove `ir` on `witness` with keys from [`keygen`] or [`Halo2BaseKeys::load`]
 /// (no parameter generation, no keygen).
 ///
-/// The global thread pool `create_proof` runs on is started before the timed
-/// window, as `halo2_hw` does: in a fresh process nothing else may have
-/// started it yet, and thread creation is not proving.
+/// The `prove_seconds` window holds exactly what `halo2_hw`'s `prove_s` holds
+/// (`baselines/halo2_hw/src/scaffold.rs`): `create_proof` and the transcript.
+/// The global thread pool `create_proof` runs on is started before it (in a
+/// fresh process nothing else may have started it yet, and thread creation is
+/// not proving), and the circuit builder is dropped after it.
 pub fn prove_with_keys(
     ir: &IRGraph,
     witness: &ResolvedWitness,
@@ -283,6 +285,7 @@ pub fn prove_with_keys(
     let (circuit, public_values) =
         build_circuit(ir, Some(witness), keys.params(), CircuitBuilderStage::Prover, Some(pinning))?;
     let witness_seconds = t_witness.elapsed().as_secs_f64();
+    let circuits = [circuit];
 
     let t_pool = Instant::now();
     rayon::broadcast(|_| ());
@@ -295,7 +298,7 @@ pub fn prove_with_keys(
     create_proof::<IPACommitmentScheme<EqAffine>, ProverIPA<EqAffine>, _, _, _, _>(
         &keys.ipa_params,
         pk,
-        &[circuit],
+        &circuits,
         &[&instance_refs],
         OsRng,
         &mut transcript,
@@ -305,6 +308,7 @@ pub fn prove_with_keys(
     })?;
     let proof = transcript.finalize();
     let prove_seconds = t_prove.elapsed().as_secs_f64();
+    drop(circuits);
     Ok(TimedProof { proof, public_values, witness_seconds, thread_pool_seconds, prove_seconds })
 }
 
