@@ -39,6 +39,10 @@ pub fn matmul(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
         );
     }
 
+    if lhs_shape.contains(&0) || rhs_shape.contains(&0) {
+        return product_with_empty_axis(b, lhs, rhs, &lhs_shape, &rhs_shape);
+    }
+
     // Determine if we should use float ops (if either operand has float elements)
     let lhs_flat = crate::helpers::composite::flatten_composite(lhs);
     let rhs_flat = crate::helpers::composite::flatten_composite(rhs);
@@ -74,6 +78,68 @@ pub fn matmul(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
     } else {
         result
     }
+}
+
+/// The element dtype of a matmul operand: a static array's own dtype, or
+/// the widest scalar kind among a nested list's elements.
+fn operand_dtype(v: &Value) -> crate::types::NumberType {
+    use crate::types::NumberType;
+    if let Value::StaticArray { dtype, .. } = v {
+        return *dtype;
+    }
+    let flat = crate::helpers::composite::flatten_composite(v);
+    if flat.iter().any(|x| matches!(x, Value::Complex { .. })) {
+        NumberType::Complex
+    } else if flat.iter().any(|x| matches!(x, Value::Float(_))) {
+        NumberType::Float
+    } else {
+        NumberType::Integer
+    }
+}
+
+/// `lhs @ rhs` when an operand has a zero-length axis (e.g.
+/// `np.dot(a[:0], b[:0])`). Every output element is an empty sum, so the
+/// result is NumPy's: zeros of the output shape (a scalar zero for two
+/// 1-D operands), or an empty array when an output axis is zero. The
+/// dtype is the operands' promoted dtype, which the element walk of the
+/// generic body cannot see when there are no elements.
+fn product_with_empty_axis(
+    b: &mut IRBuilder,
+    lhs: &Value,
+    rhs: &Value,
+    lhs_shape: &[usize],
+    rhs_shape: &[usize],
+) -> Value {
+    use crate::types::NumberType;
+    let dtype = match (operand_dtype(lhs), operand_dtype(rhs)) {
+        (NumberType::Complex, _) | (_, NumberType::Complex) => NumberType::Complex,
+        (NumberType::Float, _) | (_, NumberType::Float) => NumberType::Float,
+        _ => NumberType::Integer,
+    };
+    if lhs_shape.len() > 2 || rhs_shape.len() > 2 {
+        panic!(
+            "matmul with a zero-length axis supports operands of rank 1 or 2, got {:?} @ {:?}",
+            lhs_shape, rhs_shape
+        );
+    }
+    let out_shape = compute_matmul_output_shape(lhs_shape, rhs_shape);
+    if out_shape.is_empty() {
+        let is_complex = dtype == NumberType::Complex;
+        return build_zeros_of_shape(b, &[], dtype != NumberType::Integer, is_complex);
+    }
+    let total: usize = out_shape.iter().product();
+    let zero = |b: &mut IRBuilder| match dtype {
+        NumberType::Integer => b.ir_constant_int(0),
+        _ => b.ir_constant_float(0.0),
+    };
+    let cells: Vec<Value> = (0..total).map(|_| zero(b)).collect();
+    if dtype == NumberType::Complex {
+        let imag: Vec<Value> = (0..total).map(|_| b.ir_constant_float(0.0)).collect();
+        return crate::helpers::static_array::base::build_static_array_from_flat_complex(
+            b, cells, imag, out_shape,
+        );
+    }
+    crate::helpers::static_array::base::build_static_array_from_flat(b, cells, out_shape, dtype)
 }
 
 /// Compute the matmul broadcast output shape from `lhs_shape` and
@@ -352,32 +418,13 @@ fn matmul_generic(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
                         row_vals.push(matmul_dot_complex(b, lhs_row, &col));
                         continue;
                     }
-                    // Compute dot product of lhs row i with rhs column j
-                    let zero = if use_float {
-                        b.ir_constant_float(0.0)
-                    } else {
-                        b.ir_constant_int(0)
-                    };
-                    let mut acc = zero;
-                    for kk in 0..k {
-                        let rhs_row = match &rd.values[kk] {
-                            Value::List(r) | Value::Tuple(r) => &r.values,
+                    let col: Vec<Value> = (0..k)
+                        .map(|kk| match &rd.values[kk] {
+                            Value::List(r) | Value::Tuple(r) => r.values[j].clone(),
                             _ => panic!("matmul: expected 2D array"),
-                        };
-                        let prod = if use_float {
-                            let a = crate::helpers::value_ops::ensure_float(b, &lhs_row[kk]);
-                            let b_val = crate::helpers::value_ops::ensure_float(b, &rhs_row[j]);
-                            b.ir_mul_f(&a, &b_val)
-                        } else {
-                            b.ir_mul_i(&lhs_row[kk], &rhs_row[j])
-                        };
-                        acc = if use_float {
-                            b.ir_add_f(&acc, &prod)
-                        } else {
-                            b.ir_add_i(&acc, &prod)
-                        };
-                    }
-                    row_vals.push(acc);
+                        })
+                        .collect();
+                    row_vals.push(matmul_dot(b, lhs_row, &col, use_float));
                 }
                 let rtypes = row_vals.iter().map(|v| v.zinnia_type()).collect();
                 rows.push(Value::List(CompositeData {
@@ -422,27 +469,26 @@ pub fn matmul_dot_complex(b: &mut IRBuilder, a: &[Value], bv: &[Value]) -> Value
     acc
 }
 
-/// Dot product helper for matmul.
+/// Dot product helper for matmul: an exact integer sum of products, or a
+/// float sum of products rescaled once ([`IRBuilder::ir_dot_f`]).
 pub fn matmul_dot(b: &mut IRBuilder, a: &[Value], bv: &[Value], use_float: bool) -> Value {
-    let zero = if use_float {
-        b.ir_constant_float(0.0)
-    } else {
-        b.ir_constant_int(0)
-    };
-    let mut acc = zero;
+    if use_float {
+        let pairs: Vec<(Value, Value)> = a
+            .iter()
+            .zip(bv)
+            .map(|(x, y)| {
+                (
+                    crate::helpers::value_ops::ensure_float(b, x),
+                    crate::helpers::value_ops::ensure_float(b, y),
+                )
+            })
+            .collect();
+        return b.ir_dot_f(&pairs);
+    }
+    let mut acc = b.ir_constant_int(0);
     for (x, y) in a.iter().zip(bv.iter()) {
-        let prod = if use_float {
-            let xf = crate::helpers::value_ops::ensure_float(b, x);
-            let yf = crate::helpers::value_ops::ensure_float(b, y);
-            b.ir_mul_f(&xf, &yf)
-        } else {
-            b.ir_mul_i(x, y)
-        };
-        acc = if use_float {
-            b.ir_add_f(&acc, &prod)
-        } else {
-            b.ir_add_i(&acc, &prod)
-        };
+        let prod = b.ir_mul_i(x, y);
+        acc = b.ir_add_i(&acc, &prod);
     }
     acc
 }

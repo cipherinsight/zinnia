@@ -18,6 +18,31 @@ pub mod reshape;
 /// True if `meta` describes a contiguous row-major view from offset 0.
 /// Consumers that read via `read_all_typed` + `row_major_strides` need
 /// this to hold; if it doesn't, call [`force_contiguous`] first.
+/// Whether a contiguous runtime-shaped array keeps element
+/// `(c_0, ..., c_{n-1})` at its row-major position in the buffer shape
+/// `logical_shape` (a "padded" layout: the runtime extents are a prefix
+/// rectangle of the buffer), rather than in a compact buffer addressed by
+/// C-order strides over the runtime extents (`runtime_strides`).
+///
+/// Padded: the buffer shape covers every axis's maximum extent and the
+/// buffer holds the whole rectangle — bounded inputs with per-axis bounds,
+/// runtime-bounds slices, compactions (rank 1), merged branches. Compact:
+/// constructors whose total bound is below the rectangle, and runtime
+/// reshapes with a runtime inner extent (their `logical_shape` is a
+/// degenerate skeleton). The recorded `runtime_strides` of a padded array
+/// are not always its addressing (bounded inputs record C-order ones), so
+/// this test does not read them.
+pub(crate) fn has_padded_layout(d: &crate::types::DynamicNDArrayData) -> bool {
+    let covers_envelope = d
+        .meta
+        .logical_shape
+        .iter()
+        .zip(&d.envelope.dims)
+        .all(|(&n, dim)| n >= dim.max);
+    let rectangle: usize = d.meta.logical_shape.iter().product();
+    covers_envelope && d.envelope.total_bound >= rectangle
+}
+
 pub fn is_contiguous(meta: &crate::types::DynArrayMeta) -> bool {
     if meta.logical_offset != 0 {
         return false;

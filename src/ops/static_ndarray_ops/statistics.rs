@@ -257,7 +257,7 @@ pub fn np_cov(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>
     let mut out = Vec::with_capacity(var_count * var_count);
     for i in 0..var_count {
         for j in 0..var_count {
-            let mut acc = b.ir_constant_float(0.0);
+            let mut products = Vec::with_capacity(obs_count);
             for obs in 0..obs_count {
                 let xi = cov_cell_at(&cells, rows, cols, rowvar, i, obs);
                 let xj = cov_cell_at(&cells, rows, cols, rowvar, j, obs);
@@ -271,9 +271,9 @@ pub fn np_cov(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>
                 };
                 let di = b.ir_sub_f(&xi_f, &means[i]);
                 let dj = b.ir_sub_f(&xj_f, &means[j]);
-                let prod = b.ir_mul_f(&di, &dj);
-                acc = b.ir_add_f(&acc, &prod);
+                products.push((di, dj));
             }
+            let acc = b.ir_dot_f(&products);
             out.push(b.ir_div_f(&acc, &denom));
         }
     }
@@ -332,4 +332,145 @@ mod tests {
         assert_eq!(edges[1].float_val(), Some(2.0));
         assert_eq!(edges[2].float_val(), Some(4.0));
     }
+}
+
+/// `np.percentile(a, q)` of a 1-D static array with NumPy's default
+/// ("linear") method: on the sorted values `s` of the `n` elements, with
+/// `r = q / 100 * (n - 1)` and `lo = floor(r)`, the result is
+/// `s[lo] + (s[lo + 1] - s[lo]) * (r - lo)` (just `s[lo]` when `r` is
+/// integral). `q` is a compile-time number or a runtime integer; NumPy
+/// rejects `q` outside `[0, 100]`, so such a `q` is a compile error or has
+/// no proof.
+///
+/// A runtime `q` is lowered arithmetically instead of by enumerating the
+/// 101 possible values: `r * 100 = q * (n - 1)` is an integer, so
+/// `lo = (q * (n - 1)) // 100` (a pinned floor division by the constant
+/// 100) and `frac = q * (n - 1) - 100 * lo` in `[0, 100)`; `s[lo]` and
+/// `s[lo + 1]` are read with one shared set of `lo == i` tests (`lo` lies
+/// in `[0, n - 1]` because `q` was checked to `[0, 100]`), and the result
+/// is `s[lo] + (s[lo + 1] - s[lo]) * frac / 100`: an exact product with
+/// the integer `frac` and one division by the constant 100, a single
+/// rounding.
+pub fn np_percentile(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+    if let Some(key) = kwargs.keys().find(|k| k.as_str() != "q") {
+        panic!("np.percentile: keyword argument `{key}` is not supported");
+    }
+    assert!(args.len() >= 2 || kwargs.contains_key("q"), "np.percentile: requires a and q");
+    let arr = &args[0];
+    let q = kwargs.get("q").or_else(|| args.get(1)).expect("np.percentile: requires q");
+    let n = match arr {
+        Value::StaticArray { shape, dtype, .. } if shape.len() == 1 && *dtype != NumberType::Complex => {
+            shape[0]
+        }
+        _ => panic!("np.percentile: supports a 1-D real static array"),
+    };
+    if n == 0 {
+        panic!("np.percentile: empty arrays are not supported");
+    }
+    let sorted = crate::helpers::static_array::sorting::try_apply_sort(b, arr, None, false)
+        .expect("np.percentile: sorting a static array");
+    let cells: Vec<Value> = payload_cells(b, &sorted)
+        .iter()
+        .map(|c| crate::helpers::value_ops::ensure_float(b, c))
+        .collect();
+    if let Some(q) = q.float_val().or_else(|| q.int_val().map(|v| v as f64)) {
+        return percentile_at_constant(b, &cells, q);
+    }
+    if !matches!(q, Value::Integer(_)) {
+        panic!("np.percentile: a runtime q must be an integer");
+    }
+    percentile_at_runtime(b, &cells, q)
+}
+
+fn percentile_at_constant(b: &mut IRBuilder, sorted: &[Value], q: f64) -> Value {
+    if !(0.0..=100.0).contains(&q) {
+        panic!("np.percentile: q must be in [0, 100], got {q}");
+    }
+    let r = q / 100.0 * (sorted.len() - 1) as f64;
+    let lo = r.floor() as usize;
+    let weight = r - lo as f64;
+    if weight == 0.0 {
+        return sorted[lo].clone();
+    }
+    let diff = b.ir_sub_f(&sorted[lo + 1], &sorted[lo]);
+    let w = b.ir_constant_float(weight);
+    let step = b.ir_mul_f(&diff, &w);
+    b.ir_add_f(&sorted[lo], &step)
+}
+
+fn percentile_at_runtime(b: &mut IRBuilder, sorted: &[Value], q: &Value) -> Value {
+    let n = sorted.len();
+    // The index the computation uses (in range also where the code does not
+    // run, see `discharge_index_in_range`).
+    let q = &crate::optim::resolver::discharge_index_in_range(b, q, 0, 101, "np.percentile");
+    let n_minus_1 = b.ir_constant_int(n as i64 - 1);
+    let hundred = b.ir_constant_int(100);
+    let scaled = b.ir_mul_i(q, &n_minus_1);
+    let lo = b.ir_floor_div_i(&scaled, &hundred);
+    let lo_times_100 = b.ir_mul_i(&lo, &hundred);
+    let frac = b.ir_sub_i(&scaled, &lo_times_100);
+
+    // s[lo] and s[lo + 1] (s[n - 1] again for lo = n - 1, where frac = 0).
+    let mut low = sorted[0].clone();
+    let mut high = sorted[1.min(n - 1)].clone();
+    for i in 1..n {
+        let i_v = b.ir_constant_int(i as i64);
+        let at_i = b.ir_equal_i(&lo, &i_v);
+        low = b.ir_select_f(&at_i, &sorted[i], &low);
+        high = b.ir_select_f(&at_i, &sorted[(i + 1).min(n - 1)], &high);
+    }
+    let diff = b.ir_sub_f(&high, &low);
+    let frac_f = b.ir_float_cast(&frac);
+    let scaled_diff = b.ir_mul_f(&diff, &frac_f);
+    let hundred_f = b.ir_constant_float(100.0);
+    let step = b.ir_div_f(&scaled_diff, &hundred_f);
+    b.ir_add_f(&low, &step)
+}
+
+/// `np.corrcoef(x, y)` of two 1-D static arrays of the same length
+/// `n >= 2`: `[[1, r], [r, 1]]` with
+/// `r = sum(dx * dy) / sqrt(sum(dx^2) * sum(dy^2))`, `dx = x - mean(x)`.
+/// Each of the three sums of products is one `ProductSumF` (rescaled
+/// once, `IRBuilder::ir_dot_f`).
+pub fn np_corrcoef(b: &mut IRBuilder, args: &[Value]) -> Value {
+    assert!(args.len() >= 2, "np.corrcoef: requires x and y");
+    let length_of = |v: &Value| match v {
+        Value::StaticArray { shape, .. } if shape.len() == 1 => shape[0],
+        _ => panic!("np.corrcoef: supports two 1-D static arrays"),
+    };
+    let n = length_of(&args[0]);
+    if length_of(&args[1]) != n {
+        panic!("np.corrcoef: x and y must have the same length");
+    }
+    if n <= 1 {
+        panic!("np.corrcoef: at least two observations are required");
+    }
+    let deviations = |b: &mut IRBuilder, arr: &Value| -> Vec<Value> {
+        let cells: Vec<Value> = payload_cells(b, arr)
+            .iter()
+            .map(|c| crate::helpers::value_ops::ensure_float(b, c))
+            .collect();
+        let sum = b.ir_sum_f(&cells);
+        let count = b.ir_constant_float(n as f64);
+        let mean = b.ir_div_f(&sum, &count);
+        cells.iter().map(|c| b.ir_sub_f(c, &mean)).collect()
+    };
+    let dx = deviations(b, &args[0]);
+    let dy = deviations(b, &args[1]);
+    let pairs = |u: &[Value], v: &[Value]| -> Vec<(Value, Value)> {
+        u.iter().cloned().zip(v.iter().cloned()).collect()
+    };
+    let cov = b.ir_dot_f(&pairs(&dx, &dy));
+    let var_x = b.ir_dot_f(&pairs(&dx, &dx));
+    let var_y = b.ir_dot_f(&pairs(&dy, &dy));
+    let denom_sq = b.ir_mul_f(&var_x, &var_y);
+    let denom = b.ir_sqrt_f(&denom_sq);
+    let corr = b.ir_div_f(&cov, &denom);
+    let one = b.ir_constant_float(1.0);
+    crate::helpers::static_array::base::build_static_array_from_flat(
+        b,
+        vec![one.clone(), corr.clone(), corr, one],
+        vec![2, 2],
+        NumberType::Float,
+    )
 }

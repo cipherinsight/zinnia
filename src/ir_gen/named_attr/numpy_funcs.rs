@@ -199,53 +199,7 @@ fn np_percentile_ds1000(
     args: &[Value],
     kwargs: &HashMap<String, Value>,
 ) -> Value {
-    ensure_no_kwargs("np.percentile", kwargs, &["q"]);
-    assert!(args.len() >= 2, "np.percentile: requires a and q");
-    let arr = &args[0];
-    let q = kwargs.get("q").or_else(|| args.get(1)).unwrap();
-    let (_, shape) = static_array_meta(arr, "np.percentile");
-    if shape.len() != 1 {
-        panic!("np.percentile: DS1000 slice supports 1-D StaticArray input only");
-    }
-    let n = shape[0];
-    if n == 0 {
-        panic!("np.percentile: empty arrays are not supported");
-    }
-    let sorted = crate::helpers::static_array::sorting::try_apply_sort(b, arr, None, false)
-        .unwrap_or_else(|| panic!("np.percentile: sorting failed for StaticArray input"));
-    let cells = static_cells(b, &sorted, "np.percentile");
-    let percentile_at = |b: &mut crate::builder::IRBuilder, p: i64| -> Value {
-        if !(0..=100).contains(&p) {
-            panic!("np.percentile: q must be in [0, 100]");
-        }
-        let rank = (p as f64 / 100.0) * ((n - 1) as f64);
-        let lo = rank.floor() as usize;
-        let hi = rank.ceil() as usize;
-        let weight = rank - lo as f64;
-        let lo_v = as_float_value(b, &cells[lo]);
-        if lo == hi {
-            lo_v
-        } else {
-            let hi_v = as_float_value(b, &cells[hi]);
-            let one_minus = b.ir_constant_float(1.0 - weight);
-            let weight_v = b.ir_constant_float(weight);
-            let left = b.ir_mul_f(&lo_v, &one_minus);
-            let right = b.ir_mul_f(&hi_v, &weight_v);
-            b.ir_add_f(&left, &right)
-        }
-    };
-    if let Some(p) = q.int_val() {
-        return percentile_at(b, p);
-    }
-    crate::optim::resolver::discharge_index_in_range(b, q, 0, 101, "np.percentile");
-    let mut result = percentile_at(b, 0);
-    for p in 1..=100 {
-        let p_val = b.ir_constant_int(p);
-        let cond = b.ir_equal_i(q, &p_val);
-        let candidate = percentile_at(b, p);
-        result = b.ir_select_f(&cond, &candidate, &result);
-    }
-    result
+    crate::ops::static_ndarray_ops::np_percentile(b, args, kwargs)
 }
 
 fn np_correlate_ds1000(
@@ -315,57 +269,7 @@ fn integer_product_sum(b: &mut crate::builder::IRBuilder, lhs: &[Value], rhs: &[
 }
 
 fn np_corrcoef_ds1000(b: &mut crate::builder::IRBuilder, args: &[Value]) -> Value {
-    assert!(
-        args.len() >= 2,
-        "np.corrcoef: DS1000 slice requires x and y"
-    );
-    let (_, x_shape) = static_array_meta(&args[0], "np.corrcoef");
-    let (_, y_shape) = static_array_meta(&args[1], "np.corrcoef");
-    if x_shape.len() != 1 || y_shape.len() != 1 || x_shape[0] != y_shape[0] {
-        panic!("np.corrcoef: DS1000 slice supports same-length 1-D StaticArrays");
-    }
-    let n = x_shape[0];
-    if n <= 1 {
-        panic!("np.corrcoef: at least two observations are required");
-    }
-    let x = static_cells(b, &args[0], "np.corrcoef");
-    let y = static_cells(b, &args[1], "np.corrcoef");
-    let mean = |b: &mut crate::builder::IRBuilder, vals: &[Value]| -> Value {
-        let mut acc = b.ir_constant_float(0.0);
-        for v in vals {
-            let vf = as_float_value(b, v);
-            acc = b.ir_add_f(&acc, &vf);
-        }
-        let denom = b.ir_constant_float(vals.len() as f64);
-        b.ir_div_f(&acc, &denom)
-    };
-    let mx = mean(b, &x);
-    let my = mean(b, &y);
-    let mut cov_acc = b.ir_constant_float(0.0);
-    let mut vx_acc = b.ir_constant_float(0.0);
-    let mut vy_acc = b.ir_constant_float(0.0);
-    for i in 0..n {
-        let x_f = as_float_value(b, &x[i]);
-        let y_f = as_float_value(b, &y[i]);
-        let dx = b.ir_sub_f(&x_f, &mx);
-        let dy = b.ir_sub_f(&y_f, &my);
-        let cov_term = b.ir_mul_f(&dx, &dy);
-        cov_acc = b.ir_add_f(&cov_acc, &cov_term);
-        let vx_term = b.ir_mul_f(&dx, &dx);
-        vx_acc = b.ir_add_f(&vx_acc, &vx_term);
-        let vy_term = b.ir_mul_f(&dy, &dy);
-        vy_acc = b.ir_add_f(&vy_acc, &vy_term);
-    }
-    let denom_sq = b.ir_mul_f(&vx_acc, &vy_acc);
-    let denom = b.ir_sqrt_f(&denom_sq);
-    let corr = b.ir_div_f(&cov_acc, &denom);
-    let one = b.ir_constant_float(1.0);
-    crate::helpers::static_array::base::build_static_array_from_flat(
-        b,
-        vec![one.clone(), corr.clone(), corr, one],
-        vec![2, 2],
-        NumberType::Float,
-    )
+    crate::ops::static_ndarray_ops::np_corrcoef(b, args)
 }
 
 fn np_tensordot_ds1000(

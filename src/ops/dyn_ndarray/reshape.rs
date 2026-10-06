@@ -62,12 +62,15 @@ pub fn dyn_transpose(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value
     // not the content layout. Materialise a permuted copy with
     // runtime-stride address arithmetic instead (case 0389: swapaxes
     // after `reshape(h//r, -1, r, c)` was silently the identity).
-    if data
-        .meta
-        .runtime_shape
-        .iter()
-        .any(|sv| sv.static_val.is_none())
-    {
+    //
+    // A padded buffer (elements at their row-major position in the
+    // envelope: a bounded input, a runtime-bounds slice) is a plain stride
+    // permutation even when its extents are runtime values
+    // (`has_padded_layout`); a bounded input's recorded `runtime_strides`
+    // are C-order ones and must not be used to address it (`a.T.sum()` of
+    // a 2x2 input in a 4x3 envelope proved 0).
+    let runtime_extents = data.meta.runtime_shape.iter().any(|sv| sv.static_val.is_none());
+    if runtime_extents && !super::has_padded_layout(data) {
         return dyn_transpose_runtime_strided(b, data, &perm);
     }
 
@@ -89,18 +92,13 @@ pub fn dyn_transpose(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value
         })
         .collect();
 
-    let new_runtime_strides: Vec<ScalarValue<i64>> = perm
+    // The view's addressing is the permuted buffer strides.
+    let new_runtime_strides: Vec<ScalarValue<i64>> = new_strides
         .iter()
-        .map(|&p| {
-            if p < data.meta.runtime_strides.len() {
-                data.meta.runtime_strides[p].clone()
-            } else {
-                ScalarValue::new(Some(strides[p] as i64), None)
-            }
-        })
+        .map(|&s| ScalarValue::new(Some(s as i64), None))
         .collect();
 
-    Value::DynamicNDArray(DynamicNDArrayData {
+    let view = DynamicNDArrayData {
         envelope,
         dtype: data.dtype,
         segment_id: data.segment_id, // ← reuse: this is the lazy-view win
@@ -115,7 +113,15 @@ pub fn dyn_transpose(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value
             runtime_offset: data.meta.runtime_offset.clone(),
         },
         value_id: ValueId::next(),
-    })
+    };
+    // With runtime extents the result is materialised (a padded copy in
+    // the permuted envelope): row reads and the output layout of a
+    // runtime-shaped array assume a row-major buffer (`a.T[0]` of a padded
+    // input read a row of `a`, and `return a.T` exposed `a`).
+    if runtime_extents {
+        return Value::DynamicNDArray(super::force_contiguous(b, &view));
+    }
+    Value::DynamicNDArray(view)
 }
 
 /// Transpose a runtime-strided dyn array by materialising a permuted

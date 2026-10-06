@@ -104,6 +104,10 @@ macro_rules! ir_ternary {
 
 pub use crate::provenance::SliceView;
 
+/// Largest compile-time exponent a float power is expanded into products for
+/// (`IRBuilder::ir_pow_f_int`); 64 needs at most 12 products.
+const MAX_UNROLLED_POWER: i64 = 64;
+
 /// IR builder that accumulates IR statements and provides typed convenience
 /// methods. Mirrors Python `IRBuilderImpl` from `builder_impl.py`.
 pub struct IRBuilder {
@@ -1589,16 +1593,6 @@ impl IRBuilder {
         self.power(&IR::PowI, "pow_i", base, exp)
     }
 
-    /// Float `base ** exp` (lowered as an integer power).
-    pub fn ir_pow_f(&mut self, base: &Value, exp: &Value) -> Value {
-        self.power(&IR::PowF, "pow_f", base, exp)
-    }
-
-    /// Float base, integer exponent; halo2-base accepts exponents below 9.
-    pub fn ir_pow_f_int(&mut self, base: &Value, exp: &Value) -> Value {
-        self.power(&IR::PowFI, "pow_f", base, exp)
-    }
-
     fn power(&mut self, ir: &IR, contract: &str, base: &Value, exp: &Value) -> Value {
         let exp_operand = match exp {
             Value::Integer(_) | Value::Boolean(_) => self.guard_operand(exp, 0),
@@ -1780,9 +1774,14 @@ impl IRBuilder {
         out
     }
 
-    /// Interval bounds via input facts (call-site-fact, no SMT).
+    /// Float product. Interval bounds via input facts (call-site-fact, no
+    /// SMT). A factor that is an integer in float form is multiplied
+    /// without a rescale, see [`Self::exact_product_with_integer`].
     pub fn ir_mul_f(&mut self, a: &Value, b: &Value) -> Value {
-        let out = self.create_ir(&IR::MulF, &[a.clone(), b.clone()]);
+        let out = match self.exact_product_with_integer(a, b) {
+            Some(product) => product,
+            None => self.create_ir(&IR::MulF, &[a.clone(), b.clone()]),
+        };
         if let (Some(a_vid), Some(b_vid), Some(out_vid)) =
             (a.value_id(), b.value_id(), out.value_id())
         {
@@ -1799,10 +1798,97 @@ impl IRBuilder {
         out
     }
 
+    /// `a * b` for Float operands of which one holds an integer `k`: the
+    /// `FloatCast` of an integer cell, or an integral constant inside the
+    /// Q32 window. Returns the Float-typed field product `k * raw(x)` of
+    /// `k` and the other factor's raw fixed-point value, or `None` when
+    /// neither factor is integer-valued (or both are constants, which
+    /// folding handles).
+    ///
+    /// Exactness: `raw(k * x) = k * 2^P * x = k * raw(x)`, so this is the
+    /// value `MulF` computes: its rescale divides `raw(k) * raw(x) =
+    /// 2^P * k * raw(x)` by `2^P` with remainder zero. The product is a
+    /// deterministic function of the operand cells, so no hint is added.
+    /// What it omits is the rescale's signed 64-bit window check on the
+    /// quotient: a product outside the Q32 window is now the exact field
+    /// value instead of having no proof. That is not an obligation of the
+    /// multiplication: every consumer that needs a bounded operand
+    /// (comparisons, rescales, divisions, casts) checks it itself, as it
+    /// must for unchecked circuit inputs.
+    fn exact_product_with_integer(&mut self, a: &Value, b: &Value) -> Option<Value> {
+        if a.float_val().is_some() && b.float_val().is_some() {
+            return None;
+        }
+        let (k, x) = match self.integer_in_float(a) {
+            Some(k) => (k, b),
+            None => (self.integer_in_float(b)?, a),
+        };
+        if !matches!(x, Value::Float(_)) {
+            return None;
+        }
+        match self.create_ir(&IR::MulI, &[k, x.clone()]) {
+            Value::Integer(sv) => Some(Value::Float(ScalarValue {
+                static_val: None,
+                stmt_id: sv.stmt_id,
+                value_id: sv.value_id,
+            })),
+            other => unreachable!("MulI built a non-integer value {:?}", other),
+        }
+    }
+
+    /// The integer cell behind an integer-valued Float operand: the
+    /// argument of the `FloatCast` statement that produced it, or a
+    /// constant for an integral float constant `|c| < 2^31` (a Q32 value
+    /// in the signed 64-bit window).
+    fn integer_in_float(&mut self, v: &Value) -> Option<Value> {
+        if !matches!(v, Value::Float(_)) {
+            return None;
+        }
+        if let Some(c) = v.float_val() {
+            let in_window = c.abs() < (1u64 << 31) as f64;
+            return (c.fract() == 0.0 && in_window).then(|| self.ir_constant_int(c as i64));
+        }
+        let stmt = self.stmts.get(v.stmt_id()? as usize)?;
+        if !matches!(stmt.ir, IR::FloatCast) {
+            return None;
+        }
+        let (arg_stmt, arg_vid) = (stmt.arguments[0], stmt.arg_values[0]);
+        let static_val = match self.stmts[arg_stmt as usize].ir {
+            IR::ConstantInt { value } => Some(value),
+            _ => None,
+        };
+        Some(Value::Integer(ScalarValue {
+            static_val,
+            stmt_id: Some(arg_stmt),
+            value_id: arg_vid,
+        }))
+    }
+
+    /// `sum_i a_i * b_i` over Float pairs, rescaled once: `ProductSumF` for
+    /// two or more pairs (a product, `0.0` for none). Compile-time operands
+    /// fold in f64, as `MulF`/`AddF` fold.
+    pub fn ir_dot_f(&mut self, pairs: &[(Value, Value)]) -> Value {
+        let folded: Option<f64> = pairs
+            .iter()
+            .map(|(a, b)| Some(a.float_val()? * b.float_val()?))
+            .sum();
+        if let Some(sum) = folded {
+            return self.ir_constant_float(sum);
+        }
+        match pairs {
+            [] => self.ir_constant_float(0.0),
+            [(a, b)] => self.ir_mul_f(a, b),
+            _ => self.ir_product_sum_f(pairs),
+        }
+    }
+
     /// ProductSumF operands are adjacent Float pairs:
     /// `[lhs0, rhs0, lhs1, rhs1, ...]`, with `len` equal to the pair count.
-    /// Backend semantics are scalar `MulF` per pair followed by existing
-    /// float-add accumulation, preserving fixed-point rescale checks.
+    /// Every backend computes `floor(sum_i raw(a_i) * raw(b_i) / 2^P)`
+    /// (`kernel::fp_product_sum_rescale`): the exact field sum of the raw
+    /// products, rescaled once, with the rescale's remainder and window
+    /// checks. That is the real sum rounded once, where adding `MulF`
+    /// results rounds every product.
     pub fn ir_product_sum_f(&mut self, pairs: &[(Value, Value)]) -> Value {
         let mut args: Vec<Value> = Vec::with_capacity(pairs.len() * 2);
         for (lhs, rhs) in pairs {
@@ -1853,6 +1939,55 @@ impl IRBuilder {
         ir_floor_div_f => IR::FloorDivF,  contract = "floor_div_f",
         ir_mod_f       => IR::ModF,       contract = "mod_f",
     );
+
+    /// Float power. An integral compile-time exponent in
+    /// `0..=MAX_UNROLLED_POWER` (`x ** 2.0`) is the integer power, see
+    /// [`Self::ir_pow_f_int`]; any other exponent is `PowF` (lowered as an
+    /// integer power).
+    pub fn ir_pow_f(&mut self, base: &Value, exp: &Value) -> Value {
+        match exp.float_val() {
+            Some(e) if e.fract() == 0.0 && (0.0..=MAX_UNROLLED_POWER as f64).contains(&e) => {
+                self.square_and_multiply_f(base, e as u32)
+            }
+            _ => self.power(&IR::PowF, "pow_f", base, exp),
+        }
+    }
+
+    /// Float base raised to an Integer exponent. A compile-time exponent
+    /// `0 <= e <= MAX_UNROLLED_POWER` is expanded into square-and-multiply
+    /// float products (`x ** 6` is three `MulF`, `x ** 0` is `1.0`); the
+    /// backends' `PowFI` lowering computes every power up to its largest
+    /// supported exponent and selects one, which only a runtime exponent
+    /// needs. Each product rounds like any other `MulF`, so the result can
+    /// differ from the one-factor-at-a-time `PowFI` product in the last Q32
+    /// bits; both are within one rounding per product of the real power.
+    /// The `pow_f` contract's requirement (`base != 0 or exp >= 0`) holds
+    /// for every non-negative exponent, so nothing is lost by not firing it.
+    /// A runtime exponent is `PowFI` (halo2-base accepts exponents below 9).
+    pub fn ir_pow_f_int(&mut self, base: &Value, exp: &Value) -> Value {
+        match exp.int_val() {
+            Some(e) if (0..=MAX_UNROLLED_POWER).contains(&e) => {
+                self.square_and_multiply_f(base, e as u32)
+            }
+            _ => self.power(&IR::PowFI, "pow_f", base, exp),
+        }
+    }
+
+    /// `base ** e` by square-and-multiply over the bits of `e`, most
+    /// significant first.
+    fn square_and_multiply_f(&mut self, base: &Value, e: u32) -> Value {
+        if e == 0 {
+            return self.ir_constant_float(1.0);
+        }
+        let mut acc = base.clone();
+        for bit in (0..u32::BITS - 1 - e.leading_zeros()).rev() {
+            acc = self.ir_mul_f(&acc, &acc);
+            if (e >> bit) & 1 == 1 {
+                acc = self.ir_mul_f(&acc, base);
+            }
+        }
+        acc
+    }
     /// Float `sign`. Fires the `sign_f` op contract so the output value
     /// carries the `-1.0 <= Output <= 1.0` fact for downstream
     /// resolvers.

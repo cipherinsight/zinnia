@@ -31,11 +31,22 @@ impl PatternMatchOptim {
             IR::MulF => self.optimize_mul_f(builder, ir, args),
             IR::DivI => self.optimize_div_i(builder, ir, args),
             IR::DivF => self.optimize_div_f(builder, ir, args),
-            IR::LtI | IR::GtI | IR::LtF | IR::GtF => {
+            IR::LtI | IR::LtF | IR::LtIBounded => {
                 self.optimize_same_ptr_cmp(builder, ir, args, false)
             }
-            IR::LteI | IR::GteI | IR::LteF | IR::GteF => {
-                self.optimize_same_ptr_cmp(builder, ir, args, true)
+            IR::GtI | IR::GtF | IR::GtIBounded | IR::LteI | IR::LteF | IR::GteI | IR::GteF => {
+                if is_same_ptr(args) {
+                    let reflexive = matches!(ir, IR::LteI | IR::LteF | IR::GteI | IR::GteF);
+                    return builder.ir_constant_bool(reflexive);
+                }
+                if is_constant(&args[0]) || is_constant(&args[1]) {
+                    // A comparison with a constant keeps its form: the
+                    // input-domain checks (`x >= i64::MIN`, `x <= i64::MAX`)
+                    // are recognized by that shape after optimization, and
+                    // backends bound a compared value from it.
+                    return builder.create_ir(ir, args);
+                }
+                self.canonical_comparison(builder, ir, args)
             }
             IR::EqI | IR::EqF => self.optimize_same_ptr_cmp(builder, ir, args, true),
             IR::NeI | IR::NeF => self.optimize_same_ptr_cmp(builder, ir, args, false),
@@ -276,6 +287,38 @@ impl PatternMatchOptim {
         b.create_ir(ir, args)
     }
 
+    /// Every ordering comparison of two runtime values as a strict
+    /// less-than, negated where needed:
+    /// `a > b` is `b < a`, `a >= b` is `not (a < b)` and `a <= b` is
+    /// `not (b < a)` (total orders on the signed window and on the
+    /// non-negative bounded operands alike). Mirrored and complementary
+    /// comparisons of the same operands (`x < t` next to `x >= t`) then
+    /// become the same `Lt` statement, which `DuplicateCodeElimination`
+    /// computes once; every backend lowers `>=`/`<=` as a negated `<`
+    /// anyway.
+    fn canonical_comparison(&self, b: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
+        let (lhs, rhs) = (&args[0], &args[1]);
+        let less = |b: &mut IRBuilder, strict: &IR, x: &Value, y: &Value| {
+            b.create_ir(strict, &[x.clone(), y.clone()])
+        };
+        match ir {
+            IR::GtI => less(b, &IR::LtI, rhs, lhs),
+            IR::GtF => less(b, &IR::LtF, rhs, lhs),
+            IR::GtIBounded => less(b, &IR::LtIBounded, rhs, lhs),
+            IR::GteI | IR::GteF => {
+                let strict = if matches!(ir, IR::GteI) { IR::LtI } else { IR::LtF };
+                let lt = less(b, &strict, lhs, rhs);
+                b.create_ir(&IR::LogicalNot, &[lt])
+            }
+            IR::LteI | IR::LteF => {
+                let strict = if matches!(ir, IR::LteI) { IR::LtI } else { IR::LtF };
+                let gt = less(b, &strict, rhs, lhs);
+                b.create_ir(&IR::LogicalNot, &[gt])
+            }
+            _ => unreachable!("not an ordering comparison: {:?}", ir),
+        }
+    }
+
     /// Optimize comparisons where both operands are the same pointer.
     /// For `a == a` → true, `a != a` → false, `a < a` → false, `a <= a` → true.
     fn optimize_same_ptr_cmp(
@@ -290,6 +333,14 @@ impl PatternMatchOptim {
         }
         b.create_ir(ir, args)
     }
+}
+
+fn is_constant(v: &Value) -> bool {
+    v.int_val().is_some() || v.float_val().is_some()
+}
+
+fn is_same_ptr(args: &[Value]) -> bool {
+    args[0].stmt_id() == args[1].stmt_id() && args[0].stmt_id().is_some()
 }
 
 fn min_required_arity(ir: &IR) -> Option<usize> {
@@ -308,6 +359,8 @@ fn min_required_arity(ir: &IR) -> Option<usize> {
         | IR::DivF
         | IR::LtI
         | IR::GtI
+        | IR::LtIBounded
+        | IR::GtIBounded
         | IR::LtF
         | IR::GtF
         | IR::LteI
@@ -323,10 +376,118 @@ fn min_required_arity(ir: &IR) -> Option<usize> {
     })
 }
 
+/// Fuses disjunctions of equality tests that share an operand,
+/// `x == c1 or x == c2 or ...`, into one zero test of the field product
+/// `(x - c1)(x - c2)...` (NumPy's `in1d`/`isin`, Python's `in`).
+///
+/// Soundness: the field has no zero divisors, so the product is zero
+/// exactly when some factor is, i.e. when `x` equals some `c_i` as a field
+/// element, which is what each `EqI`/`EqF` tests (raw fixed-point values
+/// for floats). The factors are raw field differences (`SubI`) and the
+/// product a field product (`MulI`), never the rescaling `MulF`, whose
+/// rounding can make a product of non-zero factors zero. The fusion is
+/// applied only when every operand of the `or` has no other use, so the
+/// equality tests it replaces become dead; a disjunction whose tests are
+/// used elsewhere keeps the cheaper `or`.
+#[derive(Default)]
+struct MembershipFusion {
+    /// Zero tests emitted by this fusion: result stmt -> (common operand,
+    /// product of its factors).
+    fused: HashMap<StmtId, (StmtId, Value)>,
+}
+
+/// An operand of a disjunction that tests membership: a plain equality
+/// (either operand may be the common one) or an earlier fused zero test.
+enum Membership {
+    Equality([StmtId; 2]),
+    Fused { subject: StmtId, product: Value },
+}
+
+impl MembershipFusion {
+    fn membership(&self, b: &IRBuilder, v: &Value) -> Option<Membership> {
+        let sid = v.stmt_id()?;
+        if let Some((subject, product)) = self.fused.get(&sid) {
+            return Some(Membership::Fused { subject: *subject, product: product.clone() });
+        }
+        let stmt = b.stmts.get(sid as usize)?;
+        match stmt.ir {
+            IR::EqI | IR::EqF if stmt.arguments.len() == 2 => {
+                Some(Membership::Equality([stmt.arguments[0], stmt.arguments[1]]))
+            }
+            _ => None,
+        }
+    }
+
+    fn try_fuse(&mut self, b: &mut IRBuilder, args: &[Value]) -> Option<Value> {
+        let lhs = self.membership(b, &args[0])?;
+        let rhs = self.membership(b, &args[1])?;
+        let subject = common_subject(&lhs, &rhs)?;
+        let lhs_product = product_of(b, &lhs, subject);
+        let rhs_product = product_of(b, &rhs, subject);
+        let product = b.create_ir(&IR::MulI, &[lhs_product, rhs_product]);
+        let zero = b.ir_constant_int(0);
+        let out = b.create_ir(&IR::EqI, &[product.clone(), zero]);
+        self.fused.insert(out.stmt_id()?, (subject, product));
+        Some(out)
+    }
+}
+
+fn candidates(m: &Membership) -> Vec<StmtId> {
+    match m {
+        Membership::Equality(ops) => ops.to_vec(),
+        Membership::Fused { subject, .. } => vec![*subject],
+    }
+}
+
+fn common_subject(lhs: &Membership, rhs: &Membership) -> Option<StmtId> {
+    let rhs_candidates = candidates(rhs);
+    candidates(lhs).into_iter().find(|s| rhs_candidates.contains(s))
+}
+
+/// The factor product of one disjunct with respect to `subject`.
+fn product_of(b: &mut IRBuilder, m: &Membership, subject: StmtId) -> Value {
+    match m {
+        Membership::Fused { product, .. } => product.clone(),
+        Membership::Equality(ops) => {
+            let other = if ops[0] == subject { ops[1] } else { ops[0] };
+            let (x, c) = (value_at(b, subject), value_at(b, other));
+            b.create_ir(&IR::SubI, &[x, c])
+        }
+    }
+}
+
+/// An integer-typed handle on statement `sid` of the builder (the raw
+/// field value; the fusion only does field arithmetic on it).
+fn value_at(b: &IRBuilder, sid: StmtId) -> Value {
+    let stmt = &b.stmts[sid as usize];
+    let static_val = match stmt.ir {
+        IR::ConstantInt { value } => Some(value),
+        _ => None,
+    };
+    Value::Integer(crate::types::ScalarValue {
+        static_val,
+        stmt_id: Some(sid),
+        value_id: stmt.value_id,
+    })
+}
+
+/// How many statements read each statement's result.
+fn use_counts(graph: &IRGraph) -> HashMap<StmtId, usize> {
+    let mut counts: HashMap<StmtId, usize> = HashMap::new();
+    for stmt in &graph.stmts {
+        for &arg in &stmt.arguments {
+            *counts.entry(arg).or_default() += 1;
+        }
+    }
+    counts
+}
+
 impl IRPass for PatternMatchOptim {
     fn exec(&self, ir_graph: IRGraph) -> IRGraph {
         let mut builder = IRBuilder::new();
         let mut value_lookup: HashMap<StmtId, Value> = HashMap::new();
+        let uses = use_counts(&ir_graph);
+        let mut fusion = MembershipFusion::default();
 
         for stmt in ir_graph.get_topological_order(false) {
             let ir_args: Vec<Value> = stmt
@@ -334,7 +495,17 @@ impl IRPass for PatternMatchOptim {
                 .iter()
                 .map(|&arg| value_lookup[&arg].clone())
                 .collect();
-            let val = self.optimize_ir(&mut builder, &stmt.ir, &ir_args);
+            let sole_use = |arg: &StmtId| uses.get(arg).copied() == Some(1);
+            let fused = match stmt.ir {
+                IR::LogicalOr if ir_args.len() == 2 && stmt.arguments.iter().all(sole_use) => {
+                    fusion.try_fuse(&mut builder, &ir_args)
+                }
+                _ => None,
+            };
+            let val = match fused {
+                Some(v) => v,
+                None => self.optimize_ir(&mut builder, &stmt.ir, &ir_args),
+            };
             value_lookup.insert(stmt.stmt_id, val);
         }
 
