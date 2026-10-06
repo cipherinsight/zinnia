@@ -50,6 +50,10 @@ impl SecondPhaseCheck for Permutation {
         1
     }
 
+    fn reads(&self) -> Vec<AssignedValue<Fp>> {
+        self.xs.iter().chain(&self.ys).copied().collect()
+    }
+
     fn build(&self, ctx: &mut Context<Fp>, gate: &GateChip<Fp>, challenges: &[AssignedValue<Fp>]) {
         let gamma = challenges[0];
         let product = |ctx: &mut Context<Fp>, values: &[AssignedValue<Fp>]| {

@@ -12,6 +12,7 @@ use halo2_base::{
 
 mod bitwise;
 mod fixed_point;
+mod identities;
 mod keys;
 mod memory;
 mod plan;
@@ -1751,6 +1752,15 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         self.index_of_packed_key(key, index_bits)
     }
 
+    fn identity_check(&mut self, identity: crate::ir_defs::Identity, operands: &[Self::CellRef]) -> Result<(), ProvingError> {
+        self.check_identity(identity, operands)
+    }
+
+    /// `floor(raw / 2^P)`: the rescale of `fixed_product_sum`.
+    fn rescale_raw_f(&mut self, raw: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        self.rescale_by(raw, self.params.precision_bits)
+    }
+
     /// A free cell holding the hint's lane (`kernel::hint_lane` of the
     /// operands' values; placeholder values at key generation). Loaded by
     /// [`Self::hint`], so the tamper tests reach it; the IR pins it.
@@ -1800,3 +1810,6 @@ mod tamper {
 #[cfg(test)]
 #[path = "synthesizer_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+pub(crate) mod two_phase_tests;

@@ -3461,7 +3461,14 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
             crate::ir_defs::HintKind::MaskedSortedValues => {
                 unknown_like_elements(&args[..*len as usize / 2], ir_id)
             }
+            crate::ir_defs::HintKind::OrderedBy => {
+                unknown_like_elements(&args[*len as usize / 2..*len as usize], ir_id)
+            }
+            // A raw product sum is not an int64 value: never folded.
+            crate::ir_defs::HintKind::ProductSum => Value::Integer(ScalarValue::new(None, Some(ir_id))),
         },
+        IR::IdentityCheck(_) => Value::None,
+        IR::RescaleRawF => Value::Float(ScalarValue::new(None, Some(ir_id))),
         // A packed key is not an int64 value: never folded.
         IR::PackKey { .. } | IR::PackedKeyIndex { .. } => {
             Value::Integer(ScalarValue::new(None, Some(ir_id)))
@@ -3605,7 +3612,8 @@ fn min_required_arity(ir: &IR) -> usize {
         IR::Hint { len, .. } => *len as usize + 1,
         IR::KeyLess { .. } => 4,
         IR::PackKey { .. } | IR::PackedKeyLess { .. } => 2,
-        IR::PackedKeyIndex { .. } => 1,
+        IR::PackedKeyIndex { .. } | IR::RescaleRawF => 1,
+        IR::IdentityCheck(identity) => identity.operands(),
         IR::ArrayOp(op) => op.shared as usize,
     }
 }
@@ -3624,6 +3632,7 @@ fn unknown_value_for_ir(ir: &IR, ir_id: StmtId) -> Value {
         | IR::SubF
         | IR::MulF
         | IR::ProductSumF { .. }
+        | IR::RescaleRawF
         | IR::DivF
         | IR::FloorDivF
         | IR::ModF
@@ -3688,6 +3697,7 @@ fn unknown_value_for_ir(ir: &IR, ir_id: StmtId) -> Value {
         | IR::AssertDynamicNDArrayMeta { .. }
         | IR::DynamicNDArraySetItem { .. }
         | IR::InvokeExternal { .. }
+        | IR::IdentityCheck(_)
         | IR::ExportExternalI { .. } => Value::None,
         IR::AddStr | IR::StrI | IR::StrF => Value::String(StringValue {
             val: String::new(),

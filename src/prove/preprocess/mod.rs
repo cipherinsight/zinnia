@@ -431,6 +431,11 @@ impl<'a> Preprocessor<'a> {
                 Ok(Some(if kernel::fp_is_negative(d) && d != Fp::zero() { Fp::one() } else { Fp::zero() }))
             }
             IR::PackedKeyIndex { index_bits } => Ok(Some(kernel::packed_key_parts(args[0], *index_bits).1)),
+            IR::IdentityCheck(_) => Ok(None),
+            IR::RescaleRawF => {
+                let raw = kernel::fp_to_i128(args[0]).unwrap_or(0);
+                Ok(Some(kernel::fp_rescale_raw_i128(raw, prec).0))
+            }
             IR::KeyLess { .. } => {
                 let less = |x: Fp, y: Fp| {
                     let d = x - y;

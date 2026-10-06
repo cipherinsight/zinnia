@@ -800,6 +800,13 @@ pub fn hint_values(kind: crate::ir_defs::HintKind, operands: &[Fp]) -> Vec<Fp> {
             lanes
         }
         HintKind::PositionOneHot => position_one_hot(operands),
+        HintKind::OrderedBy => {
+            let (keys, entries) = operands.split_at(operands.len() / 2);
+            stable_argsort(keys).into_iter().map(|i| entries[i]).collect()
+        }
+        HintKind::ProductSum => {
+            vec![operands.chunks_exact(2).fold(Fp::zero(), |sum, pair| sum + pair[0] * pair[1])]
+        }
         HintKind::Negative => {
             let negative = operands.first().is_some_and(|x| fp_is_negative(*x));
             vec![if negative { Fp::one() } else { Fp::zero() }]
@@ -869,6 +876,51 @@ fn with_hint_values<R>(kind: crate::ir_defs::HintKind, operands: &[Fp], f: impl 
         }
         f(&last.as_ref().expect("just set").2)
     })
+}
+
+/// Whether `identity` holds exactly among `operands` (field arithmetic):
+/// the semantics of `IR::IdentityCheck`, which the mock checks this way and
+/// halo2-base at verifier challenges.
+pub fn identity_holds(identity: crate::ir_defs::Identity, operands: &[Fp]) -> bool {
+    use crate::ir_defs::Identity;
+    if operands.len() != identity.operands() {
+        return false;
+    }
+    match identity {
+        Identity::MultisetEqual { len, width } => {
+            let width = width as usize;
+            let (left, right) = operands.split_at(len as usize * width);
+            let sorted = |side: &[Fp]| {
+                let mut tuples: Vec<Vec<Vec<u8>>> = side
+                    .chunks_exact(width.max(1))
+                    .map(|t| t.iter().map(|v| v.to_repr().as_ref().to_vec()).collect())
+                    .collect();
+                tuples.sort();
+                tuples
+            };
+            sorted(left) == sorted(right)
+        }
+        Identity::PolynomialProduct { n, m } => {
+            let (n, m) = (n as usize, m as usize);
+            let (a, rest) = operands.split_at(n);
+            let (b, c) = rest.split_at(m);
+            let mut product = vec![Fp::zero(); n + m - 1];
+            for (i, x) in a.iter().enumerate() {
+                for (j, y) in b.iter().enumerate() {
+                    product[i + j] += *x * *y;
+                }
+            }
+            product == c
+        }
+        Identity::MatrixProduct { rows, inner, cols } => {
+            let (rows, inner, cols) = (rows as usize, inner as usize, cols as usize);
+            let (a, rest) = operands.split_at(rows * inner);
+            let (b, c) = rest.split_at(inner * cols);
+            (0..rows).all(|i| {
+                (0..cols).all(|j| (0..inner).fold(Fp::zero(), |s, l| s + a[i * inner + l] * b[l * cols + j]) == c[i * cols + j])
+            })
+        }
+    }
 }
 
 /// Simplified Poseidon permutation (4 rounds, t=3).

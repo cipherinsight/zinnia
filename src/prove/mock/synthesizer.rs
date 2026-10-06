@@ -704,4 +704,21 @@ impl Synthesizer for MockSynthesizer {
         let values: Vec<Fp> = operands.iter().map(|c| c.fp()).collect();
         Ok(MockCell(kernel::hint_lane(kind, &values, rank.fp())))
     }
+
+    /// Exactly, in field arithmetic (the circuits check it at a random
+    /// point, which a false identity passes with negligible probability).
+    fn identity_check(&mut self, identity: crate::ir_defs::Identity, operands: &[MockCell]) -> Result<(), ProvingError> {
+        let values: Vec<Fp> = operands.iter().map(|c| c.fp()).collect();
+        if !kernel::identity_holds(identity, &values) {
+            self.satisfied = false;
+            self.assertion_failures.push(format!("identity {} does not hold", identity.describe()));
+        }
+        Ok(())
+    }
+
+    /// The rescale of `ProductSumF` applied to the raw sum.
+    fn rescale_raw_f(&mut self, raw: &MockCell) -> Result<MockCell, ProvingError> {
+        let raw = kernel::fp_to_i128(raw.fp()).unwrap_or(0);
+        Ok(MockCell(kernel::fp_rescale_raw_i128(raw, self.prec()).0))
+    }
 }
