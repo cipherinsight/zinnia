@@ -12,6 +12,71 @@ use crate::prove::traits::Synthesizer;
 /// String operations and `Print` are no-ops (they have no circuit
 /// representation). External function calls are rejected — they must be
 /// resolved during preprocessing before the IR reaches the prover.
+/// The statements [`pure_value_op`] evaluates, as one pattern (used by
+/// `is_pure_value_op` and by `interpret_ir`'s dispatch).
+macro_rules! pure_value_ops {
+    () => {
+        IR::ConstantInt { .. }
+            | IR::ConstantFloat { .. }
+            | IR::ConstantBool { .. }
+            | IR::AddI
+            | IR::SubI
+            | IR::MulI
+            | IR::FloorDivI
+            | IR::ModI
+            | IR::AddF
+            | IR::SubF
+            | IR::EqI
+            | IR::NeI
+            | IR::LtI
+            | IR::LteI
+            | IR::GtI
+            | IR::GteI
+            | IR::LogicalAnd
+            | IR::LogicalOr
+            | IR::LogicalNot
+            | IR::SelectI
+            | IR::SelectF
+            | IR::SelectB
+    };
+}
+
+/// Whether [`pure_value_op`] evaluates `ir`: a statement whose value is a
+/// function of its operands alone (no input, memory, hint or check).
+pub fn is_pure_value_op(ir: &IR) -> bool {
+    matches!(ir, pure_value_ops!())
+}
+
+/// The value of a statement `is_pure_value_op` accepts, on `synth`. This is
+/// the dispatch `interpret_ir` uses for these statements, shared with
+/// compile-time evaluation (`optim::select_merge`), so both read the same
+/// semantics.
+pub fn pure_value_op<S: Synthesizer>(synth: &mut S, ir: &IR, args: &[S::CellRef]) -> Result<S::CellRef, ProvingError> {
+    match ir {
+        IR::ConstantInt { value } => synth.constant_int(*value),
+        IR::ConstantFloat { value } => synth.constant_float(*value),
+        IR::ConstantBool { value } => synth.constant_bool(*value),
+        IR::AddI => synth.add_i(&args[0], &args[1]),
+        IR::SubI => synth.sub_i(&args[0], &args[1]),
+        IR::MulI => synth.mul_i(&args[0], &args[1]),
+        IR::FloorDivI => synth.floor_div_i(&args[0], &args[1]),
+        IR::ModI => synth.mod_i(&args[0], &args[1]),
+        IR::AddF => synth.add_f(&args[0], &args[1]),
+        IR::SubF => synth.sub_f(&args[0], &args[1]),
+        IR::EqI => synth.eq_i(&args[0], &args[1]),
+        IR::NeI => synth.ne_i(&args[0], &args[1]),
+        IR::LtI => synth.lt_i(&args[0], &args[1]),
+        IR::LteI => synth.lte_i(&args[0], &args[1]),
+        IR::GtI => synth.gt_i(&args[0], &args[1]),
+        IR::GteI => synth.gte_i(&args[0], &args[1]),
+        IR::LogicalAnd => synth.logical_and(&args[0], &args[1]),
+        IR::LogicalOr => synth.logical_or(&args[0], &args[1]),
+        IR::LogicalNot => synth.logical_not(&args[0]),
+        IR::SelectI | IR::SelectF | IR::SelectB => synth.select(&args[0], &args[1], &args[2]),
+        other => Err(ProvingError::synthesis(format!("not a pure value statement: {other:?}"))),
+    }
+}
+
 pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<(), ProvingError> {
     let n = graph.stmts.len();
     let mut cells: Vec<Option<S::CellRef>> = Vec::with_capacity(n);
@@ -36,22 +101,18 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
             .collect::<Result<Vec<_>, _>>()?;
 
         let result: Option<S::CellRef> = match &stmt.ir {
+            // Constants, total integer arithmetic, integer comparisons,
+            // Boolean logic and selection: see `pure_value_op`.
+            ir @ (pure_value_ops!()) => Some(pure_value_op(synth, ir, &args)?),
+
             // ── Constants ─────────────────────────────────────────────
-            IR::ConstantInt { value } => Some(synth.constant_int(*value)?),
-            IR::ConstantFloat { value } => Some(synth.constant_float(*value)?),
-            IR::ConstantBool { value } => Some(synth.constant_bool(*value)?),
             IR::ConstantStr { .. } => None,
 
             // ── Integer arithmetic ────────────────────────────────────
-            IR::AddI => Some(synth.add_i(&args[0], &args[1])?),
-            IR::SubI => Some(synth.sub_i(&args[0], &args[1])?),
-            IR::MulI => Some(synth.mul_i(&args[0], &args[1])?),
             IR::DivI => Some(synth.div_i(&args[0], &args[1])?),
-            IR::FloorDivI => Some(synth.floor_div_i(&args[0], &args[1])?),
             IR::FloorDivIPinned { divisor_bits } => {
                 Some(synth.floor_div_i_pinned(&args[0], &args[1], *divisor_bits)?)
             }
-            IR::ModI => Some(synth.mod_i(&args[0], &args[1])?),
             IR::PowI => Some(synth.pow_i(&args[0], &args[1])?),
             IR::AbsI => Some(synth.abs_i(&args[0])?),
             IR::SignI => Some(synth.sign_i(&args[0])?),
@@ -66,7 +127,6 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
             IR::BitNotI => Some(synth.bit_not_i(&args[0])?),
 
             // ── Float arithmetic ──────────────────────────────────────
-            IR::AddF => Some(synth.add_f(&args[0], &args[1])?),
             IR::SumF { len } => {
                 if args.len() != *len as usize {
                     return Err(ProvingError::synthesis(format!(
@@ -77,7 +137,6 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
                 }
                 Some(synth.sum_f(&args)?)
             }
-            IR::SubF => Some(synth.sub_f(&args[0], &args[1])?),
             IR::MulF => Some(synth.mul_f(&args[0], &args[1])?),
             IR::ProductSumF { len } => {
                 let expected = (*len as usize).saturating_mul(2);
@@ -104,9 +163,6 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
             IR::SignF => Some(synth.sign_f(&args[0])?),
 
             // ── Integer comparisons ───────────────────────────────────
-            IR::EqI => Some(synth.eq_i(&args[0], &args[1])?),
-            IR::NeI => Some(synth.ne_i(&args[0], &args[1])?),
-            IR::LtI => Some(synth.lt_i(&args[0], &args[1])?),
             IR::LtIBounded => Some(synth.lt_i_bounded(&args[0], &args[1])?),
             IR::GtIBounded => Some(synth.gt_i_bounded(&args[0], &args[1])?),
             IR::IndexInBox { rank } => {
@@ -121,9 +177,6 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
                 }
                 Some(synth.index_in_box(&triples)?)
             }
-            IR::LteI => Some(synth.lte_i(&args[0], &args[1])?),
-            IR::GtI => Some(synth.gt_i(&args[0], &args[1])?),
-            IR::GteI => Some(synth.gte_i(&args[0], &args[1])?),
 
             // ── Float comparisons ─────────────────────────────────────
             IR::EqF => Some(synth.eq_f(&args[0], &args[1])?),
@@ -149,14 +202,8 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
             IR::ArcTan2F => Some(synth.arctan2_f(&args[0], &args[1])?),
 
             // ── Boolean logic ─────────────────────────────────────────
-            IR::LogicalAnd => Some(synth.logical_and(&args[0], &args[1])?),
-            IR::LogicalOr => Some(synth.logical_or(&args[0], &args[1])?),
-            IR::LogicalNot => Some(synth.logical_not(&args[0])?),
 
             // ── Selection (mux) ───────────────────────────────────────
-            IR::SelectI | IR::SelectF | IR::SelectB => {
-                Some(synth.select(&args[0], &args[1], &args[2])?)
-            }
             IR::SelectBitI | IR::SelectBitF => {
                 Some(synth.select_bit(&args[0], &args[1], &args[2])?)
             }
