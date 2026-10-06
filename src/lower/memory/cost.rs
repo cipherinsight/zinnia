@@ -1,43 +1,46 @@
 //! Cost formulas of the memory family's constructions, per target.
 //!
-//! The scalar unit costs are the gather family's (`gather::cost::units`:
-//! one place for the price of an equality test, a select, a multiply-add),
-//! plus the index bits below; all were calibrated by compiling reads with
-//! each element construction forced (`ZINNIA_FORCE_CONSTRUCTION`) over a
-//! grid of line lengths and read counts (`eval-redo/layer/layer-memory.md`,
-//! "Calibration").
+//! Unit costs are measured: reads compiled with each element construction
+//! forced (`ZINNIA_FORCE_CONSTRUCTION`) at several line lengths
+//! (`eval-redo/layer/layer-memory-data/scale.py`, 169 reads at distinct
+//! indices over lines of 2..16 cells): a halo2-base select of two variable
+//! branches in the multiplexer costs 8 cells, the bound and `w` index bits
+//! `4 + 7w`, a `select_bit` 12; on Noir 2 gates per select, the bits
+//! `4 + 2w`, a `select_bit` 3. The Noir native array's costs are the gather
+//! family's (`gather::cost::units`).
 
 use crate::lower::gather::cost::units;
 use crate::lower::{Context, OpKind, Target};
 use crate::types::StmtId;
 
-/// The bound `i < n` with `i`'s `w = ceil(log2 n)` bits
-/// (`IR::AssertU128LtBit`): `base + per_bit * w` on each target.
-fn bits_cost(n: u64, target: Target) -> u64 {
-    let w = u64::from(u64::BITS - (n - 1).leading_zeros());
-    let (base, per_bit) = match target {
-        Target::Halo2Base => (10, 5),
-        Target::Noir => (4, 2),
-    };
-    base + per_bit * w
+/// `ceil(log2 n)` for `n >= 2`.
+fn width(n: u64) -> u64 {
+    u64::from(u64::BITS - (n - 1).leading_zeros())
 }
 
 /// One read of `n >= 2` cells by the multiplexer: `n - 1` selects of two
-/// variable branches (`n = 2`: one `select_bit`, the select and the bit
+/// variable branches; for `n = 2` one `select_bit` (the select and the bit
 /// assertion).
 pub fn index_bits_read(n: u64, target: Target) -> u64 {
-    let u = units(target);
+    let (select, select_bit) = match target {
+        Target::Halo2Base => (8, 12),
+        Target::Noir => (2, 3),
+    };
     if n == 2 {
-        return u.select_var + 1;
+        return select_bit;
     }
-    (n - 1) * u.select_var
+    (n - 1) * select
 }
 
-/// The bound and the bits of one index below `n >= 3`.
+/// The bound `i < n` and `i`'s `w = ceil(log2 n)` bits
+/// (`IR::AssertU128LtBit`) of one index below `n >= 3`.
 pub fn index_bits(n: u64, target: Target) -> u64 {
-    bits_cost(n, target)
+    let (base, per_bit) = match target {
+        Target::Halo2Base => (4, 7),
+        Target::Noir => (4, 2),
+    };
+    base + per_bit * width(n)
 }
-
 
 /// A table group's fixed cost on halo2-base in cell equivalents: its value
 /// column, a key set's two advice columns and the lookup argument's

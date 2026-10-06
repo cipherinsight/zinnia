@@ -18,7 +18,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 use super::keys::{keygen, keygen_or_next_k, prove_with_keys, verify_with_keys, Halo2BaseKeys, KeyRole, LoadTimings};
-use super::{cell_profile, cell_stats, fp_from_hex, fp_to_hex, Halo2BaseProverBackend};
+use super::{cell_profile, cell_stats, committed_polys, fp_from_hex, fp_to_hex, Halo2BaseProverBackend};
 use crate::prove::traits::ProverBackend;
 use crate::prove::types::ProvingParams;
 use crate::CompiledIR;
@@ -148,6 +148,10 @@ fn halo2_base_cell_stats(compiled_ir: &CompiledIR, params_json: Option<&str>) ->
         "lookup": cells.lookup,
         "fixed": cells.fixed,
         "instances": cells.instances,
+        // estimate_params' cost model at these parameters: committed
+        // polynomials, and their number times 2^k.
+        "committed_polys": committed_polys(&cells, params.k, params.lookup_bits),
+        "poly_cost": committed_polys(&cells, params.k, params.lookup_bits).map(|p| (p as u64) << params.k),
     })
     .to_string())
 }

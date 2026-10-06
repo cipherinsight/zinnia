@@ -112,57 +112,7 @@ impl ProverBackend for Halo2BaseProverBackend {
         let mut best: Option<(u128, u32, u32)> = None; // (cost, k, lookup_bits)
         for k in ESTIMATE_K_MIN..=ESTIMATE_K_MAX {
             let lookup_bits = defaults.lookup_bits.min(k.saturating_sub(1)).max(1);
-            let CellStats { advice, second_advice, challenges, table_advice, table_rows, tables, lookup, fixed, instances } =
-                dry_run(lookup_bits)?;
-            let lookup_used = lookup > 0;
-
-            let usable = (1usize << k).saturating_sub(UNUSABLE_ROWS);
-            if usable == 0 || instances > usable {
-                continue;
-            }
-            if lookup_used && (1usize << lookup_bits) > usable {
-                continue;
-            }
-            if table_rows > usable {
-                continue;
-            }
-
-            let num_advice = (advice - second_advice - table_advice).div_ceil(usable).max(1);
-            // The memory tables (`circuit/tables.rs`): the value column, two
-            // advice columns per key set, one lookup argument per key set.
-            let (groups, _) = circuit::tables::pack(&tables, usable);
-            let table_polys: usize =
-                circuit::tables::key_sets(&groups, usable).iter().map(|sets| 1 + 2 * sets + 2 * sets).sum();
-            // The second phase (challenge-based checks, `circuit.rs`): its
-            // gate columns and the challenges' column.
-            let second_columns = if challenges > 0 { second_advice.div_ceil(usable).max(1) + 1 } else { 0 };
-            let num_lookup_advice = if lookup_used { lookup.div_ceil(usable) } else { 0 };
-            let num_fixed = fixed.div_ceil(usable).max(1);
-
-            // Configure the real constraint system for this column layout and
-            // count the polynomials the prover would commit to.
-            let base_params = BaseCircuitParams {
-                k: k as usize,
-                num_advice_per_phase: vec![num_advice],
-                num_fixed,
-                num_lookup_advice_per_phase: vec![num_lookup_advice],
-                lookup_bits: lookup_used.then_some(lookup_bits as usize),
-                num_instance_columns: 1,
-            };
-            let mut meta = ConstraintSystem::<Fp>::default();
-            let _config =
-                halo2_base::gates::circuit::BaseConfig::configure(&mut meta, base_params);
-            let degree = meta.degree().max(3);
-            let perm_chunk = (degree - 2).max(1);
-            let perm_columns = meta.permutation().get_columns().len();
-            let committed_polys = num_advice
-                + num_lookup_advice
-                + second_columns
-                + table_polys
-                + meta.lookups().len() * 2 // mv_lookup: multiplicity + running-sum poly
-                + perm_columns.div_ceil(perm_chunk) // permutation grand products
-                + (degree - 1) // quotient pieces
-                + 1; // vanishing blinder
+            let Some(committed_polys) = committed_polys(&dry_run(lookup_bits)?, k, lookup_bits) else { continue };
             let cost = (committed_polys as u128) << k;
             if best.map_or(true, |(c, _, _)| cost < c) {
                 best = Some((cost, k, lookup_bits));
@@ -390,6 +340,56 @@ impl ProverBackend for Halo2BaseProverBackend {
             ))),
         }
     }
+}
+
+/// The polynomials the prover commits to for a circuit with `stats` at `k`
+/// and `lookup_bits` (`estimate_params` minimises their number times 2^k),
+/// or `None` when the circuit does not fit `k`.
+pub fn committed_polys(stats: &CellStats, k: u32, lookup_bits: u32) -> Option<usize> {
+    use halo2_base::gates::circuit::BaseCircuitParams;
+    use halo2_base::halo2_proofs::plonk::ConstraintSystem;
+    let CellStats { advice, second_advice, challenges, table_advice, table_rows, tables, lookup, fixed, instances } = stats;
+    let lookup_used = *lookup > 0;
+    let usable = (1usize << k).saturating_sub(UNUSABLE_ROWS);
+    if usable == 0 || *instances > usable || (lookup_used && (1usize << lookup_bits) > usable) || *table_rows > usable {
+        return None;
+    }
+    let num_advice = (advice - second_advice - table_advice).div_ceil(usable).max(1);
+    // The memory tables (`circuit/tables.rs`): per table group the value
+    // column, two advice columns per key set, one lookup argument per key set.
+    let (groups, _) = circuit::tables::pack(tables, usable);
+    let table_polys: usize = circuit::tables::key_sets(&groups, usable).iter().map(|sets| 1 + 2 * sets + 2 * sets).sum();
+    // The second phase (challenge-based checks, `circuit.rs`): its gate
+    // columns and the challenges' column.
+    let second_columns = if *challenges > 0 { second_advice.div_ceil(usable).max(1) + 1 } else { 0 };
+    let num_lookup_advice = if lookup_used { lookup.div_ceil(usable) } else { 0 };
+    let num_fixed = fixed.div_ceil(usable).max(1);
+
+    // Configure the real constraint system for this column layout and count
+    // the polynomials the prover would commit to.
+    let base_params = BaseCircuitParams {
+        k: k as usize,
+        num_advice_per_phase: vec![num_advice],
+        num_fixed,
+        num_lookup_advice_per_phase: vec![num_lookup_advice],
+        lookup_bits: lookup_used.then_some(lookup_bits as usize),
+        num_instance_columns: 1,
+    };
+    let mut meta = ConstraintSystem::<Fp>::default();
+    let _config = halo2_base::gates::circuit::BaseConfig::configure(&mut meta, base_params);
+    let degree = meta.degree().max(3);
+    let perm_chunk = (degree - 2).max(1);
+    let perm_columns = meta.permutation().get_columns().len();
+    Some(
+        num_advice
+            + num_lookup_advice
+            + second_columns
+            + table_polys
+            + meta.lookups().len() * 2 // mv_lookup: multiplicity + running-sum poly
+            + perm_columns.div_ceil(perm_chunk) // permutation grand products
+            + (degree - 1) // quotient pieces
+            + 1, // vanishing blinder
+    )
 }
 
 /// Cell counts of one synthesized circuit (witness-independent).
