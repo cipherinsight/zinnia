@@ -115,9 +115,15 @@ def test_constant_write_after_dynamic_write_wins():
         out = compiled.prove_with_keys(keys, data, i)
         assert compiled.verify_with_keys(keys, out)
         assert _decode(out["public_values"][-1]) == _mock_raw(compiled, data, i) == 9
-    # A k too small for the circuit's fixed cells is an error, not a panic.
-    with pytest.raises(RuntimeError, match="k=7"):
-        compiled.setup(params={"k": 7, "lookup_bits": 6, "precision_bits": 32})
+    # 1,100 constants used to overflow the constants' columns at k=7: the
+    # layout now reserves the blinding rows in every column.
+    small = compiled.setup(params={"k": 7, "lookup_bits": 6, "precision_bits": 32})
+    out = compiled.prove_with_keys(small, data, 0)
+    assert compiled.verify_with_keys(small, out)
+    # A layout that cannot fit (the lookup table needs more rows than k
+    # has) is an error naming k, not a panic.
+    with pytest.raises(RuntimeError, match="k=6"):
+        compiled.setup(params={"k": 6, "lookup_bits": 8, "precision_bits": 32})
 
 
 def test_separated_steps_reuse_keys_and_reject_tampering():

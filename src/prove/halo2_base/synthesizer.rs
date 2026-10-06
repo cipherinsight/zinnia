@@ -10,6 +10,14 @@ use halo2_base::{
     AssignedValue, QuantumCell,
 };
 
+mod bitwise;
+mod fixed_point;
+mod memory;
+mod ranges;
+
+use self::fixed_point::Divisor;
+use self::memory::MemoryState;
+use self::ranges::{Comparison, Interval, Operand, TwoValued};
 use crate::circuit_input::{InputPath, ResolvedWitness};
 use crate::prove::error::ProvingError;
 use crate::prove::kernel::{self, Rounding};
@@ -28,7 +36,21 @@ pub struct Halo2BaseSynthesizer<'a> {
     witness: Option<ResolvedWitness>,
     params: ProvingParams,
     public_values: Vec<Fp>,
-    segments: HashMap<u32, Segment>,
+    /// Memory segments and the caches of dynamic reads (see `memory.rs`).
+    memory: MemoryState,
+    /// Q values that are float casts `n·2^P` of an integer cell `n`, by the
+    /// Q cell's id (see `fixed_point::Factor`).
+    float_casts: HashMap<u64, Halo2BaseCell>,
+    /// Cells known to be one of two constants by a bit (see `ranges.rs`).
+    two_valued: HashMap<u64, TwoValued>,
+    /// Comparison bits against a constant, by bit id, and negated bits (the
+    /// `not` cell's id to its operand's), for `refine_by_assertion`.
+    comparisons: HashMap<u64, Comparison>,
+    negations: HashMap<u64, u64>,
+    /// `a - b` cells by `(a.id, b.id)`, shared by comparisons and selects.
+    differences: HashMap<(u64, u64), Halo2BaseCell>,
+    /// Low two's-complement bits per cell id (see `bitwise.rs`).
+    bit_cache: HashMap<u64, Vec<Halo2BaseCell>>,
     dyn_meta_bounds: HashMap<u32, (u32, Vec<u32>)>,
     next_id: u64,
     bit_cells: HashSet<halo2_base::ContextCell>,
@@ -36,35 +58,14 @@ pub struct Halo2BaseSynthesizer<'a> {
     const_cell_ids: HashSet<u64>,
     select_many_cache: HashMap<Vec<u64>, Vec<Halo2BaseCell>>,
     u128_lt_bit_cache: HashMap<(u64, u64, u32), Vec<Halo2BaseCell>>,
-    // Affine address lineage: cell id -> sum of dynamic terms plus offset,
-    // enforced by the gates that built the cell. Lets dynamic-address memory
-    // reads mux over only the slots reachable from the roots instead of the
-    // whole segment.
-    addr_lineage: HashMap<u64, AffineLin>,
-    // eq(root, v) indicator bits, shared across all reads on the same root.
-    indicator_cache: HashMap<(u64, i64), Halo2BaseCell>,
-    // (root id, enumerated value set) one-hot memberships already asserted.
-    membership_asserted: HashSet<(u64, Vec<i64>)>,
-    // Stage-1 gathered planes for factored two-root reads, keyed by
-    // (segment, slots version, root id, root scale, residual offset).
-    plane_cache: HashMap<(u32, u64, u64, i64, i64), Halo2BaseCell>,
-    // Cells already constrained to the signed-64 window (x + 2^63 < 2^64)
-    // resp. the unsigned-64 window (x < 2^64). Comparisons skip their input
-    // range checks for cells whose window is already enforced; selects
-    // propagate the facts (the output provably equals one branch).
-    signed64_cells: HashSet<u64>,
-    unsigned64_cells: HashSet<u64>,
+    /// Constraint-proven integer ranges per cell id (see `ranges.rs`).
+    /// Comparisons size their checks by them and skip window checks the
+    /// constraints already imply.
+    proven: HashMap<u64, Interval>,
+    /// Pinned sign bits `[x < 0]` by cell id (sign tests, `sign_and_abs`).
+    sign_bits: HashMap<u64, Halo2BaseCell>,
     // (sign bit, magnitude) per cell id, see `sign_and_abs`.
     sign_abs_cache: HashMap<u64, (Halo2BaseCell, Halo2BaseCell)>,
-    // eq(write addr, read addr) bits for dynamic-write overlays. The read
-    // side is keyed by cell id for dynamic addresses and by value for
-    // constant addresses (constants with equal values are interchangeable).
-    overlay_eq_cache: HashMap<(u64, OverlayReadKey), Halo2BaseCell>,
-    // Constraint-derived value intervals (signed i64 view) for cells the
-    // provenance table can't see (synthesizer-internal helpers). IR-level
-    // cells read the table live via `vid_of_cell`. Witness-independent by
-    // construction.
-    value_interval: HashMap<u64, (i64, i64)>,
     // ValueId ↔ cell correspondence, maintained by `on_stmt_result`, for
     // consuming the structural-provenance table (affine views and
     // intervals are derived ONCE in the IRBuilder; see src/provenance.rs).
@@ -89,68 +90,22 @@ pub struct Halo2BaseSynthesizer<'a> {
     /// (cheap `Arc` clones). Built on first range use so circuits without
     /// range checks pay no setup. Byte-identical to `builder.range_chip()`.
     range: Option<RangeChip<Fp>>,
+    /// Per-statement cell counts, recorded only when enabled (see
+    /// [`Halo2BaseSynthesizer::enable_profile`]); a measurement aid.
+    profile: Option<CellProfile>,
     /// Test-only hook that perturbs prover hints (see `hint`).
     #[cfg(test)]
     tamper: tamper::HintTamper,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum OverlayReadKey {
-    Cell(u64),
-    Const(i64),
+/// Advice and lookup cells emitted per IR statement (a measurement aid for
+/// `cell_stats`; never enabled on the proving path).
+#[derive(Default)]
+pub struct CellProfile {
+    current: Option<(u32, usize, usize)>,
+    /// `(statement id, advice cells, lookup cells)`.
+    pub per_stmt: Vec<(u32, usize, usize)>,
 }
-
-/// One allocated memory segment.
-///
-/// Program-order rule (M3): writes at constant addresses made before the
-/// segment's first dynamic-address write go straight into `slots` (pure
-/// wiring, no constraints). From the first dynamic-address write on, every
-/// write, constant or dynamic, is appended to `overlay`, and every read
-/// applies the overlay entries in that order on top of the slot value. The
-/// last write whose address equals the read address therefore wins, which
-/// is the program-order semantics of the mock backend.
-struct Segment {
-    init: Fp,
-    /// Constant-address writes before the first dynamic write; `None` means
-    /// never written (the slot holds `init`).
-    slots: Vec<Option<Halo2BaseCell>>,
-    /// `(address, value)` of every write since the first dynamic write.
-    overlay: Vec<(Halo2BaseCell, Halo2BaseCell)>,
-    /// Bumped whenever `slots` changes; keys the gathered-plane cache.
-    slots_version: u64,
-}
-
-/// Whether an overlay write affects a read: decided at synthesis time when
-/// both addresses are constants, otherwise by an equality bit.
-enum OverlayHit {
-    Always,
-    Never,
-    When(Halo2BaseCell),
-}
-
-/// The divisor of a constrained division, classified by what the circuit
-/// already knows about it (see `div_rem`).
-#[derive(Clone, Copy)]
-enum Divisor {
-    /// A fixed-column constant in the signed 64-bit window.
-    Constant(i128),
-    /// A cell the caller knows to be positive, so the remainder needs no
-    /// sign normalisation. The remainder bound re-proves `1 <= b <= 2^65`,
-    /// so a wrong claim makes the circuit unsatisfiable, not unsound.
-    Positive(Halo2BaseCell),
-    /// A cell about which nothing is known except that it is non-zero
-    /// (`div_rem` maps a zero divisor away before using this).
-    NonZero(Halo2BaseCell),
-}
-
-/// Affine view of an integer cell: `cell == Σ root_i * scale_i + offset`,
-/// with at most two dynamic roots and non-zero scales.
-#[derive(Clone, Debug, Default)]
-struct AffineLin {
-    terms: Vec<(Halo2BaseCell, i64)>,
-    offset: i64,
-}
-
 
 impl<'a> Halo2BaseSynthesizer<'a> {
     pub fn new(
@@ -164,7 +119,14 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             witness,
             params,
             public_values: Vec::new(),
-            segments: HashMap::new(),
+            memory: MemoryState::default(),
+            float_casts: HashMap::new(),
+            two_valued: HashMap::new(),
+            bit_cache: HashMap::new(),
+            differences: HashMap::new(),
+            comparisons: HashMap::new(),
+            sign_bits: HashMap::new(),
+            negations: HashMap::new(),
             dyn_meta_bounds: HashMap::new(),
             next_id: 0,
             bit_cells: HashSet::new(),
@@ -172,23 +134,44 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             const_cell_ids: HashSet::new(),
             select_many_cache: HashMap::new(),
             u128_lt_bit_cache: HashMap::new(),
-            addr_lineage: HashMap::new(),
-            indicator_cache: HashMap::new(),
-            membership_asserted: HashSet::new(),
-            plane_cache: HashMap::new(),
-            signed64_cells: HashSet::new(),
-            unsigned64_cells: HashSet::new(),
+            proven: HashMap::new(),
             sign_abs_cache: HashMap::new(),
-            overlay_eq_cache: HashMap::new(),
-            value_interval: HashMap::new(),
             prov: provenance,
             vid_of_cell: HashMap::new(),
             cell_of_vid: HashMap::new(),
             first_unsat: None,
             gate: GateChip::<Fp>::new(),
             range: None,
+            profile: None,
             #[cfg(test)]
             tamper: tamper::HintTamper::default(),
+        }
+    }
+
+    /// Record the advice and lookup cells each statement emits (costly:
+    /// counting lookups walks every queued lookup cell).
+    pub fn enable_profile(&mut self) {
+        self.profile = Some(CellProfile::default());
+    }
+
+    /// The recorded profile, closing the last statement's entry.
+    pub fn take_profile(&mut self) -> Option<CellProfile> {
+        self.close_profile_entry();
+        self.profile.take()
+    }
+
+    fn cell_counters(&mut self) -> (usize, usize) {
+        let stats = self.builder.statistics();
+        (stats.gate.total_advice_per_phase[0], stats.total_lookup_advice_per_phase[0])
+    }
+
+    fn close_profile_entry(&mut self) {
+        let Some((stmt, advice0, lookup0)) = self.profile.as_mut().and_then(|p| p.current.take()) else {
+            return;
+        };
+        let (advice, lookup) = self.cell_counters();
+        if let Some(profile) = self.profile.as_mut() {
+            profile.per_stmt.push((stmt, advice - advice0, lookup - lookup0));
         }
     }
 
@@ -245,9 +228,17 @@ impl<'a> Halo2BaseSynthesizer<'a> {
     /// tamper tests (`synthesizer_tests.rs`) replace hints with other values
     /// and check that the circuit then rejects the witness.
     fn hint(&mut self, value: Fp) -> Halo2BaseCell {
+        let value = self.hint_value(value);
+        self.cell(value)
+    }
+
+    /// The value a hint cell receives: `value`, except under the tamper
+    /// tests, which replace it. For hints laid out by a gadget directly
+    /// (`bitwise::hinted_bits`) rather than loaded by [`Self::hint`].
+    fn hint_value(&mut self, value: Fp) -> Fp {
         #[cfg(test)]
         let value = self.tamper.apply(value);
-        self.cell(value)
+        value
     }
 
     /// A boolean hint, constrained to {0, 1} and marked as a bit.
@@ -256,12 +247,6 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         self.gate.assert_bit(self.builder.main(0), bit.assigned);
         self.mark_bit(&bit);
         bit
-    }
-
-    /// Constrain `0 <= x < 2^bits`.
-    fn range_check(&mut self, x: &Halo2BaseCell, bits: usize) {
-        let range = self.range_chip();
-        range.range_check(self.ctx(), x.assigned, bits);
     }
 
     /// `bits` rounded up to a multiple of the lookup width: a range check
@@ -276,29 +261,24 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         let assigned = self.ctx().load_constant(value);
         let cell = self.wrap(assigned, value);
         self.const_cell_ids.insert(cell.id);
-        let v = kernel::fp_to_i64(value);
-        if kernel::i64_to_fp(v) == value {
-            self.value_interval.insert(cell.id, (v, v));
-        }
         cell
     }
 
-    /// Constraint-derived signed-i64 interval of a cell, if known. IR-level
-    /// cells read the provenance table LIVE (post-hoc tightens from later
-    /// asserts are visible); internal cells fall back to the local map.
-    fn interval_of(&self, cell: &Halo2BaseCell) -> Option<(i64, i64)> {
-        if let Some(vid) = self.vid_of_cell.get(&cell.id) {
-            if let Some(iv) = self.prov.interval_of(*vid) {
-                return Some((iv.lo, iv.hi));
-            }
+    /// The interval that narrows a memory read's choice set: the provenance
+    /// table's interval of an IR value (read live, so later asserts are
+    /// visible) intersected with the cell's proven range. Only for
+    /// narrowing under a membership assertion, where a wrong interval makes
+    /// the circuit unsatisfiable; comparisons use `proven_range` alone.
+    fn interval_of(&self, cell: &Halo2BaseCell) -> Option<Interval> {
+        let provenance = self
+            .vid_of_cell
+            .get(&cell.id)
+            .and_then(|vid| self.prov.interval_of(*vid))
+            .and_then(|iv| Interval::new(iv.lo as i128, iv.hi as i128));
+        match (provenance, self.proven_range(cell)) {
+            (Some(p), Some(r)) => Some(p.intersect(&r).unwrap_or(r)),
+            (p, r) => p.or(r),
         }
-        if let Some(iv) = self.value_interval.get(&cell.id) {
-            return Some(*iv);
-        }
-        if self.bit_cell_ids.contains(&cell.id) {
-            return Some((0, 1));
-        }
-        None
     }
 
     fn wrap(&mut self, assigned: AssignedValue<Fp>, value: Fp) -> Halo2BaseCell {
@@ -337,173 +317,15 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         self.const_cell_ids.contains(&cell.id)
     }
 
-    /// Affine view of `cell`, read live from the provenance table (terms
-    /// translate root ValueIds to their cells; a root without a cell yet
-    /// degrades to the identity view). Falls back to the identity view
-    /// (the cell is its own root) for dynamic cells, and to a pure offset
-    /// for constants.
-    fn affine_lin_of(&self, cell: &Halo2BaseCell) -> AffineLin {
-        if let Some(vid) = self.vid_of_cell.get(&cell.id) {
-            if let Some(av) = self.prov.affine_of(*vid) {
-                if !av.terms.is_empty() {
-                    let mut terms = Vec::with_capacity(av.terms.len());
-                    let mut ok = true;
-                    for (rvid, scale) in &av.terms {
-                        match self.cell_of_vid.get(rvid) {
-                            Some(rc) => terms.push((*rc, *scale)),
-                            None => {
-                                ok = false;
-                                break;
-                            }
-                        }
-                    }
-                    if ok {
-                        return AffineLin {
-                            terms,
-                            offset: av.offset,
-                        };
-                    }
-                }
+    /// `cell` as a comparison operand: its value when it is a constant in
+    /// the signed 64-bit window, the cell otherwise.
+    fn operand(&self, cell: &Halo2BaseCell) -> Operand {
+        match kernel::fp_to_i128(cell.value) {
+            Some(v) if self.is_const_cell(cell) && Interval::point(v).is_some_and(|p| p.within(&Interval::SIGNED64)) => {
+                Operand::Constant(v)
             }
+            _ => Operand::Cell(*cell),
         }
-        if let Some(lin) = self.addr_lineage.get(&cell.id) {
-            return lin.clone();
-        }
-        if self.is_const_cell(cell) {
-            return AffineLin { terms: Vec::new(), offset: kernel::fp_to_i64(cell.value) };
-        }
-        AffineLin { terms: vec![(*cell, 1)], offset: 0 }
-    }
-
-    /// eq(root, v) indicator bit, shared across reads on the same root.
-    fn root_indicator(&mut self, root: &Halo2BaseCell, v: i64) -> Result<Halo2BaseCell, ProvingError> {
-        if let Some(ind) = self.indicator_cache.get(&(root.id, v)) {
-            return Ok(*ind);
-        }
-        let v_cell = self.const_cell(kernel::i64_to_fp(v));
-        let ind = self.eq_i(&root.clone(), &v_cell)?;
-        self.indicator_cache.insert((root.id, v), ind);
-        Ok(ind)
-    }
-
-    /// Assert (once per root and value set) that exactly one of the
-    /// eq(root, v) indicators is high, pinning the root onto the set.
-    fn assert_one_hot(&mut self, root: &Halo2BaseCell, vs: &[i64]) -> Result<(), ProvingError> {
-        let key = (root.id, vs.to_vec());
-        if self.membership_asserted.contains(&key) {
-            return Ok(());
-        }
-        let mut sum: Option<Halo2BaseCell> = None;
-        for v in vs {
-            let ind = self.root_indicator(root, *v)?;
-            sum = Some(match sum {
-                Some(acc) => self.add_i(&acc, &ind)?,
-                None => ind,
-            });
-        }
-        if let Some(sum) = sum {
-            self.assert_const(&sum, Fp::one());
-        }
-        self.membership_asserted.insert(key);
-        Ok(())
-    }
-
-    /// Stage-1 gathered plane for factored two-root reads:
-    /// `Σ_v eq(root, v) * mem[v * scale + t]` over in-bounds v, cached per
-    /// (segment, write version, root, scale, t). The cached value is only
-    /// meaningful when the read's full address is separately range-checked.
-    #[allow(clippy::too_many_arguments)]
-    fn gathered_plane(
-        &mut self,
-        segment_id: u32,
-        root: &Halo2BaseCell,
-        scale: i64,
-        t: i64,
-        len: usize,
-        init: Fp,
-    ) -> Result<Halo2BaseCell, ProvingError> {
-        let version = self.segment(segment_id)?.slots_version;
-        let key = (segment_id, version, root.id, scale, t);
-        if let Some(plane) = self.plane_cache.get(&key) {
-            return Ok(*plane);
-        }
-        let mut out = self.const_cell(init);
-        for idx in 0..len as i64 {
-            let num = idx - t;
-            if num % scale != 0 {
-                continue;
-            }
-            let ind = self.root_indicator(root, num / scale)?;
-            let slot = self.slot_cell(segment_id, idx as usize)?;
-            out = self.select_bit(&ind, &slot, &out)?;
-        }
-        self.plane_cache.insert(key, out);
-        Ok(out)
-    }
-
-    /// Whether an overlay write at `write_addr` is seen by a read at
-    /// `read_addr`. Two constant addresses are compared at synthesis time;
-    /// otherwise an eq bit is emitted, cached so repeated reads against the
-    /// same pending write reuse the constraint.
-    fn overlay_hit(
-        &mut self,
-        write_addr: &Halo2BaseCell,
-        read_addr: &Halo2BaseCell,
-    ) -> Result<OverlayHit, ProvingError> {
-        if self.is_const_cell(write_addr) && self.is_const_cell(read_addr) {
-            return Ok(if write_addr.value == read_addr.value {
-                OverlayHit::Always
-            } else {
-                OverlayHit::Never
-            });
-        }
-        let key = if self.is_const_cell(read_addr) {
-            OverlayReadKey::Const(kernel::fp_to_i64(read_addr.value))
-        } else {
-            OverlayReadKey::Cell(read_addr.id)
-        };
-        if let Some(hit) = self.overlay_eq_cache.get(&(write_addr.id, key)) {
-            return Ok(OverlayHit::When(*hit));
-        }
-        let hit = self.eq_i(&write_addr.clone(), &read_addr.clone())?;
-        self.overlay_eq_cache.insert((write_addr.id, key), hit);
-        Ok(OverlayHit::When(hit))
-    }
-
-    /// Apply the segment's overlay writes, in program order, to `base`
-    /// (the value the read address holds before the first dynamic write).
-    fn apply_overlay(
-        &mut self,
-        segment_id: u32,
-        read_addr: &Halo2BaseCell,
-        base: Halo2BaseCell,
-    ) -> Result<Halo2BaseCell, ProvingError> {
-        let overlay = self.segment(segment_id)?.overlay.clone();
-        let mut out = base;
-        for (write_addr, write_value) in overlay {
-            out = match self.overlay_hit(&write_addr, read_addr)? {
-                OverlayHit::Always => write_value,
-                OverlayHit::Never => out,
-                OverlayHit::When(hit) => self.select_bit(&hit, &write_value, &out)?,
-            };
-        }
-        Ok(out)
-    }
-
-    fn segment(&self, segment_id: u32) -> Result<&Segment, ProvingError> {
-        self.segments
-            .get(&segment_id)
-            .ok_or_else(|| ProvingError::synthesis("segment not allocated"))
-    }
-
-    /// The cell a slot holds before the first dynamic write: its last
-    /// constant-address write, or the segment's init value as a constant
-    /// (a witness cell here would be a free variable). Addresses past the
-    /// end read the init value, as in the mock backend.
-    fn slot_cell(&mut self, segment_id: u32, idx: usize) -> Result<Halo2BaseCell, ProvingError> {
-        let segment = self.segment(segment_id)?;
-        let (written, init) = (segment.slots.get(idx).copied().flatten(), segment.init);
-        Ok(written.unwrap_or_else(|| self.const_cell(init)))
     }
 
     fn gate_cell(
@@ -521,6 +343,19 @@ impl<'a> Halo2BaseSynthesizer<'a> {
     fn truthy_bit(&mut self, a: &Halo2BaseCell) -> Halo2BaseCell {
         if self.is_bit(a) {
             return *a;
+        }
+        // `bit ? v1 : v0` is non-zero exactly when the bit selects a
+        // non-zero value (the two values differ).
+        if let Some(tv) = self.two_valued_of(a) {
+            match (tv.if_zero != 0, tv.if_one != 0) {
+                (false, true) => return tv.bit,
+                (true, false) => {
+                    let out = self.gate_cell(Fp::one() - tv.bit.value, |gate, ctx| gate.not(ctx, tv.bit.assigned));
+                    self.mark_bit(&out);
+                    return out;
+                }
+                _ => {}
+            }
         }
         let iz = self.is_zero_bit(a);
         let out = self.gate_cell(Fp::one() - iz.value, |gate, ctx| {
@@ -555,64 +390,6 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             .and_then(|w| w.resolve_external(store_idx, output_idx).ok())
     }
 
-    /// Whether `x + 2^63 < 2^64` is already enforced: previously checked,
-    /// a constant (value fixed by the fixed column), or an asserted bit.
-    /// Only witness-independent facts qualify — the skip decision must be
-    /// identical for every witness or keygen and prove would diverge.
-    fn is_signed64_known(&self, x: &Halo2BaseCell) -> bool {
-        self.signed64_cells.contains(&x.id)
-            || self.bit_cell_ids.contains(&x.id)
-            || (self.const_cell_ids.contains(&x.id)
-                // The constant's fixed value must actually lie in the
-                // signed-64 window (canonical i64 encoding roundtrips).
-                && kernel::i64_to_fp(kernel::fp_to_i64(x.value)) == x.value)
-    }
-
-    /// Whether `x < 2^64` is already enforced (same qualifying facts).
-    fn is_unsigned64_known(&self, x: &Halo2BaseCell) -> bool {
-        self.unsigned64_cells.contains(&x.id)
-            || self.bit_cell_ids.contains(&x.id)
-            || (self.const_cell_ids.contains(&x.id)
-                && kernel::fp_to_i64(x.value) >= 0
-                && kernel::i64_to_fp(kernel::fp_to_i64(x.value)) == x.value)
-    }
-
-    /// `x + 2^63`, constrained to `[0, 2^64)` (once per cell), which puts
-    /// `x` in the signed 64-bit window `[-2^63, 2^63)`.
-    fn signed64_shifted(&mut self, x: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
-        let known = self.is_signed64_known(x);
-        let offset = self.const_cell(Fp::from(1u64 << 63));
-        let shifted = self.add_i(x, &offset)?;
-        if !known {
-            self.range_check(&shifted, 64);
-            self.signed64_cells.insert(x.id);
-        }
-        Ok(shifted)
-    }
-
-    /// Constrain `x` to the signed 64-bit window (no-op if already known).
-    fn ensure_signed64(&mut self, x: &Halo2BaseCell) -> Result<(), ProvingError> {
-        if !self.is_signed64_known(x) {
-            self.signed64_shifted(x)?;
-        }
-        Ok(())
-    }
-
-    fn signed_lt(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
-        let value = if kernel::fp_to_i64(a.value) < kernel::fp_to_i64(b.value) {
-            Fp::one()
-        } else {
-            Fp::zero()
-        };
-        let a_shifted = self.signed64_shifted(a)?;
-        let b_shifted = self.signed64_shifted(b)?;
-        let range = self.range_chip();
-        let assigned = range.is_less_than(self.ctx(), a_shifted.assigned, b_shifted.assigned, 64);
-        let out = self.wrap(assigned, value);
-        self.mark_bit(&out);
-        Ok(out)
-    }
-
     /// `[x == 0]` as a marked bit (halo2-base's inverse-witness gadget).
     fn is_zero_bit(&mut self, x: &Halo2BaseCell) -> Halo2BaseCell {
         let value = if x.value == Fp::zero() { Fp::one() } else { Fp::zero() };
@@ -622,400 +399,12 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         bit
     }
 
-    /// `(s, s ? -x : x)` for a hinted sign bit `s = [x < 0]`. The sign is
-    /// NOT pinned here: the caller must constrain the magnitude into a
-    /// window far below p, which rules out the wrong sign (it would make
-    /// the magnitude the field negation of a small number, about p).
-    fn hinted_sign_and_magnitude(
-        &mut self,
-        x: &Halo2BaseCell,
-    ) -> Result<(Halo2BaseCell, Halo2BaseCell), ProvingError> {
-        let sign = self.hint_bit(kernel::fp_is_negative(x.value));
-        let neg_x = self.gate_cell(-x.value, |gate, ctx| gate.neg(ctx, x.assigned));
-        let magnitude = self.select_bit(&sign, &neg_x, x)?;
-        Ok((sign, magnitude))
-    }
-
-    /// `(s, m)` with `s = [x < 0]` and `m = |x|`, for `x` in `[-2^64, 2^64)`.
-    ///
-    /// Soundness: `m = s ? -x : x` with a hinted sign, and the range check
-    /// `m - s ∈ [0, 2^64)`. With the wrong sign `m` is the field negation of
-    /// a small number (about p) and fails the check; for `x = 0` the sign
-    /// `s = 1` gives `m - s = -1`, which fails too. So `s` and `m` are
-    /// functions of `x`, and an `x` outside the window has no witness.
-    fn sign_and_abs(&mut self, x: &Halo2BaseCell) -> Result<(Halo2BaseCell, Halo2BaseCell), ProvingError> {
-        if let Some(pair) = self.sign_abs_cache.get(&x.id) {
-            return Ok(*pair);
-        }
-        let pair = if self.is_const_cell(x) {
-            let negative = kernel::fp_is_negative(x.value);
-            let sign = self.constant_bool(negative)?;
-            let magnitude = self.const_cell(if negative { -x.value } else { x.value });
-            (sign, magnitude)
-        } else {
-            let (sign, magnitude) = self.hinted_sign_and_magnitude(x)?;
-            let shifted = self.sub_i(&magnitude, &sign)?;
-            self.range_check(&shifted, 64);
-            (sign, magnitude)
-        };
-        self.sign_abs_cache.insert(x.id, pair);
-        Ok(pair)
-    }
-
-    /// Constrain `0 <= x < n` for a constant `n >= 1`.
-    ///
-    /// Soundness: with `w >= bit_length(n - 1)`, the checks `x ∈ [0, 2^w)`
-    /// and `n - 1 - x ∈ [0, 2^w)` both hold only if `x <= n - 1`: a negative
-    /// `n - 1 - x` is a field element above `p - 2^w`. For a power of two
-    /// `n = 2^k` the first check with `w = k` is already exact.
-    fn assert_below_constant(&mut self, x: &Halo2BaseCell, n: u128) {
-        debug_assert!(n >= 1);
-        if n.is_power_of_two() {
-            self.range_check(x, n.trailing_zeros() as usize);
-            return;
-        }
-        let bits = self.lookup_aligned((128 - (n - 1).leading_zeros()) as usize);
-        self.range_check(x, bits);
-        let n_minus_one = kernel::i128_to_fp((n - 1) as i128);
-        let gap = self.gate_cell(n_minus_one - x.value, |gate, ctx| {
-            gate.sub(ctx, QuantumCell::Constant(n_minus_one), x.assigned)
-        });
-        self.range_check(&gap, bits);
-    }
-
-    /// Constrain `0 <= x < n` for a cell `n`. Both `x` and `n - 1 - x` are
-    /// range-checked to 64 bits, so `n - 1`, their sum, lies in `[0, 2^65)`
-    /// over the integers: the check also proves `1 <= n <= 2^65`.
-    fn assert_below_cell(&mut self, x: &Halo2BaseCell, n: &Halo2BaseCell) {
-        self.range_check(x, 64);
-        let gap = self.gate_cell(n.value - Fp::one() - x.value, |gate, ctx| {
-            let n_minus_x = gate.sub(ctx, n.assigned, x.assigned);
-            gate.dec(ctx, n_minus_x)
-        });
-        self.range_check(&gap, 64);
-    }
-
-    /// The divisor kind of `b` for [`Self::div_rem_nonzero`]: a constant in
-    /// the signed 64-bit window, or `None` for a cell to be handled
-    /// dynamically.
-    fn constant_divisor(&self, b: &Halo2BaseCell) -> Option<i128> {
-        if !self.is_const_cell(b) {
-            return None;
-        }
-        kernel::fp_to_i128(b.value).filter(|c| c.unsigned_abs() < 1u128 << 63)
-    }
-
-    /// Constrained signed division `a = b*q + r` with the remainder sign of
-    /// `rounding`; returns `(q, r)`. A zero divisor yields `(0, 0)`, the
-    /// shared convention of `kernel::div_rem_or_zero` and the mock backend.
-    ///
-    /// A dynamic divisor `b` is first mapped to `b' = b + [b == 0]` and the
-    /// dividend to `a' = a * [b != 0]`: for `b = 0` this is the division
-    /// `0 / 1`, which forces `(0, 0)`; otherwise it is the original one.
-    fn div_rem(
-        &mut self,
-        a: &Halo2BaseCell,
-        b: &Halo2BaseCell,
-        rounding: Rounding,
-    ) -> Result<(Halo2BaseCell, Halo2BaseCell), ProvingError> {
-        match self.constant_divisor(b) {
-            Some(0) => {
-                let zero = self.constant_int(0)?;
-                Ok((zero, zero))
-            }
-            Some(c) => self.div_rem_nonzero(a, Divisor::Constant(c), rounding),
-            None => {
-                let b_is_zero = self.is_zero_bit(b);
-                let b_nonzero = self.add_i(b, &b_is_zero)?;
-                let a_masked = self.gate_cell(
-                    (Fp::one() - b_is_zero.value) * a.value,
-                    |gate, ctx| gate.mul_not(ctx, b_is_zero.assigned, a.assigned),
-                );
-                self.div_rem_nonzero(&a_masked, Divisor::NonZero(b_nonzero), rounding)
-            }
-        }
-    }
-
-    /// Constrained division by a divisor that is non-zero by construction.
-    ///
-    /// Constraints (A, B, Q, R are the integers the cells encode):
-    ///   * `r = a - b*q` (one gate, exact in the field), `q` a hint;
-    ///   * `q + 2^63 ∈ [0, 2^64)`: Q is in the signed 64-bit window;
-    ///   * `0 <= r_adj < |B|`, where `r_adj = ±r` strips the convention's
-    ///     remainder sign (Euclid: none; Floor: the divisor's; Trunc: the
-    ///     dividend's, from `sign_and_abs`). For a constant divisor this is
-    ///     [`Self::assert_below_constant`]; for a cell it is
-    ///     [`Self::assert_below_cell`] against `|b|`, which also proves
-    ///     `1 <= |B| <= 2^65` and with it the hinted sign of `b`.
-    ///
-    /// Soundness: `|B·Q + R| < 2^65·2^63 + 2^65`, far below p/2, so
-    /// `A = B·Q + R` holds over the integers. A second solution would give
-    /// `B(Q - Q') = R' - R` with `|R' - R| < |B|` and equal remainder signs,
-    /// so `Q = Q'` and `R = R'`: `q` and `r` are functions of `(a, b)`. An
-    /// input whose true quotient leaves the window has no witness.
-    fn div_rem_nonzero(
-        &mut self,
-        a: &Halo2BaseCell,
-        divisor: Divisor,
-        rounding: Rounding,
-    ) -> Result<(Halo2BaseCell, Halo2BaseCell), ProvingError> {
-        let (b_fp, b_value, b_quantum) = match divisor {
-            Divisor::Constant(c) => {
-                let fp = kernel::i128_to_fp(c);
-                (fp, Some(c), QuantumCell::Constant(fp))
-            }
-            Divisor::Positive(b) | Divisor::NonZero(b) => {
-                (b.value, kernel::fp_to_i128(b.value), QuantumCell::Existing(b.assigned))
-            }
-        };
-        let q_value = match (kernel::fp_to_i128(a.value), b_value) {
-            (Some(av), Some(bv)) => kernel::div_rem_or_zero(av, bv, rounding).0,
-            _ => 0,
-        };
-        let q = self.hint(kernel::i128_to_fp(q_value));
-        let r = self.gate_cell(a.value - b_fp * q.value, |gate, ctx| {
-            gate.sub_mul(ctx, a.assigned, b_quantum, q.assigned)
-        });
-        self.ensure_signed64(&q)?;
-
-        // A dynamic divisor's hinted sign and magnitude, pinned by the
-        // remainder bound below.
-        let dynamic_sign = match divisor {
-            Divisor::NonZero(b) => Some(self.hinted_sign_and_magnitude(&b)?),
-            _ => None,
-        };
-        let r_adj = match rounding {
-            Rounding::Euclid => r,
-            Rounding::Floor => match (divisor, dynamic_sign) {
-                (Divisor::Constant(c), _) if c < 0 => self.negate(&r),
-                (_, Some((b_sign, _))) => self.negate_if(&r, &b_sign)?,
-                _ => r,
-            },
-            Rounding::Trunc => {
-                let (a_sign, _) = self.sign_and_abs(a)?;
-                self.negate_if(&r, &a_sign)?
-            }
-        };
-        match (divisor, dynamic_sign) {
-            (Divisor::Constant(c), _) => self.assert_below_constant(&r_adj, c.unsigned_abs()),
-            (_, Some((_, b_magnitude))) => self.assert_below_cell(&r_adj, &b_magnitude),
-            (Divisor::Positive(b), _) => self.assert_below_cell(&r_adj, &b),
-            (Divisor::NonZero(_), None) => unreachable!("non-zero divisor without a sign"),
-        }
-        Ok((q, r))
-    }
-
-    /// `floor(raw / 2^P)` for the raw product of Q values (`mul_f`,
-    /// `product_sum_f`); `q_value` is the quotient the kernel computed.
-    ///
-    /// Soundness: `rem = raw - q*2^P` (gate) is range-checked to
-    /// `[0, 2^P)` and `q` to the signed 64-bit window, so `q*2^P + rem` lies
-    /// in `[-2^95, 2^95)`: it equals `raw` over the integers and `q` is the
-    /// unique floor. Without the window check every remainder in
-    /// `[0, 2^P)` would be accepted, each with its own (huge) `q`.
-    fn rescale(&mut self, raw: &Halo2BaseCell, q_value: Fp) -> Result<Halo2BaseCell, ProvingError> {
-        let precision_bits = self.params.precision_bits;
-        let scale = kernel::scale_fp(precision_bits);
-        let q = self.hint(q_value);
-        let rem = self.gate_cell(raw.value - q.value * scale, |gate, ctx| {
-            gate.sub_mul(ctx, raw.assigned, q.assigned, QuantumCell::Constant(scale))
-        });
-        self.range_check(&rem, precision_bits as usize);
-        self.ensure_signed64(&q)?;
-        Ok(q)
-    }
-
-    /// `floor(sqrt(x * 2^P))`, the Q-encoded square root, for a cell `x`
-    /// the caller has proven to lie in `[0, 2^64)`.
-    fn sqrt_nonneg(&mut self, x: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
-        let precision_bits = self.params.precision_bits;
-        let scale = kernel::scale_fp(precision_bits);
-        let big_x = self.gate_cell(x.value * scale, |gate, ctx| {
-            gate.mul(ctx, x.assigned, QuantumCell::Constant(scale))
-        });
-        self.isqrt(&big_x, 64 + precision_bits as usize)
-    }
-
-    /// `floor(sqrt(n))` for a cell `n` the caller has proven to lie in
-    /// `[0, 2^n_bits)`.
-    ///
-    /// Soundness: with the hint `y` and `d = n - y^2` (gate), the checks
-    /// `y ∈ [0, 2^wy)`, `d ∈ [0, 2^wd)` and `2y - d ∈ [0, 2^wd)` give
-    /// `n = y^2 + d` over the integers (both terms are far below p) and
-    /// `0 <= d <= 2y`, i.e. `y^2 <= n < (y + 1)^2`. Exactly one `y >= 0`
-    /// satisfies that, so `y` is a function of `n`. `wy` and `wd` are sized
-    /// for the largest admissible `n`.
-    fn isqrt(&mut self, n: &Halo2BaseCell, n_bits: usize) -> Result<Halo2BaseCell, ProvingError> {
-        let y_value = kernel::fp_to_i128(n.value)
-            .filter(|v| *v >= 0)
-            .map_or(0, |v| kernel::isqrt_u128(v as u128) as i128);
-        let y = self.hint(kernel::i128_to_fp(y_value));
-        let d = self.gate_cell(n.value - y.value * y.value, |gate, ctx| {
-            gate.sub_mul(ctx, n.assigned, y.assigned, y.assigned)
-        });
-        let root_bits = n_bits.div_ceil(2);
-        let wy = self.lookup_aligned(root_bits + 1);
-        let wd = self.lookup_aligned(root_bits + 2);
-        self.range_check(&y, wy);
-        self.range_check(&d, wd);
-        let two_y = self.add_i(&y, &y)?;
-        let slack = self.sub_i(&two_y, &d)?;
-        self.range_check(&slack, wd);
-        Ok(y)
-    }
-
-    /// `c - x` for a constant `c` (one gate).
-    fn constant_minus(&mut self, c: i128, x: &Halo2BaseCell) -> Halo2BaseCell {
-        let c_fp = kernel::i128_to_fp(c);
-        self.gate_cell(c_fp - x.value, |gate, ctx| gate.sub(ctx, QuantumCell::Constant(c_fp), x.assigned))
-    }
-
-    /// Horner evaluation with leading-first Q coefficients, every product
-    /// rounded down by `mul_f`: the algorithm of `kernel::horner_eval`.
-    fn poly_eval_horner(&mut self, x: &Halo2BaseCell, coefs: &[Fp]) -> Result<Halo2BaseCell, ProvingError> {
-        let (first, rest) = coefs
-            .split_first()
-            .ok_or_else(|| ProvingError::synthesis("empty polynomial"))?;
-        let mut acc = self.const_cell(*first);
-        for coef in rest {
-            let prod = self.mul_f(x, &acc)?;
-            acc = self.gate_cell(prod.value + coef, |gate, ctx| {
-                gate.add(ctx, prod.assigned, QuantumCell::Constant(*coef))
-            });
-        }
-        Ok(acc)
-    }
-
-    /// The slot value at a dynamic address, before overlay writes: a mux
-    /// over the slots reachable from the address's affine view.
-    ///
-    /// Two dynamic roots (windowed gathers, addr = r1*s1 + r2*s2 + c):
-    /// factored two-stage gather. Stage-1 planes Σ_v eq(r1,v)*mem[v*s1+t]
-    /// are cached and shared across reads; each read then muxes the
-    /// s1/s2 digit choices of r2. Both roots are pinned one-hot and the
-    /// full address is range-checked (an out-of-bounds (v,w) pair would
-    /// otherwise silently select the init value).
-    ///
-    /// One root (strided gathers, addr = root*s + c): mux only the slot
-    /// indices reachable from the root; eq(root, v) indicators are shared
-    /// across reads. The one-hot membership over the in-bounds choice set
-    /// subsumes the range check.
-    fn gather_slots(&mut self, segment_id: u32, addr: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
-        let len = self.segment(segment_id)?.slots.len();
-        let init = self.segment(segment_id)?.init;
-        let lin = self.affine_lin_of(addr);
-        let mut out: Option<Halo2BaseCell> = None;
-
-        if lin.terms.len() == 2 {
-            let (mut t1, mut t2) = (lin.terms[0], lin.terms[1]);
-            if t1.1.abs() < t2.1.abs() {
-                std::mem::swap(&mut t1, &mut t2);
-            }
-            let ((root1, s1), (root2, s2)) = (t1, t2);
-            if s1 > 0 && s2 > 0 && s1 % s2 == 0 && s1 / s2 >= 2 {
-                // Digit-canonical choices for the minor root: residuals that
-                // stay inside one major stride. Matches Zinnia's clamped
-                // in-bounds index lowering; a kernel violating it fails the
-                // one-hot assert at verify time rather than proving silently.
-                let w_choices: Vec<i64> = (0..s1 / s2)
-                    .filter(|w| {
-                        let t = w * s2 + lin.offset;
-                        (0..len as i64).any(|idx| (idx - t) % s1 == 0)
-                    })
-                    .collect();
-                let v_union: Vec<i64> = {
-                    let mut vs: Vec<i64> = Vec::new();
-                    for w in &w_choices {
-                        let t = w * s2 + lin.offset;
-                        for idx in 0..len as i64 {
-                            let num = idx - t;
-                            if num % s1 == 0 && !vs.contains(&(num / s1)) {
-                                vs.push(num / s1);
-                            }
-                        }
-                    }
-                    vs.sort_unstable();
-                    vs
-                };
-                if !w_choices.is_empty() && !v_union.is_empty() {
-                    let range = self.range_chip();
-                    range.check_less_than_safe(self.ctx(), addr.assigned, len as u64);
-                    let mut acc = self.const_cell(init);
-                    for w in &w_choices {
-                        let t = w * s2 + lin.offset;
-                        let plane = self.gathered_plane(segment_id, &root1, s1, t, len, init)?;
-                        let ind = self.root_indicator(&root2, *w)?;
-                        acc = self.select_bit(&ind, &plane, &acc)?;
-                    }
-                    self.assert_one_hot(&root2, &w_choices)?;
-                    self.assert_one_hot(&root1, &v_union)?;
-                    out = Some(acc);
-                }
-            }
-        }
-
-        if out.is_none() {
-            let (root, scale, offset) = match lin.terms.len() {
-                1 => (lin.terms[0].0, lin.terms[0].1, lin.offset),
-                _ => (*addr, 1, 0),
-            };
-            // Constraint-derived root interval shrinks the choice set: a
-            // unit-stride gather (addr = base + col, col in [0,W)) muxes W
-            // slots instead of the whole segment. The membership assert
-            // below stays sound — the interval is enforced by the root's
-            // defining gates, so the true value is always inside it.
-            let root_iv = self.interval_of(&root);
-            let mut choices: Vec<(i64, usize)> = Vec::new(); // (root value v, slot idx)
-            for idx in 0..len as i64 {
-                let num = idx - offset;
-                if scale != 0 && num % scale == 0 {
-                    let v = num / scale;
-                    if let Some((lo, hi)) = root_iv {
-                        if v < lo || v > hi {
-                            continue;
-                        }
-                    }
-                    choices.push((v, idx as usize));
-                }
-            }
-            if choices.is_empty() {
-                return Err(ProvingError::synthesis(
-                    "dynamic memory read can never be in bounds",
-                ));
-            }
-            let mut acc = self.const_cell(init);
-            for (v, idx) in &choices {
-                let ind = self.root_indicator(&root, *v)?;
-                let slot = self.slot_cell(segment_id, *idx)?;
-                acc = self.select_bit(&ind, &slot, &acc)?;
-            }
-            // Soundness: the gates that built `addr` already enforce
-            // addr == root * scale + offset; pinning root one-hot onto the
-            // in-bounds choices implies addr in bounds, replacing the
-            // per-read range check.
-            let vs: Vec<i64> = choices.iter().map(|(v, _)| *v).collect();
-            self.assert_one_hot(&root, &vs)?;
-            out = Some(acc);
-        }
-
-        Ok(out.expect("dynamic read lowering produced a value"))
-    }
-
-    /// `[x < c]` as a marked bit, for an `x` the caller has proven to lie
-    /// in `[0, 2^bits)` and a constant `c < 2^bits` (the precondition of
-    /// halo2-base's `is_less_than`).
-    fn below_constant_bit(&mut self, x: &Halo2BaseCell, c: i128, bits: usize) -> Halo2BaseCell {
-        let c_fp = kernel::i128_to_fp(c);
-        let range = self.range_chip();
-        let assigned = range.is_less_than(self.ctx(), x.assigned, QuantumCell::Constant(c_fp), bits);
-        let value = if kernel::fp_to_i128(x.value).is_some_and(|v| v < c) { Fp::one() } else { Fp::zero() };
-        let bit = self.wrap(assigned, value);
-        self.mark_bit(&bit);
-        bit
-    }
-
     fn negate(&mut self, value: &Halo2BaseCell) -> Halo2BaseCell {
-        self.gate_cell(-value.value, |gate, ctx| gate.neg(ctx, value.assigned))
+        let out = self.gate_cell(-value.value, |gate, ctx| gate.neg(ctx, value.assigned));
+        if let Some(range) = self.proven_range(value) {
+            self.prove_range(&out, range.neg());
+        }
+        out
     }
 
     /// `sign ? -value : value` for a bit `sign`.
@@ -1024,25 +413,20 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         self.select_bit(sign, &neg, value)
     }
 
-    /// `base^e` for a constant `e >= 0`, by square-and-multiply.
-    fn pow_const(&mut self, base: &Halo2BaseCell, e: u64) -> Result<Halo2BaseCell, ProvingError> {
-        let mut acc = self.constant_int(1)?;
-        let mut power = *base;
-        let mut rest = e;
-        while rest > 0 {
-            if rest & 1 == 1 {
-                acc = self.mul_i(&acc, &power)?;
-            }
-            rest >>= 1;
-            if rest > 0 {
-                power = self.mul_i(&power, &power)?;
-            }
-        }
-        Ok(acc)
-    }
 }
 
 impl Synthesizer for Halo2BaseSynthesizer<'_> {
+    fn on_stmt_begin(&mut self, stmt_id: u32) {
+        if self.profile.is_none() {
+            return;
+        }
+        self.close_profile_entry();
+        let (advice, lookup) = self.cell_counters();
+        if let Some(profile) = self.profile.as_mut() {
+            profile.current = Some((stmt_id, advice, lookup));
+        }
+    }
+
     fn on_stmt_result(
         &mut self,
         _stmt_id: u32,
@@ -1077,17 +461,30 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn add_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        // Affine lineage now lives in the provenance table (derived once
-        // in the IRBuilder); `affine_lin_of` reads it live.
-        Ok(self.gate_cell(a.value + b.value, |gate, ctx| gate.add(ctx, a.assigned, b.assigned)))
+        let out = self.gate_cell(a.value + b.value, |gate, ctx| gate.add(ctx, a.assigned, b.assigned));
+        self.propagate_range(&out, a, b, Interval::add);
+        self.propagate_two_valued(&out, a, b, |x, c| x.checked_add(c));
+        self.propagate_two_valued(&out, b, a, |x, c| x.checked_add(c));
+        Ok(out)
     }
 
     fn sub_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        Ok(self.gate_cell(a.value - b.value, |gate, ctx| gate.sub(ctx, a.assigned, b.assigned)))
+        // A fresh cell per IR value (provenance maps cells to values one to
+        // one); later selects on the same operands may reuse it.
+        let out = self.gate_cell(a.value - b.value, |gate, ctx| gate.sub(ctx, a.assigned, b.assigned));
+        self.differences.entry((a.id, b.id)).or_insert(out);
+        self.propagate_range(&out, a, b, Interval::sub);
+        self.propagate_two_valued(&out, a, b, |x, c| x.checked_sub(c));
+        self.propagate_two_valued(&out, b, a, |x, c| c.checked_sub(x));
+        Ok(out)
     }
 
     fn mul_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        Ok(self.gate_cell(a.value * b.value, |gate, ctx| gate.mul(ctx, a.assigned, b.assigned)))
+        let out = self.gate_cell(a.value * b.value, |gate, ctx| gate.mul(ctx, a.assigned, b.assigned));
+        self.propagate_range(&out, a, b, Interval::mul);
+        self.propagate_two_valued(&out, a, b, |x, c| x.checked_mul(c));
+        self.propagate_two_valued(&out, b, a, |x, c| x.checked_mul(c));
+        Ok(out)
     }
 
     /// The IR's `DivI`: field division `a * b^-1`, total, with a zero
@@ -1214,42 +611,26 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         self.div_i(&one, a)
     }
 
-    fn bit_and_i(&mut self, _: &Self::CellRef, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("bit_and_i") }
-    fn bit_or_i(&mut self, _: &Self::CellRef, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("bit_or_i") }
-    fn bit_xor_i(&mut self, _: &Self::CellRef, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("bit_xor_i") }
+    fn bit_and_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.bit_and(a, b) }
+    fn bit_or_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.bit_or(a, b) }
+    fn bit_xor_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.bit_xor(a, b) }
     fn shl_i(&mut self, _: &Self::CellRef, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("shl_i") }
     fn shr_i(&mut self, _: &Self::CellRef, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("shr_i") }
-    fn bit_not_i(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("bit_not_i") }
+    fn bit_not_i(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.bit_not(a) }
 
     fn add_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.add_i(a, b) }
     fn sub_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.sub_i(a, b) }
 
     fn mul_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let (q, _) = kernel::fp_mul_rescale(a.value, b.value, self.params.precision_bits);
-        let raw = self.mul_i(a, b)?;
-        self.rescale(&raw, q)
+        self.fixed_mul(a, b)
     }
 
     fn product_sum_f(&mut self, pairs: &[(Self::CellRef, Self::CellRef)]) -> Result<Self::CellRef, ProvingError> {
-        let mut raw = self.constant_int(0)?;
-        for (a, b) in pairs {
-            raw = self.gate_cell(raw.value + a.value * b.value, |gate, ctx| {
-                gate.mul_add(ctx, a.assigned, b.assigned, raw.assigned)
-            });
-        }
-        let values: Vec<(Fp, Fp)> = pairs.iter().map(|(a, b)| (a.value, b.value)).collect();
-        let (q, _) = kernel::fp_product_sum_rescale(&values, self.params.precision_bits);
-        self.rescale(&raw, q)
+        self.fixed_product_sum(pairs)
     }
 
-    /// Fixed-point `a / b`: `(a * 2^P) / b` rounded by `Rounding::Euclid`,
-    /// as `kernel::fp_div_prescale`; 0 for a zero divisor.
     fn div_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let scale = kernel::scale_fp(self.params.precision_bits);
-        let scaled = self.gate_cell(a.value * scale, |gate, ctx| {
-            gate.mul(ctx, a.assigned, QuantumCell::Constant(scale))
-        });
-        Ok(self.div_rem(&scaled, b, Rounding::Euclid)?.0)
+        self.fixed_div(a, b)
     }
 
     /// Float `a // b = floor(a / b)` as a Q value. The ratio of two Q values
@@ -1266,33 +647,21 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         Ok(self.div_rem(a, b, Rounding::Floor)?.1)
     }
     fn pow_f(&mut self, base: &Self::CellRef, exp: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        self.pow_f_int(base, exp)
+        self.fixed_pow(base, exp)
     }
     fn pow_f_int(&mut self, base: &Self::CellRef, exp: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let max_exp = 8usize;
-        let range = self.range_chip();
-        range.check_less_than_safe(self.ctx(), exp.assigned, (max_exp + 1) as u64);
-
-        let mut powers = Vec::with_capacity(max_exp + 1);
-        let mut acc = self.constant_float(1.0)?;
-        powers.push(acc);
-        for _ in 1..=max_exp {
-            acc = self.mul_f(&acc, base)?;
-            powers.push(acc);
-        }
-
-        let mut out = self.constant_float(0.0)?;
-        for (i, power) in powers.iter().enumerate() {
-            let idx = self.constant_int(i as i64)?;
-            let hit = self.eq_i(exp, &idx)?;
-            out = self.select_bit(&hit, power, &out)?;
-        }
-        Ok(out)
+        self.fixed_pow_int(base, exp)
     }
     fn abs_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.abs_i(a) }
     fn sign_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.sign_i(a) }
 
     fn eq_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if let Some(bit) = self.equals_constant(a, b)? {
+            return Ok(bit);
+        }
+        if let Some(bit) = self.equals_constant(b, a)? {
+            return Ok(bit);
+        }
         let value = if a.value == b.value { Fp::one() } else { Fp::zero() };
         let out = self.gate_cell(value, |gate, ctx| gate.is_equal(ctx, a.assigned, b.assigned));
         self.mark_bit(&out);
@@ -1302,26 +671,15 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         let eq = self.eq_i(a, b)?;
         self.logical_not(&eq)
     }
+    /// Signed `a < b`; operands outside the signed 64-bit window have no
+    /// witness (see `ranges::less_than`).
     fn lt_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        self.signed_lt(a, b)
+        self.less_than(self.operand(a), self.operand(b), Some(Interval::SIGNED64))
     }
+    /// Unsigned `a < b` for operands in `[0, 2^64)` (each is range-checked
+    /// there unless already known to lie inside).
     fn lt_i_bounded(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let value = if kernel::fp_to_i64(a.value) < kernel::fp_to_i64(b.value) { Fp::one() } else { Fp::zero() };
-        let a_known = self.is_unsigned64_known(a);
-        let b_known = self.is_unsigned64_known(b);
-        let range = self.range_chip();
-        if !a_known {
-            range.range_check(self.ctx(), a.assigned, 64);
-            self.unsigned64_cells.insert(a.id);
-        }
-        if !b_known {
-            range.range_check(self.ctx(), b.assigned, 64);
-            self.unsigned64_cells.insert(b.id);
-        }
-        let assigned = range.is_less_than(self.ctx(), a.assigned, b.assigned, 64);
-        let out = self.wrap(assigned, value);
-        self.mark_bit(&out);
-        Ok(out)
+        self.less_than(self.operand(a), self.operand(b), Some(Interval::UNSIGNED64))
     }
     fn gt_i_bounded(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.lt_i_bounded(b, a) }
     fn lte_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
@@ -1361,23 +719,26 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         let pi = kernel::pi_q(precision_bits);
         let half_pi = kernel::half_pi_q(precision_bits);
         let quarter_pi = kernel::quarter_pi_q(precision_bits);
-        let compare_bits = self.lookup_aligned((128 - (2 * pi).leading_zeros()) as usize);
         let (negative, magnitude) = self.sign_and_abs(a)?;
         let (_, r) = self.div_rem_nonzero(&magnitude, Divisor::Constant(2 * pi), Rounding::Euclid)?;
 
         // r in [0, 2π): fold onto [0, π).
-        let below_pi = self.below_constant_bit(&r, pi, compare_bits);
+        let below_pi = self.less_than(Operand::Cell(r), Operand::Constant(pi), None)?;
         let folded_bit = self.logical_not(&below_pi)?;
         let pi_fp = kernel::i128_to_fp(pi);
         let r = self.gate_cell(r.value - folded_bit.value * pi_fp, |gate, ctx| {
             gate.sub_mul(ctx, r.assigned, folded_bit.assigned, QuantumCell::Constant(pi_fp))
         });
+        // r - [r >= π]·π for r in [0, 2π) lies in [0, π).
+        self.prove_range(&r, Interval { lo: 0, hi: pi - 1 });
         // [0, π): mirror onto [0, π/2].
-        let up_to_half_pi = self.below_constant_bit(&r, half_pi + 1, compare_bits);
+        let up_to_half_pi = self.less_than(Operand::Cell(r), Operand::Constant(half_pi + 1), None)?;
         let mirrored = self.constant_minus(pi, &r);
         let r = self.select_bit(&up_to_half_pi, &r, &mirrored)?;
+        // r if r <= π/2, else π - r < π/2 (r > π/2): in [0, π/2].
+        self.prove_range(&r, Interval { lo: 0, hi: half_pi });
         // [0, π/2]: above π/4 use the co-function on π/2 - r.
-        let up_to_quarter_pi = self.below_constant_bit(&r, quarter_pi + 1, compare_bits);
+        let up_to_quarter_pi = self.less_than(Operand::Cell(r), Operand::Constant(quarter_pi + 1), None)?;
         let complement = self.constant_minus(half_pi, &r);
         let s = self.select_bit(&up_to_quarter_pi, &r, &complement)?;
 
@@ -1395,10 +756,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn sinh_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("sinh_f") }
     /// `cos(a) = sin(a + pi/2)`, as `kernel::fp_cos`.
     fn cos_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let half_pi = kernel::i128_to_fp(kernel::half_pi_q(self.params.precision_bits));
-        let shifted = self.gate_cell(a.value + half_pi, |gate, ctx| {
-            gate.add(ctx, a.assigned, QuantumCell::Constant(half_pi))
-        });
+        let shifted = self.add_constant(a, kernel::half_pi_q(self.params.precision_bits));
         self.sin_f(&shifted)
     }
     fn cosh_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("cosh_f") }
@@ -1407,12 +765,19 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     /// `sqrt` as `kernel::fp_sqrt`: `floor(sqrt(a * 2^P))`, and 0 for a
     /// negative input. The pinned sign bit of `sign_and_abs` zeroes a
     /// negative input; `sqrt_nonneg` pins the root.
+    /// An `a` proven non-negative (for example by the domain assertion the
+    /// frontend emits before `np.sqrt`) needs no sign handling, and its
+    /// range bounds the root's checks.
     fn sqrt_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if let Some(range) = self.proven_range(a).filter(|r| r.lo >= 0 && r.hi < 1i128 << 64) {
+            let bits = (128 - range.hi.leading_zeros()) as usize;
+            return self.sqrt_nonneg(a, bits);
+        }
         let (negative, _) = self.sign_and_abs(a)?;
         let clamped = self.gate_cell((Fp::one() - negative.value) * a.value, |gate, ctx| {
             gate.mul_not(ctx, negative.assigned, a.assigned)
         });
-        self.sqrt_nonneg(&clamped)
+        self.sqrt_nonneg(&clamped, 64)
     }
     fn exp_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("exp_f") }
     fn log_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("log_f") }
@@ -1429,7 +794,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         let precision_bits = self.params.precision_bits;
         let one = kernel::scale_fp(precision_bits);
         let (_, magnitude) = self.sign_and_abs(a)?;
-        let in_domain = self.below_constant_bit(&magnitude, (1i128 << precision_bits) + 1, 65);
+        let in_domain = self.less_than(Operand::Cell(magnitude), Operand::Constant((1i128 << precision_bits) + 1), None)?;
         let x = self.mul_i(&in_domain, a)?;
 
         let one_squared = one * one;
@@ -1471,6 +836,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         let ta = self.truthy_bit(a);
         let out = self.gate_cell(Fp::one() - ta.value, |gate, ctx| gate.not(ctx, ta.assigned));
         self.mark_bit(&out);
+        self.negations.insert(out.id, ta.id);
         Ok(out)
     }
 
@@ -1485,25 +851,29 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         // select(c, x, 0) == c*x — one gate instead of two.
         let t_zero = self.is_const_cell(if_true) && if_true.value == Fp::zero();
         let f_zero = self.is_const_cell(if_false) && if_false.value == Fp::zero();
+        // Otherwise `f + c·(t - f)`, one gate when the difference exists
+        // already (the comparison that produced `c`, or the select with the
+        // branches swapped, made it): `f - c·(f - t)` for the swapped one.
         let out = if t_zero {
             self.gate_cell(value, |gate, ctx| gate.mul_not(ctx, cond.assigned, if_false.assigned))
         } else if f_zero {
             self.gate_cell(value, |gate, ctx| gate.mul(ctx, cond.assigned, if_true.assigned))
+        } else if let Some(swapped) = self.differences.get(&(if_false.id, if_true.id)).copied() {
+            self.gate_cell(value, |gate, ctx| gate.sub_mul(ctx, if_false.assigned, cond.assigned, swapped.assigned))
         } else {
-            self.gate_cell(value, |gate, ctx| gate.select(ctx, if_true.assigned, if_false.assigned, cond.assigned))
+            let diff = self.difference(if_true, if_false);
+            self.gate_cell(value, |gate, ctx| gate.mul_add(ctx, cond.assigned, diff.assigned, if_false.assigned))
         };
-        // The select gate pins out to one of the branches, so window facts
-        // shared by both branches hold for the output as well.
-        if self.is_signed64_known(if_true) && self.is_signed64_known(if_false) {
-            self.signed64_cells.insert(out.id);
+        // The select gate pins out to one of the branches (cond is a bit), so
+        // the hull of the branches' proven ranges holds for the output, and
+        // a select between bits is a bit.
+        self.propagate_range(&out, if_true, if_false, |t, f| Some(t.hull(f)));
+        if self.is_bit(if_true) && self.is_bit(if_false) {
+            self.mark_bit(&out);
         }
-        if self.is_unsigned64_known(if_true) && self.is_unsigned64_known(if_false) {
-            self.unsigned64_cells.insert(out.id);
-        }
-        if let (Some((tl, th)), Some((fl, fh))) =
-            (self.interval_of(if_true), self.interval_of(if_false))
-        {
-            self.value_interval.insert(out.id, (tl.min(fl), th.max(fh)));
+        let constant = |s: &Self, x: &Halo2BaseCell| s.is_const_cell(x).then(|| kernel::fp_to_i128(x.value)).flatten();
+        if let (Some(t), Some(f)) = (constant(self, if_true), constant(self, if_false)) {
+            self.set_two_valued(&out, TwoValued { bit: *cond, if_zero: f, if_one: t });
         }
         Ok(out)
     }
@@ -1531,12 +901,20 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     /// lowering lacked: any remainder magnitude below `2^P` was accepted
     /// with a matching non-integer quotient).
     fn int_cast(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if let Some(n) = self.float_casts.get(&a.id) {
+            return Ok(*n); // trunc(n·2^P / 2^P) = n
+        }
         let scale = 1i128 << self.params.precision_bits;
         Ok(self.div_rem_nonzero(a, Divisor::Constant(scale), Rounding::Trunc)?.0)
     }
+    /// Integer to Q value: `a · 2^P` (one gate). The result is remembered as
+    /// a float cast of `a`, so products and quotients with it stay exact
+    /// (see `fixed_point::Factor`).
     fn float_cast(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         let scale = self.constant_int(crate::prove::field::quantization_scale(self.params.precision_bits) as i64)?;
-        self.mul_i(a, &scale)
+        let out = self.mul_i(a, &scale)?;
+        self.float_casts.insert(out.id, *a);
+        Ok(out)
     }
     fn bool_cast(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { Ok(self.truthy_bit(a)) }
 
@@ -1573,17 +951,23 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
             });
         }
         self.assert_const(a, Fp::one());
+        self.refine_by_assertion(a);
         Ok(())
     }
     fn assert_u128_lt(&mut self, idx: &Self::CellRef, hi: &Self::CellRef) -> Result<(), ProvingError> {
-        let lt = self.lt_i_bounded(idx, hi)?;
-        self.assert_true(&lt)
+        let (i, h) = (kernel::fp_to_i128(idx.value), kernel::fp_to_i128(hi.value));
+        if !i.zip(h).is_some_and(|(i, h)| 0 <= i && i < h) {
+            let (i, h) = (kernel::fp_to_i64(idx.value), kernel::fp_to_i64(hi.value));
+            self.note_unsat(move || {
+                format!("Witness does not satisfy circuit constraints: index {} is not below {}", i, h)
+            });
+        }
+        self.assert_less(idx, self.operand(hi))
     }
     fn assert_u128_lt_bit(&mut self, idx: &Self::CellRef, hi: u64, bit: u32, bits: u32) -> Result<Self::CellRef, ProvingError> {
         let key = (idx.id, hi, bits);
         if !self.u128_lt_bit_cache.contains_key(&key) {
-            let range = self.range_chip();
-            range.check_less_than_safe(self.ctx(), idx.assigned, hi);
+            self.assert_less(idx, Operand::Constant(hi as i128))?;
             let decomposed = self.gate.num_to_bits(self.builder.main(0), idx.assigned, bits as usize);
             let cells = decomposed
                 .into_iter()
@@ -1601,14 +985,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn assert_non_neg_i(&mut self, a: &Self::CellRef) -> Result<(), ProvingError> {
         // For signed-i64-domain values, x >= 0 is exactly x in [0, 2^63):
         // negatives encode as field elements near p and fail the check.
-        let range = self.range_chip();
-        range.range_check(self.ctx(), a.assigned, 63);
-        // The check enforces a in [0, 2^63); tighten any known interval.
-        let tightened = match self.interval_of(a) {
-            Some((lo, hi)) => (lo.max(0), hi),
-            None => (0, i64::MAX),
-        };
-        self.value_interval.insert(a.id, tightened);
+        self.range_check(a, 63);
         Ok(())
     }
 
@@ -1635,52 +1012,14 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn allocate_memory(&mut self, segment_id: u32, size: u32, init: i64) -> Result<(), ProvingError> {
-        let slots_version = self.segments.get(&segment_id).map_or(0, |s| s.slots_version + 1);
-        self.segments.insert(
-            segment_id,
-            Segment {
-                init: kernel::i64_to_fp(init),
-                slots: vec![None; size as usize],
-                overlay: Vec::new(),
-                slots_version,
-            },
-        );
+        self.memory_allocate(segment_id, size, init);
         Ok(())
     }
-    /// See [`Segment`] for the program-order rule. A constant address must
-    /// be in bounds at synthesis time; a dynamic one is range-checked.
     fn write_memory(&mut self, segment_id: u32, addr: &Self::CellRef, value: &Self::CellRef) -> Result<(), ProvingError> {
-        let len = self.segment(segment_id)?.slots.len();
-        let const_addr = self.is_const_cell(addr).then(|| kernel::fp_to_i64(addr.value));
-        match const_addr {
-            Some(a) if a < 0 || a as usize >= len => {
-                return Err(ProvingError::synthesis("memory write out of bounds"));
-            }
-            Some(_) => {}
-            None => {
-                let range = self.range_chip();
-                range.check_less_than_safe(self.ctx(), addr.assigned, len as u64);
-            }
-        }
-        let segment = self.segments.get_mut(&segment_id).expect("checked above");
-        match const_addr {
-            Some(a) if segment.overlay.is_empty() => {
-                segment.slots[a as usize] = Some(*value);
-                segment.slots_version += 1;
-            }
-            _ => segment.overlay.push((*addr, *value)),
-        }
-        Ok(())
+        self.memory_write(segment_id, addr, value)
     }
     fn read_memory(&mut self, segment_id: u32, addr: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let base = if self.is_const_cell(addr) {
-            let a = kernel::fp_to_i64(addr.value);
-            let idx = usize::try_from(a).unwrap_or(usize::MAX);
-            self.slot_cell(segment_id, idx)?
-        } else {
-            self.gather_slots(segment_id, addr)?
-        };
-        self.apply_overlay(segment_id, addr, base)
+        self.memory_read(segment_id, addr)
     }
     fn memory_trace_emit(&mut self, _: u32, _: bool, _: &[Self::CellRef]) -> Result<(), ProvingError> { Ok(()) }
     fn memory_trace_seal(&mut self) -> Result<(), ProvingError> { Ok(()) }
