@@ -234,3 +234,16 @@ pub(crate) fn zero_row_graph(rows: usize, cols: usize, index: i64, construction:
     let lowered = crate::lower::emit::lower(&graph, Target::Halo2Base, &[construction]).expect("a write to lower");
     ScatterGraph { graph: optimized(lowered), inputs, expected }
 }
+
+/// NumPy's position of the input `x` on an axis of length `n` by the
+/// frontend's index wrap (`helpers::static_array::base::normalize_dynamic_index`),
+/// exposed. `expected`: `None` for an index outside `[-n, n)`.
+pub(crate) fn wrap_graph(x: i64, n: usize) -> ScatterGraph {
+    let mut b = IRBuilder::new();
+    let mut inputs = Vec::new();
+    let x_cell = read(&mut b, &mut inputs, "x".into(), x);
+    let wrapped = crate::helpers::static_array::base::normalize_dynamic_index(&mut b, &x_cell, n);
+    b.ir_expose_public_i(&wrapped);
+    let expected = numpy_position(x, n, Positions::Element).map(|p| vec![p as i64]);
+    ScatterGraph { graph: b.export_ir_graph(), inputs, expected }
+}

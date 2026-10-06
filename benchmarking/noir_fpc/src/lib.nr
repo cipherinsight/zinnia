@@ -1152,6 +1152,21 @@ pub fn sorted_hint_at<let N: u32>(a: [Field; N], rank: Field) -> Field {
     unsafe { lane_or_zero(hint_sorted(a), rank) }
 }
 
+/// [x < 0] for the signed reading of x (kernel::hint_values, Negative). A
+/// prover hint: the caller must pin it.
+pub fn negative_hint(x: Field) -> Field {
+    // Safety: a prover hint; Zinnia's IR pins it.
+    unsafe { hint_negative_flag(x) }
+}
+
+unconstrained fn hint_negative_flag(x: Field) -> Field {
+    if hint_is_negative(x) {
+        1
+    } else {
+        0
+    }
+}
+
 // NumPy's position of the index x on an axis of length n: x for 0 <= x <= n,
 // x + n for -n <= x < 0 (kernel::position_one_hot), or none.
 unconstrained fn hint_position(x: Field, n: Field) -> (bool, Field) {

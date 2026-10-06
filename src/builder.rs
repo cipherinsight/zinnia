@@ -3403,7 +3403,9 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
         // A hint is never folded: its value is the prover's to choose and
         // only its pins (separate statements) relate it to its operands.
         IR::Hint { kind, len } => match kind {
-            crate::ir_defs::HintKind::StableArgsort | crate::ir_defs::HintKind::PositionOneHot => {
+            crate::ir_defs::HintKind::StableArgsort
+            | crate::ir_defs::HintKind::PositionOneHot
+            | crate::ir_defs::HintKind::Negative => {
                 Value::Integer(ScalarValue::new(None, Some(ir_id)))
             }
             crate::ir_defs::HintKind::SortedValues => {

@@ -511,11 +511,43 @@ pub(crate) fn normalize_dynamic_index(b: &mut IRBuilder, idx: &Value, axis_len: 
     if b.ask_bounds(idx).map(|(min, _)| min >= 0).unwrap_or(false) {
         return idx.clone();
     }
-    let zero_v = b.ir_constant_int(0);
-    let len_v = b.ir_constant_int(axis_len as i64);
-    let is_neg = b.ir_less_than_i(idx, &zero_v);
-    let wrapped = b.ir_add_i(idx, &len_v);
-    b.ir_select_i(&is_neg, &wrapped, idx)
+    // An index whose range the facts bound to a few bits has a cheap sign
+    // test (the comparison is sized by the range); any other one pins a
+    // hinted sign instead of comparing at the full 64-bit width.
+    const NARROW: i64 = 1 << 16;
+    if b.ask_bounds(idx).is_some_and(|(min, max)| -NARROW < min && max < NARROW) {
+        let zero_v = b.ir_constant_int(0);
+        let len_v = b.ir_constant_int(axis_len as i64);
+        let is_neg = b.ir_less_than_i(idx, &zero_v);
+        let wrapped = b.ir_add_i(idx, &len_v);
+        return b.ir_select_i(&is_neg, &wrapped, idx);
+    }
+    wrap_by_pinned_sign(b, idx, axis_len)
+}
+
+/// NumPy's position `w = i + n * s` of a runtime index `i` on an axis of
+/// length `n`, with the sign `s = [i < 0]` a prover hint (`HintKind::Negative`)
+/// instead of a comparison at the full 64-bit width: `s` is asserted to be a
+/// bit and `0 <= w < n` is asserted where the code runs (an index outside
+/// `[-n, n)` raises in NumPy).
+///
+/// Soundness: for `i` in `[0, n)` only `s = 0` passes (`i + n >= n`); for `i`
+/// in `[-n, 0)` only `s = 1` (with `s = 0`, `w = i` is a field element above
+/// `p - n`, outside the unsigned bound); for any other `i` neither does, so
+/// there is no witness. So `s` is pinned and `w` is NumPy's position. Cost: a
+/// bit, one select and the bound check the access needs anyway.
+fn wrap_by_pinned_sign(b: &mut IRBuilder, idx: &Value, axis_len: usize) -> Value {
+    let zero = b.ir_constant_int(0);
+    let negative = b.ir_hint(crate::ir_defs::HintKind::Negative, std::slice::from_ref(idx), &zero);
+    b.ir_assert_bit(&negative);
+    let len = b.ir_constant_int(axis_len as i64);
+    // A select on the bit (one gate, as `i + n s`) keeps `w` one value for
+    // the address analyses: a memory read whose address is affine in `w`
+    // builds its one-hot over `w`'s `n` values, not over `i` and `s`.
+    let shifted = b.ir_add_i(idx, &len);
+    let wrapped = b.ir_select_i(&negative, &shifted, idx);
+    b.ir_assert_u128_lt(&wrapped, &len);
+    wrapped
 }
 
 /// Bounds-check an index on axis `axis` (of length `axis_len`) and return

@@ -721,6 +721,10 @@ pub fn hint_values(kind: crate::ir_defs::HintKind, operands: &[Fp]) -> Vec<Fp> {
             lanes
         }
         HintKind::PositionOneHot => position_one_hot(operands),
+        HintKind::Negative => {
+            let negative = operands.first().is_some_and(|x| fp_is_negative(*x));
+            vec![if negative { Fp::one() } else { Fp::zero() }]
+        }
     }
 }
 

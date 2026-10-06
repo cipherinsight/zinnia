@@ -126,3 +126,29 @@ fn mask_write_chain_matches_replayed_writes() {
         }
     }
 }
+
+/// The index wrap with a hinted sign gives NumPy's position for every index
+/// in `[-n, n)`, has no witness outside, and rejects the other sign and a
+/// non-bit.
+#[test]
+fn index_wrap_sign_is_pinned() {
+    for n in 1..=4usize {
+        for x in -(n as i64) - 2..=n as i64 + 1 {
+            let case = wrap_graph(x, n);
+            let (graph, sites) = hints_as_inputs(&case);
+            assert_eq!(sites.len(), 1);
+            let honest = sites[0].honest;
+            let (ok, outputs) = mock_run(&graph, &with_hints(&case, &sites, &[honest]));
+            match &case.expected {
+                Some(expected) => {
+                    assert!(ok, "n={n} x={x}: rejected");
+                    assert_eq!(&outputs, expected, "n={n} x={x}");
+                }
+                None => assert!(!ok, "n={n} x={x}: accepted, NumPy raises"),
+            }
+            for tampered in [1 - honest, 2, -1] {
+                assert!(!mock_run(&graph, &with_hints(&case, &sites, &[tampered])).0, "n={n} x={x} sign={tampered}");
+            }
+        }
+    }
+}

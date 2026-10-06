@@ -3286,11 +3286,21 @@ impl Synthesizer for NoirEmitter<'_> {
         if kind == HintKind::PositionOneHot {
             return self.position_one_hot_hint(operands, rank);
         }
+        if kind == HintKind::Negative {
+            let [x] = operands else {
+                return Err(ProvingError::synthesis("negative hint expects one operand"));
+            };
+            if self.s_int_of(rank) != Some(0) {
+                return Ok(self.literal_int(0));
+            }
+            self.use_lib("negative_hint");
+            return Ok(self.bind(&format!("negative_hint({x})")));
+        }
         let (lanes_fn, lane_at_fn) = match kind {
             HintKind::StableArgsort => ("argsort_hint", "argsort_hint_at"),
             HintKind::SortedValues => ("sorted_hint", "sorted_hint_at"),
             HintKind::MaskedSortedValues => ("masked_sorted_hint", "masked_sorted_hint_at"),
-            HintKind::PositionOneHot => unreachable!("handled above"),
+            HintKind::PositionOneHot | HintKind::Negative => unreachable!("handled above"),
         };
         // A masked hint takes the values and their activity flags as two
         // arrays; its lanes are as many as the values.

@@ -387,6 +387,8 @@ pub enum HintKind {
     /// `x + n` (`-n <= x < 0`), else 0. Lane `n` is the end of the axis, an
     /// insertion point; for any other `x` every lane is 0.
     PositionOneHot,
+    /// `[x < 0]` for the operand `[x]` (its signed reading), one lane.
+    Negative,
 }
 
 impl HintKind {
@@ -396,6 +398,7 @@ impl HintKind {
             HintKind::SortedValues => "sorted_values",
             HintKind::MaskedSortedValues => "masked_sorted_values",
             HintKind::PositionOneHot => "position_one_hot",
+            HintKind::Negative => "negative",
         }
     }
 
@@ -405,6 +408,7 @@ impl HintKind {
             "sorted_values" => Some(HintKind::SortedValues),
             "masked_sorted_values" => Some(HintKind::MaskedSortedValues),
             "position_one_hot" => Some(HintKind::PositionOneHot),
+            "negative" => Some(HintKind::Negative),
             _ => None,
         }
     }

@@ -1830,3 +1830,27 @@ fn index_write_hints_are_pinned() {
         }
     }
 }
+
+/// The index wrap's hinted sign (`normalize_dynamic_index` on an index of
+/// unknown range): NumPy's position for every index in `[-n, n)`, no
+/// witness outside, and the sign moved by any delta rejected (MockProver).
+#[test]
+fn index_wrap_sign_is_pinned_on_halo2_base() {
+    use crate::lower::scatter::test_support::{witness, wrap_graph};
+    let mut shifts: Vec<Fp> = vec![int(1), int(-1), int(2)];
+    shifts.extend(deltas(&[]));
+    for x in -6..=5 {
+        let case = wrap_graph(x, 5);
+        let w = witness(&case.inputs);
+        let honest = synthesize_graph(&case.graph, &w, &[]);
+        let Some(expected) = &case.expected else {
+            assert!(!honest.accepted, "index {x}: accepted, NumPy raises");
+            continue;
+        };
+        assert!(honest.accepted && honest.outputs == vec![int(expected[0])], "index {x}");
+        assert_eq!(honest.hints, 1);
+        for shift in &shifts {
+            assert!(!synthesize_graph(&case.graph, &w, &[(0, *shift)]).accepted, "index {x}: sign moved by {shift:?}");
+        }
+    }
+}
