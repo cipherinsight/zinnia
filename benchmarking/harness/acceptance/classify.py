@@ -175,6 +175,8 @@ RULES: tuple[Rule, ...] = (
           "list mutated through a second name (aliasing)"),
     _rule(UNSUPPORTED, r"Named attribute `numpy\.(\w+)` not yet implemented",
           "numpy.{1} (module imported as `numpy`)"),
+    _rule(UNSUPPORTED, r"(?:Named|Expr) attribute `[\w.]*?\.?(\w+)` (?:on non-variable target )?not "
+                       r"(?:yet implemented|supported)", "method or attribute `.{1}`"),
     _rule(UNSUPPORTED, r"Unknown function `(\w+)`", "call of `{1}` (no builtin, chip or numpy "
                                                      "function of that name in scope)"),
     _rule(UNSUPPORTED, r"Circuit input must be annotated", "unannotated entry parameter"),

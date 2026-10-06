@@ -83,3 +83,19 @@ def test_empty_arrays_keep_their_shape(expression):
     expected, expected_shapes = numpy_outputs(source, np.array([1.0, 2.0]))
     assert satisfied and values == expected == []
     assert shapes == expected_shapes
+
+
+@pytest.mark.parametrize("expression", [
+    "np.zeros(shape=(2, 3)) + x[0]",
+    "np.ones(shape=4, dtype=int)",
+    "np.full(shape=(2, 2), fill_value=x[1])",
+])
+def test_constructor_shape_given_as_a_keyword(expression):
+    """`np.zeros(shape=(m, n))` returned None, so the program proved an
+    empty output (pythran ldpc_decoder then crashed in np.clip)."""
+    source = f"def kernel(x: NDArray[float, 2]):\n    return {expression}\n"
+    x = np.array([1.5, -2.0])
+    satisfied, values, shapes = run_mock_layout(compile_kernel(source), x)
+    expected, expected_shapes = numpy_outputs(source, x)
+    assert satisfied and shapes == expected_shapes
+    np.testing.assert_allclose(values, expected, atol=1e-6)
