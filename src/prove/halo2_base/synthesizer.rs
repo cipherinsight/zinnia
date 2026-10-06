@@ -705,20 +705,18 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     /// `sin` by the algorithm of `kernel::fp_sin`: range reduction modulo
-    /// `2 * pi_q`, fold onto `[0, π)`, mirror onto `[0, π/2]`, switch to
-    /// `cos(π/2 - r)` above `π/4`, Taylor polynomials in `u = s^2 < 1`.
+    /// `2 * pi_q`, fold onto `[0, π)`, mirror onto `[0, π/2]`, then
+    /// `s * P(s^2)` with the least-squares polynomial `SIN_ODD_U_COEFS`.
     ///
     /// Soundness: `sign_and_abs`, the division by the constant `2 * pi_q`
-    /// and every `mul_f` are functions of their inputs (see each). The three
-    /// comparisons take operands already proven to lie in `[0, 2 * pi_q)`,
-    /// inside the comparison's bit width. The rest are gates and selects on
-    /// pinned bits, so the output is a function of `a`. Both polynomials
-    /// are evaluated (a circuit does not branch) and the right one selected.
+    /// and every `mul_f` are functions of their inputs (see each). The two
+    /// comparisons take operands already proven to lie in `[0, 2 * pi_q)`.
+    /// The rest are gates and selects on pinned bits, so the output is a
+    /// function of `a`.
     fn sin_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         let precision_bits = self.params.precision_bits;
         let pi = kernel::pi_q(precision_bits);
         let half_pi = kernel::half_pi_q(precision_bits);
-        let quarter_pi = kernel::quarter_pi_q(precision_bits);
         let (negative, magnitude) = self.sign_and_abs(a)?;
         let (_, r) = self.div_rem_nonzero(&magnitude, Divisor::Constant(2 * pi), Rounding::Euclid)?;
 
@@ -734,19 +732,13 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         // [0, π): mirror onto [0, π/2].
         let up_to_half_pi = self.less_than(Operand::Cell(r), Operand::Constant(half_pi + 1), None)?;
         let mirrored = self.constant_minus(pi, &r);
-        let r = self.select_bit(&up_to_half_pi, &r, &mirrored)?;
+        let s = self.select_bit(&up_to_half_pi, &r, &mirrored)?;
         // r if r <= π/2, else π - r < π/2 (r > π/2): in [0, π/2].
-        self.prove_range(&r, Interval { lo: 0, hi: half_pi });
-        // [0, π/2]: above π/4 use the co-function on π/2 - r.
-        let up_to_quarter_pi = self.less_than(Operand::Cell(r), Operand::Constant(quarter_pi + 1), None)?;
-        let complement = self.constant_minus(half_pi, &r);
-        let s = self.select_bit(&up_to_quarter_pi, &r, &complement)?;
+        self.prove_range(&s, Interval { lo: 0, hi: half_pi });
 
         let u = self.mul_f(&s, &s)?;
-        let sin_odd = self.poly_eval_horner(&u, &kernel::sin_taylor_q(precision_bits))?;
-        let sin_s = self.mul_f(&s, &sin_odd)?;
-        let cos_s = self.poly_eval_horner(&u, &kernel::cos_taylor_q(precision_bits))?;
-        let value = self.select_bit(&up_to_quarter_pi, &sin_s, &cos_s)?;
+        let odd = self.poly_eval_horner(&u, &kernel::sin_odd_coefs_q(precision_bits))?;
+        let value = self.mul_f(&s, &odd)?;
 
         let flip_value = negative.value + folded_bit.value - Fp::from(2u64) * negative.value * folded_bit.value;
         let flip = self.gate_cell(flip_value, |gate, ctx| gate.xor(ctx, negative.assigned, folded_bit.assigned));

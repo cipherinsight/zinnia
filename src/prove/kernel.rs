@@ -103,7 +103,22 @@ pub const ATAN_ODD_U_COEFS: [f64; 10] = [
     -0.0017437008481290968,
 ];
 
-/// sin(x) on [0, pi), degree 14.
+/// `sin(s) / s` as a polynomial in `u = s^2`, constant term first
+/// (`SIN_ODD_U_COEFS[k]` multiplies `u^k`), so `sin(s) ≈ s * P(s^2)` on
+/// `[0, π/2]`. A degree-4 least-squares fit in `u`, weighted by `s` so that
+/// the absolute error of `s * P(s^2)` is minimized (Chebyshev nodes in `s`,
+/// float64). With Q32 coefficients and every product rounded down, the
+/// fixed-point `sin` built on it ([`fp_sin`]) is within 9.0e-9 of libm on
+/// `[-20, 20]`. Used by the fixed-point `sin`/`cos`.
+pub const SIN_ODD_U_COEFS: [f64; 5] = [
+    0.9999999812099671,
+    -0.16666649686521623,
+    0.008332926697684203,
+    -0.0001980225217649012,
+    2.5928110410078364e-06,
+];
+
+/// sin(x) on [0, pi), degree 14 (legacy halo2 backend only).
 pub const SIN_COEFS: [f64; 15] = [
     -1.1008071636607462e-11,
     2.4208013888629323e-10,
@@ -510,8 +525,8 @@ pub fn fp_sqrt(x: Fp, precision_bits: u32) -> Fp {
     }
 }
 
-/// π, π/2 and π/4 in Q-encoding (rounded). Sine reduces its argument
-/// modulo `2 * pi_q` and folds it onto `[0, quarter_pi_q]`.
+/// π and π/2 in Q-encoding (rounded). Sine reduces its argument modulo
+/// `2 * pi_q` and folds it onto `[0, half_pi_q]`.
 pub fn pi_q(precision_bits: u32) -> i128 {
     crate::prove::field::quantize(std::f64::consts::PI, precision_bits)
 }
@@ -520,33 +535,10 @@ pub fn half_pi_q(precision_bits: u32) -> i128 {
     crate::prove::field::quantize(std::f64::consts::FRAC_PI_2, precision_bits)
 }
 
-pub fn quarter_pi_q(precision_bits: u32) -> i128 {
-    crate::prove::field::quantize(std::f64::consts::FRAC_PI_4, precision_bits)
-}
 
-/// Taylor coefficients of `sin(s) / s` in `u = s^2` (`(-1)^k / (2k+1)!`,
-/// k = 6 down to 0), Q-encoded and leading-first. On `|s| <= π/4` the
-/// truncation error is below 3e-14.
-pub fn sin_taylor_q(precision_bits: u32) -> Vec<Fp> {
-    taylor_q(precision_bits, 6, 1)
-}
-
-/// Taylor coefficients of `cos(s)` in `u = s^2` (`(-1)^k / (2k)!`, k = 7
-/// down to 0), Q-encoded and leading-first; truncation error below 2e-15
-/// on `|s| <= π/4`.
-pub fn cos_taylor_q(precision_bits: u32) -> Vec<Fp> {
-    taylor_q(precision_bits, 7, 0)
-}
-
-fn taylor_q(precision_bits: u32, last: u32, offset: u32) -> Vec<Fp> {
-    (0..=last)
-        .rev()
-        .map(|k| {
-            let factorial: f64 = (1..=2 * k + offset).map(f64::from).product();
-            let sign = if k % 2 == 0 { 1.0 } else { -1.0 };
-            quantize_to_fp(sign / factorial, precision_bits)
-        })
-        .collect()
+/// [`SIN_ODD_U_COEFS`] Q-encoded and leading-first, for [`horner_eval`].
+pub fn sin_odd_coefs_q(precision_bits: u32) -> Vec<Fp> {
+    SIN_ODD_U_COEFS.iter().rev().map(|c| quantize_to_fp(*c, precision_bits)).collect()
 }
 
 /// [`ATAN_ODD_U_COEFS`] Q-encoded and leading-first, for [`horner_eval`].
@@ -558,15 +550,13 @@ pub fn atan_odd_coefs_q(precision_bits: u32) -> Vec<Fp> {
 ///
 /// 1. `m = |x|`; `r = m mod (2 * pi_q)`;
 /// 2. fold `r >= pi_q` onto `r - pi_q` (sin(r) = -sin(r - π));
-/// 3. mirror `r > half_pi_q` onto `pi_q - r` (sin(r) = sin(π - r));
-/// 4. for `r > quarter_pi_q` use `cos(half_pi_q - r)`, else `sin(r)`, so
-///    the polynomial argument `s` lies in `[0, π/4]`;
-/// 5. evaluate the Taylor polynomials in `u = s^2` by [`horner_eval`]
-///    (every product rounded down, as `mul_f` does); `|u| < 1`, so the
-///    rounding errors are not amplified;
-/// 6. negate when exactly one of "x < 0" and "folded" holds.
+/// 3. mirror `r > half_pi_q` onto `pi_q - r` (sin(r) = sin(π - r)), so
+///    `s = r` lies in `[0, π/2]`;
+/// 4. `s * P(s^2)` with [`SIN_ODD_U_COEFS`] by [`horner_eval`] (every
+///    product rounded down, as `mul_f` does);
+/// 5. negate when exactly one of "x < 0" and "folded" holds.
 ///
-/// Measured maximum error against libm: 1.1e-9 on `[-20, 20]`, 3.6e-8 on
+/// Measured maximum error against libm: 9.0e-9 on `[-20, 20]`, 4e-8 on
 /// `[-1000, 1000]` (the range reduction loses about one Q unit per period).
 pub fn fp_sin(x: Fp, precision_bits: u32) -> Fp {
     let Some(v) = fp_to_i128(x) else {
@@ -578,19 +568,13 @@ pub fn fp_sin(x: Fp, precision_bits: u32) -> Fp {
     }
     let pi = pi_q(precision_bits) as u128;
     let half_pi = half_pi_q(precision_bits) as u128;
-    let quarter_pi = quarter_pi_q(precision_bits) as u128;
     let r = m % (2 * pi);
     let (r, folded) = if r >= pi { (r - pi, true) } else { (r, false) };
-    let r = if r > half_pi { pi - r } else { r };
-    let (s, cofunction) = if r > quarter_pi { (half_pi - r, true) } else { (r, false) };
+    let s = if r > half_pi { pi - r } else { r };
     let s = i128_to_fp(s as i128);
     let (u, _) = fp_mul_rescale(s, s, precision_bits);
-    let p = if cofunction {
-        horner_eval(u, &cos_taylor_q(precision_bits), precision_bits)
-    } else {
-        let odd = horner_eval(u, &sin_taylor_q(precision_bits), precision_bits);
-        fp_mul_rescale(s, odd, precision_bits).0
-    };
+    let odd = horner_eval(u, &sin_odd_coefs_q(precision_bits), precision_bits);
+    let p = fp_mul_rescale(s, odd, precision_bits).0;
     if (v < 0) != folded {
         -p
     } else {
@@ -1043,7 +1027,7 @@ mod tests {
             sin_cos = sin_cos.max(error(fp_sin(xq, prec), exact.sin()));
             sin_cos = sin_cos.max(error(fp_cos(xq, prec), exact.cos()));
         }
-        assert!(sin_cos < 2e-9, "sin/cos error {sin_cos}");
+        assert!(sin_cos < 1e-8, "sin/cos error {sin_cos}");
         let mut far: f64 = 0.0;
         for x in grid(-1000.0, 1000.0, 20_000) {
             let xq = quantize_to_fp(x, prec);
@@ -1064,11 +1048,9 @@ mod tests {
         let atan = atan_odd_coefs_q(32);
         assert_eq!(atan.len(), ATAN_ODD_U_COEFS.len());
         assert_eq!(atan[atan.len() - 1], quantize_to_fp(ATAN_ODD_U_COEFS[0], 32));
-        let sin = sin_taylor_q(32);
-        assert_eq!(sin[sin.len() - 1], quantize_to_fp(1.0, 32));
-        assert_eq!(sin[sin.len() - 2], quantize_to_fp(-1.0 / 6.0, 32));
-        let cos = cos_taylor_q(32);
-        assert_eq!(cos[cos.len() - 2], quantize_to_fp(-0.5, 32));
+        let sin = sin_odd_coefs_q(32);
+        assert_eq!(sin.len(), SIN_ODD_U_COEFS.len());
+        assert_eq!(sin[sin.len() - 1], quantize_to_fp(SIN_ODD_U_COEFS[0], 32));
     }
 
     #[test]
