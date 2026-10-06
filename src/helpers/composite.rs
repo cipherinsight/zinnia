@@ -105,7 +105,13 @@ pub fn build_nested_value(flat: Vec<Value>, flat_types: Vec<ZinniaType>, shape: 
     }
     let inner_size: usize = shape[1..].iter().product();
     let mut rows = Vec::new();
-    for chunk in flat.chunks(inner_size) {
+    if inner_size == 0 {
+        // Rows without elements (`np.zeros((3, 0))`): `chunks(0)` panics.
+        for _ in 0..shape[0] {
+            rows.push(build_nested_value(Vec::new(), Vec::new(), &shape[1..]));
+        }
+    }
+    for chunk in flat.chunks(inner_size.max(1)) {
         let chunk_types = chunk.iter().map(|v| v.zinnia_type()).collect();
         rows.push(build_nested_value(chunk.to_vec(), chunk_types, &shape[1..]));
     }
