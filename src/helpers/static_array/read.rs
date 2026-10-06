@@ -2186,9 +2186,6 @@ fn window_gather(
     axes: &[(usize, usize, Value, Value, Value, bool, Option<bool>)],
     out_shape: &[usize],
 ) -> Option<Vec<Value>> {
-    if std::env::var_os("ZINNIA_NO_WINDOW_GATHER").is_some() {
-        return None;
-    }
     let all_axes_windowed = dtype != NumberType::Complex
         && static_range_axes.is_empty()
         && axes.len() == shape.len()
@@ -2199,7 +2196,6 @@ fn window_gather(
     if !all_axes_windowed || static_base < 0 {
         return None;
     }
-    let skip_mask = std::env::var_os("ZINNIA_WINDOW_NO_MASK").is_some();
     // cells[flat] over the current (partially shifted) array, row-major in `shape`.
     let row_strides = row_major_strides(shape);
     let total: usize = shape.iter().product();
@@ -2220,9 +2216,6 @@ fn window_gather(
             .collect();
         let sel: Vec<Vec<Value>> = (0..n)
             .map(|u| {
-                if skip_mask {
-                    return hits[..n - u].to_vec();
-                }
                 let u_v = b.ir_constant_int(u as i64);
                 let at = b.ir_add_i(start, &u_v);
                 let inside = b.ir_less_than_i_bounded(&at, stop);
