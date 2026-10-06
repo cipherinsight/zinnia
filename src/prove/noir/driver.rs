@@ -109,18 +109,25 @@ fn read_file(path: &Path) -> Result<Vec<u8>, NoirError> {
 /// `nargo execute --overwrite-return` in a staged package: compiles the
 /// circuit, solves the witness (failing if any constraint is violated) and
 /// returns the values `main` returned, as `0x`-prefixed field elements.
+/// nargo rewrites `Prover.toml` (inputs in hex, plus the return value).
 pub fn execute(pkg_dir: &Path, paths: &DriverPaths) -> Result<Vec<String>, NoirError> {
-    require(&paths.nargo, "nargo", "ZINNIA_NARGO_BIN")?;
-    run(
-        "nargo execute",
-        Command::new(&paths.nargo)
-            .arg("execute")
-            .arg("--overwrite-return")
-            .current_dir(pkg_dir),
-    )?;
+    solve_witness(pkg_dir, paths, true)?;
     let prover_toml = std::fs::read_to_string(pkg_dir.join("Prover.toml"))
         .map_err(|e| NoirError::Io(format!("read Prover.toml: {}", e)))?;
     Ok(parse_return_entry(&prover_toml))
+}
+
+/// `nargo execute` (compile and solve the witness); with `record_return`,
+/// nargo also writes the returned values into `Prover.toml`.
+fn solve_witness(pkg_dir: &Path, paths: &DriverPaths, record_return: bool) -> Result<(), NoirError> {
+    require(&paths.nargo, "nargo", "ZINNIA_NARGO_BIN")?;
+    let mut cmd = Command::new(&paths.nargo);
+    cmd.arg("execute").current_dir(pkg_dir);
+    if record_return {
+        cmd.arg("--overwrite-return");
+    }
+    run("nargo execute", &mut cmd)?;
+    Ok(())
 }
 
 /// The `return = ...` entry nargo writes into Prover.toml: a single quoted
@@ -145,7 +152,8 @@ fn parse_return_entry(prover_toml: &str) -> Vec<String> {
 /// verify the proof against the public inputs bb wrote.
 pub fn run_pipeline(pkg_dir: &Path, paths: &DriverPaths) -> Result<DriverOutput, NoirError> {
     require(&paths.bb, "bb", "ZINNIA_BB_BIN")?;
-    execute(pkg_dir, paths)?;
+    // The staged Prover.toml stays as emitted (the harness compares it).
+    solve_witness(pkg_dir, paths, false)?;
 
     let target = pkg_dir.join("target");
     let bytecode = target.join(format!("{}.json", PACKAGE_NAME));
