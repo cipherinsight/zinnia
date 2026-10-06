@@ -313,9 +313,11 @@ pub(super) fn astype(b: &mut IRBuilder, input: &Value, dtype: &Value) -> Value {
 }
 
 /// Median of a statically shaped array, with ordinary NumPy axis semantics.
+/// A reduction to zero dimensions gives a float scalar, as NumPy's does.
 pub(super) fn median(b:&mut IRBuilder,args:&[Value],kwargs:&HashMap<String,Value>)->Value {
     use crate::types::{SliceIndex,NumberType};
-    let mut input=args[0].clone();
+    let Some(input) = args.first() else { panic!("np.median requires an array argument") };
+    let mut input = input.clone();
     let axis_arg=kwargs.get("axis").or_else(||args.get(1));
     let axis = if axis_arg.is_none() || matches!(axis_arg,Some(Value::None)) {
         input=crate::helpers::static_array::shape::try_apply_flatten(b,&input).expect("median requires numeric array");0
@@ -341,6 +343,12 @@ pub(super) fn median(b:&mut IRBuilder,args:&[Value],kwargs:&HashMap<String,Value
     };
     let mut out_shape=shape.clone();out_shape.remove(axis);
     if super::kwarg_static_truthy(kwargs,"keepdims",false) {out_shape.insert(axis,1);}
-    let cells=crate::helpers::composite::flatten_composite_with_builder(b,&result).iter().map(|cell|crate::helpers::value_ops::ensure_float(b,cell)).collect();
+    let mut cells: Vec<Value> = crate::helpers::composite::flatten_composite_with_builder(b, &result)
+        .iter()
+        .map(|cell| crate::helpers::value_ops::ensure_float(b, cell))
+        .collect();
+    if out_shape.is_empty() {
+        return cells.pop().expect("a full reduction has one cell");
+    }
     crate::helpers::static_array::base::build_static_array_from_flat(b,cells,out_shape,NumberType::Float)
 }

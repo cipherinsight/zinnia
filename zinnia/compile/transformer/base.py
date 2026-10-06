@@ -217,6 +217,19 @@ def make_type_dict(dbg, typename, args=None):
     raise InvalidAnnotationException(dbg, f'`{typename}` is not a valid type name')
 
 
+_OPERATOR_NAMES = {
+    ast.Add: "add", ast.Sub: "sub", ast.Div: "div", ast.Mult: "mul", ast.MatMult: "mat_mul",
+    ast.FloorDiv: "floor_div", ast.Mod: "mod", ast.Pow: "pow",
+    ast.BitAnd: "bit_and", ast.BitOr: "bit_or", ast.BitXor: "bit_xor",
+    ast.LShift: "shl", ast.RShift: "shr",
+    ast.Not: "not", ast.USub: "usub", ast.UAdd: "uadd", ast.Invert: "invert",
+}
+
+_COMPARISON_NAMES = {
+    ast.GtE: "gte", ast.LtE: "lte", ast.Gt: "gt", ast.Lt: "lt", ast.Eq: "eq", ast.NotEq: "ne",
+    ast.In: "in", ast.NotIn: "not_in",
+}
+
 # `np.<ufunc>.reduce` → the reduction it computes.
 _UFUNC_REDUCTIONS = {"add": "sum", "multiply": "prod", "minimum": "min", "maximum": "max",
                      "logical_or": "any", "logical_and": "all"}
@@ -240,62 +253,28 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
         self.shape_symbol_names = set()
         self.shape_symbol_bounds = {}
 
-    def get_op_name_from_node(self, node) -> str:
-        if isinstance(node, ast.Add):
-            return "add"
-        elif isinstance(node, ast.Sub):
-            return "sub"
-        elif isinstance(node, ast.Div):
-            return "div"
-        elif isinstance(node, ast.Mult):
-            return "mul"
-        elif isinstance(node, ast.MatMult):
-            return "mat_mul"
-        elif isinstance(node, ast.FloorDiv):
-            return "floor_div"
-        elif isinstance(node, ast.Mod):
-            return "mod"
-        if isinstance(node, ast.Not):
-            return "not"
-        elif isinstance(node, ast.USub):
-            return "usub"
-        elif isinstance(node, ast.UAdd):
-            return "uadd"
-        elif isinstance(node, ast.Pow):
-            return "pow"
-        elif isinstance(node, ast.BitAnd):
-            return "bit_and"
-        elif isinstance(node, ast.BitOr):
-            return "bit_or"
-        elif isinstance(node, ast.BitXor):
-            return "bit_xor"
-        elif isinstance(node, ast.LShift):
-            return "shl"
-        elif isinstance(node, ast.RShift):
-            return "shr"
-        elif isinstance(node, ast.Invert):
-            return "invert"
-        raise UnsupportedOperatorException(self.get_dbg(node), f"Invalid operator {type(node).__name__} in circuit.")
+    def get_op_name_from_node(self, op, expression) -> str:
+        """The IR name of an arithmetic, bitwise or unary operator; errors
+        point at ``expression``, the node that applies it (operator nodes
+        carry no source location)."""
+        name = _OPERATOR_NAMES.get(type(op))
+        if name is None:
+            raise UnsupportedOperatorException(self.get_dbg(expression),
+                                               f"Invalid operator {type(op).__name__} in circuit.")
+        return name
 
-    def get_comp_op_name_from_node(self, node) -> str:
-        if isinstance(node, ast.GtE):
-            return "gte"
-        elif isinstance(node, ast.LtE):
-            return "lte"
-        elif isinstance(node, ast.Gt):
-            return "gt"
-        elif isinstance(node, ast.Lt):
-            return "lt"
-        elif isinstance(node, ast.Eq):
-            return "eq"
-        elif isinstance(node, ast.NotEq):
-            return "ne"
-        elif isinstance(node, ast.In):
-            return "in"
-        elif isinstance(node, ast.NotIn):
-            return "not_in"
-        raise UnsupportedOperatorException(self.get_dbg(node),
-                                           f"Invalid compare operator {type(node).__name__} in circuit.")
+    def get_comp_op_name_from_node(self, op, comparison) -> str:
+        """The IR name of a comparison operator; errors point at ``comparison``."""
+        name = _COMPARISON_NAMES.get(type(op))
+        if name is not None:
+            return name
+        if isinstance(op, (ast.Is, ast.IsNot)):
+            raise UnsupportedOperatorException(
+                self.get_dbg(comparison),
+                "`is` / `is not` compare object identity, which circuit values do not have; "
+                "compare values with `==` / `!=`.")
+        raise UnsupportedOperatorException(self.get_dbg(comparison),
+                                           f"Invalid compare operator {type(op).__name__} in circuit.")
 
     def get_dbg(self, node) -> DebugInfo:
         raise NotImplementedError(
@@ -361,7 +340,7 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
 
     def visit_AugAssign(self, node: ast.AugAssign):
         dbg_info = self.get_dbg(node)
-        op_type = self.get_op_name_from_node(node.op)
+        op_type = self.get_op_name_from_node(node.op, node)
         if isinstance(node.target, ast.Name):
             identifier_name = node.target.id
             expr = self.visit_expr(node.value)
@@ -436,7 +415,7 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
     def visit_BinOp(self, node: ast.BinOp):
         left = self.visit_expr(node.left)
         right = self.visit_expr(node.right)
-        return {"__class__": "ASTBinaryOperator", "operator": self.get_op_name_from_node(node.op),
+        return {"__class__": "ASTBinaryOperator", "operator": self.get_op_name_from_node(node.op, node),
                 "lhs": left, "rhs": right}
 
     def visit_Compare(self, node: ast.Compare):
@@ -447,7 +426,7 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
         compare_expr_list = []
         for i, op in enumerate(node.ops):
             compare_expr_list.append(
-                {"__class__": "ASTBinaryOperator", "operator": self.get_comp_op_name_from_node(op),
+                {"__class__": "ASTBinaryOperator", "operator": self.get_comp_op_name_from_node(op, node),
                  "lhs": all_operands[i], "rhs": all_operands[i + 1]})
         finalized = compare_expr_list[0]
         for expr in compare_expr_list[1:]:
@@ -474,7 +453,7 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
 
     def visit_UnaryOp(self, node: ast.UnaryOp):
         value = self.visit_expr(node.operand)
-        return {"__class__": "ASTUnaryOperator", "operator": self.get_op_name_from_node(node.op), "operand": value}
+        return {"__class__": "ASTUnaryOperator", "operator": self.get_op_name_from_node(node.op, node), "operand": value}
 
     def visit_Call(self, node: ast.Call):
         dbg_info = self.get_dbg(node)
