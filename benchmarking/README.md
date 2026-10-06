@@ -24,6 +24,9 @@
 .venv/bin/python -m benchmarking.harness build --skip-zinnia --baselines halo2_hw,sp1,risc0,cairo
 .venv/bin/python -m benchmarking.harness run --label main   # one epoch, default systems and case set
 .venv/bin/python -m benchmarking.harness analyze benchmarking/results/<epoch>
+.venv/bin/python -m benchmarking.harness run --label npb --case-set benchmarking/datasets/case_sets/npbench_pythran_perf.json \
+    --systems zinnia_halo2,zinnia_noir,sp1,risc0 --shard 0/8        # shard 0 of 8 of the NPBench/Pythran set
+.venv/bin/python -m benchmarking.harness analyze <epoch-s0> ... <epoch-s7> --out <dir>   # the shards together
 .venv/bin/python -m benchmarking.harness accept --epoch benchmarking/results/<epoch>
 ```
 
@@ -32,7 +35,17 @@ risc0, risc0_groth16, cairo` (default: all but the two Groth16 variants), `--cas
 `--cases 0309,0336`, `--fixtures-dir DIR` (trial fixtures outside the dataset), `--repeats N`
 (default 5), `--timeout S` (per step, default 1800), `--memory-max 16G|none`, `--threads N`,
 `--seed N`, `--halo2-k K --halo2-lookup-bits L` (fixed halo2 parameters on both halo2 sides,
-for a sensitivity run), `--results-dir DIR`. Tests: `.venv/bin/python -m pytest -q
+for a sensitivity run), `--shard K/N` (only shard K, from 0, of N: the case set's included cases
+sorted by id and dealt out in turn, so the N shards are disjoint and cover the set),
+`--results-dir DIR`. `analyze` takes one epoch, or the epochs of the shards of one run with
+`--out DIR` (every system/case record must come from one shard).
+
+Case sets: `ds1000_perf.json` (DS-1000, the default) and `npbench_pythran_perf.json` (the
+NPBench/Pythran entry functions Zinnia accepts that have an audited SP1/RISC Zero port; written
+by `datasets/tools/npbench_pythran_perf.py <acceptance results.json>`). An NPBench/Pythran case
+is one entry function of a program folder (`shape_generic`: the zkVM hosts get `--function`); a
+function that returns `None` outputs the arguments it writes (`mutated_outputs`); its `group`
+(the corpus) gets its own comparison in the summary. `case_sets.py` documents the fields. Tests: `.venv/bin/python -m pytest -q
 benchmarking/harness/tests`.
 
 `build` runs `scripts/develop.sh --release --features halo2-base-backend,noir-backend` with

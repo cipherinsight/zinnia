@@ -72,6 +72,8 @@ class RunConfig:
     threads: int | None = None
     seed: int = 20261006
     halo2_params: dict | None = None
+    #: [K, N] when the epoch runs shard K of N of the case set (`case_sets.shard_cases`).
+    shard: list[int] | None = None
     python: str = field(default_factory=lambda: sys.executable)
 
     def options(self) -> dict:

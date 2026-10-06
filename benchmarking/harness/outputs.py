@@ -231,30 +231,37 @@ def reference_leaves(result: Any) -> tuple[list[Leaf], list[list[int]]]:
 
 
 class UnlistedOutput(ValueError):
-    """NumPy modifies an array argument the compiled program does not output."""
+    """NumPy modifies an array argument that is not listed among the outputs."""
 
 
 def reference_outputs(result: Any, arguments_after: dict[str, Any], arguments_before: list[Any],
                       layout: list[dict]) -> tuple[list[Leaf], list[list[int]]]:
-    """The reference output, for a kernel that may return `None`.
+    """The reference output, for a kernel that may return `None`, with the
+    written arguments taken from the compiler's layout (`{"output": {"argument":
+    name}}` parts); see `call_outputs`."""
+    written = [part["output"]["argument"] for part in layout
+               if "argument" in part.get("output", {})]
+    return call_outputs(result, arguments_after, arguments_before, written)
+
+
+def call_outputs(result: Any, arguments_after: dict[str, Any], arguments_before: list[Any],
+                 written: list[str] | tuple[str, ...]) -> tuple[list[Leaf], list[list[int]]]:
+    """The outputs of one kernel call.
 
     A kernel that returns a value outputs that value. One that returns `None`
-    outputs the array arguments it writes, in parameter order; which ones is
-    taken from the compiler's layout (`{"output": {"argument": name}}` parts),
-    and checked against NumPy: an array argument the call changed but the
-    layout does not list is an error, so a compiler that misses a written
-    argument cannot pass.
+    outputs the array arguments it writes, in parameter order; `written` names
+    them (from the compiler's layout, or from the case set), and is checked
+    against NumPy: an array argument the call changed that `written` does not
+    list is an error, so a missed written argument cannot pass.
     """
     if result is not None:
         return reference_leaves(result)
-    named = [part["output"]["argument"] for part in layout
-             if "argument" in part.get("output", {})]
     for (name, after), before in zip(arguments_after.items(), arguments_before):
-        if isinstance(after, np.ndarray) and name not in named \
+        if isinstance(after, np.ndarray) and name not in written \
                 and not np.array_equal(after, before, equal_nan=True):
-            raise UnlistedOutput(f"the kernel modifies argument {name!r}, which the "
-                                 "compiled program does not output")
-    return reference_leaves(tuple(arguments_after[name] for name in named))
+            raise UnlistedOutput(f"the kernel modifies argument {name!r}, which is not "
+                                 "listed among its outputs")
+    return reference_leaves(tuple(arguments_after[name] for name in written))
 
 
 def _leaves_of_scalar(value: Any, dtype_kind: str) -> list[Leaf]:
