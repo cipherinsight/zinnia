@@ -821,9 +821,16 @@ pub fn np_unravel_index(
     } else {
         (0..shape.len()).collect()
     };
-    for axis in axes {
-        let dim = shape[axis] as i64;
-        let dim_val = b.ir_constant_int(dim);
+    // `0 <= idx < prod(shape)` holds (checked above), so after dividing by
+    // every other axis's length the remaining quotient is already below the
+    // last axis's length: it is that coordinate, with no `% dim`.
+    let last = *axes.last().expect("a non-empty shape");
+    for &axis in &axes {
+        if axis == last {
+            coords[axis] = rem.clone();
+            break;
+        }
+        let dim_val = b.ir_constant_int(shape[axis] as i64);
         coords[axis] = b.ir_mod_i(&rem, &dim_val);
         rem = b.ir_floor_div_i(&rem, &dim_val);
     }

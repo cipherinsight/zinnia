@@ -128,7 +128,7 @@ fn asserted_comparisons(ir: &IRGraph) -> HashSet<u32> {
                 s.ir,
                 IR::LtI | IR::LteI | IR::GtI | IR::GteI | IR::LtF | IR::LteF | IR::GtF | IR::GteF
                     | IR::LtIBounded | IR::GtIBounded | IR::IndexInBox { .. } | IR::NeI | IR::NeF
-                    | IR::KeyLess { .. }
+                    | IR::EqI | IR::EqF | IR::KeyLess { .. }
             )
         })
         .map(|s| s.stmt_id)
@@ -1200,21 +1200,40 @@ impl<'a> NoirEmitter<'a> {
         let t = self.fresh();
         let _ = writeln!(self.body, "    let {t}: Field = {gap};");
         let _ = writeln!(self.body, "    {t}.assert_max_bit_size::<{width}>();");
-        // low + strict <= high < low + strict + 2^W.
+        // low + strict <= high < low + strict + 2^W: an operand with a known
+        // range (a constant, or a range an earlier check proves) bounds the
+        // other one, an integer then too.
         let span = 1i128 << width;
         let offset = strict as i128;
-        if let Some(c) = self.raw_constant(high) {
-            self.narrow_proven_range(low, c - offset - span + 1, c - offset);
+        if let Some((lo, hi)) = self.known_range(high) {
+            self.narrow_proven_range(low, lo - offset - span + 1, hi - offset);
         }
-        if let Some(c) = self.raw_constant(low) {
-            self.narrow_proven_range(high, c + offset, c + offset + span - 1);
+        if let Some((lo, hi)) = self.known_range(low) {
+            self.narrow_proven_range(high, lo + offset, hi + offset + span - 1);
         }
+    }
+
+    /// The range of a constant or of a cell whose range an emitted check proves.
+    fn known_range(&self, cell: &str) -> Option<(i128, i128)> {
+        self.raw_constant(cell).map(|c| (c, c)).or_else(|| self.proven_range.get(cell).copied())
     }
 
     /// Remember that `out = a + b`, so a select between `out` and one of
     /// its summands is one product of the other summand (see `select`).
     fn record_sum(&mut self, out: &str, a: &str, b: &str) {
         self.sum_of.insert(out.to_string(), (a.to_string(), b.to_string()));
+    }
+
+    /// `a == b` for an `==` whose only uses are asserts: the assertion
+    /// itself (`assert(a == b)`, one linear constraint), and the literal true
+    /// for the asserts, instead of a zero-test flag asserted to be 1.
+    fn asserted_equal(&mut self, a: &str, b: &str) -> Option<String> {
+        let asserted = self.current_stmt.is_some_and(|id| self.asserted_comparisons.contains(&id));
+        if !asserted {
+            return None;
+        }
+        let _ = writeln!(self.body, "    assert({a} == {b});");
+        Some(self.literal_int(1))
     }
 
     /// `a != b` for a `!=` whose only uses are asserts: the assertion
@@ -1242,6 +1261,12 @@ impl<'a> NoirEmitter<'a> {
             }
         }
         Some(self.literal_int(1))
+    }
+
+    /// Whether every accepted witness has `cell >= 0`: an emitted check
+    /// (`proven_range`) or the static interval of its IR value (`ival`).
+    fn known_non_negative(&self, cell: &str) -> bool {
+        self.proven_range.get(cell).is_some_and(|(lo, _)| *lo >= 0) || self.ival(cell).is_some_and(|(lo, _)| lo >= 0)
     }
 
     fn narrow_proven_range(&mut self, cell: &str, lo: i128, hi: i128) {
@@ -1335,9 +1360,13 @@ impl<'a> NoirEmitter<'a> {
     /// `x = i64::MIN`, whose magnitude overflows int64 (the raw Q32 value of
     /// a float lives in the same window). `sign_abs`'s magnitude is not used
     /// here because it admits `2^63`.
+    /// `|x|` (`noir_fpc::abs_int64`); its check `2|x| + sign < 2^64` puts the
+    /// result in `[0, 2^63)`, recorded in `proven_range`.
     fn abs_int64(&mut self, x: &str) -> String {
         self.use_lib("abs_int64");
-        self.bind(&format!("abs_int64({x})"))
+        let mag = self.bind(&format!("abs_int64({x})"));
+        self.narrow_proven_range(&mag, 0, (1i128 << 63) - 1);
+        mag
     }
 
     /// `x != 0` (`nonzero`) or `x == 0` as a 0/1 cell; for a scaled bit
@@ -2136,6 +2165,17 @@ impl Synthesizer for NoirEmitter<'_> {
 
     fn add_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let out = self.integer_arith(a, b, '+');
+        // The sum of two values with proven ranges (integers far below p/2)
+        // is the integer sum: its range is the sum of the ranges.
+        if let (Some((al, ah)), Some((bl, bh))) =
+            (self.proven_range.get(a.as_str()).copied(), self.proven_range.get(b.as_str()).copied())
+        {
+            if let (Some(lo), Some(hi)) = (al.checked_add(bl), ah.checked_add(bh)) {
+                if lo > -(1i128 << 120) && hi < 1i128 << 120 {
+                    self.narrow_proven_range(&out, lo, hi);
+                }
+            }
+        }
         if let Some(c) = self.s_int_of(b) {
             self.add_const_of.insert(out.clone(), (a.clone(), c as i64));
         } else if let Some(c) = self.s_int_of(a) {
@@ -2301,12 +2341,20 @@ impl Synthesizer for NoirEmitter<'_> {
             }
         }
         if self.nonzero.contains(b.as_str()) {
-            // A divisor proven in [0, 2^64): `divmod_by_positive` bounds the
-            // remainder by `b` itself (`b - 1 - r` 64 bits, so `b >= 1`), no
-            // sign projection; floor and Euclid agree for `b > 0`.
-            if self.proven_range.get(b.as_str()).is_some_and(|(lo, hi)| *lo >= 0 && *hi < 1i128 << 64) {
+            // A divisor known non-negative: `divmod_by_positive` bounds the
+            // remainder by the divisor itself (`d - 1 - r` 64 bits, so
+            // `d >= 1`; a wrong sign would only fail the proof), with no sign
+            // projection; floor and Euclid agree for `d > 0`. An integral
+            // float `b = n * 2^32` cancels the scale, as halo2-base's
+            // `fixed_div` does: the Euclidean quotient of `a` by `n` equals
+            // that of `a * 2^32` by `b`.
+            let (numerator, divisor) = match self.integral_float.get(b.as_str()) {
+                Some(n) => (a.to_string(), n.clone()),
+                None => (format!("{a} * {Q_U64}"), b.clone()),
+            };
+            if self.known_non_negative(&divisor) {
                 self.use_lib("divmod_by_positive");
-                return Ok(self.bind(&format!("divmod_by_positive::<64>({a} * {Q_U64}, {b}).0")));
+                return Ok(self.bind(&format!("divmod_by_positive::<64>({numerator}, {divisor}).0")));
             }
             let (_, mag) = self.sign_abs(b);
             self.use_lib("qdiv_nonzero_of");
@@ -2364,6 +2412,9 @@ impl Synthesizer for NoirEmitter<'_> {
     }
 
     fn eq_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some(v) = self.asserted_equal(a, b) {
+            return Ok(v);
+        }
         if let Some(v) = self.scaled_bit_zero_test(a, b, false) {
             return Ok(v);
         }
@@ -2480,6 +2531,9 @@ impl Synthesizer for NoirEmitter<'_> {
     }
 
     fn eq_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some(v) = self.asserted_equal(a, b) {
+            return Ok(v);
+        }
         let (af, bf) = (a, b);
         Ok(self.bind_flag(&format!("if {} == {} {{ 1 }} else {{ 0 }}", af, bf)))
     }
