@@ -2416,6 +2416,13 @@ impl Synthesizer for NoirEmitter<'_> {
     fn sqrt_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         // (No literal propagation: the circuit's floor root of a constant
         // need not equal the f64 sqrt the literal store would record.)
+        // An operand a check emitted earlier proves non-negative (the
+        // `x >= 0` precondition of `np.sqrt`) is its own magnitude, below
+        // 2^64, inside `isqrt_floor`'s domain.
+        if self.proven_range.get(a.as_str()).is_some_and(|(lo, hi)| *lo >= 0 && *hi < 1i128 << 64) {
+            self.use_lib("qsqrt_of");
+            return Ok(self.bind(&format!("qsqrt_of(false, {a})")));
+        }
         let (negative, mag) = self.sign_abs(a);
         self.use_lib("qsqrt_of");
         Ok(self.bind(&format!("qsqrt_of({negative}, {mag})")))

@@ -299,6 +299,12 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         cell
     }
 
+    /// Whether the statement being lowered is a comparison whose only use is
+    /// `Assert` (see `plan.rs`).
+    fn is_asserted_comparison(&self) -> bool {
+        self.plan.asserted_comparisons.contains(&self.current_stmt)
+    }
+
     /// The truth value of a constant cell, if `a` is one.
     fn constant_truth(&self, a: &Halo2BaseCell) -> Option<bool> {
         self.is_const_cell(a).then(|| a.value != Fp::zero())
@@ -791,6 +797,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     /// Signed `a < b`; operands outside the signed 64-bit window have no
     /// witness (see `ranges::less_than`).
     fn lt_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.is_asserted_comparison() {
+            return self.assert_relation(a, b, true);
+        }
         self.less_than(self.operand(a), self.operand(b), Some(Interval::SIGNED64))
     }
     /// Unsigned `a < b` for operands in `[0, 2^64)` (each is range-checked
@@ -800,11 +809,17 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
     fn gt_i_bounded(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.lt_i_bounded(b, a) }
     fn lte_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.is_asserted_comparison() {
+            return self.assert_relation(a, b, false);
+        }
         let gt = self.gt_i(a, b)?;
         self.logical_not(&gt)
     }
     fn gt_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.lt_i(b, a) }
     fn gte_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.is_asserted_comparison() {
+            return self.assert_relation(b, a, false);
+        }
         let lt = self.lt_i(a, b)?;
         self.logical_not(&lt)
     }
@@ -812,11 +827,17 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn ne_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.ne_i(a, b) }
     fn lt_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.lt_i(a, b) }
     fn lte_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.is_asserted_comparison() {
+            return self.assert_relation(a, b, false);
+        }
         let gt = self.gt_f(a, b)?;
         self.logical_not(&gt)
     }
     fn gt_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.lt_i(b, a) }
     fn gte_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.is_asserted_comparison() {
+            return self.assert_relation(b, a, false);
+        }
         let lt = self.lt_f(a, b)?;
         self.logical_not(&lt)
     }

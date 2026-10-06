@@ -383,6 +383,34 @@ fn domain_checks_implied_by_a_bounds_check_are_dropped() {
     assert_rejected(execute(&graph, &raw_witness(&[("x", "0x8000000000000000")])));
 }
 
+/// `np.sqrt(x)` as the builder emits it: the precondition `x >= 0`
+/// (asserted) before the root. The root then takes `x` as its own magnitude
+/// (no `sign_abs`); it equals the mock's floor root, and a negative `x` is
+/// rejected by the precondition's check.
+#[test]
+fn sqrt_of_an_asserted_non_negative_needs_no_sign() {
+    if !toolchain_present(false) {
+        return;
+    }
+    let mut g = Graph::default();
+    let x = g.push(IR::ReadFloat { path: InputPath::new("x", vec![]), is_public: false }, &[]);
+    let zero = g.push(IR::ConstantFloat { value: 0.0 }, &[]);
+    let non_negative = g.push(IR::GteF, &[x, zero]);
+    g.push(IR::Assert, &[non_negative]);
+    let root = g.push(IR::SqrtF, &[x]);
+    g.push(IR::ExposePublicF, &[root]);
+    let graph = g.finish();
+    let honest = float_witness(&[], &[("x", 2.0)]);
+    let emitted = emit_circuit(&graph, &honest, &ProvingParams::default()).unwrap();
+    assert!(emitted.main_nr.contains("qsqrt_of(false,") && !emitted.main_nr.contains("sign_abs("), "{}", emitted.main_nr);
+    for value in [2.0, 0.0, 1e-9, 1.5e9] {
+        let w = float_witness(&[], &[("x", value)]);
+        assert_eq!(execute(&graph, &w).unwrap(), mock_outputs(&graph, &w).1, "sqrt({value})");
+    }
+    assert_rejected(execute(&graph, &float_witness(&[], &[("x", -1.0)])));
+    assert_rejected(execute(&graph, &float_witness(&[], &[("x", -1e-9)])));
+}
+
 /// M5: a dynamic-address write outside the segment used to update no slot
 /// and succeed; the mock rejects it.
 #[test]

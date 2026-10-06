@@ -1237,8 +1237,9 @@ fn domain_checks_of_bounded_inputs_use_the_bound() {
     for x in [8i64, -1, i64::MAX, i64::MIN] {
         assert!(!run(&checked, &[("x", x)], None).accepted, "{x} accepted");
     }
-    // The two loaded bounds and the two shared truth constants.
-    assert_eq!(run(&checked, &[("x", 3)], None).advice, run(&bare, &[("x", 3)], None).advice + 4);
+    // The two loaded bounds and the constant `true` the asserted
+    // comparisons decide to.
+    assert_eq!(run(&checked, &[("x", 3)], None).advice, run(&bare, &[("x", 3)], None).advice + 3);
 }
 
 /// `acc + a·b` and `acc - a·b` with a product used only there are one gate
@@ -1297,4 +1298,55 @@ fn sums_of_products_fuse_into_one_gate_per_term() {
     let ir = g.finish();
     let outcome = run(&ir, &[("a", 4), ("b", 5), ("c", 1)], None);
     assert!(outcome.accepted && outcome.outputs == vec![int(41)]);
+}
+
+/// A comparison whose only use is `Assert` is one range check of its gap
+/// (no result bit, no negation): accepted exactly where the relation holds,
+/// for constants on either side, strict and non-strict, and two cells.
+#[test]
+fn asserted_comparisons_check_their_gap() {
+    use crate::ir_defs::IR;
+    use graphs::*;
+    let asserted = |op: IR, constant: Option<(i64, bool)>| {
+        let mut g = Graph::default();
+        let x = g.read("x");
+        g.domain_check(x);
+        let (lhs, rhs) = match constant {
+            Some((c, on_left)) => {
+                let c = g.int(c);
+                if on_left { (c, x) } else { (x, c) }
+            }
+            None => (x, g.read("y")),
+        };
+        let relation = g.push(op, &[lhs, rhs]);
+        g.push(IR::Assert, &[relation]);
+        g.push(IR::ExposePublicI, &[x]);
+        g.finish()
+    };
+    type Case = (IR, Option<(i64, bool)>, fn(i64, i64) -> bool);
+    let cases: Vec<Case> = vec![
+        (IR::GteI, Some((0, false)), |x, _| x >= 0),
+        (IR::GtI, Some((3, false)), |x, _| x > 3),
+        (IR::LtI, Some((3, true)), |x, _| 3 < x),
+        (IR::LteF, Some((-2, false)), |x, _| x <= -2),
+        (IR::LtI, None, |x, y| x < y),
+        (IR::GteF, None, |x, y| x >= y),
+    ];
+    for (op, constant, holds) in cases {
+        let ir = asserted(op.clone(), constant);
+        for (x, y) in [(-3i64, 4i64), (-2, -2), (0, -1), (3, 3), (4, 9), (i64::MAX, i64::MIN), (i64::MIN, i64::MAX)] {
+            let accepted = run(&ir, &[("x", x), ("y", y)], None).accepted;
+            assert_eq!(accepted, holds(x, y), "{op:?} {constant:?} at x = {x}, y = {y}");
+        }
+    }
+    // `x >= 0` on a value in the window is one 64-bit check of x itself.
+    let (with, without) = (asserted(IR::GteI, Some((0, false))), {
+        let mut g = Graph::default();
+        let x = g.read("x");
+        g.domain_check(x);
+        g.push(IR::ExposePublicI, &[x]);
+        g.finish()
+    });
+    let extra = run(&with, &[("x", 5)], None).advice - run(&without, &[("x", 5)], None).advice;
+    assert!(extra <= 1 + 3 * 8 - 2, "asserted x >= 0 costs {extra} cells");
 }
