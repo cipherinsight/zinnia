@@ -117,14 +117,19 @@ def decode_with_layout(fields: list[int | None], layout: list[dict],
     when strides are given, else the cell at its row-major position (compact).
     `public_inputs` (`get_public_inputs`) are the public values that are inputs,
     not outputs. Every public index must be used exactly once, so no public value
-    goes unexplained.
+    goes unexplained; the one exception is a dynamic part's shape entries, which
+    may share a public value among themselves (a rank-1 part's only dim is its
+    length, exposed once).
     """
     used: list[int] = [entry["public"] for entry in public_inputs]
 
-    def value(slot: dict) -> int | float:
+    def value(slot: dict, shared: set[int] | None = None) -> int | float:
         if "constant" in slot:
             return slot["constant"]
-        used.append(slot["public"])
+        if shared is None or slot["public"] not in shared:
+            used.append(slot["public"])
+            if shared is not None:
+                shared.add(slot["public"])
         signed = field_to_signed(fields[slot["public"]])
         return q32_to_float(signed) if slot["kind"] == "f" else signed
 
@@ -140,9 +145,10 @@ def decode_with_layout(fields: list[int | None], layout: list[dict],
             shapes.append(list(part["shape"]))
             continue
         dynamic = part["dynamic"]
-        length = value(dynamic["length"])
-        rank = value(dynamic["rank"])
-        all_dims = [value(d) for d in dynamic["dims"]]
+        shape_publics: set[int] = set()
+        length = value(dynamic["length"], shape_publics)
+        rank = value(dynamic["rank"], shape_publics)
+        all_dims = [value(d, shape_publics) for d in dynamic["dims"]]
         cells = [value(cell) for cell in dynamic["cells"]]
         if not (isinstance(rank, int) and 0 <= rank <= len(all_dims)):
             raise ValueError(f"dynamic rank {rank} outside [0, {len(all_dims)}]")

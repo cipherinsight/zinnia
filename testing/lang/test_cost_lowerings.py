@@ -243,9 +243,9 @@ def test_membership_matches_numpy(source, args):
     expected = np.asarray(numpy_kernel(source)(*[np.copy(a) for a in args]))
     satisfied, outputs = run_mock(compile_kernel(source), *args)
     assert satisfied
-    if "A[" in source:  # runtime-shaped: length, dim, padded payload
+    if "A[" in source:  # runtime-shaped, rank 1: length (= its dim), padded payload
         assert outputs[0] == len(expected)
-        assert outputs[2:2 + len(expected)] == list(expected)
+        assert outputs[1:1 + len(expected)] == list(expected)
     else:
         assert np.array_equal(np.asarray(outputs, dtype=float).ravel(), expected.astype(float).ravel())
 
@@ -446,13 +446,15 @@ def test_nonzero_1d_matches_numpy(body, x):
 @pytest.mark.parametrize("body, envelope", [
     ("np.argwhere(a)", 12), ("np.nonzero(a)[1]", 6), ("np.argwhere(a == np.min(a))", 12)])
 def test_argwhere_and_nonzero_2d_match_numpy(body, envelope):
-    # Layout: runtime length, runtime rows, then the zero-padded payload.
+    # Layout: runtime length, runtime rows (rank 2 only; a rank-1 result's
+    # only dim is its length's public), then the zero-padded payload.
     a = np.array([[0, 4, 0], [5, 0, 6]])
     source = f'def kernel(a: Integer[Array, "2 3"]):\n    return {body}\n'
     expected = np.asarray(numpy_kernel(source)(a.copy()))
     satisfied, outputs = run_mock(compile_kernel(source), a)
-    assert satisfied and outputs[:2] == [expected.size, expected.shape[0]]
-    payload = outputs[2:]
+    shape_entries = [expected.size, expected.shape[0]] if expected.ndim == 2 else [expected.size]
+    assert satisfied and outputs[:len(shape_entries)] == shape_entries
+    payload = outputs[len(shape_entries):]
     assert len(payload) == envelope
     assert payload[:expected.size] == expected.ravel().tolist()
     assert all(v == 0 for v in payload[expected.size:])

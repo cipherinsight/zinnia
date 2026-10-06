@@ -181,6 +181,17 @@ pub fn dominated(checks: &[ProgramCheck]) -> HashSet<StmtId> {
 pub fn cost(claim: &Claim, target: Target) -> u64 {
     match (claim, target) {
         (Claim::InRange { .. }, Target::Halo2Base) => 8,
+        // The Noir emitter checks `0 <= x < h` for a constant `h` as one
+        // range check of `x` when `h` is a power of two, else as range
+        // checks of `x` and `h - 1 - x` (measured on 0345 / 0346: 4 gates for
+        // h = 6, about 1 for h = 8).
+        (&Claim::InRange { hi: Bound::Const(h), .. }, Target::Noir) if h > 0 => {
+            if (h as u64).is_power_of_two() {
+                1
+            } else {
+                4
+            }
+        }
         (Claim::InRange { .. }, Target::Noir) => 5,
         (Claim::NonNegative(_), Target::Halo2Base) => 8,
         (Claim::NonNegative(_), Target::Noir) => 4,

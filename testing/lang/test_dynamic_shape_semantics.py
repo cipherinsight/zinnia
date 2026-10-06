@@ -1,34 +1,31 @@
 """NumPy-differential tests for operators with runtime-shaped results (audit M2).
 
 Each case used to prove a result different from NumPy's on an honest input.
-Outputs are compared position by position; a runtime-shaped (dynamic) result
-is exposed as its runtime length and dims followed by the padded payload, and
-only the runtime prefix is compared with NumPy.
+A runtime-shaped (dynamic) result is exposed as its runtime length and dims
+followed by the padded payload; it is decoded with the compiler's output
+layout (`run_mock_layout`), so only the runtime elements are compared with
+NumPy.
 """
 import numpy as np
 import pytest
 
-from testing.lang.mock_outputs import assert_matches_numpy, compile_kernel, numpy_kernel, run_mock
+from testing.lang.mock_outputs import assert_matches_numpy, compile_kernel, numpy_kernel, run_mock, run_mock_layout
 
 A23 = np.array([[1, 5, 0], [7, 3, 2]])
 
 
 def dynamic_1d(source, *args):
-    """(runtime length, runtime prefix of the payload) of a 1-D dynamic result."""
-    satisfied, outputs = run_mock(compile_kernel(source), *args)
+    """(runtime length, runtime elements) of a 1-D dynamic result."""
+    satisfied, values, shapes = run_mock_layout(compile_kernel(source), *args)
+    assert satisfied and len(shapes) == 1 and len(shapes[0]) == 1
+    return shapes[0][0], values
+
+
+def runtime_values(source, *args):
+    """The result's elements (a dynamic result's runtime elements only)."""
+    satisfied, values, _ = run_mock_layout(compile_kernel(source), *args)
     assert satisfied
-    length = outputs[0]
-    return length, outputs[2:2 + length]
-
-
-def runtime_values(outputs, n):
-    """The `n` result values: all outputs for a static result, the runtime
-    prefix of the payload for a 1-D dynamic one (layout: runtime length,
-    runtime dim, padded payload)."""
-    if len(outputs) == n:
-        return outputs
-    assert outputs[0] == n, f"runtime length {outputs[0]} != {n}"
-    return outputs[2:2 + n]
+    return values
 
 
 def test_one_argument_where_is_nonzero():
@@ -62,9 +59,7 @@ def test_reduction_over_runtime_bounded_2d_slice(expr):
     # by 8, `.min()` saw the padding zeros, `len` was 4.
     source = SLICE_2D.format(expr)
     expected = np.asarray(numpy_kernel(source)(A42.copy(), 2), dtype=float).ravel()
-    satisfied, outputs = run_mock(compile_kernel(source), A42, 2)
-    assert satisfied
-    np.testing.assert_allclose(runtime_values(outputs, expected.size), expected)
+    np.testing.assert_allclose(runtime_values(source, A42, 2), expected)
 
 
 def test_elementwise_over_runtime_bounded_2d_slice_keeps_runtime_shape():
@@ -98,9 +93,7 @@ def test_runtime_shaped_array_operations_match_numpy(expr):
     x = np.array([1, -1, 2, 7, -3, 9])
     m = np.array([[0, 1, 0], [0, 0, 1]])
     expected = np.asarray(numpy_kernel(source)(x.copy(), m.copy()), dtype=float).ravel()
-    satisfied, outputs = run_mock(compile_kernel(source), x, m)
-    assert satisfied
-    np.testing.assert_allclose(runtime_values(outputs, expected.size), expected, rtol=0, atol=1e-6)
+    np.testing.assert_allclose(runtime_values(source, x, m), expected, rtol=0, atol=1e-6)
 
 
 @pytest.mark.parametrize("source, args", [
@@ -138,9 +131,9 @@ def test_merged_crop_reductions_and_reads_match_numpy(expr, expected):
 
 
 def test_merged_crop_row_read_matches_numpy():
-    satisfied, outputs = run_mock(compile_kernel(CROP_OR_EMPTY.format("result[1]")),
-                                  IM, 1, 4, 2, 5, 1)
-    assert satisfied and outputs[0] == 3 and outputs[2:5] == [14, 15, 16]
+    satisfied, values, shapes = run_mock_layout(compile_kernel(CROP_OR_EMPTY.format("result[1]")),
+                                                IM, 1, 4, 2, 5, 1)
+    assert satisfied and shapes == [[3]] and values == [14, 15, 16]
 
 
 def test_merged_empty_arm_exposes_no_data():
