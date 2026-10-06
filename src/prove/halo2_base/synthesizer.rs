@@ -475,12 +475,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
                 _ => {}
             }
         }
-        let iz = self.is_zero_bit(a);
-        let out = self.gate_cell(Fp::one() - iz.value, |gate, ctx| {
-            gate.not(ctx, iz.assigned)
-        });
-        self.mark_bit(&out);
-        out
+        self.is_nonzero_bit(a)
     }
 
     fn constrain_equal(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) {
@@ -535,6 +530,49 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             }
         }
         self.constant_bool(true)
+    }
+
+    /// `a - b`, or the other operand when one is the constant 0 (an
+    /// equality test with 0 tests the value itself).
+    fn difference_or_operand(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Halo2BaseCell {
+        let zero = |s: &Self, x: &Halo2BaseCell| s.is_const_cell(x) && x.value == Fp::zero();
+        if zero(self, b) {
+            *a
+        } else if zero(self, a) {
+            *b
+        } else {
+            self.difference(a, b)
+        }
+    }
+
+    /// `[x != 0]` as a marked bit, in eight cells: `nz = x·inv` and
+    /// `x·nz = x` (gates `[0, x, inv, nz]` and `[0, x, nz, x]`). For `x ≠ 0`
+    /// the second gate forces `nz = 1`; for `x = 0` the first forces
+    /// `nz = 0`. (`[x == 0]` and a negation cost eleven.) `inv` is the
+    /// gadget's witness, free only when `x = 0`, where it does not matter.
+    fn is_nonzero_bit(&mut self, x: &Halo2BaseCell) -> Halo2BaseCell {
+        use halo2_base::halo2_proofs::plonk::Assigned;
+        let (value, inverse) = if x.value == Fp::zero() {
+            (Fp::zero(), Assigned::Trivial(Fp::zero()))
+        } else {
+            (Fp::one(), Assigned::Rational(Fp::one(), x.value))
+        };
+        let ctx = self.builder.main(0);
+        let cells = [
+            QuantumCell::Constant(Fp::zero()),
+            QuantumCell::Existing(x.assigned),
+            QuantumCell::WitnessFraction(inverse),
+            QuantumCell::Witness(value),
+            QuantumCell::Constant(Fp::zero()),
+            QuantumCell::Existing(x.assigned),
+            QuantumCell::Witness(value),
+            QuantumCell::Existing(x.assigned),
+        ];
+        ctx.assign_region_smart(cells, [0, 4], [(3, 6)], []);
+        let assigned = ctx.get(-5);
+        let bit = self.wrap(assigned, value);
+        self.mark_bit(&bit);
+        bit
     }
 
     /// `[x == 0]` as a marked bit: halo2-base's inverse-witness gadget,
@@ -853,24 +891,22 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         if let Some(bit) = self.equals_constant(b, a)? {
             return Ok(bit);
         }
-        // `[a == b] = [a - b == 0]`; a comparison with the constant 0 tests
-        // the other operand directly.
-        let zero = |s: &Self, x: &Halo2BaseCell| s.is_const_cell(x) && x.value == Fp::zero();
-        let difference = if zero(self, b) {
-            *a
-        } else if zero(self, a) {
-            *b
-        } else {
-            self.difference(a, b)
-        };
+        // `[a == b] = [a - b == 0]`.
+        let difference = self.difference_or_operand(a, b);
         Ok(self.is_zero_bit(&difference))
     }
     fn ne_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         if self.is_asserted_comparison() {
             return self.assert_distinct(a, b);
         }
-        let eq = self.eq_i(a, b)?;
-        self.logical_not(&eq)
+        // A two-valued cell against a constant: the negated bit (or a constant).
+        for (x, c) in [(a, b), (b, a)] {
+            if let Some(eq) = self.equals_constant(x, c)? {
+                return self.logical_not(&eq);
+            }
+        }
+        let difference = self.difference_or_operand(a, b);
+        Ok(self.is_nonzero_bit(&difference))
     }
     /// Signed `a < b`; operands outside the signed 64-bit window have no
     /// witness (see `ranges::less_than`).

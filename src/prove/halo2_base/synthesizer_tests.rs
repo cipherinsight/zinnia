@@ -1389,6 +1389,20 @@ fn equality_tests_are_pinned() {
     }
     let (with_zero, general) = (cells_of(&*eq_zero, &[int(5)]).0, cells_of(&*eq, &[int(5), int(6)]).0);
     assert!(with_zero + 4 <= general, "x == 0 costs {with_zero}, a == b {general}");
+    // `!=` and truthiness by the eight-cell non-zero test.
+    let ne = binary(|s, a, b| s.ne_i(a, b));
+    let truth = unary(|s, a| s.bool_cast(a));
+    for (a, b) in [(3i64, 3i64), (3, 4), (0, 0), (i64::MIN, i64::MAX)] {
+        let honest = synthesize(&*ne, &[int(a), int(b)], &[]);
+        assert!(honest.accepted && honest.outputs == vec![bit(a != b)], "{a} != {b}");
+        assert!(!accepts_claim(&*ne, &[int(a), int(b)], &[bit(a == b)]), "{a} != {b}: flipped bit accepted");
+        let honest = synthesize(&*truth, &[int(a)], &[]);
+        assert!(honest.accepted && honest.outputs == vec![bit(a != 0)], "bool({a})");
+        assert!(!accepts_claim(&*truth, &[int(a)], &[bit(a == 0)]), "bool({a}): flipped bit accepted");
+    }
+    // One cell more than `==` (eight-cell test against seven), not the four
+    // of a negation gate.
+    assert!(cells_of(&*ne, &[int(5), int(6)]).0 <= general + 1, "a != b costs more than a == b plus one");
 }
 
 /// An asserted `x != 0` is the pinned inverse `x·inv = 1`; division by a
