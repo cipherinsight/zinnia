@@ -8,6 +8,7 @@ use crate::types::{NumberType, ScalarValue, StmtId, StringValue, Value};
 
 mod fixed_width;
 mod bool_dtype;
+mod same_value;
 pub(crate) mod guard;
 
 #[derive(Clone)]
