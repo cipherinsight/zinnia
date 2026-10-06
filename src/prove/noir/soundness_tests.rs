@@ -411,6 +411,40 @@ fn sqrt_of_an_asserted_non_negative_needs_no_sign() {
     assert_rejected(execute(&graph, &float_witness(&[], &[("x", -1e-9)])));
 }
 
+/// `x / d` as the builder emits it: the precondition `d != 0` asserted
+/// first. The assertion is `assert(d != 0)`; the division then uses `d`'s
+/// `sign_abs` pair without the zero-divisor mapping, one pair for every
+/// division by `d`. Results equal the mock; `d = 0` is rejected.
+#[test]
+fn divisions_by_an_asserted_nonzero_divisor_share_its_sign() {
+    if !toolchain_present(false) {
+        return;
+    }
+    let mut g = Graph::default();
+    let x = g.push(IR::ReadFloat { path: InputPath::new("x", vec![]), is_public: false }, &[]);
+    let d = g.push(IR::ReadFloat { path: InputPath::new("d", vec![]), is_public: false }, &[]);
+    let zero = g.push(IR::ConstantFloat { value: 0.0 }, &[]);
+    let nonzero = g.push(IR::NeF, &[d, zero]);
+    g.push(IR::Assert, &[nonzero]);
+    let first = g.push(IR::DivF, &[x, d]);
+    let second = g.push(IR::DivF, &[d, d]);
+    let third = g.push(IR::FloorDivF, &[x, d]);
+    for out in [first, second, third] {
+        g.push(IR::ExposePublicF, &[out]);
+    }
+    let graph = g.finish();
+    let honest = float_witness(&[], &[("x", 7.5), ("d", -2.0)]);
+    let emitted = emit_circuit(&graph, &honest, &ProvingParams::default()).unwrap();
+    let main = &emitted.main_nr;
+    assert!(main.contains("assert(") && main.contains("qdiv_nonzero_of") && !main.contains("qdiv("), "{main}");
+    assert_eq!(main.matches("sign_abs(").count(), 1, "{main}");
+    for (xv, dv) in [(7.5, -2.0), (-3.25, 0.5), (1e-6, 3.0)] {
+        let w = float_witness(&[], &[("x", xv), ("d", dv)]);
+        assert_eq!(execute(&graph, &w).unwrap(), mock_outputs(&graph, &w).1, "{xv} / {dv}");
+    }
+    assert_rejected(execute(&graph, &float_witness(&[], &[("x", 1.0), ("d", 0.0)])));
+}
+
 /// M5: a dynamic-address write outside the segment used to update no slot
 /// and succeed; the mock rejects it.
 #[test]

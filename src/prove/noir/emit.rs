@@ -125,7 +125,7 @@ fn asserted_comparisons(ir: &IRGraph) -> HashSet<u32> {
             matches!(
                 s.ir,
                 IR::LtI | IR::LteI | IR::GtI | IR::GteI | IR::LtF | IR::LteF | IR::GtF | IR::GteF
-                    | IR::LtIBounded | IR::GtIBounded | IR::IndexInBox { .. }
+                    | IR::LtIBounded | IR::GtIBounded | IR::IndexInBox { .. } | IR::NeI | IR::NeF
             )
         })
         .map(|s| s.stmt_id)
@@ -648,6 +648,8 @@ pub struct NoirEmitter<'a> {
     write_version: HashMap<u32, u64>,
     /// Comparisons used only by asserts (see `asserted_comparisons`).
     asserted_comparisons: HashSet<u32>,
+    /// Cells an emitted `assert(x != 0)` proves non-zero.
+    nonzero: HashSet<String>,
     /// Asserted comparisons a bounds check elsewhere implies (see
     /// `implied_comparisons`): they emit nothing.
     implied_comparisons: HashSet<u32>,
@@ -1163,6 +1165,25 @@ impl<'a> NoirEmitter<'a> {
         }
     }
 
+    /// `a != b` for a `!=` whose only uses are asserts: the assertion
+    /// itself (`assert(a != b)`, an inverse constraint), and the literal
+    /// true for the asserts. Against the constant 0 the other operand is
+    /// recorded as non-zero, so divisions by it skip the zero-divisor
+    /// mapping (`nonzero`).
+    fn asserted_distinct(&mut self, a: &str, b: &str) -> Option<String> {
+        let asserted = self.current_stmt.is_some_and(|id| self.asserted_comparisons.contains(&id));
+        if !asserted {
+            return None;
+        }
+        let _ = writeln!(self.body, "    assert({a} != {b});");
+        for (x, other) in [(a, b), (b, a)] {
+            if self.raw_constant(other) == Some(0) {
+                self.nonzero.insert(x.to_string());
+            }
+        }
+        Some(self.literal_int(1))
+    }
+
     fn narrow_proven_range(&mut self, cell: &str, lo: i128, hi: i128) {
         let entry = self.proven_range.entry(cell.to_string()).or_insert((lo, hi));
         *entry = (entry.0.max(lo), entry.1.min(hi));
@@ -1398,6 +1419,11 @@ impl<'a> NoirEmitter<'a> {
     fn floor_divmod_cells(&mut self, a: &str, b: &str) -> (String, String) {
         if let Some(d) = self.raw_constant(b).filter(|d| *d > 0) {
             return self.divide_by_positive_constant(a, d);
+        }
+        if self.nonzero.contains(b) {
+            let (negative, mag) = self.sign_abs(b);
+            self.use_lib("floor_divmod_nonzero_of");
+            return self.divmod_call(format!("floor_divmod_nonzero_of({a}, {b}, {negative}, {mag})"));
         }
         self.use_lib("floor_divmod");
         self.divmod_call(format!("floor_divmod({a}, {b})"))
@@ -1767,6 +1793,7 @@ impl<'a> NoirEmitter<'a> {
             write_version: HashMap::new(),
             wrapped_index_ranges: HashMap::new(),
             asserted_comparisons: HashSet::new(),
+            nonzero: HashSet::new(),
             implied_comparisons: HashSet::new(),
             current_stmt: None,
             proven_range: HashMap::new(),
@@ -2196,6 +2223,11 @@ impl Synthesizer for NoirEmitter<'_> {
                 return Ok(self.div_f_by_constant(a, c));
             }
         }
+        if self.nonzero.contains(b.as_str()) {
+            let (_, mag) = self.sign_abs(b);
+            self.use_lib("qdiv_nonzero_of");
+            return Ok(self.bind(&format!("qdiv_nonzero_of({a}, {b}, {mag})")));
+        }
         self.use_lib("qdiv");
         let v = self.bind(&format!("qdiv({}, {})", a, b));
         Ok(v)
@@ -2301,6 +2333,9 @@ impl Synthesizer for NoirEmitter<'_> {
         Ok(v)
     }
     fn ne_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some(v) = self.asserted_distinct(a, b) {
+            return Ok(v);
+        }
         if let Some(v) = self.scaled_bit_zero_test(a, b, true) {
             return Ok(v);
         }
@@ -2365,6 +2400,9 @@ impl Synthesizer for NoirEmitter<'_> {
         Ok(self.bind_flag(&format!("if {} == {} {{ 1 }} else {{ 0 }}", af, bf)))
     }
     fn ne_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some(v) = self.asserted_distinct(a, b) {
+            return Ok(v);
+        }
         let (af, bf) = (a, b);
         Ok(self.bind_flag(&format!("if {} == {} {{ 0 }} else {{ 1 }}", af, bf)))
     }
