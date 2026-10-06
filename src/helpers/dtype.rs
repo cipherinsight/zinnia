@@ -326,29 +326,78 @@ fn wrap_into(b: &mut IRBuilder, v: &Value, t: IntType) -> Value {
     converted
 }
 
-/// The range of the integer `v` that its facts and the IR's interval
-/// analysis prove: `IRBuilder::ask_bounds` without the SMT layer, whose
-/// per-value queries over a long dependency cone (a float pipeline before
-/// the conversion) take seconds each.
+/// The range of the integer `v` that its facts, the IR's interval analysis
+/// and its min/max structure prove: `IRBuilder::ask_bounds` without the SMT
+/// layer, whose per-value queries over a long dependency cone (a float
+/// pipeline before the conversion) take seconds each.
 fn proven_range(b: &IRBuilder, v: &Value) -> Option<(i64, i64)> {
+    /// How many nested selections are followed (`np.clip` is two).
+    const SELECTION_DEPTH: u32 = 4;
+    let (min, max) = range_of(b, v, SELECTION_DEPTH);
+    (min > i64::MIN || max < i64::MAX).then_some((min, max))
+}
+
+/// [`proven_range`] with `i64::MIN` / `i64::MAX` for an unknown end.
+fn range_of(b: &IRBuilder, v: &Value, depth: u32) -> (i64, i64) {
     use crate::optim::resolver::Resolver;
     let mut intervals = crate::optim::range::RangeResolver::new();
-    let min = intervals
-        .resolve_min_with_stmts(v, &b.stmts)
-        .unwrap_or(i64::MIN);
-    let max = intervals
-        .resolve_max_with_stmts(v, &b.stmts)
-        .unwrap_or(i64::MAX);
+    let interval = (
+        intervals
+            .resolve_min_with_stmts(v, &b.stmts)
+            .unwrap_or(i64::MIN),
+        intervals
+            .resolve_max_with_stmts(v, &b.stmts)
+            .unwrap_or(i64::MAX),
+    );
     let facts = v
         .value_id()
         .and_then(|vid| crate::optim::resolver::derive_bounds_from_facts(&b.facts, vid));
-    let (min, max) = [facts, b.deep_bounds_walk(v)]
+    let selection = (depth > 0)
+        .then(|| selection_range(b, v, depth - 1))
+        .flatten();
+    [facts, b.deep_bounds_walk(v), selection]
         .into_iter()
         .flatten()
-        .fold((min, max), |(lo, hi), (fact_lo, fact_hi)| {
-            (lo.max(fact_lo), hi.min(fact_hi))
-        });
-    (min > i64::MIN || max < i64::MAX).then_some((min, max))
+        .fold(interval, |(lo, hi), (other_lo, other_hi)| {
+            (lo.max(other_lo), hi.min(other_hi))
+        })
+}
+
+/// The range of a selection `v = SelectI(c, t, f)`: one of the ranges of `t`
+/// and `f`, and for a maximum or minimum (`c` compares `t` with `f`, as
+/// `np.maximum`, `np.minimum`, `np.clip` and `max()` build them) the range of
+/// the larger or smaller of the two.
+fn selection_range(b: &IRBuilder, v: &Value, depth: u32) -> Option<(i64, i64)> {
+    let stmt = b.stmts.get(v.stmt_id()? as usize)?;
+    let (IR::SelectI, &[condition, t, f]) = (&stmt.ir, stmt.arguments.as_slice()) else {
+        return None;
+    };
+    let operand = |id: crate::types::StmtId| {
+        let value_id = b.stmts[id as usize].value_id;
+        Value::Integer(crate::types::ScalarValue {
+            static_val: None,
+            stmt_id: Some(id),
+            value_id,
+        })
+    };
+    let (t_lo, t_hi) = range_of(b, &operand(t), depth);
+    let (f_lo, f_hi) = range_of(b, &operand(f), depth);
+    let comparison = &b.stmts[condition as usize];
+    let larger_if_true = match comparison.ir {
+        IR::GtI | IR::GteI => Some(true),
+        IR::LtI | IR::LteI => Some(false),
+        _ => None,
+    };
+    let picks_larger = match (larger_if_true, comparison.arguments.as_slice()) {
+        (Some(larger), &[p, q]) if (p, q) == (t, f) => Some(larger),
+        (Some(larger), &[p, q]) if (p, q) == (f, t) => Some(!larger),
+        _ => None,
+    };
+    Some(match picks_larger {
+        Some(true) => (t_lo.max(f_lo), t_hi.max(f_hi)),
+        Some(false) => (t_lo.min(f_lo), t_hi.min(f_hi)),
+        None => (t_lo.min(f_lo), t_hi.max(f_hi)),
+    })
 }
 
 /// A statically shaped array (or a nested list) converted element-wise.

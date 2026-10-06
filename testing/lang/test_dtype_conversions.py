@@ -179,10 +179,14 @@ def test_dtype_attribute_of_converted_arrays(expression):
 
 @pytest.mark.parametrize("expression", [
     "np.clip(x, 0, 255).astype(np.uint8)", "(x > 0).astype(np.int8)", "np.clip(x, -128, 127).astype(np.int8)",
+    "np.maximum(x, 0).astype(np.uint64)", "np.minimum(np.maximum(x, -5), 5).astype(np.int8)",
 ])
 def test_values_in_range_convert_without_a_remainder(expression):
+    # The facts, the interval analysis and the min/max structure of the
+    # operand prove it in the type's range: no constraint is added.
     source = f'def kernel(x: Integer[Array, "8"]):\n    return {expression}\n'
-    assert "ModIIR" not in ir_classes(compile_kernel(source))
+    classes = ir_classes(compile_kernel(source))
+    assert "ModIIR" not in classes and "AssertNonNegIIR" not in classes
     assert_matches_numpy(source, X_INT)
 
 
