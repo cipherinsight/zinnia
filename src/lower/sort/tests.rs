@@ -133,6 +133,63 @@ fn every_plan_is_the_stable_sort_with_ties() {
     }
 }
 
+/// A payload gathered by the stable argsort (`b[np.argsort(a)]`) is
+/// carried by every stable network and read at the pinned indices of every
+/// hinted plan: NumPy's gather, ties in original order, alone or with the
+/// sort's other outputs, every rank or some.
+#[test]
+fn payloads_are_gathered_in_stable_order() {
+    let n = TIED.len() as u32;
+    let every_payload: Vec<Output> = (0..n).map(Output::Payload).collect();
+    let some: Vec<Output> = [0, 4, 8].map(Output::Payload).to_vec();
+    let mixed = vec![Output::Payload(2), Output::Index(2), Output::Value(5), Output::Payload(7)];
+    for outputs in [&every_payload, &some, &mixed] {
+        for forced in [Forced::Batcher, Forced::AdjacentSwap, Forced::Permutation, Forced::Runs] {
+            assert_computes_numpy(&TIED, outputs, forced);
+        }
+        for target in [Target::Halo2Base, Target::Noir] {
+            assert_computes_numpy(&TIED, outputs, Forced::CostRule(target));
+        }
+    }
+    assert_computes_numpy(&TIED, &every_payload, Forced::PackedBatcher);
+    assert_computes_numpy(&TIED, &some, Forced::PackedBatcher);
+    for n in 1..=4u32 {
+        let values: Vec<i64> = TIED[..n as usize].to_vec();
+        let outputs: Vec<Output> = (0..n).map(Output::Payload).collect();
+        for forced in [Forced::AdjacentSwap, Forced::Permutation, Forced::CostRule(Target::Noir)] {
+            assert_computes_numpy(&values, &outputs, forced);
+        }
+    }
+}
+
+/// The packed-key network yields the stable argsort (ties in original
+/// order) for every rank, some ranks, runtime ranks, every small length
+/// and window-extreme values.
+#[test]
+fn packed_network_is_the_stable_argsort() {
+    let indices = |ranks: &[u32]| ranks.iter().map(|&r| Output::Index(r)).collect::<Vec<_>>();
+    let n = TIED.len() as u32;
+    assert_computes_numpy(&TIED, &indices(&(0..n).collect::<Vec<_>>()), Forced::PackedBatcher);
+    for ranks in [vec![0], vec![8], vec![7, 8], vec![0, 4, 8]] {
+        assert_computes_numpy(&TIED, &indices(&ranks), Forced::PackedBatcher);
+    }
+    for r in [0, 4, 8, -1, 9] {
+        assert_computes_numpy(&TIED, &[Output::IndexAt(r)], Forced::PackedBatcher);
+    }
+    let extremes = [i64::MAX, i64::MIN, 0, i64::MAX, -1, i64::MIN];
+    assert_computes_numpy(&extremes, &indices(&[0, 1, 2, 3, 4, 5]), Forced::PackedBatcher);
+    let mut state = 0x2545F4914F6CDD1Du64;
+    for n in 1..=17usize {
+        let values: Vec<i64> = (0..n)
+            .map(|_| {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                ((state >> 33) % 5) as i64 - 2
+            })
+            .collect();
+        assert_computes_numpy(&values, &indices(&(0..n as u32).collect::<Vec<_>>()), Forced::PackedBatcher);
+    }
+}
+
 #[test]
 fn runtime_ranks_are_the_stable_sort_and_out_of_range_has_no_proof() {
     for forced in [Forced::Batcher, Forced::Permutation, Forced::Runs] {
@@ -173,6 +230,8 @@ fn demand(n: usize, values: &[usize], indices: &[usize], runtime_values: usize) 
         indices: indices.iter().copied().collect(),
         runtime_values,
         runtime_indices: 0,
+        payloads: Vec::new(),
+        masked_extremes: Default::default(),
     }
 }
 
@@ -181,10 +240,13 @@ fn cost_rule_picks_by_target_and_live_outputs() {
     let halo2 = unit_costs(Target::Halo2Base);
     let noir = unit_costs(Target::Noir);
     let every: Vec<usize> = (0..100).collect();
-    // A full argsort of 100: Batcher on halo2-base (a read is a one-hot
-    // selection over 100 slots), the permutation check on Noir.
+    // A full argsort of 100: Batcher on packed keys on halo2-base (a read is
+    // a one-hot selection over 100 slots), the permutation check on Noir.
     let full = demand(100, &[], &every, 0);
-    assert_eq!(choose_plan(&full, &halo2).0, Plan::Network { network: Network::MergeExchangeTieBreak });
+    assert_eq!(choose_plan(&full, &halo2).0, Plan::Network { network: Network::PackedMergeExchange });
+    // With the sorted values live too: the (value, index) network.
+    let both = demand(100, &every, &every, 0);
+    assert_eq!(choose_plan(&both, &halo2).0, Plan::Network { network: Network::MergeExchangeTieBreak });
     assert_eq!(
         choose_plan(&full, &noir).0,
         Plan::Hinted { runs: vec![Run { first: 0, last: 99, pin: Pin::Keys }] }
@@ -287,6 +349,27 @@ fn counts_reject_every_other_value() {
     }
     for r in [0u32, 8] {
         assert_pinned(&TIED, &[Output::Value(r)], Forced::Extremes, wrong_values(&TIED));
+    }
+}
+
+/// An extreme whose value the program compares with every element takes
+/// its membership from those equality bits: NumPy's mask, ties included,
+/// and every other hinted value rejected.
+#[test]
+fn extremes_with_equality_bits_are_pinned() {
+    let n = TIED.len() as u32;
+    for r in [0, n - 1] {
+        let outputs = [Output::EqualsEach(r)];
+        assert_computes_numpy(&TIED, &outputs, Forced::MaskedExtremes);
+        let sort = sort_graph(&TIED, &outputs, Forced::MaskedExtremes);
+        assert!(
+            !sort.graph.stmts.iter().any(|s| matches!(s.ir, IR::MulI)),
+            "membership by the equality bits, not a product"
+        );
+        assert_pinned(&TIED, &outputs, Forced::MaskedExtremes, wrong_values(&TIED));
+        for target in [Target::Halo2Base, Target::Noir] {
+            assert_computes_numpy(&TIED, &outputs, Forced::CostRule(target));
+        }
     }
 }
 

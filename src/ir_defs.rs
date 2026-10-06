@@ -366,6 +366,30 @@ pub enum IR {
     KeyLess {
         index_bits: u32,
     },
+    /// The packed sort key `v * 2^index_bits + i` of the operands `[v, i]`:
+    /// a signed value `v` (int64 or Q32; a backend rejects values outside
+    /// the 64-bit window, as for `LtI`) and an index the producer
+    /// guarantees in `[0, 2^index_bits)` (a constant). A packed key needs
+    /// `64 + index_bits` bits: it is not an int64 value, and only
+    /// `SelectI`, `PackedKeyLess` and `PackedKeyIndex` may consume it.
+    /// The integer order of packed keys is the lexicographic order of the
+    /// pairs (see `KeyLess`), so a sorting network can exchange one packed
+    /// key instead of a value and an index.
+    PackKey {
+        index_bits: u32,
+    },
+    /// `[K1 < K2]` for packed keys `[K1, K2]` (results of `PackKey` with the
+    /// same `index_bits`, or selections among them).
+    PackedKeyLess {
+        index_bits: u32,
+    },
+    /// The index `i` of a packed key `K = v * 2^index_bits + i` (a result
+    /// of `PackKey`, or a selection among such results): the unique
+    /// decomposition with `v` in the signed 64-bit window and `i` in
+    /// `[0, 2^index_bits)`.
+    PackedKeyIndex {
+        index_bits: u32,
+    },
 }
 
 /// The deterministic function an [`IR::Hint`] takes a lane of. Both order
@@ -386,6 +410,10 @@ pub enum HintKind {
     /// (1: the slot holds an element), so `len = 2n`; lane `r` is the value
     /// of rank `r` among the active ones (0 past their number).
     MaskedSortedValues,
+    /// The number of operands at most the rank operand (signed order):
+    /// `#{j : a_j <= t}` for the query `t` passed as the rank. Not a lane of
+    /// a vector: every query value has its count.
+    CountAtMost,
 }
 
 impl HintKind {
@@ -394,6 +422,7 @@ impl HintKind {
             HintKind::StableArgsort => "stable_argsort",
             HintKind::SortedValues => "sorted_values",
             HintKind::MaskedSortedValues => "masked_sorted_values",
+            HintKind::CountAtMost => "count_at_most",
         }
     }
 
@@ -402,6 +431,7 @@ impl HintKind {
             "stable_argsort" => Some(HintKind::StableArgsort),
             "sorted_values" => Some(HintKind::SortedValues),
             "masked_sorted_values" => Some(HintKind::MaskedSortedValues),
+            "count_at_most" => Some(HintKind::CountAtMost),
             _ => None,
         }
     }
@@ -660,6 +690,9 @@ impl IR {
             // Prover hints and their placeholders
             IR::Hint { kind, len } => format!("hint[{}][{}]", kind.name(), len),
             IR::KeyLess { index_bits } => format!("key_less[{}]", index_bits),
+            IR::PackKey { index_bits } => format!("pack_key[{}]", index_bits),
+            IR::PackedKeyLess { index_bits } => format!("packed_key_less[{}]", index_bits),
+            IR::PackedKeyIndex { index_bits } => format!("packed_key_index[{}]", index_bits),
             IR::ArrayOp(op) => op.describe(),
         }
     }
@@ -822,6 +855,9 @@ impl IR {
             IR::Hint { .. } => "HintIR",
             IR::ArrayOp(_) => "ArrayOpIR",
             IR::KeyLess { .. } => "KeyLessIR",
+            IR::PackKey { .. } => "PackKeyIR",
+            IR::PackedKeyLess { .. } => "PackedKeyLessIR",
+            IR::PackedKeyIndex { .. } => "PackedKeyIndexIR",
         }
     }
 
@@ -991,7 +1027,10 @@ impl IR {
 
             IR::Hint { kind, len } => serde_json::json!({ "kind": kind.name(), "len": len }),
             IR::ArrayOp(op) => serde_json::to_value(op).expect("an ArrayOp serializes"),
-            IR::KeyLess { index_bits } => serde_json::json!({ "index_bits": index_bits }),
+            IR::KeyLess { index_bits }
+            | IR::PackKey { index_bits }
+            | IR::PackedKeyLess { index_bits }
+            | IR::PackedKeyIndex { index_bits } => serde_json::json!({ "index_bits": index_bits }),
 
             // All parameterless IRs export empty dicts
             _ => serde_json::json!({}),
@@ -1301,6 +1340,15 @@ impl IR {
             "KeyLessIR" => Ok(IR::KeyLess {
                 index_bits: data["index_bits"].as_u64().ok_or("KeyLess: missing index_bits")? as u32,
             }),
+            "PackKeyIR" | "PackedKeyLessIR" | "PackedKeyIndexIR" => {
+                let index_bits =
+                    data["index_bits"].as_u64().ok_or("packed key: missing index_bits")? as u32;
+                Ok(match class_name {
+                    "PackKeyIR" => IR::PackKey { index_bits },
+                    "PackedKeyLessIR" => IR::PackedKeyLess { index_bits },
+                    _ => IR::PackedKeyIndex { index_bits },
+                })
+            }
             "ArrayOpIR" => serde_json::from_value(data.clone())
                 .map(IR::ArrayOp)
                 .map_err(|e| format!("ArrayOp: {e}")),
@@ -1488,6 +1536,7 @@ mod tests {
             IR::Hint { kind: HintKind::StableArgsort, len: 7 },
             IR::Hint { kind: HintKind::SortedValues, len: 1 },
             IR::Hint { kind: HintKind::MaskedSortedValues, len: 6 },
+            IR::Hint { kind: HintKind::CountAtMost, len: 4 },
             IR::ArrayOp(crate::lower::ArrayOp {
                 kind: crate::lower::OpKind::Sort,
                 shared: 5,
@@ -1501,6 +1550,9 @@ mod tests {
                 position: None,
             }),
             IR::KeyLess { index_bits: 7 },
+            IR::PackKey { index_bits: 7 },
+            IR::PackedKeyLess { index_bits: 7 },
+            IR::PackedKeyIndex { index_bits: 7 },
             IR::SqrtProductIF,
         ];
         for ir in irs {

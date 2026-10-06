@@ -22,6 +22,8 @@ use crate::lower::{Candidate, Construction, Context, Group, Target};
 pub(crate) enum Forced {
     /// Batcher's network (with the tie-break when indices are live).
     Batcher,
+    /// Batcher's network on packed keys (indices only).
+    PackedBatcher,
     /// The adjacent-swap network.
     AdjacentSwap,
     /// One pinned run over every rank (the permutation check).
@@ -34,6 +36,8 @@ pub(crate) enum Forced {
     /// The live smallest / largest values by asserted bounds and a
     /// membership product.
     Extremes,
+    /// The same, membership by the program's equality bits.
+    MaskedExtremes,
     /// The cost rule of a target.
     CostRule(Target),
 }
@@ -46,7 +50,17 @@ pub(crate) enum Output {
     Index(u32),
     ValueAt(i64),
     IndexAt(i64),
+    /// Rank `r` of the payload `p` (inputs `p{j}` holding `PAYLOAD_BASE + j`)
+    /// carried by the sort: `p[argsort[r]]`.
+    Payload(u32),
+    /// The bits `[s_r == a_j]` for every element (the value of rank `r`
+    /// compared with each element, `a.max(axis) == a`), not the value.
+    EqualsEach(u32),
 }
+
+/// The payload entries of [`Output::Payload`]: distinct from every element
+/// and index, so a wrong gather shows.
+pub(crate) const PAYLOAD_BASE: i64 = 1000;
 
 /// A lowered sort graph, its inputs (`a{j}` the elements, `r{k}` runtime
 /// ranks) and the outputs NumPy's stable sort gives (`None` where a runtime
@@ -58,12 +72,14 @@ pub(crate) struct SortGraph {
 }
 
 fn plan_for(forced: Forced, demand: &Demand) -> Plan {
-    let live: Vec<usize> = demand.values.union(&demand.indices).copied().collect();
-    let needs_indices = !demand.indices.is_empty() || demand.runtime_indices > 0;
+    let with_payloads = demand.with_payload_indices();
+    let live: Vec<usize> = with_payloads.values.union(&with_payloads.indices).copied().collect();
+    let needs_indices = !with_payloads.indices.is_empty() || demand.runtime_indices > 0;
     match forced {
         Forced::Batcher => Plan::Network {
             network: if needs_indices { Network::MergeExchangeTieBreak } else { Network::MergeExchange },
         },
+        Forced::PackedBatcher => Plan::Network { network: Network::PackedMergeExchange },
         Forced::AdjacentSwap => Plan::Network { network: Network::AdjacentSwap },
         Forced::Permutation => {
             Plan::Hinted { runs: vec![Run { first: 0, last: demand.n - 1, pin: Pin::Keys }] }
@@ -86,6 +102,10 @@ fn plan_for(forced: Forced, demand: &Demand) -> Plan {
             assert!(demand.indices.is_empty(), "extremes are values");
             Plan::Hinted { runs: live.iter().map(|&r| Run { first: r, last: r, pin: Pin::Extreme }).collect() }
         }
+        Forced::MaskedExtremes => {
+            assert!(live.iter().all(|r| demand.masked_extremes.contains_key(r)), "no equality bits");
+            Plan::Hinted { runs: live.iter().map(|&r| Run { first: r, last: r, pin: Pin::MaskedExtreme }).collect() }
+        }
         Forced::CostRule(target) => cost::choose_plan(demand, &cost::unit_costs(target)).0,
     }
 }
@@ -98,8 +118,8 @@ impl Construction for ForcedPlan {
         "sort: forced"
     }
 
-    fn candidates(&self, group: &Group, _cx: &Context) -> Vec<Candidate> {
-        let demand = super::demand(group);
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        let demand = super::demand(group, cx);
         let plan = plan_for(self.0, &demand);
         vec![super::plan_candidate(group, demand, plan, 0)]
     }
@@ -122,9 +142,37 @@ pub(crate) fn sort_graph(values: &[i64], outputs: &[Output], forced: Forced) -> 
     let mut inputs: Vec<(String, i64)> =
         values.iter().enumerate().map(|(j, v)| (format!("a{j}"), *v)).collect();
     let (sorted, argsort) = stable_sort(values);
+    let payload: Vec<i64> = (0..values.len() as i64).map(|j| PAYLOAD_BASE + j).collect();
+    let gathered: Vec<i64> = argsort.iter().map(|&i| payload[i as usize]).collect();
+    let mut payload_cells: Option<Vec<Value>> = None;
     let mut expected = Some(Vec::new());
     for (k, output) in outputs.iter().enumerate() {
+        if let Output::EqualsEach(r) = *output {
+            let value = b.ir_sorted(&elements, r, false);
+            for (j, element) in elements.iter().enumerate() {
+                let bit = b.ir_equal_i(&value, element);
+                let bit = b.ir_int_cast(&bit);
+                b.ir_expose_public_i(&bit);
+                if let Some(list) = expected.as_mut() {
+                    list.push(i64::from(sorted[r as usize] == values[j]));
+                }
+            }
+            continue;
+        }
         let (cell, want) = match *output {
+            Output::Payload(r) => {
+                let cells = payload_cells.get_or_insert_with(|| {
+                    inputs.extend(payload.iter().enumerate().map(|(j, &p)| (format!("p{j}"), p)));
+                    (0..values.len()).map(|j| b.ir_read_integer(InputPath::new(format!("p{j}"), vec![]), false)).collect()
+                });
+                let op = crate::lower::ArrayOp {
+                    kind: crate::lower::OpKind::Sort,
+                    shared: values.len() as u32,
+                    output: super::PAYLOAD,
+                    position: Some(r),
+                };
+                (b.ir_array_op(op, &elements, &cells.clone()), gathered.get(r as usize))
+            }
             Output::Value(r) => (b.ir_sorted(&elements, r, false), sorted.get(r as usize)),
             Output::Index(r) => (b.ir_sorted(&elements, r, true), argsort.get(r as usize)),
             Output::ValueAt(r) | Output::IndexAt(r) => {
@@ -135,6 +183,7 @@ pub(crate) fn sort_graph(values: &[i64], outputs: &[Output], forced: Forced) -> 
                 let want = usize::try_from(r).ok().and_then(|r| lanes.get(r));
                 (b.ir_sorted_at_runtime_rank(&elements, &rank, index), want)
             }
+            Output::EqualsEach(_) => unreachable!("handled above"),
         };
         b.ir_expose_public_i(&cell);
         match (want, expected.as_mut()) {

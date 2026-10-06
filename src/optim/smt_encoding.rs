@@ -500,7 +500,12 @@ impl IROp for IR {
             // A hint is the prover's choice: a fresh unconstrained term, so
             // no assert that pins it can ever be proved always-satisfied.
             // An array-operator placeholder is likewise left unconstrained.
-            IR::Hint { .. } | IR::ArrayOp(_) | IR::KeyLess { .. } => ctx.fresh_unconstrained(),
+            IR::Hint { .. }
+            | IR::ArrayOp(_)
+            | IR::KeyLess { .. }
+            | IR::PackKey { .. }
+            | IR::PackedKeyLess { .. }
+            | IR::PackedKeyIndex { .. } => ctx.fresh_unconstrained(),
         }
     }
 }

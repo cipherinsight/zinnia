@@ -421,6 +421,14 @@ impl<'a> Preprocessor<'a> {
                 }
                 Ok(Some(kernel::hint_lane(*kind, &args[..len], args[len])))
             }
+            IR::PackKey { index_bits } => {
+                Ok(Some(args[0] * kernel::i128_to_fp(1i128 << index_bits) + args[1]))
+            }
+            IR::PackedKeyLess { .. } => {
+                let d = args[0] - args[1];
+                Ok(Some(if kernel::fp_is_negative(d) && d != Fp::zero() { Fp::one() } else { Fp::zero() }))
+            }
+            IR::PackedKeyIndex { index_bits } => Ok(Some(kernel::packed_key_parts(args[0], *index_bits).1)),
             IR::KeyLess { .. } => {
                 let less = |x: Fp, y: Fp| {
                     let d = x - y;

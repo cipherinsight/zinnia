@@ -30,7 +30,7 @@ impl Elements<'_> {
     }
 
     /// Bits that hold every index `0..n` (at least one).
-    fn index_bits(&self) -> u32 {
+    pub(super) fn index_bits(&self) -> u32 {
         (usize::BITS - self.len().saturating_sub(1).leading_zeros()).max(1)
     }
 
@@ -41,14 +41,14 @@ impl Elements<'_> {
         b.ir_key_less(v1, i1, v2, i2, self.index_bits())
     }
 
-    fn less(&self, b: &mut IRBuilder, x: &Value, y: &Value) -> Value {
+    pub(super) fn less(&self, b: &mut IRBuilder, x: &Value, y: &Value) -> Value {
         match self.dtype {
             NumberType::Float => b.ir_less_than_f(x, y),
             _ => b.ir_less_than_i(x, y),
         }
     }
 
-    fn equal(&self, b: &mut IRBuilder, x: &Value, y: &Value) -> Value {
+    pub(super) fn equal(&self, b: &mut IRBuilder, x: &Value, y: &Value) -> Value {
         match self.dtype {
             NumberType::Float => b.ir_equal_f(x, y),
             _ => b.ir_equal_i(x, y),
@@ -65,6 +65,24 @@ impl Elements<'_> {
 
 // ── Sorting networks ────────────────────────────────────────────────────
 
+/// An array carried through a sorting network (`b[np.argsort(a)]`): its
+/// slots, exchanged with the keys.
+pub(super) struct Payload {
+    pub slots: Vec<Value>,
+    pub dtype: NumberType,
+}
+
+impl Payload {
+    /// Exchange slots `i < j` when `swap` (the key at `j` is the smaller).
+    pub(super) fn exchange(&mut self, b: &mut IRBuilder, swap: &Value, i: usize, j: usize) {
+        let carried = Elements { values: &self.slots, dtype: self.dtype };
+        let low = carried.select(b, swap, &self.slots[j], &self.slots[i]);
+        let high = carried.select(b, swap, &self.slots[i], &self.slots[j]);
+        self.slots[i] = low;
+        self.slots[j] = high;
+    }
+}
+
 /// Sorted values and (when `network` tracks them) the original index of
 /// each, by a compare-exchange network: every comparator puts the smaller
 /// key first. Without a tie-break the keys are the values (equal values are
@@ -74,12 +92,18 @@ impl Elements<'_> {
 /// lexicographically (`IR::KeyLess`, whose index bound holds because every
 /// index cell is a selection among the constants `0..n`).
 ///
+/// Each payload (an array as long as the elements) is exchanged with the
+/// keys (`select` on the same comparison), so its slot `r` ends holding the
+/// payload entry of the element at rank `r`; the network must then be
+/// stable (`Network::is_stable`).
+///
 /// No hint: every output is a function of the elements. Comparators whose
 /// outputs are not used are removed by dead-code elimination.
 pub(super) fn sort_by_network(
     b: &mut IRBuilder,
     elements: &Elements,
     network: Network,
+    payloads: &mut [Payload],
 ) -> (Vec<Value>, Vec<Value>) {
     let n = elements.len();
     let mut keys = elements.values.to_vec();
@@ -98,6 +122,9 @@ pub(super) fn sort_by_network(
         let high = elements.select(b, &swap, &keys[i], &keys[j]);
         keys[i] = low;
         keys[j] = high;
+        for payload in payloads.iter_mut() {
+            payload.exchange(b, &swap, i, j);
+        }
         if network.tracks_indices() {
             let low = b.ir_select_i(&swap, &indices[j], &indices[i]);
             let high = b.ir_select_i(&swap, &indices[i], &indices[j]);
@@ -167,7 +194,7 @@ fn count_keys_beyond(b: &mut IRBuilder, elements: &Elements, key: &Key, above: b
 }
 
 /// The sum of 0/1 values, as an integer.
-fn count(b: &mut IRBuilder, bits: &[Value]) -> Value {
+pub(super) fn count(b: &mut IRBuilder, bits: &[Value]) -> Value {
     let mut total = b.ir_constant_int(0);
     for bit in bits {
         let as_int = b.ir_int_cast(bit);
@@ -261,21 +288,35 @@ pub(super) fn order_statistic(b: &mut IRBuilder, elements: &Elements, rank: &Val
     v
 }
 
+/// How an extreme pin shows that its value is one of the elements.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Membership {
+    /// `prod_j (a_j - v) == 0`.
+    Product,
+    /// One of the bits `[v == a_j]` (`value_first`) or `[a_j == v]` is set:
+    /// their sum is non-zero. The program computes those bits anyway
+    /// (`a.max(axis) == a`), so they cost nothing here.
+    EqualityBits { value_first: bool },
+}
+
 /// The smallest value (`largest`: the largest), pinned without counts: the
 /// prover supplies `v` (lane 0, or `n - 1`, of the sorted values) and the
-/// IR asserts `v <= a_j` (`a_j <= v`) for every element and
-/// `prod_j (a_j - v) == 0`.
+/// IR asserts `v <= a_j` (`a_j <= v`) for every element and that `v` is an
+/// element (`membership`).
 ///
 /// Soundness. The asserted comparisons make `v` a lower (upper) bound of
-/// the elements; a product of field elements is zero only when a factor is
-/// (a field has no zero divisors), so `v` equals some element. A lower
-/// bound that is an element is the minimum: `v` is pinned. The backends
-/// check an asserted comparison as one range check of its gap.
-pub(super) fn extreme_value(b: &mut IRBuilder, elements: &Elements, largest: bool) -> Value {
+/// the elements. A product of field elements is zero only when a factor is
+/// (a field has no zero divisors); a sum of `n` bits (`n` far below the
+/// field's characteristic) is non-zero only when a bit is set, and each bit
+/// is an exact equality test. Either way `v` equals some element, and a
+/// lower bound that is an element is the minimum: `v` is pinned. The
+/// backends check an asserted comparison as one range check of its gap.
+pub(super) fn extreme_value(b: &mut IRBuilder, elements: &Elements, largest: bool, membership: Membership) -> Value {
     let n = elements.len();
     let rank = b.ir_constant_int(if largest { n as i64 - 1 } else { 0 });
     let v = b.ir_hint(HintKind::SortedValues, elements.values, &rank);
     let mut product: Option<Value> = None;
+    let mut bits: Vec<Value> = Vec::new();
     for a in elements.values {
         let (low, high) = if largest { (a, &v) } else { (&v, a) };
         let bounded = match elements.dtype {
@@ -283,14 +324,28 @@ pub(super) fn extreme_value(b: &mut IRBuilder, elements: &Elements, largest: boo
             _ => b.ir_less_than_or_equal_i(low, high),
         };
         b.ir_assert(&bounded);
-        let difference = b.ir_sub_i(a, &v);
-        product = Some(match product {
-            None => difference,
-            Some(p) => b.ir_mul_i(&p, &difference),
-        });
+        match membership {
+            Membership::Product => {
+                let difference = b.ir_sub_i(a, &v);
+                product = Some(match product {
+                    None => difference,
+                    Some(p) => b.ir_mul_i(&p, &difference),
+                });
+            }
+            Membership::EqualityBits { value_first } => {
+                let bit = if value_first { elements.equal(b, &v, a) } else { elements.equal(b, a, &v) };
+                bits.push(bit);
+            }
+        }
     }
     let zero = b.ir_constant_int(0);
-    let member = b.ir_equal_i(&product.expect("a sort has elements"), &zero);
+    let member = match membership {
+        Membership::Product => b.ir_equal_i(&product.expect("a sort has elements"), &zero),
+        Membership::EqualityBits { .. } => {
+            let hits = count(b, &bits);
+            b.ir_not_equal_i(&hits, &zero)
+        }
+    };
     b.ir_assert(&member);
     v
 }

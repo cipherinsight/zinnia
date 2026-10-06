@@ -168,6 +168,7 @@ fn asserted_comparisons(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<
                     | IR::EqI
                     | IR::EqF
                     | IR::KeyLess { .. }
+                    | IR::PackedKeyLess { .. }
             )
         })
         .filter(|stmt| only_user(ir, uses, stmt.stmt_id).is_some_and(|user| matches!(user.ir, IR::Assert)))

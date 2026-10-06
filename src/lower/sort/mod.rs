@@ -1,5 +1,6 @@
 //! The sort family: `np.sort`, `np.argsort`, `np.median`, `np.percentile`
-//! (`OpKind::Sort`).
+//! (`OpKind::Sort`), and `np.searchsorted` over a constant sorted table
+//! (`OpKind::SearchSorted`, see `search`).
 //!
 //! Each sort emits one placeholder per output it uses: the value or the
 //! stable argsort index of a constant rank, or of a runtime rank (a read of
@@ -8,8 +9,10 @@
 //! keeps 7 of 100). Three constructions offer plans that compute every live
 //! lane (`cost` prices them per target; the selection takes the cheapest):
 //!
-//! * [`SortingNetwork`]: a sorting network (Batcher's merge exchange, or
-//!   the adjacent-swap network for small or one-sided demands), no hint;
+//! * [`SortingNetwork`]: a sorting network (Batcher's merge exchange on
+//!   values, on `(value, index)` keys, or on packed keys (`packed`) for an
+//!   argsort, or the adjacent-swap network for small or one-sided demands),
+//!   no hint;
 //! * [`PermutationCheck`]: every rank's key hinted and pinned by one run
 //!   over every rank (`emit::pinned_run`);
 //! * [`PinnedSelection`]: hinted outputs pinned in runs of ranks, per-output
@@ -19,8 +22,14 @@
 //! Every plan yields NumPy's stable sort exactly; each hint's soundness
 //! argument is next to its pins in `emit`.
 
+mod argmax;
 mod cost;
+mod counts;
 mod emit;
+mod packed;
+mod payload;
+pub(crate) mod search;
+mod table;
 mod semantics;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -28,20 +37,28 @@ pub(crate) mod test_support;
 mod tests;
 
 pub(crate) use emit::masked_order_statistic;
-pub use semantics::{SortSemantics, INDICES, VALUES};
+pub use search::SearchSortedSemantics;
+pub use argmax::ArgmaxQueries;
+pub use counts::SortCountQueries;
+pub use table::ConstantTableReads;
+pub use payload::payload_at_argsort_lane;
+pub use semantics::{SortSemantics, COUNT_AT_MOST, COUNT_BELOW, INDICES, PAYLOAD, VALUES};
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::builder::IRBuilder;
+use crate::ir_defs::IR;
 use crate::types::{NumberType, StmtId, Value};
 
-use self::cost::{Demand, Pin, Plan, Run, UnitCosts};
-use self::emit::{ElementMemory, Elements, OutputMemory};
+use self::cost::{Demand, Network, Pin, Plan, Run, UnitCosts};
+use self::emit::{ElementMemory, Elements, Membership, OutputMemory, Payload};
 use super::{Candidate, Construction, Context, EmitCx, Emitter, Group, Lane, OpKind, Requirement};
 
 /// The sort family's constructions, in the order the selection breaks ties.
 pub fn constructions() -> Vec<&'static dyn Construction> {
-    vec![&SortingNetwork, &PermutationCheck, &PinnedSelection]
+    let mut all: Vec<&'static dyn Construction> = vec![&SortingNetwork, &PermutationCheck, &PinnedSelection];
+    all.extend(search::constructions());
+    all
 }
 
 /// A sorting network over all keys (`emit::sort_by_network`), pruned to the
@@ -95,7 +112,7 @@ fn plans(group: &Group, cx: &Context, offer: impl Fn(&Demand, &UnitCosts) -> Vec
     if group.kind != OpKind::Sort {
         return Vec::new();
     }
-    let demand = demand(group);
+    let demand = demand(group, cx);
     offer(&demand, &cost::unit_costs(cx.target))
         .into_iter()
         .map(|(plan, cost)| plan_candidate(group, demand.clone(), plan, cost))
@@ -108,17 +125,70 @@ fn plan_candidate(group: &Group, demand: Demand, plan: Plan, cost: u64) -> Candi
         pre: Vec::new(),
         post: group.lanes.iter().map(|lane| Requirement::Lane(lane.stmt)).collect(),
         cost,
-        emitter: Box::new(SortEmitter { elements: group.shared.clone(), demand, plan, sort: None }),
+        emitter: Box::new(SortEmitter {
+            elements: group.shared.clone(),
+            payloads: payload_arrays(group),
+            demand,
+            plan,
+            sort: None,
+        }),
     }
 }
 
+/// The arrays a sort carries as payloads (the own operands of its payload
+/// lanes), each once, in lane order.
+fn payload_arrays(group: &Group) -> Vec<Vec<StmtId>> {
+    let mut arrays: Vec<Vec<StmtId>> = Vec::new();
+    for lane in group.lanes.iter().filter(|lane| lane.output == PAYLOAD) {
+        if !arrays.contains(&lane.own) {
+            arrays.push(lane.own.clone());
+        }
+    }
+    arrays
+}
+
+/// Whether the program compares the sorted value `lane` for equality with
+/// every element: `Some(true)` when the value is each comparison's first
+/// operand, `Some(false)` when it is the second (in every comparison).
+fn compared_with_every_element(group: &Group, cx: &Context, lane: StmtId) -> Option<bool> {
+    let order = |element: StmtId| {
+        cx.users(lane).iter().find_map(|&user| {
+            let stmt = cx.stmt(user);
+            if !matches!(stmt.ir, IR::EqI | IR::EqF) {
+                return None;
+            }
+            match stmt.arguments[..] {
+                [x, y] if x == lane && y == element => Some(true),
+                [x, y] if x == element && y == lane => Some(false),
+                _ => None,
+            }
+        })
+    };
+    let orders: Vec<bool> = group.shared.iter().map(|&e| order(e)).collect::<Option<_>>()?;
+    let first = *orders.first()?;
+    orders.iter().all(|&o| o == first).then_some(first)
+}
+
 /// The live outputs of a sort.
-fn demand(group: &Group) -> Demand {
+fn demand(group: &Group, cx: &Context) -> Demand {
     let mut demand = Demand { n: group.shared.len(), ..Demand::default() };
-    for lane in &group.lanes {
+    let arrays = payload_arrays(group);
+    demand.payloads = vec![BTreeSet::new(); arrays.len()];
+    for lane in group.lanes.iter().filter(|lane| lane.output == PAYLOAD) {
+        let array = arrays.iter().position(|a| *a == lane.own).expect("listed");
+        let rank = lane.position.expect("a payload lane has a constant position");
+        demand.payloads[array].insert(rank as usize);
+    }
+    let n = group.shared.len();
+    for lane in group.lanes.iter().filter(|lane| lane.output == VALUES || lane.output == INDICES) {
         match (lane.position, lane.output == INDICES) {
             (Some(r), false) => {
                 demand.values.insert(r as usize);
+                if r == 0 || r as usize + 1 == n {
+                    if let Some(value_first) = compared_with_every_element(group, cx, lane.stmt) {
+                        demand.masked_extremes.insert(r as usize, value_first);
+                    }
+                }
             }
             (Some(r), true) => {
                 demand.indices.insert(r as usize);
@@ -135,6 +205,8 @@ fn demand(group: &Group) -> Demand {
 /// later).
 struct SortEmitter {
     elements: Vec<StmtId>,
+    /// The payload arrays (`payload_arrays`), as statements.
+    payloads: Vec<Vec<StmtId>>,
     demand: Demand,
     plan: Plan,
     sort: Option<LoweredSort>,
@@ -143,11 +215,33 @@ struct SortEmitter {
 impl Emitter for SortEmitter {
     fn begin(&mut self, b: &mut IRBuilder, cx: &mut EmitCx) {
         let elements = cx.values(&self.elements);
-        self.sort = Some(LoweredSort::new(b, &self.demand, &self.plan, &elements));
+        let payloads: Vec<Payload> = self
+            .payloads
+            .iter()
+            .map(|array| {
+                let slots = cx.values(array);
+                let dtype = if slots.iter().any(|v| matches!(v, Value::Float(_))) {
+                    NumberType::Float
+                } else {
+                    NumberType::Integer
+                };
+                Payload { slots, dtype }
+            })
+            .collect();
+        self.sort = Some(LoweredSort::new(b, &self.demand, &self.plan, &elements, payloads));
     }
 
     fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, lane: &Lane) -> Value {
         let sort = self.sort.as_mut().expect("started");
+        if lane.output == COUNT_AT_MOST || lane.output == COUNT_BELOW {
+            let e = cx.value(lane.own[0]);
+            return counts::count_query(b, &sort.as_elements(), &e, lane.output == COUNT_AT_MOST);
+        }
+        if lane.output == PAYLOAD {
+            let array = self.payloads.iter().position(|a| *a == lane.own).expect("listed");
+            let rank = lane.position.expect("a payload lane has a constant position") as usize;
+            return sort.payload_output(array, rank);
+        }
         let index = lane.output == INDICES;
         match lane.position {
             Some(r) => sort.output(r as usize, index),
@@ -169,10 +263,13 @@ struct LoweredSort {
     element_memory: Option<ElementMemory>,
     value_memory: Option<OutputMemory>,
     index_memory: Option<OutputMemory>,
+    /// Each payload's slots by rank: carried through a network, or read at
+    /// the hinted indices.
+    payloads: Vec<HashMap<usize, Value>>,
 }
 
 impl LoweredSort {
-    fn new(b: &mut IRBuilder, demand: &Demand, plan: &Plan, elements: &[Value]) -> LoweredSort {
+    fn new(b: &mut IRBuilder, demand: &Demand, plan: &Plan, elements: &[Value], mut payloads: Vec<Payload>) -> LoweredSort {
         let dtype = if elements.iter().any(|v| matches!(v, Value::Float(_))) {
             NumberType::Float
         } else {
@@ -187,11 +284,17 @@ impl LoweredSort {
             element_memory: None,
             value_memory: None,
             index_memory: None,
+            payloads: Vec::new(),
         };
         let n = elements.len();
         match plan {
+            Plan::Network { network: Network::PackedMergeExchange } => {
+                let indices = packed::argsort_by_packed_keys(b, &sort.as_elements(), &mut payloads);
+                sort.indices = indices.into_iter().enumerate().collect();
+                sort.complete = true;
+            }
             Plan::Network { network } => {
-                let (values, indices) = emit::sort_by_network(b, &sort.as_elements(), *network);
+                let (values, indices) = emit::sort_by_network(b, &sort.as_elements(), *network, &mut payloads);
                 sort.values = values.into_iter().enumerate().collect();
                 sort.indices = indices.into_iter().enumerate().collect();
                 sort.complete = true;
@@ -201,17 +304,49 @@ impl LoweredSort {
                     match run.pin {
                         Pin::Keys => sort.pin_keys(b, run),
                         Pin::Counts => sort.pin_by_counts(b, demand, run),
-                        Pin::Extreme => {
+                        Pin::Extreme | Pin::MaskedExtreme => {
                             let largest = run.first + 1 == n && n > 1;
-                            let value = emit::extreme_value(b, &sort.as_elements(), largest);
+                            let membership = match (run.pin, demand.masked_extremes.get(&run.first)) {
+                                (Pin::MaskedExtreme, Some(&value_first)) => Membership::EqualityBits { value_first },
+                                _ => Membership::Product,
+                            };
+                            let value = emit::extreme_value(b, &sort.as_elements(), largest, membership);
                             sort.values.insert(run.first, value);
                         }
                     }
                 }
                 sort.complete = matches!(runs.as_slice(), [run] if run.pin == Pin::Keys && run.first == 0 && run.last + 1 == n);
+                sort.read_payloads(b, demand, &payloads);
+                return sort;
             }
         }
+        sort.payloads = payloads.into_iter().map(|p| p.slots.into_iter().enumerate().collect()).collect();
         sort
+    }
+
+    /// Each payload's live ranks read at the hinted argsort indices (the
+    /// plan's runs cover every payload rank, see `cost::Demand`). The index
+    /// is pinned to the stable argsort and bounded to `[0, n)`, so the read
+    /// is the payload entry of the element at that rank.
+    fn read_payloads(&mut self, b: &mut IRBuilder, demand: &Demand, payloads: &[Payload]) {
+        for (payload, ranks) in payloads.iter().zip(&demand.payloads) {
+            let segment = crate::helpers::segment::alloc_and_write_values(b, &payload.slots, payload.dtype);
+            let slots = ranks
+                .iter()
+                .map(|&r| {
+                    let index = self.output(r, true);
+                    (r, crate::helpers::segment::read_typed(b, segment, &index, payload.dtype))
+                })
+                .collect();
+            self.payloads.push(slots);
+        }
+    }
+
+    fn payload_output(&self, array: usize, rank: usize) -> Value {
+        self.payloads[array]
+            .get(&rank)
+            .cloned()
+            .unwrap_or_else(|| panic!("sort lowering: payload rank {rank} was not lowered"))
     }
 
     /// The run's values and indices as pinned keys.
