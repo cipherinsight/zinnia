@@ -1,4 +1,4 @@
-"""Cheaper first-True lowerings (cost-gap round, sorting area, 2026-10-06).
+"""Cheaper first-True lowerings and runtime reads (cost-gap round, sorting area, 2026-10-06).
 
 `argmax` of a Boolean array is a select chain from the last index down to
 the first (no found flag), and the `searchsorted` count of a strict
@@ -8,11 +8,13 @@ position by position on the mock backend, the halo2-base proof's public
 values must equal the mock's, and the IR shape that makes it cheaper is
 pinned.
 """
+import json
+
 import numpy as np
 import pytest
 
 from testing.lang.mock_outputs import assert_matches_numpy, compile_kernel
-from testing.lang.test_cost_lowerings import assert_backends_agree, ir_classes
+from testing.lang.test_cost_lowerings import HALO2_PARAMS, assert_backends_agree, ir_classes
 
 FIRST_MATCH = (
     'def kernel(x: Integer[Array, "6"], y: Integer[Array, "6"], a: Integer, b: Integer):\n'
@@ -67,3 +69,69 @@ def test_searchsorted_count_needs_no_negation():
     classes = ir_classes(compile_kernel(SEARCHSORTED))
     assert "LogicalNotIR" not in classes, classes
     assert "HintIR" not in classes, classes  # the sort itself is gone
+
+
+# ── halo2-base runtime reads by a multiplexer ────────────────────────────
+
+
+def proves(source, *args):
+    """Whether halo2-base produces a proof that verifies."""
+    program = compile_kernel(source)
+    try:
+        result = program.prove(*args, backend="halo2-base", params=HALO2_PARAMS)
+    except Exception:  # noqa: BLE001 - an unsatisfiable witness raises
+        return False
+    return program.verify(result)
+
+
+def read_cells(source):
+    """halo2-base cells (advice + lookup, 8-bit lookups) of the program's
+    `ReadMemory` statements."""
+    from zinnia._zinnia_core import halo2_base_cell_profile
+
+    program = compile_kernel(source)
+    reads = {s["stmt_id"] for s in program.get_ir_stmts() if s["ir_instance"]["__class__"] == "ReadMemoryIR"}
+    profile = json.loads(halo2_base_cell_profile(program._compiled_ir, 8))
+    return sum(advice + lookup for stmt, advice, lookup in profile if stmt in reads)
+
+
+ONE_READ = 'def kernel(a: Float[Array, "7"], i: Integer):\n    return a[i]\n'
+ONE_READ_SHIFTED = 'def kernel(a: Float[Array, "7"], i: Integer):\n    return a[i + 2]\n'
+CONSTANT_TABLE = 'def kernel(i: Integer):\n    return (np.arange(1, 8) / 7.0)[i]\n'
+A7 = np.array([0.5, -1.0, 2.25, 3.0, -4.5, 6.0, 7.75])
+
+
+@pytest.mark.parametrize("i", range(-7, 7))
+def test_one_runtime_read_matches_numpy(i):
+    assert_matches_numpy(ONE_READ, A7, i)
+    assert_backends_agree(ONE_READ, A7, i)
+    assert_backends_agree(CONSTANT_TABLE, i)
+
+
+@pytest.mark.parametrize("i", range(-2, 5))
+def test_shifted_runtime_read_matches_numpy(i):
+    assert_matches_numpy(ONE_READ_SHIFTED, A7, i)
+    assert_backends_agree(ONE_READ_SHIFTED, A7, i)
+
+
+@pytest.mark.parametrize("source, i", [(ONE_READ, 7), (ONE_READ, -8), (ONE_READ_SHIFTED, 5),
+                                       (ONE_READ_SHIFTED, -10), (CONSTANT_TABLE, 7)])
+def test_runtime_read_out_of_bounds_has_no_proof(source, i):
+    args = (i,) if source == CONSTANT_TABLE else (A7, i)
+    assert not proves(source, *args)
+
+
+def test_one_runtime_read_is_a_multiplexer():
+    # A single read of 64 slots: 63 selects (8 cells) and a 6-bit
+    # decomposition, against ~17 cells per slot for the one-hot form.
+    source = 'def kernel(a: Float[Array, "64"], i: Integer):\n    return a[i]\n'
+    assert read_cells(source) < 64 * 10
+
+
+def test_reads_sharing_a_root_keep_the_one_hot_form():
+    # Four reads on one index share its equality bits (~14 cells per slot
+    # once, ~3 per slot per read: ~1,700 cells), cheaper than four
+    # multiplexers (~2,000).
+    arrays = ", ".join(f'{n}: Float[Array, "64"]' for n in "abcd")
+    source = f'def kernel({arrays}, i: Integer):\n    return a[i] + b[i] + c[i] + d[i]\n'
+    assert read_cells(source) < 4 * 64 * 7

@@ -186,7 +186,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
     /// Read the facts of `ir` the lowering uses ahead of the statements that
     /// establish them (planned bounds, deferred products; see `plan.rs`).
     pub fn plan_ahead(&mut self, ir: &crate::ir::IRGraph) {
-        self.plan = Plan::of(ir);
+        self.plan = Plan::with_provenance(ir, self.prov);
     }
 
     /// Record the advice and lookup cells each statement emits (costly:
