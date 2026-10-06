@@ -143,8 +143,9 @@ fn deferred_products(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<u32
         .filter(|stmt| {
             let Some(user) = only_user(ir, uses, stmt.stmt_id) else { return false };
             match (&user.ir, user.arguments.as_slice()) {
-                (IR::AddI, [a, b]) => a != b,
-                (IR::SubI, [a, b]) => *b == stmt.stmt_id && a != b,
+                // `add_f`/`sub_f` are the field addition of `add_i`/`sub_i`.
+                (IR::AddI | IR::AddF, [a, b]) => a != b,
+                (IR::SubI | IR::SubF, [a, b]) => *b == stmt.stmt_id && a != b,
                 _ => false,
             }
         })
