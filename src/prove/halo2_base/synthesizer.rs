@@ -1087,7 +1087,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn arcsin_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         let precision_bits = self.params.precision_bits;
         let one = kernel::scale_fp(precision_bits);
-        let (_, magnitude) = self.sign_and_abs(a)?;
+        let magnitude = self.magnitude(a)?;
         let in_domain = self.less_than(Operand::Cell(magnitude), Operand::Constant((1i128 << precision_bits) + 1), None)?;
         let x = self.mul_i(&in_domain, a)?;
 
