@@ -200,7 +200,7 @@ fn role(ir: &IR, operands: usize) -> Role {
             init_value,
             ..
         } => Role::Allocates(*segment_id, *init_value),
-        IR::ReadMemory { segment_id } | IR::DynamicNDArrayGetItem { segment_id, .. } => {
+        IR::ReadMemory { segment_id } | IR::ReadTable { segment_id } | IR::DynamicNDArrayGetItem { segment_id, .. } => {
             Role::Reads(*segment_id)
         }
         IR::WriteMemory { segment_id } | IR::DynamicNDArraySetItem { segment_id, .. } => {

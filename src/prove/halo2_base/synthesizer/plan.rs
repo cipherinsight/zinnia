@@ -75,6 +75,10 @@ pub(super) struct Plan {
     /// constant `hi > 0` (the smallest): the input is loaded inside the gate
     /// of that check (see `Halo2BaseSynthesizer::read_bounded_input`).
     pub bounded_inputs: HashMap<u32, i128>,
+    /// Memory segments whose accesses after their first runtime-address
+    /// write go through a RAM trace (`circuit/ram.rs`) instead of the
+    /// program-order overlay ([`ram_segments`]).
+    pub ram_segments: HashSet<u32>,
 }
 
 /// `select([r == k_m], x_m, ... select([r == k_1], x_1, x_0))` where
@@ -115,6 +119,7 @@ impl Plan {
             root_guards: crate::prove::guards::root_guards(ir),
             divisor_guards: crate::prove::guards::divisor_guards(ir),
             bounded_inputs: bounded_inputs(ir),
+            ram_segments: ram_segments(ir),
         }
         .with_onehot_chains(ir, &uses)
     }
@@ -124,6 +129,72 @@ impl Plan {
     pub fn with_provenance(ir: &IRGraph, prov: &crate::provenance::ProvenanceTable) -> Plan {
         Plan { reads_per_root: reads_per_root(ir, prov), ..Plan::of(ir) }
     }
+}
+
+/// The fixed cost of a RAM trace in cell equivalents: its 8 advice columns,
+/// the shuffle's grand product and the gap lookup's 2 polynomials, at the
+/// `k = 9` of small programs (`estimate_params` prices a committed
+/// polynomial as 2^k cells).
+const RAM_FIXED_CELLS: u64 = 11 * 512;
+
+/// Segments for which a RAM trace is cheaper than the overlay, from the
+/// statements alone (the same decision at key generation and proving).
+///
+/// After a segment's first runtime-address write, the overlay
+/// (`memory.rs`) applies every later write to every later read: an
+/// equality test and a select (about 16 cells) per (write, read) pair, on
+/// top of a one-hot read of the slots (about 3 cells per slot) per
+/// runtime-address read. A RAM trace costs about 9 cells per row (one per
+/// slot and one per access from the first runtime-address write on) and
+/// its fixed columns.
+fn ram_segments(ir: &IRGraph) -> HashSet<u32> {
+    #[derive(Default)]
+    struct Usage {
+        slots: u64,
+        active: bool,
+        writes: u64,
+        accesses: u64,
+        overlay_cells: u64,
+    }
+    let constant = |id: u32| matches!(ir.stmts.get(id as usize).map(|s| &s.ir), Some(IR::ConstantInt { .. }));
+    let mut usage: HashMap<u32, Usage> = HashMap::new();
+    let mut chosen = HashSet::new();
+    let decide = |u: &Usage, segment: u32, chosen: &mut HashSet<u32>| {
+        if u.active && u.overlay_cells > 9 * (u.slots + u.accesses) + RAM_FIXED_CELLS {
+            chosen.insert(segment);
+        }
+    };
+    for stmt in &ir.stmts {
+        match stmt.ir {
+            IR::AllocateMemory { segment_id, size, .. } => {
+                if let Some(old) = usage.insert(segment_id, Usage { slots: u64::from(size), ..Usage::default() }) {
+                    decide(&old, segment_id, &mut chosen);
+                }
+            }
+            IR::WriteMemory { segment_id } => {
+                let Some(u) = usage.get_mut(&segment_id) else { continue };
+                let runtime = stmt.arguments.first().is_some_and(|&a| !constant(a));
+                u.active |= runtime;
+                if u.active {
+                    u.writes += 1;
+                    u.accesses += 1;
+                }
+            }
+            IR::ReadMemory { segment_id } => {
+                let Some(u) = usage.get_mut(&segment_id) else { continue };
+                if u.active {
+                    let runtime = stmt.arguments.first().is_some_and(|&a| !constant(a));
+                    u.accesses += 1;
+                    u.overlay_cells += 16 * u.writes + if runtime { 3 * u.slots } else { 0 };
+                }
+            }
+            _ => {}
+        }
+    }
+    for (segment, u) in &usage {
+        decide(u, *segment, &mut chosen);
+    }
+    chosen
 }
 
 /// See [`Plan::reads_per_root`].

@@ -89,15 +89,25 @@ fn check_against_numpy(case: &ReadGraph, what: &str) {
     }
 }
 
+/// Each construction of the family, alone (with the nodes it needs).
+fn each_construction() -> Vec<(&'static str, Vec<&'static dyn Construction>)> {
+    use super::constructions::{ElementByIndexBits, ElementByTable, IndexBitsNode};
+    vec![("bits", vec![&ElementByIndexBits, &IndexBitsNode]), ("table", vec![&ElementByTable])]
+}
+
 #[test]
-fn index_bits_read_numpys_element_and_reject_out_of_range() {
-    for n in [2usize, 3, 4, 5, 6, 7, 8, 9, 16, 17] {
-        for rows in [1usize, 3] {
-            for i in -2..=n as i64 + 1 {
-                let j = (i + 1).rem_euclid(n as i64);
-                for checked in [false, true] {
-                    let case = read_graph(n, rows, (i, j), checked, Some(&super::constructions()), Target::Halo2Base);
-                    check_against_numpy(&case, &format!("bits n={n} rows={rows} i={i} checked={checked}"));
+fn every_construction_reads_numpys_element_and_rejects_out_of_range() {
+    for (name, constructions) in each_construction() {
+        for target in [Target::Halo2Base, Target::Noir] {
+            for n in [2usize, 3, 4, 5, 6, 7, 8, 9, 16, 17] {
+                for rows in [1usize, 3] {
+                    for i in -2..=n as i64 + 1 {
+                        let j = (i + 1).rem_euclid(n as i64);
+                        for checked in [false, true] {
+                            let case = read_graph(n, rows, (i, j), checked, Some(&constructions), target);
+                            check_against_numpy(&case, &format!("{name} {target:?} n={n} rows={rows} i={i} checked={checked}"));
+                        }
+                    }
                 }
             }
         }
@@ -105,12 +115,14 @@ fn index_bits_read_numpys_element_and_reject_out_of_range() {
 }
 
 #[test]
-fn index_bits_drop_the_programs_check() {
-    // The construction proves `0 <= i < n`; the frontend's check on the same
+fn the_constructions_drop_the_programs_check() {
+    // Each construction proves `0 <= i < n`; the frontend's check on the same
     // index is then not emitted.
-    let case = read_graph(5, 1, (1, 2), true, Some(&super::constructions()), Target::Halo2Base);
-    let checks = case.graph.stmts.iter().filter(|s| matches!(s.ir, IR::AssertU128Lt)).count();
-    assert_eq!(checks, 0, "{:#?}", case.graph.stmts.iter().map(|s| &s.ir).collect::<Vec<_>>());
+    for (name, constructions) in each_construction() {
+        let case = read_graph(5, 1, (1, 2), true, Some(&constructions), Target::Halo2Base);
+        let checks = case.graph.stmts.iter().filter(|s| matches!(s.ir, IR::AssertU128Lt)).count();
+        assert_eq!(checks, 0, "{name}: {:#?}", case.graph.stmts.iter().map(|s| &s.ir).collect::<Vec<_>>());
+    }
 }
 
 #[test]

@@ -230,12 +230,14 @@ impl RamConfig {
             let fx = |m: &mut halo2_base::halo2_proofs::plonk::VirtualCells<Fr>, c| m.query_fixed(c, Rotation::cur());
             let ad = |m: &mut halo2_base::halo2_proofs::plonk::VirtualCells<Fr>, c| m.query_advice(c, Rotation::cur());
             let p_addr_expr = fx(m, p_addr_fixed) + fx(m, p_dyn) * ad(m, p_addr);
+            // Sorted trace as the input side: the pinned halo2_proofs sizes
+            // the input side's evaluation buffer from the shuffle side.
             vec![
-                (fx(m, p_en), fx(m, s_en)),
-                (fx(m, p_time), ad(m, s_time)),
-                (fx(m, p_read), ad(m, s_read)),
-                (p_addr_expr, ad(m, s_addr)),
-                (ad(m, p_val), ad(m, s_val)),
+                (fx(m, s_en), fx(m, p_en)),
+                (ad(m, s_time), fx(m, p_time)),
+                (ad(m, s_read), fx(m, p_read)),
+                (ad(m, s_addr), p_addr_expr),
+                (ad(m, s_val), ad(m, p_val)),
             ]
         });
         Self {

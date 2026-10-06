@@ -123,6 +123,13 @@ pub enum OpKind {
     /// position 0) whose value is 1; no proof unless `p` is a permutation
     /// of `0..n` (the frontend asserts the lane).
     IsPermutation,
+    // ── memory family (`lower::memory`) ───────────────────────────────
+    /// NumPy's position of a runtime index on an axis of length `len`: the
+    /// shared operand is the index `i`; output 0 (position 0) is the
+    /// position `w` (`i`, or `i + len` for a negative `i`), output 1 at
+    /// position `k` the bit `[w == k]`. An `i` outside `[-len, len)` has no
+    /// proof (NumPy raises; the program checks `0 <= w < len`).
+    Wrap { len: u32 },
 }
 
 impl OpKind {
@@ -143,6 +150,7 @@ impl OpKind {
             OpKind::MaskWrite => &super::scatter::MaskWriteSemantics,
             OpKind::Correlation { .. } | OpKind::MatMul { .. } => &super::linear::LinearSemantics,
             OpKind::IsPermutation => &super::permutation::IsPermutationSemantics,
+            OpKind::Wrap { .. } => &super::memory::wrap::WrapSemantics,
         }
     }
 
@@ -165,6 +173,7 @@ impl OpKind {
             OpKind::Correlation { .. } => "correlation",
             OpKind::MatMul { .. } => "matmul",
             OpKind::IsPermutation => "is_permutation",
+            OpKind::Wrap { .. } => "wrap",
         }
     }
 }

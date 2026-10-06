@@ -149,10 +149,18 @@ def test_read_after_write_at_a_runtime_index_matches_numpy(source, args):
 
 
 def test_read_after_write_reads_the_written_values():
-    """The second read of `a[row-1, :]` is the written row itself: only the
-    first read (over the original rows) leaves a select chain."""
-    with_forwarding = ir_classes(compile_kernel(ROW_UPDATE)).count("SelectFIR")
-    read_once = ir_classes(compile_kernel(
-        'def kernel(a: Float[Array, "8 6"], row: Integer, m: Float):\n'
-        '    return np.cumsum(a[row-1, :] * m)\n')).count("SelectFIR")
-    assert with_forwarding == read_once
+    """The second read of `a[row-1, :]` is the written row itself: the
+    program costs no more than reading the row once (a second gather over
+    the updated rows would add several hundred cells). Compared by halo2-base
+    cells, since the layer may build the one read differently in the two
+    programs (the write's position one-hot, or the pinned sign's tests)."""
+    import json
+    from zinnia._zinnia_core import halo2_base_cell_stats
+
+    def cells(source):
+        stats = json.loads(halo2_base_cell_stats(compile_kernel(source)._compiled_ir))
+        return stats["advice"] + stats["lookup"]
+
+    read_once = ('def kernel(a: Float[Array, "8 6"], row: Integer, m: Float):\n'
+                 '    return np.cumsum(a[row-1, :] * m)\n')
+    assert cells(ROW_UPDATE) <= cells(read_once)

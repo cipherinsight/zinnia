@@ -80,14 +80,13 @@ pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction
     for group in &groups {
         let offered: Vec<(&dyn Construction, Vec<super::Candidate>)> =
             constructions.iter().map(|c| (*c, c.candidates(group, &cx))).collect();
-        let only_forced = forced
-            .as_deref()
-            .is_some_and(|name| offered.iter().any(|(c, cands)| c.name() == name && !cands.is_empty()));
+        // The first forced construction offering candidates for this group.
+        let only = forced.iter().find(|name| offered.iter().any(|(c, cands)| c.name() == name.as_str() && !cands.is_empty()));
         for (construction, candidates) in offered {
             // Producers of shared values only (no lane) stay: the forced
             // construction may need them.
             let produces_lanes = candidates.iter().any(|c| c.post.iter().any(|r| matches!(r, Requirement::Lane(_))));
-            if only_forced && Some(construction.name()) != forced.as_deref() && produces_lanes {
+            if only.is_some_and(|name| construction.name() != name.as_str()) && produces_lanes {
                 continue;
             }
             for candidate in candidates {
@@ -119,13 +118,15 @@ pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction
 }
 
 /// Measurement only: the environment variable `ZINNIA_FORCE_CONSTRUCTION`
-/// set to a construction's [`Construction::name`] makes it the only
-/// construction offering lanes for every group it applies to (other groups
-/// are lowered as usual; producers of shared values only stay available), so cost curves and scaling demonstrations can compile
+/// set to a comma-separated list of [`Construction::name`]s makes, for every
+/// group, the first listed construction applying to it the only one offering
+/// lanes (other groups are lowered as usual; producers of shared values only
+/// stay available), so cost curves and scaling demonstrations can compile
 /// one program with each alternative. The benchmark harness never sets it;
 /// a forced construction is sound like any other, it may only cost more.
-fn forced_construction() -> Option<String> {
-    std::env::var("ZINNIA_FORCE_CONSTRUCTION").ok().filter(|s| !s.is_empty())
+fn forced_construction() -> Vec<String> {
+    let names = std::env::var("ZINNIA_FORCE_CONSTRUCTION").unwrap_or_default();
+    names.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect()
 }
 
 // ── Groups ──────────────────────────────────────────────────────────────
@@ -673,6 +674,7 @@ fn next_free_segment_id(graph: &IRGraph) -> u32 {
             IR::AllocateMemory { segment_id, .. }
             | IR::WriteMemory { segment_id }
             | IR::ReadMemory { segment_id }
+            | IR::ReadTable { segment_id }
             | IR::MemoryTraceEmit { segment_id, .. }
             | IR::DynamicNDArrayGetItem { segment_id, .. }
             | IR::DynamicNDArraySetItem { segment_id, .. } => Some(segment_id + 1),
