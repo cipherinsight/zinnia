@@ -25,7 +25,8 @@ use optim::{
     AlwaysSatisfiedElimination, AssertSubsumption, AssertedEqualityConstantPropagation,
     ConstantFold, DeadCodeElimination, DoubleNotElimination, DuplicateCodeElimination,
     DynamicNDArrayMemoryLowering, DynamicNDArrayMetaAssertInjection, ExternalCallRemover, IRPass,
-    MemoryTraceInjection, PatternMatchOptim, SortLowering, SortTarget, UnreadMemoryEliminator,
+    MemoryTraceInjection, PatternMatchOptim, SelectChainForwarding, SortLowering, SortTarget,
+    UnreadMemoryEliminator,
 };
 
 /// Opaque handle holding a compiled IR graph.
@@ -135,6 +136,7 @@ fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32, target: SortT
         "DynamicNDArrayMetaAssertInjection" => DynamicNDArrayMetaAssertInjection.exec(graph),
         "MemoryTraceInjection" => MemoryTraceInjection.exec(graph),
         "PatternMatchOptim" => PatternMatchOptim.exec(graph),
+        "SelectChainForwarding" => SelectChainForwarding.exec(graph),
         "SortLowering" => SortLowering { target }.exec(graph),
         _ => return None,
     };
@@ -412,6 +414,9 @@ fn compile_circuit_impl(
     }
     if duplicate_code_elimination {
         passes.push("DuplicateCodeElimination");
+        // Needs equal conditions to be one statement (after the pass above);
+        // the DCE below removes the selects it bypasses.
+        passes.push("SelectChainForwarding");
     }
     // `argwhere/nonzero` bbox kernels can materialize coordinate segments
     // that later min/max fast paths never read. Drop those memory ops late

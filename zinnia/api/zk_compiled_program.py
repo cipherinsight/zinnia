@@ -200,21 +200,39 @@ class ZKCompiledProgram:
         ``params`` is ``{"k", "lookup_bits", "precision_bits"}``; it defaults
         to the backend's own ``estimate_params``. The returned handle exposes
         ``k``, ``lookup_bits``, ``precision_bits``, ``ir_hash``,
-        ``keygen_seconds`` (IPA parameters plus keygen) and ``vk_bytes()``.
-        Use it with :meth:`prove_with_keys` and :meth:`verify_with_keys`;
-        unlike :meth:`prove`, neither repeats parameter generation or keygen.
+        ``keygen_seconds`` (IPA parameters plus keygen), ``vk_bytes()`` and
+        ``save(directory)``, which writes the IPA parameters, both keys and
+        their pinning so another process can :meth:`load_keys` them. Use it
+        with :meth:`prove_with_keys` and :meth:`verify_with_keys`; unlike
+        :meth:`prove`, neither repeats parameter generation or keygen.
         """
         from zinnia._zinnia_core import halo2_base_keygen
 
         return halo2_base_keygen(self._compiled_ir, json.dumps(params) if params else None)
 
-    def prove_with_keys(self, keys, *args, externals=None) -> Dict:
-        """Prove with keys from :meth:`setup`.
+    @staticmethod
+    def load_keys(directory, role: str = "prover"):
+        """Read keys written by ``keys.save(directory)``.
 
-        Returns ``{"proof": hex, "public_values": [hex field elements],
-        "preprocess_seconds", "witness_seconds", "prove_seconds", "k"}``:
-        input parsing and external calls, circuit synthesis, and
-        ``create_proof`` plus transcript, timed separately.
+        ``role="prover"`` reads the IPA parameters and the proving key,
+        ``role="verifier"`` the IPA parameters and the verifying key. The
+        handle's ``load_seconds`` is ``{"params": s, "proving_key" |
+        "verifying_key": s}``, the time spent reading each file.
+        """
+        from zinnia._zinnia_core import halo2_base_load_keys
+
+        return halo2_base_load_keys(str(directory), role)
+
+    def prove_with_keys(self, keys, *args, externals=None) -> Dict:
+        """Prove with keys from :meth:`setup` or :meth:`load_keys` (role ``prover``).
+
+        Returns ``{"proof": hex, "public_values": [hex field elements], "k"}``
+        and the seconds of each phase, timed separately:
+        ``parse_inputs_seconds`` (reading the inputs into the backend),
+        ``preprocess_seconds`` (the IR evaluation pass that resolves external
+        calls), ``witness_seconds`` (circuit synthesis),
+        ``thread_pool_seconds`` (starting the proving thread pool) and
+        ``prove_seconds`` (``create_proof`` plus transcript).
         """
         from zinnia.exec.input_parser import build_circuit_inputs
         from zinnia._zinnia_core import halo2_base_prove
@@ -225,12 +243,23 @@ class ZKCompiledProgram:
         )
         return json.loads(out)
 
-    def verify_with_keys(self, keys, proof: Dict) -> bool:
+    @staticmethod
+    def verify_with_keys(keys, proof: Dict) -> bool:
         """Verify a :meth:`prove_with_keys` result against the keys' verifying key."""
+        return ZKCompiledProgram.verify_with_keys_report(keys, proof)["valid"]
+
+    @staticmethod
+    def verify_with_keys_report(keys, proof: Dict) -> Dict:
+        """:meth:`verify_with_keys` with the verdict's details.
+
+        Returns ``{"valid": bool, "error": str | None, "verify_seconds"}``;
+        ``verify_seconds`` covers the transcript and ``verify_proof`` only.
+        Needs only the verifying key (keys from :meth:`setup`, or
+        :meth:`load_keys` with either role), the proof and its public values.
+        """
         from zinnia._zinnia_core import halo2_base_verify
 
-        result = json.loads(halo2_base_verify(keys, proof["proof"], proof["public_values"]))
-        return result["valid"]
+        return json.loads(halo2_base_verify(keys, proof["proof"], proof["public_values"]))
 
     def _external_callables(self, externals=None) -> Dict:
         if externals:

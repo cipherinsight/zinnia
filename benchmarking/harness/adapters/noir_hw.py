@@ -88,7 +88,8 @@ class NoirHandwrittenAdapter(Adapter):
         setup="nargo compile + bb write_vk",
         prove_core="wall clock of the `bb prove` process (UltraHonk, ZK), including bb "
                    "start-up and CRS loading",
-        end_to_end="`nargo execute` (witness generation; ACIR already compiled) + `bb prove`",
+        end_to_end="`nargo execute` (re-elaborates the package source, reuses setup's compiled "
+                   "ACIR, runs the ACVM: witness generation) + `bb prove`",
         verify="wall clock of the `bb verify` process with the setup's verification key",
     )
 

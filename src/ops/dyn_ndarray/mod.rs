@@ -29,9 +29,8 @@ pub mod reshape;
 /// runtime-bounds slices, compactions (rank 1), merged branches. Compact:
 /// constructors whose total bound is below the rectangle, and runtime
 /// reshapes with a runtime inner extent (their `logical_shape` is a
-/// degenerate skeleton). The recorded `runtime_strides` of a padded array
-/// are not always its addressing (bounded inputs record C-order ones), so
-/// this test does not read them.
+/// degenerate skeleton). The test reads the shapes only; a padded array's
+/// `runtime_strides` are its buffer strides as well.
 pub(crate) fn has_padded_layout(d: &crate::types::DynamicNDArrayData) -> bool {
     let covers_envelope = d
         .meta
@@ -41,6 +40,32 @@ pub(crate) fn has_padded_layout(d: &crate::types::DynamicNDArrayData) -> bool {
         .all(|(&n, dim)| n >= dim.max);
     let rectangle: usize = d.meta.logical_shape.iter().product();
     covers_envelope && d.envelope.total_bound >= rectangle
+}
+
+/// Whether a padded runtime-shaped array may have holes in its buffer: an
+/// axis after the first whose runtime extent is not statically its buffer
+/// width. Then the element of C-order position `k` is not at buffer slot
+/// `k`, so operations that read the buffer as a flat C-order sequence
+/// (reshape, a flat argmax index) must map positions through the runtime
+/// extents, or refuse the array.
+pub(crate) fn padded_with_holes(d: &crate::types::DynamicNDArrayData) -> bool {
+    has_padded_layout(d)
+        && d.meta
+            .runtime_shape
+            .iter()
+            .zip(&d.meta.logical_shape)
+            .skip(1)
+            .any(|(extent, &width)| extent.static_val != Some(width as i64))
+}
+
+/// The panic (an IR-generation error naming the construct) for an operation
+/// that would read a padded buffer with holes as a flat C-order sequence.
+pub(crate) fn refuse_padded_with_holes(op: &str) -> ! {
+    panic!(
+        "{op} is not supported on an array with a runtime shape held in a padded buffer \
+         (a bounded input with per-axis bounds, or a slice with runtime bounds on an inner axis): \
+         its elements are not contiguous in C order"
+    )
 }
 
 pub fn is_contiguous(meta: &crate::types::DynArrayMeta) -> bool {

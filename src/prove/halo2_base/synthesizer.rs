@@ -14,13 +14,16 @@ mod bitwise;
 mod fixed_point;
 mod keys;
 mod memory;
+mod plan;
 mod ranges;
 
 use self::fixed_point::Divisor;
 use self::memory::MemoryState;
+use self::plan::Plan;
 use self::ranges::{Comparison, Interval, Operand, TwoValued};
 use crate::circuit_input::{InputPath, ResolvedWitness};
 use crate::prove::error::ProvingError;
+use crate::prove::field::PrimeField;
 use crate::prove::kernel::{self, Rounding};
 use crate::prove::traits::Synthesizer;
 use crate::prove::types::ProvingParams;
@@ -59,6 +62,10 @@ pub struct Halo2BaseSynthesizer<'a> {
     bit_cells: HashSet<halo2_base::ContextCell>,
     bit_cell_ids: HashSet<u64>,
     const_cell_ids: HashSet<u64>,
+    /// One loaded constant cell per value (the field element's bytes):
+    /// `load_constant` costs an advice cell, and equal constants are
+    /// interchangeable.
+    constants: HashMap<[u8; 32], Halo2BaseCell>,
     select_many_cache: HashMap<Vec<u64>, Vec<Halo2BaseCell>>,
     u128_lt_bit_cache: HashMap<(u64, u64, u32), Vec<Halo2BaseCell>>,
     /// Constraint-proven integer ranges per cell id (see `ranges.rs`).
@@ -67,6 +74,12 @@ pub struct Halo2BaseSynthesizer<'a> {
     proven: HashMap<u64, Interval>,
     /// Pinned sign bits `[x < 0]` by cell id (sign tests, `sign_and_abs`).
     sign_bits: HashMap<u64, Halo2BaseCell>,
+    /// Cells an emitted constraint proves non-zero (an asserted `x != 0`).
+    nonzero: HashSet<u64>,
+    /// `(sign, magnitude)` hints of dynamic divisors, by cell id: pinned by
+    /// the remainder bound of the division that made them (see
+    /// `div_rem_nonzero`), so later divisions by the same cell reuse them.
+    divisor_signs: HashMap<u64, (Halo2BaseCell, Halo2BaseCell)>,
     // (sign bit, magnitude) per cell id, see `sign_and_abs`.
     sign_abs_cache: HashMap<u64, (Halo2BaseCell, Halo2BaseCell)>,
     // ValueId ↔ cell correspondence, maintained by `on_stmt_result`, for
@@ -93,6 +106,17 @@ pub struct Halo2BaseSynthesizer<'a> {
     /// (cheap `Arc` clones). Built on first range use so circuits without
     /// range checks pay no setup. Byte-identical to `builder.range_chip()`.
     range: Option<RangeChip<Fp>>,
+    /// Facts read off the whole IR graph ahead of synthesis (see `plan.rs`);
+    /// empty unless [`Halo2BaseSynthesizer::plan_ahead`] is called.
+    plan: Plan,
+    /// The statement being lowered (from `on_stmt_begin`).
+    current_stmt: u32,
+    /// Deferred products by placeholder id: the factors of a `MulI` that the
+    /// plan fuses into its one consumer (see `mul_i`).
+    deferred: HashMap<u64, (Halo2BaseCell, Halo2BaseCell)>,
+    /// `(cell id, advice length)` right after `gate_from` emitted the cell:
+    /// while the length is unchanged, that cell is the context's last one.
+    last_output: Option<(u64, usize)>,
     /// Per-statement cell counts, recorded only when enabled (see
     /// [`Halo2BaseSynthesizer::enable_profile`]); a measurement aid.
     profile: Option<CellProfile>,
@@ -130,12 +154,15 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             differences: HashMap::new(),
             comparisons: HashMap::new(),
             sign_bits: HashMap::new(),
+            nonzero: HashSet::new(),
+            divisor_signs: HashMap::new(),
             negations: HashMap::new(),
             dyn_meta_bounds: HashMap::new(),
             next_id: 0,
             bit_cells: HashSet::new(),
             bit_cell_ids: HashSet::new(),
             const_cell_ids: HashSet::new(),
+            constants: HashMap::new(),
             select_many_cache: HashMap::new(),
             u128_lt_bit_cache: HashMap::new(),
             proven: HashMap::new(),
@@ -146,10 +173,20 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             first_unsat: None,
             gate: GateChip::<Fp>::new(),
             range: None,
+            plan: Plan::default(),
+            current_stmt: 0,
+            deferred: HashMap::new(),
+            last_output: None,
             profile: None,
             #[cfg(test)]
             tamper: tamper::HintTamper::default(),
         }
+    }
+
+    /// Read the facts of `ir` the lowering uses ahead of the statements that
+    /// establish them (planned bounds, deferred products; see `plan.rs`).
+    pub fn plan_ahead(&mut self, ir: &crate::ir::IRGraph) {
+        self.plan = Plan::of(ir);
     }
 
     /// Record the advice and lookup cells each statement emits (costly:
@@ -261,11 +298,28 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         bits.div_ceil(lookup) * lookup
     }
 
+    /// A cell fixed to `value` (loaded once per value, then shared).
     fn const_cell(&mut self, value: Fp) -> Halo2BaseCell {
+        let key = value.to_repr();
+        if let Some(cell) = self.constants.get(&key) {
+            return *cell;
+        }
         let assigned = self.ctx().load_constant(value);
         let cell = self.wrap(assigned, value);
         self.const_cell_ids.insert(cell.id);
+        self.constants.insert(key, cell);
         cell
+    }
+
+    /// Whether the statement being lowered is a comparison whose only use is
+    /// `Assert` (see `plan.rs`).
+    fn is_asserted_comparison(&self) -> bool {
+        self.plan.asserted_comparisons.contains(&self.current_stmt)
+    }
+
+    /// The truth value of a constant cell, if `a` is one.
+    fn constant_truth(&self, a: &Halo2BaseCell) -> Option<bool> {
+        self.is_const_cell(a).then(|| a.value != Fp::zero())
     }
 
     /// The interval that narrows a memory read's choice set: the provenance
@@ -344,6 +398,70 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         self.wrap(assigned, value)
     }
 
+    /// `first + b·c` by halo2-base's vertical gate `[first, b, c, out]`.
+    /// When `first` is the last advice cell of the context (it was the
+    /// output of the previous `gate_from`), the gate starts at that cell
+    /// instead of copying it: three cells instead of four. halo2-base lays
+    /// out gates that share a cell (its inner products do the same) and
+    /// copies a shared cell across a column break. The decision depends
+    /// only on the order of emission, never on values, so key generation
+    /// and proving lay out the same gates.
+    fn gate_from(&mut self, first: &Halo2BaseCell, b: QuantumCell<Fp>, c: QuantumCell<Fp>, value: Fp) -> Halo2BaseCell {
+        let ctx = self.builder.main(0);
+        let assigned = if self.last_output == Some((first.id, ctx.advice.len())) {
+            ctx.assign_region_last([b, c, QuantumCell::Witness(value)], [-1])
+        } else {
+            ctx.assign_region_last([QuantumCell::Existing(first.assigned), b, c, QuantumCell::Witness(value)], [0])
+        };
+        let out = self.wrap(assigned, value);
+        self.last_output = Some((out.id, self.builder.main(0).advice.len()));
+        out
+    }
+
+    /// A stand-in for the product `a·b` of a `MulI` that the plan fuses into
+    /// its only consumer (an `AddI`, or a `SubI` subtracting it): no cell is
+    /// assigned (`cell: None`); the consumer emits `acc ± a·b` as one gate
+    /// from the recorded factors. The plan admits only products that no
+    /// other statement and no affine view of a memory address reads, so the
+    /// stand-in never reaches a gate; if it did, key generation would stop
+    /// on the missing cell instead of building a circuit.
+    fn defer_product(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Halo2BaseCell {
+        let value = a.value * b.value;
+        let placeholder = AssignedValue { value: halo2_base::halo2_proofs::plonk::Assigned::Trivial(value), cell: None };
+        let cell = self.wrap(placeholder, value);
+        self.deferred.insert(cell.id, (*a, *b));
+        cell
+    }
+
+    /// `cell` itself, or for a deferred product its product as a cell (when
+    /// both operands of a sum are deferred products, one is emitted).
+    fn materialize(&mut self, cell: &Halo2BaseCell) -> Halo2BaseCell {
+        let Some((a, b)) = self.deferred.get(&cell.id).copied() else { return *cell };
+        let out = self.gate_cell(cell.value, |gate, ctx| gate.mul(ctx, a.assigned, b.assigned));
+        self.propagate_range(&out, &a, &b, Interval::mul);
+        out
+    }
+
+    /// `a·b` as the first gate of a multiply-add chain (`0 + a·b`, so the
+    /// next `multiply_add` can start at its output cell).
+    fn product(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Halo2BaseCell {
+        let zero = self.const_cell(Fp::zero());
+        let out = self.gate_from(&zero, QuantumCell::Existing(a.assigned), QuantumCell::Existing(b.assigned), a.value * b.value);
+        self.propagate_range(&out, a, b, Interval::mul);
+        out
+    }
+
+    /// `acc + a·b` in one gate, with the range of the sum propagated.
+    fn multiply_add(&mut self, acc: &Halo2BaseCell, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Halo2BaseCell {
+        let out = self.gate_from(acc, QuantumCell::Existing(a.assigned), QuantumCell::Existing(b.assigned), acc.value + a.value * b.value);
+        if let (Some(ra), Some(rb), Some(racc)) = (self.proven_range(a), self.proven_range(b), self.proven_range(acc)) {
+            if let Some(range) = ra.mul(&rb).and_then(|p| p.add(&racc)) {
+                self.prove_range(&out, range);
+            }
+        }
+        out
+    }
+
     fn truthy_bit(&mut self, a: &Halo2BaseCell) -> Halo2BaseCell {
         if self.is_bit(a) {
             return *a;
@@ -361,12 +479,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
                 _ => {}
             }
         }
-        let iz = self.is_zero_bit(a);
-        let out = self.gate_cell(Fp::one() - iz.value, |gate, ctx| {
-            gate.not(ctx, iz.assigned)
-        });
-        self.mark_bit(&out);
-        out
+        self.is_nonzero_bit(a)
     }
 
     fn constrain_equal(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) {
@@ -394,10 +507,104 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             .and_then(|w| w.resolve_external(store_idx, output_idx).ok())
     }
 
-    /// `[x == 0]` as a marked bit (halo2-base's inverse-witness gadget).
+    /// `a != b` as an assertion, for a `!=` whose only use is `Assert`: the
+    /// hint `inv` with `(a - b)·inv = 1`, which has a solution exactly when
+    /// `a - b ≠ 0` (and then only `inv = 1/(a - b)`). Records `a` (or `b`)
+    /// as non-zero when the other is the constant 0, and with it the integer
+    /// a float cast stands for. Returns the constant `true`.
+    fn assert_distinct(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        let zero = |s: &Self, x: &Halo2BaseCell| s.is_const_cell(x) && x.value == Fp::zero();
+        let difference = if zero(self, b) {
+            *a
+        } else if zero(self, a) {
+            *b
+        } else {
+            self.difference(a, b)
+        };
+        if difference.value == Fp::zero() {
+            self.note_unsat(|| "Witness does not satisfy circuit constraints: an asserted `!=` is false".to_string());
+        }
+        let inverse = self.hint(difference.value.invert().unwrap_or(Fp::zero()));
+        let product = self.gate_cell(difference.value * inverse.value, |gate, ctx| gate.mul(ctx, difference.assigned, inverse.assigned));
+        self.assert_const(&product, Fp::one());
+        if zero(self, b) || zero(self, a) {
+            self.nonzero.insert(difference.id);
+            if let Some(n) = self.float_casts.get(&difference.id).copied() {
+                self.nonzero.insert(n.id); // n·2^P ≠ 0 exactly when n ≠ 0
+            }
+        }
+        self.constant_bool(true)
+    }
+
+    /// `a - b`, or the other operand when one is the constant 0 (an
+    /// equality test with 0 tests the value itself).
+    fn difference_or_operand(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Halo2BaseCell {
+        let zero = |s: &Self, x: &Halo2BaseCell| s.is_const_cell(x) && x.value == Fp::zero();
+        if zero(self, b) {
+            *a
+        } else if zero(self, a) {
+            *b
+        } else {
+            self.difference(a, b)
+        }
+    }
+
+    /// `[x != 0]` as a marked bit, in eight cells: `nz = x·inv` and
+    /// `x·nz = x` (gates `[0, x, inv, nz]` and `[0, x, nz, x]`). For `x ≠ 0`
+    /// the second gate forces `nz = 1`; for `x = 0` the first forces
+    /// `nz = 0`. (`[x == 0]` and a negation cost eleven.) `inv` is the
+    /// gadget's witness, free only when `x = 0`, where it does not matter.
+    fn is_nonzero_bit(&mut self, x: &Halo2BaseCell) -> Halo2BaseCell {
+        use halo2_base::halo2_proofs::plonk::Assigned;
+        let (value, inverse) = if x.value == Fp::zero() {
+            (Fp::zero(), Assigned::Trivial(Fp::zero()))
+        } else {
+            (Fp::one(), Assigned::Rational(Fp::one(), x.value))
+        };
+        let ctx = self.builder.main(0);
+        let cells = [
+            QuantumCell::Constant(Fp::zero()),
+            QuantumCell::Existing(x.assigned),
+            QuantumCell::WitnessFraction(inverse),
+            QuantumCell::Witness(value),
+            QuantumCell::Constant(Fp::zero()),
+            QuantumCell::Existing(x.assigned),
+            QuantumCell::Witness(value),
+            QuantumCell::Existing(x.assigned),
+        ];
+        ctx.assign_region_smart(cells, [0, 4], [(3, 6)], []);
+        let assigned = ctx.get(-5);
+        let bit = self.wrap(assigned, value);
+        self.mark_bit(&bit);
+        bit
+    }
+
+    /// `[x == 0]` as a marked bit: halo2-base's inverse-witness gadget,
+    /// `z + x·inv = 1` and `x·z = 0`, laid out in seven cells
+    /// `[z, x, inv, 1, x, z, 1]` with gates at 0 and 3 and the two `z` cells
+    /// equal (halo2-base's own layout spends an eighth cell on a zero).
+    /// For `x ≠ 0` the second gate forces `z = 0`; for `x = 0` the first
+    /// forces `z = 1`. `inv` is the gadget's witness (`1/x`, or 1 for 0); any
+    /// other value leaves no satisfying `z` or the same one.
     fn is_zero_bit(&mut self, x: &Halo2BaseCell) -> Halo2BaseCell {
-        let value = if x.value == Fp::zero() { Fp::one() } else { Fp::zero() };
-        let assigned = self.gate.is_zero(self.builder.main(0), x.assigned);
+        use halo2_base::halo2_proofs::plonk::Assigned;
+        let (value, inverse) = if x.value == Fp::zero() {
+            (Fp::one(), Assigned::Trivial(Fp::one()))
+        } else {
+            (Fp::zero(), Assigned::Rational(Fp::one(), x.value))
+        };
+        let ctx = self.builder.main(0);
+        let cells = [
+            QuantumCell::Witness(value),
+            QuantumCell::Existing(x.assigned),
+            QuantumCell::WitnessFraction(inverse),
+            QuantumCell::Constant(Fp::one()),
+            QuantumCell::Existing(x.assigned),
+            QuantumCell::Witness(value),
+            QuantumCell::Constant(Fp::one()),
+        ];
+        ctx.assign_region_smart(cells, [0, 3], [(0, 5)], []);
+        let assigned = ctx.get(-7);
         let bit = self.wrap(assigned, value);
         self.mark_bit(&bit);
         bit
@@ -421,6 +628,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
 
 impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn on_stmt_begin(&mut self, stmt_id: u32) {
+        self.current_stmt = stmt_id;
         if self.profile.is_none() {
             return;
         }
@@ -465,7 +673,18 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn add_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let out = self.gate_cell(a.value + b.value, |gate, ctx| gate.add(ctx, a.assigned, b.assigned));
+        if let Some((x, y)) = self.deferred.get(&b.id).copied() {
+            let acc = self.materialize(a);
+            return Ok(self.multiply_add(&acc, &x, &y));
+        }
+        if let Some((x, y)) = self.deferred.get(&a.id).copied() {
+            return Ok(self.multiply_add(b, &x, &y));
+        }
+        let out = self.gate_from(a, QuantumCell::Existing(b.assigned), QuantumCell::Constant(Fp::one()), a.value + b.value);
+        // out - a = b and out - b = a: a select between the sum and one of
+        // its summands needs no difference gate (see `select_bit`).
+        self.differences.entry((out.id, a.id)).or_insert(*b);
+        self.differences.entry((out.id, b.id)).or_insert(*a);
         self.propagate_range(&out, a, b, Interval::add);
         self.propagate_two_valued(&out, a, b, |x, c| x.checked_add(c));
         self.propagate_two_valued(&out, b, a, |x, c| x.checked_add(c));
@@ -473,10 +692,22 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn sub_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if let Some((x, y)) = self.deferred.get(&b.id).copied() {
+            // `a - x·y` as halo2-base's `[a - x·y, x, y, a]` gate.
+            let a = &self.materialize(a);
+            let out = self.gate_cell(a.value - x.value * y.value, |gate, ctx| gate.sub_mul(ctx, a.assigned, x.assigned, y.assigned));
+            if let (Some(ra), Some(rx), Some(ry)) = (self.proven_range(a), self.proven_range(&x), self.proven_range(&y)) {
+                if let Some(range) = rx.mul(&ry).and_then(|p| ra.sub(&p)) {
+                    self.prove_range(&out, range);
+                }
+            }
+            return Ok(out);
+        }
         // A fresh cell per IR value (provenance maps cells to values one to
         // one); later selects on the same operands may reuse it.
         let out = self.gate_cell(a.value - b.value, |gate, ctx| gate.sub(ctx, a.assigned, b.assigned));
         self.differences.entry((a.id, b.id)).or_insert(out);
+        self.differences.entry((a.id, out.id)).or_insert(*b); // a - out = b
         self.propagate_range(&out, a, b, Interval::sub);
         self.propagate_two_valued(&out, a, b, |x, c| x.checked_sub(c));
         self.propagate_two_valued(&out, b, a, |x, c| c.checked_sub(x));
@@ -484,6 +715,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn mul_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.plan.deferred_products.contains(&self.current_stmt) {
+            return Ok(self.defer_product(a, b));
+        }
         let out = self.gate_cell(a.value * b.value, |gate, ctx| gate.mul(ctx, a.assigned, b.assigned));
         self.propagate_range(&out, a, b, Interval::mul);
         self.propagate_two_valued(&out, a, b, |x, c| x.checked_mul(c));
@@ -666,18 +900,29 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         if let Some(bit) = self.equals_constant(b, a)? {
             return Ok(bit);
         }
-        let value = if a.value == b.value { Fp::one() } else { Fp::zero() };
-        let out = self.gate_cell(value, |gate, ctx| gate.is_equal(ctx, a.assigned, b.assigned));
-        self.mark_bit(&out);
-        Ok(out)
+        // `[a == b] = [a - b == 0]`.
+        let difference = self.difference_or_operand(a, b);
+        Ok(self.is_zero_bit(&difference))
     }
     fn ne_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let eq = self.eq_i(a, b)?;
-        self.logical_not(&eq)
+        if self.is_asserted_comparison() {
+            return self.assert_distinct(a, b);
+        }
+        // A two-valued cell against a constant: the negated bit (or a constant).
+        for (x, c) in [(a, b), (b, a)] {
+            if let Some(eq) = self.equals_constant(x, c)? {
+                return self.logical_not(&eq);
+            }
+        }
+        let difference = self.difference_or_operand(a, b);
+        Ok(self.is_nonzero_bit(&difference))
     }
     /// Signed `a < b`; operands outside the signed 64-bit window have no
     /// witness (see `ranges::less_than`).
     fn lt_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.is_asserted_comparison() {
+            return self.assert_relation(a, b, true);
+        }
         self.less_than(self.operand(a), self.operand(b), Some(Interval::SIGNED64))
     }
     /// Unsigned `a < b` for operands in `[0, 2^64)` (each is range-checked
@@ -687,11 +932,17 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
     fn gt_i_bounded(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.lt_i_bounded(b, a) }
     fn lte_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.is_asserted_comparison() {
+            return self.assert_relation(a, b, false);
+        }
         let gt = self.gt_i(a, b)?;
         self.logical_not(&gt)
     }
     fn gt_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.lt_i(b, a) }
     fn gte_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.is_asserted_comparison() {
+            return self.assert_relation(b, a, false);
+        }
         let lt = self.lt_i(a, b)?;
         self.logical_not(&lt)
     }
@@ -699,11 +950,17 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn ne_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.ne_i(a, b) }
     fn lt_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.lt_i(a, b) }
     fn lte_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.is_asserted_comparison() {
+            return self.assert_relation(a, b, false);
+        }
         let gt = self.gt_f(a, b)?;
         self.logical_not(&gt)
     }
     fn gt_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.lt_i(b, a) }
     fn gte_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.is_asserted_comparison() {
+            return self.assert_relation(b, a, false);
+        }
         let lt = self.lt_f(a, b)?;
         self.logical_not(&lt)
     }
@@ -815,6 +1072,12 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn arctan2_f(&mut self, _: &Self::CellRef, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("arctan2_f") }
 
     fn logical_and(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        // `x and true = [x]`, `x and false = false`.
+        for (constant, other) in [(a, b), (b, a)] {
+            if let Some(truth) = self.constant_truth(constant) {
+                return if truth { Ok(self.truthy_bit(other)) } else { self.constant_bool(false) };
+            }
+        }
         let ta = self.truthy_bit(a);
         let tb = self.truthy_bit(b);
         let out = self.gate_cell(ta.value * tb.value, |gate, ctx| gate.and(ctx, ta.assigned, tb.assigned));
@@ -822,6 +1085,12 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         Ok(out)
     }
     fn logical_or(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        // `x or false = [x]`, `x or true = true`.
+        for (constant, other) in [(a, b), (b, a)] {
+            if let Some(truth) = self.constant_truth(constant) {
+                return if truth { self.constant_bool(true) } else { Ok(self.truthy_bit(other)) };
+            }
+        }
         let ta = self.truthy_bit(a);
         let tb = self.truthy_bit(b);
         let out = self.gate_cell(ta.value + tb.value - ta.value * tb.value, |gate, ctx| gate.or(ctx, ta.assigned, tb.assigned));
@@ -829,6 +1098,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         Ok(out)
     }
     fn logical_not(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if let Some(truth) = self.constant_truth(a) {
+            return self.constant_bool(!truth);
+        }
         let ta = self.truthy_bit(a);
         let out = self.gate_cell(Fp::one() - ta.value, |gate, ctx| gate.not(ctx, ta.assigned));
         self.mark_bit(&out);

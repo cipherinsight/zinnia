@@ -187,6 +187,11 @@ impl Halo2BaseSynthesizer<'_> {
     /// (the cell is its own root) for dynamic cells, and to a pure offset
     /// for constants.
     fn affine_lin_of(&self, cell: &Halo2BaseCell) -> AffineLin {
+        // A constant is its own value (constant cells are shared between IR
+        // values, so the provenance of whichever value took it last is moot).
+        if self.is_const_cell(cell) {
+            return AffineLin { terms: Vec::new(), offset: kernel::fp_to_i64(cell.value) };
+        }
         let provenance = self
             .vid_of_cell
             .get(&cell.id)
@@ -201,9 +206,6 @@ impl Halo2BaseSynthesizer<'_> {
             if let Some(terms) = terms {
                 return AffineLin { terms, offset: view.offset };
             }
-        }
-        if self.is_const_cell(cell) {
-            return AffineLin { terms: Vec::new(), offset: kernel::fp_to_i64(cell.value) };
         }
         AffineLin { terms: vec![(*cell, 1)], offset: 0 }
     }
@@ -403,12 +405,20 @@ impl Halo2BaseSynthesizer<'_> {
     }
 
     /// Whether an overlay write at `write_addr` is seen by a read at
-    /// `read_addr`. Two constant addresses are compared at synthesis time;
-    /// otherwise an equality bit, cached so repeated reads against the same
-    /// pending write reuse it.
+    /// `read_addr`. Two constant addresses are compared at synthesis time,
+    /// and so are addresses whose proven ranges are disjoint (the
+    /// constraints already emitted keep them apart, for example a write to
+    /// `b[i, idx_i]` with `idx_i` asserted below the row length and a read of
+    /// another row); otherwise an equality bit, cached so repeated reads
+    /// against the same pending write reuse it.
     fn overlay_hit(&mut self, write_addr: &Halo2BaseCell, read_addr: &Halo2BaseCell) -> Result<OverlayHit, ProvingError> {
         if self.is_const_cell(write_addr) && self.is_const_cell(read_addr) {
             return Ok(if write_addr.value == read_addr.value { OverlayHit::Always } else { OverlayHit::Never });
+        }
+        if let (Some(w), Some(r)) = (self.proven_range(write_addr), self.proven_range(read_addr)) {
+            if w.intersect(&r).is_none() {
+                return Ok(OverlayHit::Never);
+            }
         }
         let key = if self.is_const_cell(read_addr) {
             OverlayReadKey::Const(kernel::fp_to_i64(read_addr.value))

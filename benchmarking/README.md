@@ -77,14 +77,39 @@ the proof had no public value). Otherwise its status is the first failure class:
 
 | system | prove core | end to end | verify |
 |---|---|---|---|
-| `zinnia_halo2` | `create_proof` + transcript finalize, timed in the backend | the whole `prove()` call, **including** IPA parameter generation and keygen (the API couples them) | `verify_proof_artifact`, **including** re-keygen from the shipped IR |
-| `zinnia_noir`, `noir_hw` | `bb prove` process wall clock (includes bb start-up; the epoch manifest records the start-up floor on a one-line circuit) | `nargo execute` + `bb prove` | `bb verify` process |
+| `zinnia_halo2` | `prove_s`: `create_proof` + transcript finalize, timed in the backend | `preprocess_s` + `witness_s` + `prove_s` | `verify_s`: transcript + `verify_proof` with the verifying key read from setup's key directory |
+| `zinnia_noir`, `noir_hw` | `bb prove` process wall clock (includes bb start-up; the epoch manifest records the start-up floor on a one-line circuit) | `nargo execute` + `bb prove` (`nargo execute` re-elaborates the package source before running the ACIR: see Noir below) | `bb verify` process |
 | `halo2_hw` | `prove_s` (create_proof) | `witness_s` + `prove_s` | `verify_s` |
 | `sp1`, `sp1_groth16` | `prove` (the SDK executes inside the prove call) | `prove` | `verify` |
 | `risc0` (`_groth16`) | `prove` (+ `compress_succinct` + `wrap_groth16`) | `execute` + prove core | `verify` |
 | `cairo` | `scarb prove` process | `scarb execute` + `scarb prove` processes | `scarb verify` process |
 
 Every raw record carries its system's window descriptions.
+
+### The halo2 pair, step by step
+
+Both halo2 sides run the same steps in separate processes and write the same files:
+setup writes the IPA parameters (`params.bin`), the proving key (`pk.bin`), the verifying key
+(`vk.bin`, both `SerdeFormat::RawBytes`) and the pinned layout; prove reads the parameters
+and the proving key; verify reads the parameters and the verifying key. Zinnia's keys are
+generated without a witness (the synthesis a verifier runs); halo2_hw's with input A. Every
+prove uses input B. The per-step timings in the raw records (`timings_s`):
+
+| step | `zinnia_halo2` | `halo2_hw` | in a clock |
+|---|---|---|---|
+| read the inputs | Python input builder + `parse_inputs_s` | `load_input_s` | no |
+| read parameters / key | `load_params_s`, `load_pk_s` (prove); `load_params_s`, `load_vk_s` (verify) | same names | no |
+| resolve external calls | `preprocess_s`: one evaluation pass over the IR | (none) | end to end |
+| witness | `witness_s`: IR walk into the builder pinned to keygen's layout | `witness_s`: the circuit function into the pinned builder | end to end |
+| start the proving thread pool | `thread_pool_s` | `thread_pool_s` | no |
+| prove | `prove_s`: `create_proof` + transcript finalize | `prove_s`: same calls | prove core, end to end |
+| verify | `verify_s`: transcript + `verify_proof` | `verify_s`: same calls | verify |
+
+Outside every clock on both sides: process start-up, Zinnia's recompilation in each step
+(the IR digest must equal setup's; halo2_hw's circuit is compiled into its binary), Zinnia's
+check that the keys belong to the compiled circuit (an IR hash computed once per process),
+writing the proof, and the whole-call diagnostics (`prove_call_s`, `verify_call_s`,
+`process_wall`).
 
 ### halo2 parameters (same policy on both halo2 sides)
 
@@ -104,6 +129,18 @@ Both Noir sides go through `harness/adapters/noir_toolchain.py`: nargo 1.0.0-bet
 `--scheme ultra_honk --verifier_target noir-recursive` (UltraHonk, zero-knowledge) for
 `write_vk`, `prove`, `verify` and `gates`. Zinnia's `main.nr` comes from `emit_structural`
 and must be byte-identical for inputs A and B.
+
+The two sides run the same commands on the same files: setup compiles the package and writes
+the verifying key (`bb write_vk`); every prove runs `nargo execute` with `Prover_B.toml` and
+`bb prove -k <setup's vk>`; every verify runs `bb verify -k <setup's vk>`. Writing
+`Prover_B.toml` (Zinnia's input builder, or `hw_check.prover_toml`) is outside the windows on
+both sides. `nargo execute` is the witness step on both sides, but nargo has no mode that runs
+the compiled ACIR alone: each call re-elaborates the package's source and libraries (it skips
+code generation when the result matches the compiled artifact), then runs the ACVM. Its floor on
+a one-line circuit is in the manifest (`calibration.bb.nargo_execute_s`, about 60 ms), and it
+grows with the source size: on 0381 Zinnia's emitted `main.nr` is 669 KB and `nargo check`
+alone takes about 170 ms of its about 285 ms `nargo execute`, against 60 ms of 66 ms for the
+2.5 KB handwritten one.
 
 ## The per-system program contract
 
@@ -133,7 +170,7 @@ and `hw_check.noir_driver` decoding the outputs from each `main.nr`'s `// @outpu
 `results/<epoch>/`: `manifest.json` (repository commit, diff hash and untracked files; build
 record and current `.so` hash; every toolchain version and path; baseline entry points and
 `Cargo.lock` hashes; `noir_fpc` hashes; machine; tracked environment variables; configuration;
-case order; indexer log; bb calibration), `case_set.json`, `raw/<system>/<case>.json` (every
+case order; indexer log; nargo/bb start-up calibration), `case_set.json`, `raw/<system>/<case>.json` (every
 sample with both clocks, proof size and hash, decoded publics of the first samples, output
 check, verification, tamper result, CPU state, file hashes), `raw/_reference/<case>.json`,
 `logs/`, `work/` (keys and proofs, not committed), and `summary/` from `analyze`:

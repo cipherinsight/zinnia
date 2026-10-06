@@ -10,7 +10,7 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["halo2-backend", "extension-module"]
 halo2-backend = ["halo2_proofs", "rand"]
-halo2-base-backend = ["halo2-backend", "halo2-base"]
+halo2-base-backend = ["halo2-backend", "halo2-base", "rayon"]
 # Source-to-source Noir backend: emits .nr text from IR and shells out to
 # nargo + bb. No new Rust deps; the Q32 fixed-point library lives in
 # benchmarking/noir_fpc and is vendored into emitted packages via
@@ -47,6 +47,10 @@ halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.gi
 halo2curves = { version = "0.6.1", features = ["derive_serde"] }
 halo2-base = { git = "https://github.com/axiom-crypto/halo2-lib.git", branch = "community-edition", default-features = false, features = ["halo2-pse"], optional = true }
 rand = { version = "0.8", optional = true }
+# The thread pool halo2_proofs proves on (already in the tree through it);
+# the halo2-base backend starts it before its timed `create_proof` window,
+# as the handwritten halo2_hw baseline does.
+rayon = { version = "1", optional = true }
 # BLAKE2b for the canonical `ir_hash` (`ProofArtifact.ir_hash` + the
 # halo2-IPA VK-cache key). NON-optional: the hash is computed eagerly on the
 # always-compiled prove path (`crate::prove::ir_hash`, cached on `CompiledIR`)

@@ -44,25 +44,29 @@ def _check_preconditions(config: RunConfig) -> tuple[dict | None, list[toolchain
 
 
 def calibrate_bb(work: Path) -> dict:
-    """Start-up floor of the Noir CLI: prove and verify a one-line circuit.
+    """Start-up floor of the Noir CLIs: execute, prove and verify a one-line circuit.
 
-    Both Noir sides pay this floor in every `bb prove`/`bb verify` window.
+    Both Noir sides pay this floor in every `nargo execute`, `bb prove` and
+    `bb verify` window. `nargo execute` has no mode that runs the compiled
+    ACIR alone: it re-elaborates the package's source (and its libraries)
+    before running it, so its floor is mostly nargo's front end.
     """
     package = noir_toolchain.NoirPackage.create(work / "package", "calibration",
                                                 CALIBRATION_MAIN_NR)
     package.write_inputs("Prover", 'x = "7"\n')
     package.compile()
     package.write_vk()
-    _, witness = package.execute("Prover", "witness")
-    prove_s, verify_s = [], []
+    execute_s, prove_s, verify_s = [], [], []
     for index in range(CALIBRATION_REPEATS):
+        seconds, witness = package.execute("Prover", f"witness-{index}")
+        execute_s.append(seconds)
         proof_dir = work / f"proof-{index}"
         prove_s.append(package.prove(witness, proof_dir))
         verdict = noir_toolchain.verify_proof(package.vk, proof_dir / "proof", tamper=False,
                                               has_outputs=True)
         verify_s.append(verdict.verify_s)
-    return {"circuit": CALIBRATION_MAIN_NR, "bb_prove_s": prove_s, "bb_verify_s": verify_s,
-            "flags": list(noir_toolchain.BB_FLAGS)}
+    return {"circuit": CALIBRATION_MAIN_NR, "nargo_execute_s": execute_s, "bb_prove_s": prove_s,
+            "bb_verify_s": verify_s, "flags": list(noir_toolchain.BB_FLAGS)}
 
 
 def run_epoch(label: str, cases: list[PerfCase], config: RunConfig,

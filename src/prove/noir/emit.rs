@@ -125,7 +125,8 @@ fn asserted_comparisons(ir: &IRGraph) -> HashSet<u32> {
             matches!(
                 s.ir,
                 IR::LtI | IR::LteI | IR::GtI | IR::GteI | IR::LtF | IR::LteF | IR::GtF | IR::GteF
-                    | IR::LtIBounded | IR::GtIBounded | IR::IndexInBox { .. } | IR::KeyLess { .. }
+                    | IR::LtIBounded | IR::GtIBounded | IR::IndexInBox { .. } | IR::NeI | IR::NeF
+                    | IR::KeyLess { .. }
             )
         })
         .map(|s| s.stmt_id)
@@ -648,6 +649,10 @@ pub struct NoirEmitter<'a> {
     write_version: HashMap<u32, u64>,
     /// Comparisons used only by asserts (see `asserted_comparisons`).
     asserted_comparisons: HashSet<u32>,
+    /// Cells an emitted `assert(x != 0)` proves non-zero.
+    nonzero: HashSet<String>,
+    /// `out -> (a, b)` for every emitted sum `out = a + b`.
+    sum_of: HashMap<String, (String, String)>,
     /// Asserted comparisons a bounds check elsewhere implies (see
     /// `implied_comparisons`): they emit nothing.
     implied_comparisons: HashSet<u32>,
@@ -827,6 +832,9 @@ impl<'a> NoirEmitter<'a> {
     /// integer arithmetic: the values involved stay far below p).
     fn integer_arith(&mut self, a: &str, b: &str, op: char) -> String {
         let v = self.bind(&format!("{a} {op} {b}"));
+        if op == '+' {
+            self.record_sum(&v, a, b);
+        }
         if let (Some((al, ah)), Some((bl, bh))) = (self.ival(a), self.ival(b)) {
             let (al, ah, bl, bh) = (al as i128, ah as i128, bl as i128, bh as i128);
             let (lo, hi) = match op {
@@ -1166,6 +1174,31 @@ impl<'a> NoirEmitter<'a> {
         }
     }
 
+    /// Remember that `out = a + b`, so a select between `out` and one of
+    /// its summands is one product of the other summand (see `select`).
+    fn record_sum(&mut self, out: &str, a: &str, b: &str) {
+        self.sum_of.insert(out.to_string(), (a.to_string(), b.to_string()));
+    }
+
+    /// `a != b` for a `!=` whose only uses are asserts: the assertion
+    /// itself (`assert(a != b)`, an inverse constraint), and the literal
+    /// true for the asserts. Against the constant 0 the other operand is
+    /// recorded as non-zero, so divisions by it skip the zero-divisor
+    /// mapping (`nonzero`).
+    fn asserted_distinct(&mut self, a: &str, b: &str) -> Option<String> {
+        let asserted = self.current_stmt.is_some_and(|id| self.asserted_comparisons.contains(&id));
+        if !asserted {
+            return None;
+        }
+        let _ = writeln!(self.body, "    assert({a} != {b});");
+        for (x, other) in [(a, b), (b, a)] {
+            if self.raw_constant(other) == Some(0) {
+                self.nonzero.insert(x.to_string());
+            }
+        }
+        Some(self.literal_int(1))
+    }
+
     fn narrow_proven_range(&mut self, cell: &str, lo: i128, hi: i128) {
         let entry = self.proven_range.entry(cell.to_string()).or_insert((lo, hi));
         *entry = (entry.0.max(lo), entry.1.min(hi));
@@ -1401,6 +1434,11 @@ impl<'a> NoirEmitter<'a> {
     fn floor_divmod_cells(&mut self, a: &str, b: &str) -> (String, String) {
         if let Some(d) = self.raw_constant(b).filter(|d| *d > 0) {
             return self.divide_by_positive_constant(a, d);
+        }
+        if self.nonzero.contains(b) {
+            let (negative, mag) = self.sign_abs(b);
+            self.use_lib("floor_divmod_nonzero_of");
+            return self.divmod_call(format!("floor_divmod_nonzero_of({a}, {b}, {negative}, {mag})"));
         }
         self.use_lib("floor_divmod");
         self.divmod_call(format!("floor_divmod({a}, {b})"))
@@ -1770,6 +1808,8 @@ impl<'a> NoirEmitter<'a> {
             write_version: HashMap::new(),
             wrapped_index_ranges: HashMap::new(),
             asserted_comparisons: HashSet::new(),
+            nonzero: HashSet::new(),
+            sum_of: HashMap::new(),
             implied_comparisons: HashSet::new(),
             current_stmt: None,
             proven_range: HashMap::new(),
@@ -2155,6 +2195,7 @@ impl Synthesizer for NoirEmitter<'_> {
     fn add_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qadd");
         let v = self.bind(&format!("qadd({}, {})", a, b));
+        self.record_sum(&v, a, b);
         Ok(v)
     }
     fn sub_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
@@ -2199,6 +2240,11 @@ impl Synthesizer for NoirEmitter<'_> {
             if c.unsigned_abs() < 1u128 << 100 {
                 return Ok(self.div_f_by_constant(a, c));
             }
+        }
+        if self.nonzero.contains(b.as_str()) {
+            let (_, mag) = self.sign_abs(b);
+            self.use_lib("qdiv_nonzero_of");
+            return Ok(self.bind(&format!("qdiv_nonzero_of({a}, {b}, {mag})")));
         }
         self.use_lib("qdiv");
         let v = self.bind(&format!("qdiv({}, {})", a, b));
@@ -2305,6 +2351,9 @@ impl Synthesizer for NoirEmitter<'_> {
         Ok(v)
     }
     fn ne_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some(v) = self.asserted_distinct(a, b) {
+            return Ok(v);
+        }
         if let Some(v) = self.scaled_bit_zero_test(a, b, true) {
             return Ok(v);
         }
@@ -2369,6 +2418,9 @@ impl Synthesizer for NoirEmitter<'_> {
         Ok(self.bind_flag(&format!("if {} == {} {{ 1 }} else {{ 0 }}", af, bf)))
     }
     fn ne_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some(v) = self.asserted_distinct(a, b) {
+            return Ok(v);
+        }
         let (af, bf) = (a, b);
         Ok(self.bind_flag(&format!("if {} == {} {{ 0 }} else {{ 1 }}", af, bf)))
     }
@@ -2420,6 +2472,13 @@ impl Synthesizer for NoirEmitter<'_> {
     fn sqrt_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         // (No literal propagation: the circuit's floor root of a constant
         // need not equal the f64 sqrt the literal store would record.)
+        // An operand a check emitted earlier proves non-negative (the
+        // `x >= 0` precondition of `np.sqrt`) is its own magnitude, below
+        // 2^64, inside `isqrt_floor`'s domain.
+        if self.proven_range.get(a.as_str()).is_some_and(|(lo, hi)| *lo >= 0 && *hi < 1i128 << 64) {
+            self.use_lib("qsqrt_of");
+            return Ok(self.bind(&format!("qsqrt_of(false, {a})")));
+        }
         let (negative, mag) = self.sign_abs(a);
         self.use_lib("qsqrt_of");
         Ok(self.bind(&format!("qsqrt_of({negative}, {mag})")))
@@ -2482,8 +2541,24 @@ impl Synthesizer for NoirEmitter<'_> {
         let c = self.booleanize(cond);
         let is_zero_int = self.s_int_of(if_false) == Some(0);
         let is_zero_flt = self.s_float_of(if_false) == Some(0.0);
+        let difference = |x: &str, base: &str| -> Option<String> {
+            let (p, q) = self.sum_of.get(x)?;
+            if p == base {
+                Some(q.clone())
+            } else if q == base {
+                Some(p.clone())
+            } else {
+                None
+            }
+        };
         let expr = if is_zero_int || is_zero_flt {
             format!("{} * {}", c, if_true)
+        } else if let Some(x) = difference(if_true, if_false) {
+            // t = f + x: one product, f + c * x.
+            format!("{if_false} + {c} * {x}")
+        } else if let Some(x) = difference(if_false, if_true) {
+            // f = t + x: t + (1 - c) * x.
+            format!("{if_true} + (1 - {c}) * {x}")
         } else {
             format!("{} * {} + (1 - {}) * {}", c, if_true, c, if_false)
         };

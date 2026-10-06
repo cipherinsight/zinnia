@@ -324,20 +324,6 @@ fn dyn_getitem_row(b: &mut IRBuilder, data: &DynamicNDArrayData, indices: &[Slic
 
 // ── Range slicing ───────────────────────────────────────────────────────
 
-/// The slice-bound check of a runtime (non-literal) bound (see
-/// `dyn_slice_1d`); a literal bound needs none, `normalize_runtime_slice`
-/// clamps it as Python does.
-fn discharge_runtime_slice_bound(
-    b: &mut IRBuilder,
-    bound: Option<&Value>,
-    len: usize,
-    op_name: &'static str,
-) {
-    if bound.is_some_and(|v| v.int_val().is_none()) {
-        crate::optim::resolver::discharge_slice_bound(b, bound, len, op_name);
-    }
-}
-
 /// A slice `start:stop:step` normalized against a runtime extent: the
 /// first source index, the step, and the number of selected elements.
 struct RuntimeSlice {
@@ -346,20 +332,31 @@ struct RuntimeSlice {
     length: Value,
 }
 
-/// Python's slice semantics against the runtime extent `len_rt` of the
-/// sliced axis: missing bounds take the defaults of the step's sign,
-/// negative bounds count from `len_rt`, and both are clamped into
-/// `[0, len_rt]` (step > 0) or `[-1, len_rt - 1]` (step < 0); the length is
-/// `max(0, ceil((stop - start) / step))`. Every selected index
-/// `start + i * step`, `i < length`, is then in `[0, len_rt)`. A zero step
-/// is rejected (statically, or by an in-circuit assert).
-fn normalize_runtime_slice(
+/// The bounds of a slice `start:stop:step` as Python reads them against an
+/// axis of `len` elements (`slice.indices`): missing bounds take the
+/// defaults of the step's sign, negative bounds count from `len`, and both
+/// are clamped into `[0, len]` (step > 0) or `[-1, len - 1]` (step < 0).
+/// The selected indices are then `start, start + step, ...` while
+/// `index < stop` (step > 0) or `index > stop` (step < 0), all inside
+/// `[0, len)`. A zero step is rejected (statically, or by an in-circuit
+/// assert). With `static_len`, a runtime bound the compiler can prove inside
+/// the window is used as it is (no wrap or clamp to emit).
+pub(crate) struct PythonSlice {
+    pub start: Value,
+    pub stop: Value,
+    pub step: Value,
+    /// The step's sign when known at compile time.
+    pub step_positive: Option<bool>,
+}
+
+pub(crate) fn python_slice_bounds(
     b: &mut IRBuilder,
     start: Option<&Value>,
     stop: Option<&Value>,
     step: Option<&Value>,
-    len_rt: &Value,
-) -> RuntimeSlice {
+    len: &Value,
+    static_len: Option<usize>,
+) -> PythonSlice {
     let is_present =
         |v: Option<&Value>| -> bool { matches!(v, Some(val) if !matches!(val, Value::None)) };
     let step_static = step.and_then(|v| if matches!(v, Value::None) { None } else { v.int_val() });
@@ -367,7 +364,7 @@ fn normalize_runtime_slice(
     let zero = b.ir_constant_int(0);
     let one = b.ir_constant_int(1);
     let neg_one = b.ir_constant_int(-1);
-    let len_rt_m1 = b.ir_sub_i(len_rt, &one);
+    let len_m1 = b.ir_sub_i(len, &one);
 
     // Step: static when possible; a runtime step is supported via
     // sign-dependent selects. step == 0 is rejected (statically or by an
@@ -385,7 +382,7 @@ fn normalize_runtime_slice(
             s
         }
     };
-    let step_pos: Option<bool> = step_static.map(|s| s > 0).or(if is_present(step) {
+    let step_positive: Option<bool> = step_static.map(|s| s > 0).or(if is_present(step) {
         None
     } else {
         Some(true)
@@ -393,7 +390,7 @@ fn normalize_runtime_slice(
     // Step-sign-dependent quantities: fold statically when the sign is
     // known, otherwise select on the runtime sign bit.
     let by_sign = |b: &mut IRBuilder, pos: &Value, neg: &Value| -> Value {
-        match step_pos {
+        match step_positive {
             Some(true) => pos.clone(),
             Some(false) => neg.clone(),
             None => {
@@ -403,14 +400,16 @@ fn normalize_runtime_slice(
         }
     };
     let window_lo = by_sign(b, &zero, &neg_one);
-    let window_hi = by_sign(b, len_rt, &len_rt_m1);
-    let start_default = by_sign(b, &zero, &len_rt_m1);
-    let stop_default = by_sign(b, len_rt, &neg_one);
+    let window_hi = by_sign(b, len, &len_m1);
+    let start_default = by_sign(b, &zero, &len_m1);
+    let stop_default = by_sign(b, len, &neg_one);
+    // The non-negative values that need neither the wrap nor the clamp.
+    let identity_window = match (static_len, step_positive) {
+        (Some(n), Some(true)) => Some(n as i64 + 1),
+        (Some(n), Some(false)) => Some(n as i64),
+        _ => None,
+    };
 
-    // Normalize a slice bound against the runtime length: missing bounds
-    // take the python default for the step sign; negative values are
-    // length-relative; everything clamps into the valid window
-    // (step>0: [0, len]; step<0: [-1, len-1]).
     let normalize = |b: &mut IRBuilder, v: Option<&Value>, default: &Value| -> Value {
         let raw = match v {
             Some(val) if !matches!(val, Value::None) => {
@@ -422,7 +421,10 @@ fn normalize_runtime_slice(
             }
             _ => return default.clone(),
         };
-        let shifted = b.ir_add_i(&raw, len_rt);
+        if identity_window.is_some_and(|hi| crate::optim::resolver::provably_in_range(b, &raw, 0, hi)) {
+            return raw;
+        }
+        let shifted = b.ir_add_i(&raw, len);
         let is_neg = b.ir_less_than_i(&raw, &zero);
         let adjusted = b.ir_select_i(&is_neg, &shifted, &raw);
         let lt_lo = b.ir_less_than_i(&adjusted, &window_lo);
@@ -432,6 +434,33 @@ fn normalize_runtime_slice(
     };
     let start_ir = normalize(b, start, &start_default);
     let stop_ir = normalize(b, stop, &stop_default);
+    PythonSlice { start: start_ir, stop: stop_ir, step: step_ir, step_positive }
+}
+
+/// Python's slice semantics against the runtime extent `len_rt` of the
+/// sliced axis ([`python_slice_bounds`]) and the number of selected
+/// elements, `max(0, ceil((stop - start) / step))`.
+fn normalize_runtime_slice(
+    b: &mut IRBuilder,
+    start: Option<&Value>,
+    stop: Option<&Value>,
+    step: Option<&Value>,
+    len_rt: &Value,
+) -> RuntimeSlice {
+    let slice = python_slice_bounds(b, start, stop, step, len_rt, None);
+    let (start_ir, stop_ir, step_ir) = (slice.start, slice.stop, slice.step);
+    let zero = b.ir_constant_int(0);
+    let one = b.ir_constant_int(1);
+    let by_sign = |b: &mut IRBuilder, pos: &Value, neg: &Value| -> Value {
+        match slice.step_positive {
+            Some(true) => pos.clone(),
+            Some(false) => neg.clone(),
+            None => {
+                let sp = b.ir_greater_than_i(&step_ir, &zero);
+                b.ir_select_i(&sp, pos, neg)
+            }
+        }
+    };
 
     // out_len = max(0, ceil(diff / |step|)) with diff oriented by step sign.
     let stop_minus_start = b.ir_sub_i(&stop_ir, &start_ir);
@@ -484,24 +513,9 @@ fn dyn_slice_1d(
         return dyn_slice_1d_static(b, data, start_static, stop_static, step_static);
     }
 
-    // Load-bearing slice-bound discharge (compiler.fuzz-finding-v2-slice-oob-witness-miss).
-    // The pad-and-mask path below silently swallows OOB `start` / `stop` —
-    // without an explicit discharge, an OOB witness slips through and
-    // returns `satisfied = True`. Mirrors the scalar dyn-getitem path's
-    // `discharge_index_in_range` call (Group 5a).
-    //
-    // Bound is `envelope.total_bound`, not `logical_shape[0]`, because a
-    // reshape with runtime dims over-approximates `logical_shape` (e.g.
-    // a `(2,4) -> (a,b)` reshape produces `logical_shape = [8, 1]` even
-    // though a valid runtime shape is `(2,4)`). `total_bound` is the
-    // max possible storage extent and matches the scalar dyn-getitem path.
-    let bound = data.envelope.total_bound;
-    discharge_runtime_slice_bound(b, start, bound, "dyn_slice_start");
-    discharge_runtime_slice_bound(b, stop, bound, "dyn_slice_stop");
-
     // Dynamic path: pad-and-mask, with slice defaults / negative bounds /
     // clamping all relative to the array's *runtime* length (python slice
-    // semantics), not the padded bound.
+    // semantics: any integer bound is valid), not the padded bound.
     let max_out_len = len;
     let len_rt = Value::Integer(data.meta.runtime_length.clone());
     let RuntimeSlice { start: start_ir, step: step_ir, length: runtime_length } =
@@ -755,6 +769,23 @@ fn dyn_subscript_multidim(
     data: &DynamicNDArrayData,
     indices: &[SliceIndex],
 ) -> Value {
+    // Single indices wrap against, and are checked below, the runtime
+    // extent of their axis (NumPy's IndexError has no proof), not the
+    // buffer width: `x[:, -1]` of a 2x2 array in a 4x3 buffer is column 1.
+    let indices: &Vec<SliceIndex> = &indices
+        .iter()
+        .enumerate()
+        .map(|(axis, idx)| match idx {
+            SliceIndex::Single(raw @ Value::Integer(_)) => {
+                let hi = scalar_i64_value(b, &data.meta.runtime_shape[axis]);
+                let wrapped = wrap_negative_index(b, raw, &hi);
+                SliceIndex::Single(crate::optim::resolver::discharge_index_below_value(
+                    b, &wrapped, 0, &hi, "dyn_subscript",
+                ))
+            }
+            other => other.clone(),
+        })
+        .collect();
     // Check if any Range has dynamic bounds.
     let first_dynamic_range = indices.iter().enumerate().find(|(_, idx)| {
         if let SliceIndex::Range(start, stop, step) = idx {
@@ -888,13 +919,6 @@ fn dyn_slice_axis(
     let mode = select_stride_mode(data);
     let axis_len = shape[axis];
     let max_slice_len = axis_len; // upper bound on output size along this axis
-
-    // Load-bearing slice-bound discharge (compiler.fuzz-finding-v2-slice-oob-witness-miss).
-    // See `dyn_slice_1d` for rationale; multi-dim path uses `total_bound`
-    // for the same reshape over-approximation reason.
-    let bound = data.envelope.total_bound;
-    discharge_runtime_slice_bound(b, start, bound, "dyn_slice_start");
-    discharge_runtime_slice_bound(b, stop, bound, "dyn_slice_stop");
 
     // Python slice semantics against the RUNTIME extent of this axis (the
     // envelope width is padding): bounds are wrapped and clamped, so every
@@ -1234,7 +1258,37 @@ fn dyn_subscript_multidim_static(
     }
 
     let segment_id = crate::helpers::segment::alloc_and_write_values(b, &out_elements, data.dtype);
-    let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &out_shape);
+
+    // Every Range reaching this path on an axis with a runtime extent is the
+    // whole axis (see `dyn_subscript_multidim`), so the output axis has that
+    // runtime extent; the output buffer is padded (static strides of
+    // `out_shape`), its cells past the extent unused.
+    let runtime_shape: Vec<ScalarValue<i64>> = axis_ranges
+        .iter()
+        .map(|(src_ax, coords)| match data.meta.runtime_shape.get(*src_ax) {
+            Some(extent) if extent.static_val.is_none() && coords.len() == shape[*src_ax] => extent.clone(),
+            _ => ScalarValue::new(Some(coords.len() as i64), None),
+        })
+        .collect();
+    let dims: Vec<crate::types::Dim> = runtime_shape
+        .iter()
+        .zip(&out_shape)
+        .map(|(extent, &width)| match extent.static_val {
+            Some(_) => crate::types::Dim::new_static(&mut b.dim_table, width),
+            None => crate::types::Dim::new_dynamic(&mut b.dim_table, 0, width),
+        })
+        .collect();
+    let envelope = crate::types::Envelope::new_with_bound(dims, out_total);
+    let runtime_length = if runtime_shape.iter().all(|e| e.static_val.is_some()) {
+        ScalarValue::new(Some(out_total as i64), None)
+    } else {
+        let mut length = b.ir_constant_int(1);
+        for extent in &runtime_shape {
+            let extent = scalar_i64_value(b, extent);
+            length = b.ir_mul_i(&length, &extent);
+        }
+        crate::ops::dyn_ndarray::value_to_scalar_i64(&length)
+    };
 
     Value::DynamicNDArray(DynamicNDArrayData {
         envelope,
@@ -1244,12 +1298,9 @@ fn dyn_subscript_multidim_static(
             logical_shape: out_shape.clone(),
             logical_offset: 0,
             logical_strides: out_strides_out.clone(),
-            runtime_length: ScalarValue::new(Some(out_total as i64), None),
+            runtime_length,
             runtime_rank: ScalarValue::new(Some(out_shape.len() as i64), None),
-            runtime_shape: out_shape
-                .iter()
-                .map(|&s| ScalarValue::new(Some(s as i64), None))
-                .collect(),
+            runtime_shape,
             runtime_strides: out_strides_out
                 .iter()
                 .map(|&s| ScalarValue::new(Some(s as i64), None))

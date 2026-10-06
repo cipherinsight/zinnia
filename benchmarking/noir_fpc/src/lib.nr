@@ -368,6 +368,28 @@ fn euclid_divmod_nonzero(n: Field, d: Field) -> (Field, Field) {
     (q, r)
 }
 
+/// Python `(n // d, n % d)` for a divisor the circuit already proves
+/// non-zero (an asserted `d != 0`), from `d`'s `sign_abs` pair: no zero
+/// mapping, and one `sign_abs` shared by every division by `d`. The pair is
+/// pinned by `sign_abs`'s own constraint; `constrain_divmod` then pins
+/// (q, r) as in `floor_divmod_nonzero`.
+pub fn floor_divmod_nonzero_of(n: Field, d: Field, d_negative: bool, d_mag: Field) -> (Field, Field) {
+    // Safety: constrain_divmod pins (q, r) uniquely.
+    let (q, r) = unsafe { hint_divmod(n, d, d_negative) };
+    constrain_divmod(n, d, q, r, d_mag, d_negative);
+    (q, r)
+}
+
+/// `qdiv(a, b)` for a divisor the circuit already proves non-zero, from
+/// `b`'s `sign_abs` magnitude (see `floor_divmod_nonzero_of`).
+pub fn qdiv_nonzero_of(a: Field, b: Field, b_mag: Field) -> Field {
+    let n = a * Q;
+    // Safety: constrain_divmod pins (q, r) uniquely.
+    let (q, r) = unsafe { hint_divmod(n, b, false) };
+    constrain_divmod(n, b, q, r, b_mag, false);
+    q
+}
+
 /// (n, d), or (0, 1) when d == 0: dividing the substitute gives the zero
 /// divisor's (0, 0) without a special case in the division constraints.
 fn zero_divisor_to_unit(n: Field, d: Field) -> (Field, Field) {
@@ -1138,6 +1160,34 @@ fn test_qdiv_signs() {
     // Negative divisors.
     assert(qdiv(q_from_int(10), -q_from_int(4)) == -(q_from_int(2) + Q / 2));
     assert(qdiv(-q_from_int(10), -q_from_int(4)) == q_from_int(2) + Q / 2);
+}
+
+#[test]
+fn test_divisions_by_nonzero_divisors() {
+    for d in [q_from_int(4), -q_from_int(4), q_from_int(3), -q_from_int(7)] {
+        let (_, mag) = sign_abs(d);
+        assert(qdiv_nonzero_of(q_from_int(10), d, mag) == qdiv(q_from_int(10), d));
+        assert(qdiv_nonzero_of(-q_from_int(10), d, mag) == qdiv(-q_from_int(10), d));
+    }
+    for d in [4, -4, 3, -7] {
+        let (negative, mag) = sign_abs(d);
+        let (q, r) = floor_divmod_nonzero_of(-9, d, negative, mag);
+        let (q2, r2) = floor_divmod(-9, d);
+        assert((q == q2) & (r == r2));
+    }
+}
+
+#[test(should_fail)]
+fn test_qdiv_nonzero_of_rejects_zero_divisor() {
+    let _ = qdiv_nonzero_of(Q, 0, 0);
+}
+
+#[test(should_fail)]
+fn test_divmod_of_rejects_a_shifted_quotient() {
+    // The remainder bound pins q: q + 1 with r - d fails it.
+    let (negative, mag) = sign_abs(7);
+    let (q, r) = floor_divmod_nonzero_of(100, 7, negative, mag);
+    constrain_divmod(100, 7, q + 1, r - 7, mag, negative);
 }
 
 #[test]
