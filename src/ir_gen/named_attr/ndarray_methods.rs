@@ -13,7 +13,7 @@
 use crate::types::{CompositeData, Value, ValueId, ZinniaType};
 
 use super::super::IRGenerator;
-use super::DispatchCtx;
+use super::{dtype_of_elements, DispatchCtx};
 
 impl IRGenerator {
     pub(crate) fn try_ndarray_method(&mut self, ctx: &DispatchCtx) -> Option<Value> {
@@ -239,12 +239,7 @@ impl IRGenerator {
                 let val =
                     crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 let flat = crate::helpers::composite::flatten_composite(&val);
-                let has_float = flat.iter().any(|v| matches!(v, Value::Float(_)));
-                if has_float {
-                    Value::Class(ZinniaType::Float)
-                } else {
-                    Value::Class(ZinniaType::Integer)
-                }
+                dtype_of_elements(&flat)
             }
 
             // ── NDArray ndim, size, flatten, flat, reshape, moveaxis, repeat, filter ─

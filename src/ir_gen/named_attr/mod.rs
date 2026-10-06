@@ -115,7 +115,12 @@ impl IRGenerator {
             if target_name == "copy" && matches!(member, "copy" | "deepcopy") {
                 return visited_args_orig.first().cloned().unwrap_or(Value::None);
             }
-            if let Some(Value::StaticArray { shape, .. }) = self.ctx.get(target_name) {
+            // A real array's `.real` / `.conjugate()` is itself and its
+            // `.imag` is zeros; a complex array is handled with the ndarray
+            // methods (`try_ndarray_method`).
+            if let Some(Value::StaticArray { shape, .. }) =
+                self.ctx.get(target_name).filter(|v| !is_complex_static_array(v))
+            {
                 match member {
                     "real" | "conjugate" => return self.ctx.get(target_name).unwrap(),
                     "imag" => {
@@ -166,7 +171,7 @@ impl IRGenerator {
             return v;
         }
         if let Some(v) = self.try_numpy_func(&ctx) {
-            return self.finish_numpy_out(&ctx, v);
+            return self.finish_numpy_call(&ctx, v);
         }
         if let Some(v) = self.try_list_method(&ctx) {
             return v;
@@ -175,7 +180,7 @@ impl IRGenerator {
             return v;
         }
         if let Some(v) = self.try_np_fallback(&ctx) {
-            return self.finish_numpy_out(&ctx, v);
+            return self.finish_numpy_call(&ctx, v);
         }
 
         // ── Chip calls (no target or target not a known variable) ─
@@ -213,11 +218,22 @@ impl IRGenerator {
         )
     }
 
-    /// Honour NumPy's `out` argument: write the result into the given array
-    /// (through views) and return that array. Ufuncs also accept `out`
-    /// positionally, right after their inputs (`np.add(x, 1, y)`).
-    fn finish_numpy_out(&mut self, ctx: &DispatchCtx, value: Value) -> Value {
-        if ctx.target != Some("np") || ctx.member == "clip" {
+    /// The result of an `np.*` call as NumPy returns it: a function that
+    /// returns one ndarray returns an ndarray (see [`returns_one_ndarray`]),
+    /// and NumPy's `out` argument is honoured: the result is written into
+    /// the given array (through views) and that array returned. Ufuncs also
+    /// accept `out` positionally, right after their inputs
+    /// (`np.add(x, 1, y)`).
+    fn finish_numpy_call(&mut self, ctx: &DispatchCtx, value: Value) -> Value {
+        if ctx.target != Some("np") {
+            return value;
+        }
+        let value = if returns_one_ndarray(ctx.member, ctx.args_orig.len()) {
+            self.numeric_sequence_as_ndarray(value)
+        } else {
+            value
+        };
+        if ctx.member == "clip" {
             return value;
         }
         let target = match (ctx.positional_out, ctx.kwargs_orig.get("out")) {
@@ -228,6 +244,26 @@ impl IRGenerator {
         let written = array_compat::write_output(&mut self.builder, &value, target, ctx.kwargs_orig.get("where"));
         self.note_array_write(&written);
         written
+    }
+
+    /// A numeric Python sequence (possibly holding arrays) as a
+    /// `StaticArray`; any other value as it is. Several `np.*` lowerings
+    /// build their result as a nested `List`; returned as is, the result
+    /// picks up Python sequence semantics downstream, so that
+    /// `2 * np.arctan2(a, b)` or `2 * np.cumsum([x, y])` repeated the list
+    /// instead of doubling every element.
+    fn numeric_sequence_as_ndarray(&mut self, value: Value) -> Value {
+        if !matches!(value, Value::List(_) | Value::Tuple(_)) {
+            return value;
+        }
+        let nested = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &value);
+        let shape = crate::helpers::composite::get_composite_shape(&nested);
+        let rectangular = crate::helpers::composite::flatten_composite(&nested).len()
+            == shape.iter().product::<usize>();
+        if !rectangular {
+            return value;
+        }
+        crate::helpers::static_array::base::to_static_array(&mut self.builder, &nested).unwrap_or(value)
     }
 
     pub(crate) fn visit_expr_attr(&mut self, n: &ASTExprAttribute) -> Value {
@@ -341,6 +377,19 @@ impl IRGenerator {
             }
         }
 
+        if is_complex_static_array(&target_orig) {
+            use crate::helpers::static_array::complex::{
+                np_conj_static_array, np_imag_static_array, np_real_static_array,
+            };
+            match n.member.as_str() {
+                "real" => return np_real_static_array(&mut self.builder, &target_orig),
+                "imag" => return np_imag_static_array(&mut self.builder, &target_orig),
+                "conjugate" => return np_conj_static_array(&mut self.builder, &target_orig),
+                _ => {}
+            }
+        }
+
+        // A real array's `.real` / `.conjugate()` is itself, its `.imag` zeros.
         if matches!(target_orig, Value::StaticArray { .. }) {
             match n.member.as_str() {
                 "real" | "conjugate" => return target_orig,
@@ -542,12 +591,7 @@ impl IRGenerator {
             }
             "dtype" => {
                 let flat = crate::helpers::composite::flatten_composite(&target);
-                let has_float = flat.iter().any(|v| matches!(v, Value::Float(_)));
-                if has_float {
-                    Value::Class(ZinniaType::Float)
-                } else {
-                    Value::Class(ZinniaType::Integer)
-                }
+                dtype_of_elements(&flat)
             }
             "append" | "extend" | "pop" | "remove" | "clear" | "reverse" | "count"
             | "index" => {
@@ -631,6 +675,49 @@ impl IRGenerator {
             ),
         };
         Some(out)
+    }
+}
+
+/// The `.dtype` of an array with these elements: complex if any element
+/// is complex (a complex array used to report an integer dtype, so
+/// `np.empty(z.shape, dtype=z.dtype)` could not hold `z`'s values), else
+/// float if any is a float, else integer.
+pub(super) fn dtype_of_elements(elements: &[Value]) -> Value {
+    if elements.iter().any(|v| matches!(v, Value::Complex { .. })) {
+        Value::Class(ZinniaType::Complex)
+    } else if elements.iter().any(|v| matches!(v, Value::Float(_))) {
+        Value::Class(ZinniaType::Float)
+    } else {
+        Value::Class(ZinniaType::Integer)
+    }
+}
+
+fn is_complex_static_array(value: &Value) -> bool {
+    matches!(value, Value::StaticArray { dtype: crate::types::NumberType::Complex, .. })
+}
+
+/// Whether `np.<name>` called with `positional` arguments returns exactly
+/// one ndarray in NumPy (when its result is not a scalar): every ufunc, and
+/// the array-building and array-reshaping functions below. Functions that
+/// return a tuple or list of arrays (`np.nonzero`, `np.split`,
+/// `np.histogram`, `np.unique` with `return_counts`, one-argument
+/// `np.where`, several-argument `np.atleast_*d`, ...) are not listed.
+fn returns_one_ndarray(name: &str, positional: usize) -> bool {
+    const ONE_NDARRAY: &[&str] = &[
+        "add_outer", "subtract_outer", "multiply_outer", "divide_outer", "arange", "argwhere",
+        "bincount", "block", "broadcast_to", "ceil", "clip", "column_stack", "concatenate",
+        "copy", "corrcoef", "correlate", "cov", "cumprod", "cumsum", "delete", "diag", "diff",
+        "dot", "dstack", "einsum", "empty_like", "expand_dims", "flatnonzero", "flip", "fliplr",
+        "flipud", "floor", "full", "full_like", "hstack", "in1d", "inner", "insert", "isclose",
+        "linspace", "matmul", "mean", "median", "moveaxis", "ones", "ones_like", "outer", "pad",
+        "percentile", "reciprocal", "repeat", "reshape", "rot90", "round", "row_stack", "select",
+        "square", "squeeze", "stack", "swapaxes", "take", "take_along_axis", "tensordot", "tile",
+        "transpose", "trunc", "vstack", "zeros", "zeros_like",
+    ];
+    match name {
+        "where" => positional == 3,
+        "atleast_1d" | "atleast_2d" | "atleast_3d" => positional == 1,
+        _ => ONE_NDARRAY.contains(&name) || ufunc_input_count(name).is_some(),
     }
 }
 

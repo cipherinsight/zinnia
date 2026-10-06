@@ -850,6 +850,14 @@ impl IRGenerator {
                         &cast_val,
                     ) {
                         sa
+                    } else if let Some(shape) = empty_rectangular_shape(&cast_val) {
+                        // `np.array([[], [], []])` is a float array of shape (3, 0).
+                        crate::helpers::static_array::base::build_static_array_from_flat(
+                            &mut self.builder,
+                            Vec::new(),
+                            shape,
+                            NumberType::Float,
+                        )
                     } else {
                         cast_val
                     }
@@ -2136,23 +2144,12 @@ impl IRGenerator {
             )
         {
             // Centralized unary vectorization.
-            let out = vectorize_unary_np(
+            Some(vectorize_unary_np(
                 &mut self.builder,
                 member,
                 _visited_kwargs,
                 &visited_args[0],
-            );
-            // Keep ndarray-ness: a StaticArray input must yield a
-            // StaticArray result — a numeric List result would pick up
-            // Python sequence semantics downstream (`sin(a) + sin(b)`
-            // would CONCATENATE).
-            let out = if matches!(visited_args_orig.first(), Some(Value::StaticArray { .. })) {
-                crate::helpers::static_array::base::to_static_array(&mut self.builder, &out)
-                    .unwrap_or(out)
-            } else {
-                out
-            };
-            Some(out)
+            ))
         } else if visited_args.len() == 2
             && (matches!(
                 visited_args_orig[0],
@@ -2207,4 +2204,26 @@ impl IRGenerator {
             None => panic!("np.{} is not implemented", name),
         }
     }
+}
+
+/// The shape of a nested list or tuple of rank 2 or more without any
+/// element whose nesting is rectangular (`[[], [], []]` has shape
+/// `(3, 0)`), else `None`. (A flat empty list stays a list: its output
+/// layout already has NumPy's shape `(0,)`.)
+fn empty_rectangular_shape(value: &Value) -> Option<Vec<usize>> {
+    fn shape_of(value: &Value) -> Option<Vec<usize>> {
+        let (Value::List(data) | Value::Tuple(data)) = value else {
+            return None;
+        };
+        let mut rows = data.values.iter().map(shape_of);
+        let Some(first) = rows.next() else {
+            return Some(vec![0]);
+        };
+        let first = first?;
+        if !rows.all(|row| row.as_ref() == Some(&first)) {
+            return None;
+        }
+        Some([vec![data.values.len()], first].concat())
+    }
+    shape_of(value).filter(|shape| shape.len() >= 2 && shape.contains(&0))
 }
