@@ -8,7 +8,7 @@ import math
 import numpy as np
 import pytest
 
-from benchmarking.harness.acceptance.classify import classify_compile_error
+from benchmarking.harness.acceptance.classify import classify_compile_error, resource_rejection
 from benchmarking.harness.analysis import stats
 from benchmarking.harness.fixtures import FixtureError, load_fixture
 from benchmarking.harness.kernels import function_roles, out_of_scope_imports
@@ -87,20 +87,40 @@ def test_scope_rule(tmp_path):
     assert out_of_scope_imports(kernel) == ["os", "scipy"]
 
 
-@pytest.mark.parametrize("message, reason_class", [
+@pytest.mark.parametrize("message, reason_class, construct", [
     ("ZinniaException: Only supported NumPy imports are allowed in circuit source",
-     "out_of_scope"),
+     "out_of_scope", "import of a module other than numpy and math"),
     ("IR generation failed: shape element at axis 0 must be a compile-time constant int",
-     "no_provable_bound"),
-    ("IR generation failed: op `sqrt_f` requires precondition `Cmp { ... }`",
-     "no_provable_bound"),
-    ("IR generation failed: np.mgrid is not implemented", "unsupported_construct"),
-    ("IR generation failed: Unknown function `zip` in @zk_circuit.", "unsupported_construct"),
+     "no_provable_bound", "array shape from a runtime value"),
+    ("IR generation failed: loop bound depends on a private value with no provable maximum: "
+     "cannot bound the number of iterations of range() because its start or stop is a runtime "
+     "value", "no_provable_bound", "range() trip count"),
+    ("IR generation failed: linspace `num` must be a compile-time constant int",
+     "no_provable_bound", "np.linspace num from a runtime value"),
+    ("IR generation failed: op `pow_f` requires precondition `BoolComb {..}` could not be "
+     "lowered to a witness constraint", "compiler_limitation",
+     "precondition of `pow_f` neither proved nor checkable in the circuit"),
+    ("IR generation failed: np.mgrid is not implemented", "unsupported_construct", "np.mgrid"),
+    ("IR generation failed: np.linalg.matrix_rank is not implemented; supported verification "
+     "helpers are ...", "unsupported_construct", "np.linalg.matrix_rank"),
+    ("UnsupportedOperatorException: `is` / `is not` compare object identity",
+     "unsupported_construct", "`is` / `is not`"),
+    ("IR generation failed: Unknown function `zip` in @zk_circuit.", "unsupported_construct",
+     "call of `zip` (no builtin, chip or numpy function of that name in scope)"),
     ("compile thread panicked: index out of bounds: the len is 3 but the index is 3",
-     "compiler_error"),
-    ("IR generation failed: Variable `x_min` not found", "compiler_error"),
-    ("IR generation failed: IRBuilder::ensure_ptr: cannot materialize a composite", "compiler_error"),
-    ("something nobody anticipated", "unclassified"),
+     "compiler_error", "internal error"),
+    ("IR generation failed: Variable `x_min` not found", "compiler_error", "internal error"),
+    ("IR generation failed: IRBuilder::ensure_ptr: cannot materialize a composite",
+     "compiler_error", "internal error"),
+    ("something nobody anticipated", "unclassified", ""),
 ])
-def test_rejection_classes(message, reason_class):
-    assert classify_compile_error(message) == reason_class
+def test_rejection_classes(message, reason_class, construct):
+    rejection = classify_compile_error(message)
+    assert (rejection.reason_class, rejection.construct) == (reason_class, construct)
+
+
+def test_resource_rejections_name_the_limit():
+    assert resource_rejection("timeout after 301s", 300.0, "8G").construct == \
+        "compile time over 300 s"
+    assert resource_rejection("out of memory after 12s", 300.0, "8G").construct == \
+        "compile memory over 8G"

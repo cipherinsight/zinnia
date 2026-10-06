@@ -188,7 +188,10 @@ systems, exclusions, and the acceptance table when `acceptance/results.json` exi
 `accept` reads `datasets/case_sets/acceptance.json` and, for every program, in a capped child
 process: applies the scope rule (imports other than numpy and math are out of scope), compiles,
 mock-runs input B and compares with the NumPy reference. Outcomes: `accepted_correct`,
-`accepted_wrong_output`, `accepted_unchecked`, `rejected_out_of_scope`,
-`rejected_unsupported_construct`, `rejected_no_provable_bound`, `rejected_solver_budget` (rejected
-at the default SMT budget, accepted with a larger one), `rejected_compiler_error`,
-`rejected_resource_limit`, `rejected_unclassified` (`harness/acceptance/classify.py`).
+`accepted_wrong_output` (outputs or shapes differ from NumPy's), `accepted_unsatisfied` (the
+circuit or prover rejects the honest input), `accepted_unchecked`, `rejected_out_of_scope`,
+`rejected_unsupported_construct`, `rejected_no_provable_bound`, `rejected_compiler_limitation`,
+`rejected_solver_budget` (rejected at the default SMT budget, accepted with a larger one),
+`rejected_compiler_error`, `rejected_resource_limit`, `rejected_unclassified`. Every rejection
+also names its construct (`harness/acceptance/classify.py` defines the classes). The run writes
+`results.json`, `results.csv` (one row per program) and `summary.md` (counts per dataset).
