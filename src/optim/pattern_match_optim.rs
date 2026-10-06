@@ -397,12 +397,29 @@ fn min_required_arity(ir: &IR) -> Option<usize> {
 /// applied only when every operand of the `or` has no other use, so the
 /// equality tests it replaces become dead; a disjunction whose tests are
 /// used elsewhere keeps the cheaper `or`.
+///
+/// When at least `HORNER_MIN_SUBJECTS` whole disjunctions test different
+/// subjects against the same constants (`np.in1d(A, B)`), the product is
+/// the polynomial `x^k + a_{k-1} x^{k-1} + ... + a_0` with coefficients
+/// computed once from the constants, evaluated by Horner's rule: one
+/// multiply-add per constant instead of a difference and a product. It is
+/// the same polynomial, so the same zero test.
 #[derive(Default)]
 struct MembershipFusion {
     /// Zero tests emitted by this fusion: result stmt -> (common operand,
     /// product of its factors).
     fused: HashMap<StmtId, (StmtId, Value)>,
+    /// Whole disjunctions evaluated by Horner's rule: root `or` statement
+    /// (input graph) -> (subject, constants).
+    horner: HashMap<StmtId, (StmtId, Vec<StmtId>)>,
+    /// Coefficients `[a_0, ..., a_{k-1}]` by the sorted constants (output
+    /// graph statements).
+    coefficients: HashMap<Vec<StmtId>, Vec<Value>>,
 }
+
+/// The fewest disjunctions over one set of constants that share its
+/// coefficients (below, computing them costs more than they save).
+const HORNER_MIN_SUBJECTS: usize = 3;
 
 /// An operand of a disjunction that tests membership: a plain equality
 /// (either operand may be the common one) or an earlier fused zero test.
@@ -437,6 +454,130 @@ impl MembershipFusion {
         let out = b.create_ir(&IR::EqI, &[product.clone(), zero]);
         self.fused.insert(out.stmt_id()?, (subject, product));
         Some(out)
+    }
+}
+
+impl MembershipFusion {
+    /// Find the whole disjunctions `x == c_1 or ... or x == c_k` (every
+    /// `or` and equality used once, by the disjunction) of the input graph
+    /// that share their constants with enough others to use Horner's rule.
+    fn plan_horner(&mut self, graph: &IRGraph, uses: &HashMap<StmtId, usize>) {
+        let sole = |id: StmtId| uses.get(&id).copied() == Some(1);
+        let fusable_or = |id: StmtId| {
+            let s = &graph.stmts[id as usize];
+            matches!(s.ir, IR::LogicalOr) && s.arguments.len() == 2 && s.arguments.iter().all(|a| sole(*a))
+        };
+        let mut inner: std::collections::HashSet<StmtId> = std::collections::HashSet::new();
+        for stmt in &graph.stmts {
+            if fusable_or(stmt.stmt_id) {
+                inner.extend(stmt.arguments.iter().copied().filter(|a| fusable_or(*a)));
+            }
+        }
+        let mut by_constants: HashMap<Vec<StmtId>, Vec<(StmtId, StmtId)>> = HashMap::new();
+        for stmt in &graph.stmts {
+            if !fusable_or(stmt.stmt_id) || inner.contains(&stmt.stmt_id) {
+                continue;
+            }
+            let Some(tests) = equality_leaves(graph, stmt.stmt_id, &fusable_or) else { continue };
+            let Some(subject) = tests[0].iter().copied().find(|s| tests.iter().all(|t| t.contains(s))) else { continue };
+            let mut constants: Vec<StmtId> =
+                tests.iter().map(|t| if t[0] == subject { t[1] } else { t[0] }).collect();
+            if constants.contains(&subject) {
+                continue;
+            }
+            constants.sort_unstable();
+            by_constants.entry(constants).or_default().push((stmt.stmt_id, subject));
+        }
+        for (constants, roots) in by_constants {
+            if roots.len() >= HORNER_MIN_SUBJECTS {
+                for (root, subject) in roots {
+                    self.horner.insert(root, (subject, constants.clone()));
+                }
+            }
+        }
+    }
+
+    /// `[x in constants]` by Horner's rule on the shared coefficients.
+    fn horner_test(&mut self, b: &mut IRBuilder, subject: &Value, constants: &[Value]) -> Value {
+        let mut key: Vec<StmtId> = constants.iter().filter_map(Value::stmt_id).collect();
+        key.sort_unstable();
+        let coefficients = match self.coefficients.get(&key) {
+            Some(c) => c.clone(),
+            None => {
+                let c = polynomial_coefficients(b, constants);
+                self.coefficients.insert(key, c.clone());
+                c
+            }
+        };
+        let k = coefficients.len();
+        let mut z = b.create_ir(&IR::AddI, &[subject.clone(), coefficients[k - 1].clone()]);
+        for a in coefficients[..k - 1].iter().rev() {
+            let product = b.create_ir(&IR::MulI, &[z, subject.clone()]);
+            z = b.create_ir(&IR::AddI, &[product, a.clone()]);
+        }
+        let zero = b.ir_constant_int(0);
+        b.create_ir(&IR::EqI, &[z, zero])
+    }
+}
+
+/// The coefficients `[a_0, ..., a_{k-1}]` of the monic polynomial
+/// `prod_i (x - c_i) = x^k + a_{k-1} x^{k-1} + ... + a_0`, multiplying in
+/// one factor at a time: `(x - c) * sum_j p_j x^j` has coefficient
+/// `p_{j-1} - c p_j` at `x^j`.
+fn polynomial_coefficients(b: &mut IRBuilder, constants: &[Value]) -> Vec<Value> {
+    // `p[j]` is the coefficient of `x^j`; `None` is the leading 1.
+    let mut p: Vec<Option<Value>> = vec![None];
+    for c in constants {
+        let mut next: Vec<Option<Value>> = Vec::with_capacity(p.len() + 1);
+        for j in 0..=p.len() {
+            let shifted = if j == 0 { None } else { Some(p[j - 1].clone()) };
+            let scaled = p.get(j).map(|pj| match pj {
+                None => c.clone(),
+                Some(v) => b.create_ir(&IR::MulI, &[c.clone(), v.clone()]),
+            });
+            next.push(match (shifted, scaled) {
+                (Some(None), None) => None,
+                (Some(Some(s)), None) => Some(s),
+                (None, Some(t)) => {
+                    let zero = b.ir_constant_int(0);
+                    Some(b.create_ir(&IR::SubI, &[zero, t]))
+                }
+                (Some(None), Some(t)) => {
+                    let one = b.ir_constant_int(1);
+                    Some(b.create_ir(&IR::SubI, &[one, t]))
+                }
+                (Some(Some(s)), Some(t)) => Some(b.create_ir(&IR::SubI, &[s, t])),
+                (None, None) => unreachable!("every coefficient has a term"),
+            });
+        }
+        p = next;
+    }
+    p.pop();
+    p.into_iter().map(|v| v.expect("only the leading coefficient is 1")).collect()
+}
+
+/// The equality tests `[a, b]` under a disjunction of `or`s (`fusable_or`)
+/// and `EqI`/`EqF` leaves, left to right; an `or` with the constant false
+/// (the start of a running `found = found or x == c`) is its other operand.
+/// `None` for any other leaf.
+fn equality_leaves(graph: &IRGraph, id: StmtId, fusable_or: &dyn Fn(StmtId) -> bool) -> Option<Vec<[StmtId; 2]>> {
+    let s = &graph.stmts[id as usize];
+    let is_false = |a: StmtId| {
+        matches!(graph.stmts[a as usize].ir, IR::ConstantBool { value: false } | IR::ConstantInt { value: 0 })
+    };
+    match (&s.ir, s.arguments.as_slice()) {
+        (IR::LogicalOr, &[a, b]) if is_false(a) => return equality_leaves(graph, b, fusable_or),
+        (IR::LogicalOr, &[a, b]) if is_false(b) => return equality_leaves(graph, a, fusable_or),
+        _ => {}
+    }
+    if fusable_or(id) {
+        let mut leaves = equality_leaves(graph, s.arguments[0], fusable_or)?;
+        leaves.extend(equality_leaves(graph, s.arguments[1], fusable_or)?);
+        return Some(leaves);
+    }
+    match (&s.ir, s.arguments.as_slice()) {
+        (IR::EqI | IR::EqF, &[a, b]) => Some(vec![[a, b]]),
+        _ => None,
     }
 }
 
@@ -563,6 +704,7 @@ impl IRPass for PatternMatchOptim {
         let mut asserted = asserted_only(&ir_graph, &uses);
         asserted.extend(conjunct_comparisons(&ir_graph, &uses, &conjunctions));
         let mut fusion = MembershipFusion::default();
+        fusion.plan_horner(&ir_graph, &uses);
 
         for stmt in ir_graph.get_topological_order(false) {
             let ir_args: Vec<Value> = stmt
@@ -586,7 +728,14 @@ impl IRPass for PatternMatchOptim {
             let sole_use = |arg: &StmtId| uses.get(arg).copied() == Some(1);
             let fused = match stmt.ir {
                 IR::LogicalOr if ir_args.len() == 2 && stmt.arguments.iter().all(sole_use) => {
-                    fusion.try_fuse(&mut builder, &ir_args)
+                    match fusion.horner.get(&stmt.stmt_id).cloned() {
+                        Some((subject, constants)) => {
+                            let constants: Vec<Value> = constants.iter().map(|c| value_lookup[c].clone()).collect();
+                            let subject = value_lookup[&subject].clone();
+                            Some(fusion.horner_test(&mut builder, &subject, &constants))
+                        }
+                        None => fusion.try_fuse(&mut builder, &ir_args),
+                    }
                 }
                 _ => None,
             };

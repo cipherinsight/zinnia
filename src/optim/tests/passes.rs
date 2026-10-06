@@ -537,6 +537,45 @@ mod tests {
         assert!(result.stmts.iter().all(|s| !matches!(s.ir, IR::LogicalAnd)), "conjunction kept");
     }
 
+    /// Four subjects tested against the same three constants (`np.in1d`)
+    /// use Horner's rule on shared coefficients: no difference per factor,
+    /// and the zero test agrees with the equalities for members, non-members
+    /// and repeated constants (mock).
+    #[test]
+    fn pattern_match_shares_membership_coefficients() {
+        let mut irs = vec![(read("b0"), vec![]), (read("b1"), vec![]), (read("b2"), vec![])];
+        let mut exposed = Vec::new();
+        for k in 0..4u32 {
+            let x = irs.len() as u32;
+            irs.push((read(&format!("x{k}")), vec![]));
+            let eqs: Vec<u32> = (0..3)
+                .map(|j| {
+                    irs.push((IR::EqI, vec![x, j]));
+                    irs.len() as u32 - 1
+                })
+                .collect();
+            irs.push((IR::LogicalOr, vec![eqs[0], eqs[1]]));
+            irs.push((IR::LogicalOr, vec![irs.len() as u32 - 1, eqs[2]]));
+            exposed.push(irs.len() as u32 - 1);
+        }
+        for e in &exposed {
+            irs.push((IR::ExposePublicI, vec![*e]));
+        }
+        let result = DeadCodeElimination.exec(PatternMatchOptim.exec(graph_of(irs)));
+        // The coefficients' subtractions only (computed once): a difference
+        // per factor and subject would be 12.
+        let subtractions = result.stmts.iter().filter(|s| matches!(s.ir, IR::SubI)).count();
+        assert!(subtractions <= 6, "a difference per factor: {subtractions}");
+        for (bs, xs) in [([2, 5, 9], [5, 1, 9, 2]), ([3, 3, -4], [3, -4, 4, 0]), ([0, 0, 0], [0, 1, -1, 7])] {
+            let mut inputs: Vec<(String, i64)> = (0..3).map(|j| (format!("b{j}"), bs[j])).collect();
+            inputs.extend((0..4).map(|k| (format!("x{k}"), xs[k])));
+            let (ok, outputs) = crate::lower::sort::test_support::mock_run(&result, &inputs);
+            let expected: Vec<i64> = xs.iter().map(|x| bs.contains(x) as i64).collect();
+            assert!(ok);
+            assert_eq!(outputs, expected, "B = {bs:?}, x = {xs:?}");
+        }
+    }
+
     #[test]
     fn test_memory_trace_injection() {
         let stmts = vec![
