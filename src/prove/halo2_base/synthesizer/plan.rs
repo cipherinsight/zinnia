@@ -35,6 +35,12 @@ pub(super) struct Plan {
     /// Statement ids of the comparisons (`<`, `<=`, `>`, `>=`, `!=`, key
     /// orders) whose only use is `Assert`.
     pub asserted_comparisons: HashSet<u32>,
+    /// The number of `ReadMemory` statements whose address has each value as
+    /// its single affine root (an address with no single root is its own
+    /// root). The read lowering picks the one-hot form, whose equality bits
+    /// every read on the root shares, or a multiplexer per read (see
+    /// `memory.rs`).
+    pub reads_per_root: HashMap<ValueId, usize>,
 }
 
 impl Plan {
@@ -44,8 +50,32 @@ impl Plan {
             bounds: planned_bounds(ir),
             deferred_products: deferred_products(ir, &uses),
             asserted_comparisons: asserted_comparisons(ir, &uses),
+            reads_per_root: HashMap::new(),
         }
     }
+
+    /// [`Plan::of`] with the reads per address root, which need the
+    /// provenance table's affine views of the addresses.
+    pub fn with_provenance(ir: &IRGraph, prov: &crate::provenance::ProvenanceTable) -> Plan {
+        Plan { reads_per_root: reads_per_root(ir, prov), ..Plan::of(ir) }
+    }
+}
+
+/// See [`Plan::reads_per_root`].
+fn reads_per_root(ir: &IRGraph, prov: &crate::provenance::ProvenanceTable) -> HashMap<ValueId, usize> {
+    let mut reads: HashMap<ValueId, usize> = HashMap::new();
+    for stmt in &ir.stmts {
+        if !matches!(stmt.ir, IR::ReadMemory { .. }) {
+            continue;
+        }
+        let Some(addr) = stmt.arguments.first().and_then(|a| ir.stmts.get(*a as usize)) else { continue };
+        let root = match prov.affine_of(addr.value_id) {
+            Some(view) if view.terms.len() == 1 => view.terms[0].0,
+            _ => addr.value_id,
+        };
+        *reads.entry(root).or_default() += 1;
+    }
+    reads
 }
 
 /// The statements that use each statement's value, by statement id.
