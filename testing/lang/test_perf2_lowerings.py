@@ -124,3 +124,35 @@ def test_single_index_past_the_runtime_extent_has_no_proof(expr):
     from testing.lang.mock_outputs import run_mock
     satisfied, _ = run_mock(compile_kernel(BOUNDED.format(expr)), X22)
     assert not satisfied
+
+
+# ── read after write at a bounded runtime index ──────────────────────────
+
+ROW_UPDATE = ('def kernel(a: Float[Array, "8 6"], row: Integer, m: Float):\n'
+              '    a[row-1, :] *= m\n'
+              '    return np.cumsum(a[row-1, :])\n')
+COL_UPDATE = ('def kernel(a: Float[Array, "5 4"], col: Integer, m: Float):\n'
+              '    a[:, col] = a[:, col] / m\n'
+              '    return a.sum(axis=0) + a[:, col].sum()\n')
+
+
+@pytest.mark.parametrize("source, args", [
+    (ROW_UPDATE, (np.arange(48.0).reshape(8, 6) / 7, 3, 2.5)),
+    (ROW_UPDATE, (np.arange(48.0).reshape(8, 6) / 7, 0, -1.5)),  # row -1: the last row
+    (ROW_UPDATE, (np.arange(48.0).reshape(8, 6) / 7, 8, 0.5)),
+    (COL_UPDATE, (np.arange(20.0).reshape(5, 4) - 3, 2, 4.0)),
+    (COL_UPDATE, (np.arange(20.0).reshape(5, 4) - 3, -1, 2.0)),
+])
+def test_read_after_write_at_a_runtime_index_matches_numpy(source, args):
+    assert_matches_numpy(source, *args)
+    assert_backends_agree(source, *args)
+
+
+def test_read_after_write_reads_the_written_values():
+    """The second read of `a[row-1, :]` is the written row itself: only the
+    first read (over the original rows) leaves a select chain."""
+    with_forwarding = ir_classes(compile_kernel(ROW_UPDATE)).count("SelectFIR")
+    read_once = ir_classes(compile_kernel(
+        'def kernel(a: Float[Array, "8 6"], row: Integer, m: Float):\n'
+        '    return np.cumsum(a[row-1, :] * m)\n')).count("SelectFIR")
+    assert with_forwarding == read_once
