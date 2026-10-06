@@ -394,6 +394,16 @@ impl Halo2BaseSynthesizer<'_> {
     /// unique floor. Without the window check every remainder in
     /// `[0, 2^shift)` would be accepted, each with its own (huge) `q`.
     pub(super) fn rescale_by(&mut self, raw: &Halo2BaseCell, shift: u32) -> Result<Halo2BaseCell, ProvingError> {
+        Ok(self.rescale_with_remainder(raw, shift)?.0)
+    }
+
+    /// [`Self::rescale_by`], also returning the remainder `raw - q·2^shift`
+    /// (proven to lie in `[0, 2^shift)`).
+    pub(super) fn rescale_with_remainder(
+        &mut self,
+        raw: &Halo2BaseCell,
+        shift: u32,
+    ) -> Result<(Halo2BaseCell, Halo2BaseCell), ProvingError> {
         let q_value = kernel::fp_to_i128(raw.value).map_or(0, |v| v >> shift);
         let scale = kernel::i128_to_fp(1i128 << shift);
         let (q, rem) = self.quotient_gate(raw, QuantumCell::Constant(scale), scale, kernel::i128_to_fp(q_value));
@@ -406,7 +416,7 @@ impl Halo2BaseSynthesizer<'_> {
         if let Some(range) = implied {
             self.prove_range(&q, range);
         }
-        Ok(q)
+        Ok((q, rem))
     }
 
     /// What the circuit knows about a Q-encoded value used as a factor.
@@ -716,6 +726,36 @@ impl Halo2BaseSynthesizer<'_> {
         Ok(acc)
     }
 
+
+    /// `2^e` for a cell `e`, decomposed into `bits` booleans by `num_to_bits`
+    /// (which recomposes them into `e`, so there is no witness for
+    /// `e >= 2^bits`): the product of the constants `2^(2^j)` the bits
+    /// select, `1 + b_j·(2^(2^j) - 1)` each. `bits <= 7`, so the constants
+    /// and the product stay below `2^128`.
+    pub(super) fn power_of_two(&mut self, e: &Halo2BaseCell, bits: usize) -> Halo2BaseCell {
+        assert!((1..=7).contains(&bits), "power_of_two: 1 to 7 bits");
+        let e_cell = self.assigned(e);
+        let decomposed = self.gate.num_to_bits(self.builder.main(0), e_cell, bits);
+        let mut power: Option<Halo2BaseCell> = None;
+        for (j, assigned) in decomposed.into_iter().enumerate() {
+            let value = *assigned.value();
+            let bit = self.wrap(assigned, value);
+            self.mark_bit(&bit);
+            let step = kernel::i128_to_fp((1i128 << (1u32 << j)) - 1);
+            let factor = self.gate_cell(Fp::one() + bit.value * step, |gate, ctx| {
+                gate.mul_add(ctx, bit.quantum(), QuantumCell::Constant(step), QuantumCell::Constant(Fp::one()))
+            });
+            power = Some(match power {
+                None => factor,
+                Some(p) => self.gate_cell(p.value * factor.value, |gate, ctx| gate.mul(ctx, p.quantum(), factor.quantum())),
+            });
+        }
+        let power = power.expect("at least one bit");
+        let max_exponent = (1u32 << bits) - 1;
+        let hi = if max_exponent >= 127 { i128::MAX } else { 1i128 << max_exponent };
+        self.prove_range(&power, Interval { lo: 1, hi });
+        power
+    }
 
     /// `base^e` for a constant `e >= 0`, by square-and-multiply.
     pub(super) fn pow_const(&mut self, base: &Halo2BaseCell, e: u64) -> Result<Halo2BaseCell, ProvingError> {

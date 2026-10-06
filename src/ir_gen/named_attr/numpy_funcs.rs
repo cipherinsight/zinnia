@@ -270,60 +270,284 @@ fn np_percentile_ds1000(
     crate::ops::static_ndarray_ops::np_percentile(b, args, kwargs)
 }
 
-fn np_correlate_ds1000(
+/// The `mode` of `np.correlate` / `np.convolve`.
+#[derive(Clone, Copy, PartialEq)]
+enum CorrelationMode {
+    Valid,
+    Same,
+    Full,
+}
+
+/// `np.correlate(a, v, mode='valid')` and `np.convolve(a, v, mode='full')`
+/// of 1-D arrays (lists and scalars are converted, as NumPy's `ndmin=1`),
+/// by direct sums with NumPy's index conventions:
+///
+/// * `correlate`: with `x` the longer and `y` the shorter operand
+///   (`n1 >= n2`), `full[k] = sum_j x[j + k - (n2 - 1)] * y[j]` over the
+///   `j` that index `x`, for `k` in `[0, n1 + n2 - 1)`; `valid` is
+///   `full[n2 - 1 .. n1]`, `same` is the `n1` values from
+///   `n2 - 1 - n2 / 2`. When `v` is the longer operand, NumPy correlates
+///   `(v, a)` and reverses the result.
+/// * `convolve(a, v)` is `correlate(a, v[::-1])` with the longer operand
+///   first (convolution is symmetric).
+///
+/// Integer operands give exact integer sums; otherwise each output is one
+/// fused `ProductSumF` (the real sum rounded once).
+fn np_correlate(
     b: &mut crate::builder::IRBuilder,
+    convolve: bool,
     args: &[Value],
     kwargs: &HashMap<String, Value>,
 ) -> Value {
-    ensure_no_kwargs("np.correlate", kwargs, &["mode"]);
-    assert!(args.len() >= 2, "np.correlate: requires a and v");
-    let mode = kwargs
-        .get("mode")
-        .or_else(|| args.get(2))
-        .and_then(|v| v.string_val())
-        .unwrap_or("valid");
-    if mode != "valid" {
-        panic!("np.correlate: DS1000 slice currently supports mode='valid' only");
+    let name = if convolve { "np.convolve" } else { "np.correlate" };
+    ensure_no_kwargs(name, kwargs, &["mode"]);
+    if args.len() < 2 || args.len() > 3 {
+        panic!("{name} takes 2 or 3 positional arguments (a, v, mode), got {}", args.len());
     }
-    let (lhs_dtype, lhs_shape) = static_array_meta(&args[0], "np.correlate");
-    let (rhs_dtype, rhs_shape) = static_array_meta(&args[1], "np.correlate");
-    if lhs_dtype == NumberType::Complex || rhs_dtype == NumberType::Complex {
-        panic!("np.correlate: Complex inputs are not supported in this slice");
-    }
-    if lhs_shape.len() != 1 || rhs_shape.len() != 1 {
-        panic!("np.correlate: DS1000 slice supports 1-D StaticArray inputs only");
-    }
-    let a = static_cells(b, &args[0], "np.correlate");
-    let v = static_cells(b, &args[1], "np.correlate");
-    // NumPy: `c[k] = sum_n a[n + k] * v[n]` when `len(a) >= len(v)`; when
-    // `v` is longer it computes `correlate(v, a)` and returns it reversed.
-    let swapped = v.len() > a.len();
-    let (long, short) = if swapped { (&v, &a) } else { (&a, &v) };
-    let out_len = long.len() - short.len() + 1;
-    let integer_inputs = lhs_dtype == NumberType::Integer && rhs_dtype == NumberType::Integer;
-    let mut out = Vec::with_capacity(out_len);
-    for start in 0..out_len {
-        let window = &long[start..start + short.len()];
-        out.push(if integer_inputs {
-            integer_product_sum(b, window, short)
-        } else {
-            product_sum(b, window, short)
-        });
-    }
-    if swapped {
-        out.reverse();
-    }
-    let out_dtype = if integer_inputs {
-        NumberType::Integer
-    } else {
-        NumberType::Float
+    let mode = match (args.get(2), kwargs.get("mode")) {
+        (Some(_), Some(_)) => panic!("{name} got multiple values for argument 'mode'"),
+        (Some(v), None) | (None, Some(v)) => correlation_mode(v, name),
+        (None, None) if convolve => CorrelationMode::Full,
+        (None, None) => CorrelationMode::Valid,
     };
-    crate::helpers::static_array::base::build_static_array_from_flat(
-        b,
-        out,
-        vec![out_len],
-        out_dtype,
-    )
+    let (a, a_dtype) = correlation_operand(b, &args[0], name, "a");
+    let (v, v_dtype) = correlation_operand(b, &args[1], name, "v");
+    let integer = a_dtype == NumberType::Integer && v_dtype == NumberType::Integer;
+    let out = if convolve {
+        let (long, short) = if v.len() > a.len() { (v, a) } else { (a, v) };
+        let reversed: Vec<Value> = short.into_iter().rev().collect();
+        correlation(b, &long, &reversed, mode, integer)
+    } else if v.len() > a.len() {
+        let mut out = correlation(b, &v, &a, mode, integer);
+        out.reverse();
+        out
+    } else {
+        correlation(b, &a, &v, mode, integer)
+    };
+    let len = out.len();
+    let dtype = if integer { NumberType::Integer } else { NumberType::Float };
+    crate::helpers::static_array::base::build_static_array_from_flat(b, out, vec![len], dtype)
+}
+
+/// NumPy's `mode` names: any string whose first letter is `v`, `s` or `f`
+/// (case-insensitive), as `numpy._core.numeric._mode_from_name`.
+fn correlation_mode(value: &Value, name: &str) -> CorrelationMode {
+    let text = value
+        .string_val()
+        .unwrap_or_else(|| panic!("{name}: mode must be a compile-time string ('valid', 'same' or 'full')"));
+    match text.chars().next().map(|c| c.to_ascii_lowercase()) {
+        Some('v') => CorrelationMode::Valid,
+        Some('s') => CorrelationMode::Same,
+        Some('f') => CorrelationMode::Full,
+        _ => panic!("{name}: mode must be 'valid', 'same' or 'full', got '{text}'"),
+    }
+}
+
+/// The elements and dtype of a 1-D operand (a scalar is one element).
+fn correlation_operand(
+    b: &mut crate::builder::IRBuilder,
+    value: &Value,
+    name: &str,
+    parameter: &str,
+) -> (Vec<Value>, NumberType) {
+    let array = match value {
+        Value::StaticArray { .. } => value.clone(),
+        Value::List(_) | Value::Tuple(_) => crate::helpers::static_array::base::to_static_array(b, value)
+            .unwrap_or_else(|| panic!("{name}: {parameter} must be a rectangular array of numbers")),
+        Value::Integer(_) | Value::Boolean(_) => return (vec![value.clone()], NumberType::Integer),
+        Value::Float(_) => return (vec![value.clone()], NumberType::Float),
+        Value::DynamicNDArray(_) => panic!("{name} is not yet supported for bounded-dynamic arrays"),
+        other => panic!("{name}: unsupported type {} for {parameter}", other.zinnia_type()),
+    };
+    let (dtype, shape) = static_array_meta(&array, name);
+    if dtype == NumberType::Complex {
+        panic!("{name}: complex arrays are not supported");
+    }
+    if shape.len() != 1 {
+        panic!("{name}: {parameter} must be one-dimensional (NumPy: object too deep for desired array)");
+    }
+    if shape[0] == 0 {
+        panic!("{name}: {parameter} cannot be empty");
+    }
+    (static_cells(b, &array, name), dtype)
+}
+
+/// `correlate(x, y, mode)` for `x.len() >= y.len() >= 1` (see `np_correlate`).
+fn correlation(
+    b: &mut crate::builder::IRBuilder,
+    x: &[Value],
+    y: &[Value],
+    mode: CorrelationMode,
+    integer: bool,
+) -> Vec<Value> {
+    let (n1, n2) = (x.len(), y.len());
+    let (start, len) = match mode {
+        CorrelationMode::Valid => (n2 - 1, n1 - n2 + 1),
+        CorrelationMode::Same => (n2 - 1 - n2 / 2, n1),
+        CorrelationMode::Full => (0, n1 + n2 - 1),
+    };
+    (start..start + len)
+        .map(|k| {
+            // j with 0 <= j + k - (n2 - 1) < n1.
+            let first = (n2 - 1).saturating_sub(k);
+            let last = (n1 + n2 - 1 - k).min(n2);
+            let lhs: Vec<Value> = (first..last).map(|j| x[j + k + 1 - n2].clone()).collect();
+            let rhs = &y[first..last];
+            if integer {
+                integer_product_sum(b, &lhs, rhs)
+            } else {
+                product_sum(b, &lhs, rhs)
+            }
+        })
+        .collect()
+}
+
+/// `np.triu(m, k=0)` / `np.tril(m, k=0)`: `m` with the elements below
+/// (`triu`) or above (`tril`) the `k`-th diagonal of the last two axes set to
+/// zero. A 1-D `m` of length `n` is broadcast to `n x n` first, as NumPy does
+/// (`np.triu([1, 2, 3])` is a 3 x 3 matrix). The dtype is kept.
+fn np_triangle(
+    b: &mut crate::builder::IRBuilder,
+    upper: bool,
+    args: &[Value],
+    kwargs: &HashMap<String, Value>,
+) -> Value {
+    let name = if upper { "np.triu" } else { "np.tril" };
+    ensure_no_kwargs(name, kwargs, &["k"]);
+    let m = args.first().cloned().unwrap_or_else(|| panic!("{name}: missing argument 'm'"));
+    let k = match (args.get(1), kwargs.get("k")) {
+        (Some(_), Some(_)) => panic!("{name} got multiple values for argument 'k'"),
+        (Some(v), None) | (None, Some(v)) => v
+            .int_val()
+            .unwrap_or_else(|| panic!("{name}: k must be a compile-time integer")),
+        (None, None) => 0,
+    };
+    let m = match &m {
+        Value::StaticArray { .. } => m.clone(),
+        Value::List(_) | Value::Tuple(_) => crate::helpers::static_array::base::to_static_array(b, &m)
+            .unwrap_or_else(|| panic!("{name}: m must be a rectangular array of numbers")),
+        other => panic!("{name}: m must be an array of rank 1 or more, got {}", other.zinnia_type()),
+    };
+    let (dtype, shape) = static_array_meta(&m, name);
+    if dtype == NumberType::Complex {
+        panic!("{name}: complex arrays are not supported");
+    }
+    let cells = static_cells(b, &m, name);
+    // A 1-D input is the row of every output row.
+    let (shape, cells) = match shape.as_slice() {
+        [] => panic!("{name}: m must have at least one dimension"),
+        [n] => {
+            let rows: Vec<Value> = (0..*n).flat_map(|_| cells.iter().cloned()).collect();
+            (vec![*n, *n], rows)
+        }
+        _ => (shape, cells),
+    };
+    let (rows, cols) = (shape[shape.len() - 2], shape[shape.len() - 1]);
+    let zero = match dtype {
+        NumberType::Float => b.ir_constant_float(0.0),
+        _ => b.ir_constant_int(0),
+    };
+    let out: Vec<Value> = cells
+        .into_iter()
+        .enumerate()
+        .map(|(flat, cell)| {
+            let (i, j) = (((flat / cols) % rows.max(1)) as i64, (flat % cols) as i64);
+            let kept = if upper { j - i >= k } else { j - i <= k };
+            if kept { cell } else { zero.clone() }
+        })
+        .collect();
+    crate::helpers::static_array::base::build_static_array_from_flat(b, out, shape, dtype)
+}
+
+/// `np.isin(element, test_elements, assume_unique=False, invert=False, *,
+/// kind=None)` (the result has `element`'s shape) and `np.in1d(ar1, ar2,
+/// ...)` (the result is flat): whether each element of the first argument
+/// equals some element of the second, `!=` with `invert=True`. Both
+/// arguments may be arrays, lists or scalars, with runtime values; the set
+/// is the flattened second argument. Each test is the disjunction
+/// `x == t_1 or ... or x == t_k`, which the optimizer's membership fusion
+/// turns into one zero test of `(x - t_1)...(x - t_k)` (by Horner's rule
+/// when many subjects share constant `t_i`). `assume_unique` and `kind`
+/// only select NumPy's algorithm, never the result, so they are accepted
+/// and ignored (as compile-time values).
+fn np_membership(
+    b: &mut crate::builder::IRBuilder,
+    keep_shape: bool,
+    args: &[Value],
+    kwargs: &HashMap<String, Value>,
+) -> Value {
+    let name = if keep_shape { "np.isin" } else { "np.in1d" };
+    ensure_no_kwargs(name, kwargs, &["assume_unique", "invert", "kind"]);
+    if args.len() < 2 || args.len() > 4 {
+        panic!("{name} takes 2 to 4 positional arguments, got {}", args.len());
+    }
+    let argument = |position: usize, parameter: &str| -> Option<Value> {
+        match (args.get(position), kwargs.get(parameter)) {
+            (Some(_), Some(_)) => panic!("{name} got multiple values for argument '{parameter}'"),
+            (Some(v), None) | (None, Some(v)) => Some(v.clone()),
+            (None, None) => None,
+        }
+    };
+    let flag = |value: Option<Value>, parameter: &str| -> bool {
+        value.map_or(false, |v| {
+            v.bool_val()
+                .or_else(|| v.int_val().map(|i| i != 0))
+                .unwrap_or_else(|| panic!("{name}: {parameter} must be a compile-time True or False"))
+        })
+    };
+    let invert = flag(argument(3, "invert"), "invert");
+    flag(argument(2, "assume_unique"), "assume_unique");
+    if let Some(kind) = kwargs.get("kind") {
+        if !matches!(kind, Value::None) && !matches!(kind.string_val(), Some("sort" | "table")) {
+            panic!("{name}: kind must be None, 'sort' or 'table'");
+        }
+    }
+    let (shape, subjects) = membership_operand(b, &args[0], name, "the first argument");
+    let (_, tests) = membership_operand(b, &args[1], name, "the second argument");
+    let out: Vec<Value> = subjects
+        .iter()
+        .map(|subject| {
+            let mut found = b.ir_constant_bool(false);
+            for test in &tests {
+                let eq = crate::helpers::value_ops::apply_binary_op(b, "eq", subject, test);
+                let eq = crate::helpers::value_ops::to_scalar_bool(b, &eq);
+                found = b.ir_logical_or(&found, &eq);
+            }
+            if invert { b.ir_logical_not(&found) } else { found }
+        })
+        .collect();
+    let out_shape = if keep_shape { shape } else { vec![out.len()] };
+    if out_shape.is_empty() {
+        return out.into_iter().next().expect("one element");
+    }
+    crate::helpers::static_array::base::build_static_array_from_flat(b, out, out_shape, NumberType::Integer)
+}
+
+/// The shape (empty for a scalar) and the row-major elements of an operand
+/// of `np.isin` / `np.in1d`.
+fn membership_operand(
+    b: &mut crate::builder::IRBuilder,
+    value: &Value,
+    name: &str,
+    which: &str,
+) -> (Vec<usize>, Vec<Value>) {
+    match value {
+        Value::StaticArray { shape, .. } => {
+            (shape.clone(), crate::helpers::static_array::elementwise::payload_cells(b, value))
+        }
+        Value::List(_) | Value::Tuple(_) => {
+            let array = crate::helpers::static_array::base::to_static_array(b, value)
+                .unwrap_or_else(|| panic!("{name}: {which} must be a rectangular array of numbers"));
+            membership_operand(b, &array, name, which)
+        }
+        Value::Integer(_) | Value::Float(_) | Value::Boolean(_) | Value::Complex { .. } => {
+            (vec![], vec![value.clone()])
+        }
+        Value::DynamicNDArray(_) => panic!(
+            "{name} is not yet supported for bounded-dynamic arrays ({which} has a runtime shape)"
+        ),
+        other => panic!("{name}: unsupported type {} for {which}", other.zinnia_type()),
+    }
 }
 
 /// Exact integer dot product `sum_i lhs[i] * rhs[i]`.
@@ -1563,64 +1787,12 @@ impl IRGenerator {
                     _ => panic!("np.flatnonzero: expected rank-1 nonzero output"),
                 }
             }
-            ("np", "in1d") => {
-                let ar1 = visited_args_orig.first().cloned().unwrap_or(Value::None);
-                let ar2 = visited_args_orig.get(1).cloned().unwrap_or(Value::None);
-                let ar1_flat = if matches!(ar1, Value::StaticArray { .. }) {
-                    crate::helpers::static_array::shape::try_apply_flatten(&mut self.builder, &ar1)
-                        .unwrap_or(ar1)
-                } else {
-                    ar1
-                };
-                let ar2_flat = if matches!(ar2, Value::StaticArray { .. }) {
-                    crate::helpers::static_array::shape::try_apply_flatten(&mut self.builder, &ar2)
-                        .unwrap_or(ar2)
-                } else {
-                    ar2
-                };
-                let (shape, ar1_cells) = match &ar1_flat {
-                    Value::StaticArray { shape, .. } => (
-                        shape.clone(),
-                        crate::helpers::static_array::elementwise::payload_cells(
-                            &mut self.builder,
-                            &ar1_flat,
-                        ),
-                    ),
-                    _ => panic!("np.in1d: ar1 must be a StaticArray in this slice"),
-                };
-                let ar2_cells = match &ar2_flat {
-                    Value::StaticArray { .. } => {
-                        crate::helpers::static_array::elementwise::payload_cells(
-                            &mut self.builder,
-                            &ar2_flat,
-                        )
-                    }
-                    Value::List(d) | Value::Tuple(d) => d.values.clone(),
-                    _ => panic!("np.in1d: ar2 must be a static array/list in this slice"),
-                };
-                let mut out = Vec::with_capacity(ar1_cells.len());
-                for lhs in ar1_cells {
-                    let mut found = self.builder.ir_constant_bool(false);
-                    for rhs in &ar2_cells {
-                        let eq = crate::helpers::value_ops::apply_binary_op(
-                            &mut self.builder,
-                            "eq",
-                            &lhs,
-                            rhs,
-                        );
-                        let eq_bool =
-                            crate::helpers::value_ops::to_scalar_bool(&mut self.builder, &eq);
-                        found = self.builder.ir_logical_or(&found, &eq_bool);
-                    }
-                    out.push(found);
-                }
-                crate::helpers::static_array::base::build_static_array_from_flat(
-                    &mut self.builder,
-                    out,
-                    shape,
-                    crate::types::NumberType::Integer,
-                )
-            }
+            ("np", name @ ("in1d" | "isin")) => np_membership(
+                &mut self.builder,
+                name == "isin",
+                visited_args_orig,
+                visited_kwargs_orig,
+            ),
             ("np", "bincount") => {
                 crate::ops::static_ndarray_ops::np_bincount(
                     &mut self.builder,
@@ -1638,12 +1810,19 @@ impl IRGenerator {
                 visited_args_orig,
                 visited_kwargs_orig,
             ),
-            ("np", "correlate") => np_correlate_ds1000(
+            ("np", name @ ("correlate" | "convolve")) => np_correlate(
                 &mut self.builder,
+                name == "convolve",
                 visited_args_orig,
                 visited_kwargs_orig,
             ),
             ("np", "corrcoef") => np_corrcoef_ds1000(&mut self.builder, visited_args_orig),
+            ("np", name @ ("triu" | "tril")) => np_triangle(
+                &mut self.builder,
+                name == "triu",
+                visited_args_orig,
+                visited_kwargs_orig,
+            ),
             ("np", "einsum") => {
                 ensure_no_kwargs("np.einsum", visited_kwargs_orig, &["optimize"]);
                 crate::ops::static_ndarray_ops::einsum::einsum(&mut self.builder, visited_args_orig)

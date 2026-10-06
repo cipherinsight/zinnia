@@ -806,23 +806,27 @@ fn floor_div_pow2(v: Field, m: Field) -> Field {
     q
 }
 
-/// Q32 exp(x). Splits y = x / ln 2 into floor(y) + f with f in [0, 1), takes
-/// 2^f from the polynomial and scales by 2^floor(y) exactly (multiplication,
-/// or flooring division for negative powers). Fails when |floor(y)| >= 128.
+/// Q32 exp(x), bit for bit kernel::fp_exp (the mock and halo2-base): splits
+/// y = x / ln 2 into floor(y) + f with f in [0, 1), takes 2^f from the
+/// polynomial (t in [Q, 2Q]) and, with k = floor(y) + 48 (kernel::EXP_SHIFT),
+/// returns floor(t * 2^k / 2^48) = floor(t * 2^floor(y)): 0 for k < 0
+/// (underflow; the floor is 0 from floor(y) <= -34 on), and no proof for
+/// k >= 128 or a result outside the signed 64-bit window (x > 21.48).
+/// Uniqueness: the sign of k is pinned by sign_abs; k' (k, or 0 on
+/// underflow) is checked to 7 bits, so 2^k' < 2^128 and t * 2^k' < p is the
+/// integer product; divmod_by_pow2 pins its floor and window-checks it.
 pub fn qexp(x: Field) -> Field {
     let y = qmul(x, INV_LN2_Q);
     let (i, f) = divmod_by_pow2::<32>(y);
     let two_to_f = horner_q(f, EXP2_COEFS_Q); // in [Q, 2Q]
-    let (i_negative, e) = sign_abs(i);
-    e.assert_max_bit_size::<7>();
-    let scale = pow2(e);
-    // Both are well defined for every e; the sign picks one.
-    let scaled_down = floor_div_pow2(two_to_f, scale);
-    let scaled_up = two_to_f * scale;
-    if i_negative {
-        scaled_down
+    let (underflow, k) = sign_abs(i + 48);
+    let kept = if underflow { 0 } else { k };
+    kept.assert_max_bit_size::<7>();
+    let (scaled, _r) = divmod_by_pow2::<48>(two_to_f * pow2(kept));
+    if underflow {
+        0
     } else {
-        scaled_up
+        scaled
     }
 }
 
@@ -1577,6 +1581,25 @@ fn test_qsin_qcos_match_the_kernel() {
 #[test(should_fail)]
 fn test_qsin_rejects_values_outside_the_window() {
     let _ = qsin(18446744073709551616); // raw 2^64
+}
+
+#[test]
+fn test_qexp_matches_the_kernel() {
+    // kernel::fp_exp at the same inputs (src/prove/kernel.rs tests).
+    assert(qexp(0) == 4294967296);
+    assert(qexp(Q) == 11674931554);
+    assert(qexp(-Q) == 1580030168);
+    // Underflow: exp(-30) is below half a Q32 unit, exp(-20) is not.
+    assert(qexp(-100 * Q) == 0);
+    assert(qexp(-30 * Q) == 0);
+    assert(qexp(-20 * Q) == 8);
+    // The largest exp(x) in the window is near x = 21.48.
+    assert(qexp(21 * Q) == 5664270453422686208);
+}
+
+#[test(should_fail)]
+fn test_qexp_beyond_the_window_has_no_proof() {
+    let _ = qexp(22 * Q);
 }
 
 #[test]
