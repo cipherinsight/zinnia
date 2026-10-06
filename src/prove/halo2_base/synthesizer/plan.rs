@@ -43,9 +43,36 @@ pub(super) struct Plan {
     /// (an overlay comparison, an address bound the roots do not imply), and
     /// then computes it from the view (see `Halo2BaseSynthesizer::materialize_address`).
     pub address_only: HashSet<u32>,
+    /// Select chains over the equality bits of one bounded index (see
+    /// [`OneHotChain`]), by the statement id of the chain's last select.
+    pub onehot_chains: HashMap<u32, OneHotChain>,
+    /// The other selects of those chains: they get no cell.
+    pub onehot_links: HashSet<u32>,
+}
+
+/// `select([r == k_m], x_m, ... select([r == k_1], x_1, x_0))` where
+/// `AssertU128Lt(r, n)` holds somewhere in the circuit and `{k_1..k_m}` is
+/// `{0..n-1}` without one value `k_0`: exactly one of `[r == k_0], ...,
+/// [r == k_m]` is 1, so the chain is the inner product
+/// `sum_i [r == k_i] x_i` (one cell triple per term instead of a select gate
+/// pair per link).
+#[derive(Clone, Debug)]
+pub(super) struct OneHotChain {
+    pub root: ValueId,
+    pub missing: i64,
+    pub default: ValueId,
+    /// `(condition, value)` per link, innermost first.
+    pub terms: Vec<(ValueId, ValueId)>,
 }
 
 impl Plan {
+    fn with_onehot_chains(mut self, ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> Plan {
+        let (chains, links) = onehot_chains(ir, uses, &self.bounds);
+        self.onehot_chains = chains;
+        self.onehot_links = links;
+        self
+    }
+
     pub fn of(ir: &IRGraph) -> Plan {
         let uses = uses_of(ir);
         Plan {
@@ -53,7 +80,10 @@ impl Plan {
             deferred_products: deferred_products(ir, &uses),
             asserted_comparisons: asserted_comparisons(ir, &uses),
             address_only: address_only(ir, &uses),
+            onehot_chains: HashMap::new(),
+            onehot_links: HashSet::new(),
         }
+        .with_onehot_chains(ir, &uses)
     }
 }
 
@@ -205,4 +235,96 @@ fn address_only(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<u32> {
         }
         set = keep;
     }
+}
+
+/// `(root, k)` when `stmt` is `EqI(root, k)` or `EqI(k, root)` for a constant `k`.
+fn equality_with_constant(ir: &IRGraph, stmt: u32) -> Option<(u32, i64)> {
+    let st = ir.stmts.get(stmt as usize)?;
+    if !matches!(st.ir, IR::EqI) {
+        return None;
+    }
+    match st.arguments.as_slice() {
+        [a, b] => match (constant_int(ir, *a), constant_int(ir, *b)) {
+            (None, Some(k)) => Some((*a, k)),
+            (Some(k), None) => Some((*b, k)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// See [`OneHotChain`]. A chain is found from its last select by following
+/// else-branches that are selects used only there; it is kept when it has at
+/// least three links (shorter chains cost no more as selects).
+fn onehot_chains(
+    ir: &IRGraph,
+    uses: &HashMap<u32, Vec<u32>>,
+    bounds: &HashMap<ValueId, i128>,
+) -> (HashMap<u32, OneHotChain>, HashSet<u32>) {
+    let is_select = |id: u32| ir.stmts.get(id as usize).is_some_and(|s| matches!(s.ir, IR::SelectI | IR::SelectF));
+    let link = |id: u32| -> Option<(u32, i64, u32, u32)> {
+        let st = &ir.stmts[id as usize];
+        let [c, t, f] = st.arguments.as_slice() else { return None };
+        let (root, k) = equality_with_constant(ir, *c)?;
+        Some((root, k, *t, *f))
+    };
+    let mut chains = HashMap::new();
+    let mut links = HashSet::new();
+    for stmt in &ir.stmts {
+        if !is_select(stmt.stmt_id) {
+            continue;
+        }
+        // Not the end when the only user continues the chain on the same root.
+        if let Some(user) = only_user(ir, uses, stmt.stmt_id) {
+            if is_select(user.stmt_id) && user.arguments.get(2) == Some(&stmt.stmt_id) {
+                if let (Some((r1, ..)), Some((r2, ..))) = (link(user.stmt_id), link(stmt.stmt_id)) {
+                    if r1 == r2 {
+                        continue;
+                    }
+                }
+            }
+        }
+        let Some((root, _, _, _)) = link(stmt.stmt_id) else { continue };
+        let mut members = Vec::new();
+        let mut cur = stmt.stmt_id;
+        loop {
+            match link(cur) {
+                Some((r, k, t, f)) if r == root && is_select(cur) => {
+                    members.push((cur, k, ir.stmts[t as usize].value_id, ir.stmts[link_cond(ir, cur)].value_id));
+                    let continues = is_select(f)
+                        && only_user(ir, uses, f).is_some_and(|u| u.stmt_id == cur)
+                        && link(f).is_some_and(|(r2, ..)| r2 == root);
+                    if !continues {
+                        cur = f;
+                        break;
+                    }
+                    cur = f;
+                }
+                _ => break,
+            }
+        }
+        if members.len() < 3 {
+            continue;
+        }
+        let root_vid = ir.stmts[root as usize].value_id;
+        let Some(&hi) = bounds.get(&root_vid) else { continue };
+        let ks: HashSet<i64> = members.iter().map(|m| m.1).collect();
+        if ks.len() != members.len() || hi as usize != members.len() + 1 || ks.iter().any(|k| *k < 0 || *k as i128 >= hi) {
+            continue;
+        }
+        let Some(missing) = (0..hi as i64).find(|k| !ks.contains(k)) else { continue };
+        let terms: Vec<(ValueId, ValueId)> = members.iter().rev().map(|m| (m.3, m.2)).collect();
+        for m in &members[1..] {
+            links.insert(m.0);
+        }
+        chains.insert(
+            stmt.stmt_id,
+            OneHotChain { root: root_vid, missing, default: ir.stmts[cur as usize].value_id, terms },
+        );
+    }
+    (chains, links)
+}
+
+fn link_cond(ir: &IRGraph, select: u32) -> usize {
+    ir.stmts[select as usize].arguments[0] as usize
 }

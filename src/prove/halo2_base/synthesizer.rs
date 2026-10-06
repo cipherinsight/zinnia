@@ -499,6 +499,36 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         Ok(out)
     }
 
+    /// The last select of a one-hot chain (plan.rs `OneHotChain`): the inner
+    /// product of the equality bits with the link values, the missing value's
+    /// bit standing for the innermost default. Sound because the planned
+    /// bound `AssertU128Lt(root, n)` (emitted wherever it appears) leaves the
+    /// root one of `0..n`, so exactly one bit is 1 and the product equals the
+    /// select chain's value. The range is the hull of the values' ranges.
+    fn onehot_chain(
+        &mut self,
+        chain: &plan::OneHotChain,
+        last_cond: &Halo2BaseCell,
+        last_value: &Halo2BaseCell,
+    ) -> Result<Halo2BaseCell, ProvingError> {
+        let cell = |s: &Self, vid: &crate::types::ValueId| {
+            s.cell_of_vid.get(vid).copied().ok_or_else(|| ProvingError::synthesis("one-hot chain operand without a cell"))
+        };
+        let root = cell(self, &chain.root)?;
+        let default = cell(self, &chain.default)?;
+        let mut choices = vec![(self.root_indicator(&root, chain.missing)?, default)];
+        for (cond, value) in &chain.terms[..chain.terms.len() - 1] {
+            choices.push((cell(self, cond)?, cell(self, value)?));
+        }
+        choices.push((*last_cond, *last_value));
+        let ranges: Option<Vec<Interval>> = choices.iter().map(|(_, v)| self.proven_range(v)).collect();
+        let out = self.one_hot_combination(&choices);
+        if let Some(hull) = ranges.and_then(|rs| rs.into_iter().reduce(|a, b| a.hull(&b))) {
+            self.prove_range(&out, hull);
+        }
+        Ok(out)
+    }
+
     /// `cell` itself, or for a deferred product its product as a cell (when
     /// both operands of a sum are deferred products, one is emitted).
     fn materialize(&mut self, cell: &Halo2BaseCell) -> Halo2BaseCell {
@@ -1193,6 +1223,16 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn select(&mut self, cond: &Self::CellRef, if_true: &Self::CellRef, if_false: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.plan.onehot_links.contains(&self.current_stmt) {
+            // A link of a one-hot chain (plan.rs): only the chain's last select
+            // reads it, through the chain's terms, so it needs no cell.
+            let value = cond.value * if_true.value + (Fp::one() - cond.value) * if_false.value;
+            let placeholder = AssignedValue { value: halo2_base::halo2_proofs::plonk::Assigned::Trivial(value), cell: None };
+            return Ok(self.wrap(placeholder, value));
+        }
+        if let Some(chain) = self.plan.onehot_chains.get(&self.current_stmt).cloned() {
+            return self.onehot_chain(&chain, cond, if_true);
+        }
         let cond = self.truthy_bit(cond);
         self.select_bit(&cond, if_true, if_false)
     }

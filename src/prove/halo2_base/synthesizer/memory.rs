@@ -219,7 +219,7 @@ impl Halo2BaseSynthesizer<'_> {
     }
 
     /// `[root == v]`, shared by every read on the same root.
-    fn root_indicator(&mut self, root: &Halo2BaseCell, v: i64) -> Result<Halo2BaseCell, ProvingError> {
+    pub(super) fn root_indicator(&mut self, root: &Halo2BaseCell, v: i64) -> Result<Halo2BaseCell, ProvingError> {
         if let Some(ind) = self.memory.indicators.get(&(root.id, v)) {
             return Ok(*ind);
         }
