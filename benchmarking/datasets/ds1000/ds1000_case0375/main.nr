@@ -8,13 +8,13 @@
 // k <= u = floor((50 T + 24) / 2^32). So clamp(u, 0, 50) values of ys are
 // <= threshold, and argmax (the first True, 0 when there is none) is t = u if
 // 0 <= u < 50, else 0.
-// xs[0] is minus the maximum of the negated grades (max_of). xs[t] is an
+// xs[0] is the minimum of the grades (min_of). xs[t] is an
 // order statistic at a private position: a hint v pinned by counting,
 // #{g < v} <= t < #{g <= v}: 50 comparisons and 50 equality tests, where a
 // sort would need a permutation argument on top of 49 comparisons.
 // @outputs: float[2]
 
-use noir_hw::{max_of, rescale, window};
+use noir_hw::{min_of, rescale, window};
 
 global OFFSET_U64: u64 = 9223372036854775808; // 2^63
 
@@ -44,11 +44,7 @@ fn main(grades: [Field; 50], threshold: Field) -> pub [Field; 2] {
     // Input domain: every input element is an int64 / a Q32 code in the window.
     noir_hw::check_inputs(grades);
     noir_hw::check_input(threshold);
-    let mut negated: [Field; 50] = [0; 50];
-    for i in 0..50 {
-        negated[i] = -grades[i];
-    }
-    let low = -max_of(negated);
+    let low = min_of(grades);
 
     let u = rescale(50 * threshold + 24);
     let wu = window(u);
