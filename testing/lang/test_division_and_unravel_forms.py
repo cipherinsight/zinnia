@@ -123,3 +123,32 @@ def test_plane_gather_by_a_checked_root():
     assert rejected_everywhere(program, a, perm, wrong)
     for bad in ([2, 0, 3, 1, 7, 5, 4, 4], [8, 0, 3, 1, 7, 5, 4, 6], [-1, 0, 3, 1, 7, 5, 4, 6]):
         assert rejected_everywhere(program, a, np.array(bad), a[c])
+
+
+# ── halo2-base: a bounded input loaded inside its bound check ───────────
+
+RAVEL = (
+    'def kernel(index: Integer[Array, "5"], expected: Integer):\n'
+    '    dims = np.array([8, 9, 8, 8, 8])\n'
+    '    assert np.ravel_multi_index(index, dims=dims, order="{order}") == expected\n'
+)
+
+
+@pytest.mark.parametrize("order", ["C", "F"])
+def test_bounded_inputs_keep_their_bounds(order):
+    """Each index input is assigned inside the gate of its `< dim` check
+    (halo2-base); NumPy's flat index is accepted, a wrong one rejected, and
+    an index outside its axis (NumPy raises) has no proof."""
+    program = compile_kernel(RAVEL.format(order=order))
+    dims = (8, 9, 8, 8, 8)
+    for index in ([0, 0, 0, 0, 0], [7, 8, 7, 7, 7], [3, 4, 1, 6, 2]):
+        flat = int(np.ravel_multi_index(index, dims, order=order))
+        assert accepted_everywhere(program, np.array(index), flat), (order, index)
+        assert rejected_everywhere(program, np.array(index), flat + 1), (order, index)
+    for index in ([8, 0, 0, 0, 0], [0, 9, 0, 0, 0], [0, 0, 0, 0, -1], [0, 0, 32, 0, 0]):
+        with pytest.raises(ValueError):
+            np.ravel_multi_index(index, dims, order=order)
+        wrapped = sum(i * s for i, s in zip(index, np.cumprod((1,) + dims[:-1]) if order == "F"
+                                              else np.cumprod((1,) + dims[::-1][:-1])[::-1]))
+        for claim in (0, int(wrapped)):
+            assert rejected_everywhere(program, np.array(index), claim), (order, index, claim)
