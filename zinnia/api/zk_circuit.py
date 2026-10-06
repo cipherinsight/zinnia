@@ -173,7 +173,8 @@ class ZKCircuit:
 
         Args:
             *args: Positional arguments matching the circuit inputs.
-            backend: "mock" (default, fast) or "halo2" (real ZK proof).
+            backend: "mock" (default, fast), "halo2-base" or "noir" (real ZK
+                proof). The legacy "halo2" backend is retired (an error).
             params: Optional dict with proving parameters.
 
         Returns:

@@ -1,4 +1,10 @@
-//! Halo2 (IPA) proving backend.
+//! Halo2 (IPA) proving backend — **retired**.
+//!
+//! `prove::create_prover_backend` refuses `"halo2"` / `"halo2-ipa"`: this
+//! backend's signed comparisons are limited to a 56-bit window, so it cannot
+//! satisfy the 64-bit input-domain checks of current circuits
+//! (`prove::LEGACY_HALO2_RETIRED`). Use `halo2-base`. The code stays for its
+//! unit tests and the mock backend's cross-checks.
 //!
 //! Implements `ProverBackend` using the zcash/halo2 proving system with
 //! IPA polynomial commitment (no trusted setup required).

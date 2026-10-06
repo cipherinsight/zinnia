@@ -38,17 +38,13 @@ def test_circuit_annotated_return_supports_early_return():
     assert any(v.endswith("=0") for v in zero.public_values)
 
 
-def test_circuit_annotated_integer_return_halo2_proves_and_verifies():
+def test_circuit_annotated_integer_return_halo2_base_proves_and_verifies():
     @zk_circuit
     def add_one(x: Public[Integer]) -> Integer:
         return x + 1
 
     circuit = ZKCircuit.from_method(add_one)
-    proof = circuit.prove(
-        6,
-        backend="halo2",
-        params={"k": 8, "precision_bits": 32, "lookup_bits": 8},
-    )
+    proof = circuit.prove(6, backend="halo2-base")
     assert proof.public_values
     assert circuit.verify(proof)
 
