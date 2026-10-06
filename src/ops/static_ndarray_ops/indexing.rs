@@ -1247,7 +1247,12 @@ pub fn np_insert(
         }
     };
 
-    if !matches!(obj, Value::Integer(_) | Value::Boolean(_)) {
+    // NumPy reads `obj` by its dtype: a bool scalar is a rank-0 boolean
+    // array, which it rejects (it used to insert at position 0 or 1).
+    if b.is_bool_cell(obj) {
+        panic!("np.insert: boolean array argument obj to insert must be one dimensional");
+    }
+    if !matches!(obj, Value::Integer(_)) {
         panic!("np.insert: this bounded slice supports one scalar obj");
     }
     if let Some(raw_pos) = obj.int_val() {

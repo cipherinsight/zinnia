@@ -333,6 +333,13 @@ def test_position_past_runtime_length_is_rejected():
     assert accepts(program, np.array([1, 1, 1, 1, 0]), B5, 50)
 
 
+@pytest.mark.parametrize("obj", ["True", "a[0] > 1.5"])
+def test_insert_rejects_a_bool_obj(obj):
+    # NumPy raises ValueError for a bool scalar `obj` (a rank-0 boolean array).
+    with pytest.raises(BaseException, match="boolean array argument obj to insert"):
+        compile_kernel(kernel(AB, f"return np.insert(b, {obj}, 0)"))
+
+
 @pytest.mark.parametrize("backend", ["mock", "halo2-base"])
 def test_converted_bool_parameter_positions_are_pinned(backend):
     program = compile_kernel(kernel(MP + ', expected: Integer[Array, "3"]',
