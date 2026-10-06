@@ -779,7 +779,9 @@ fn sign_tests_and_asserted_ranges_are_pinned() {
     }
     assert!(!synthesize(&*root_then_check, &[q(-2.0)], &[]).accepted);
     let abs = unary(|s, a| s.abs_i(a));
-    assert_sound("abs(i64::MIN)", &*abs, &[int(i64::MIN)], &[kernel::i128_to_fp(1i128 << 63)], &[]);
+    assert_sound("abs(i64::MIN + 1)", &*abs, &[int(i64::MIN + 1)], &[int(i64::MAX)], &[]);
+    // `|i64::MIN| = 2^63` overflows int64: no proof (the sign_and_abs path).
+    assert!(!synthesize(&*abs, &[int(i64::MIN)], &[]).accepted, "|i64::MIN| has no proof");
     assert!(!synthesize(&*abs, &[kernel::i128_to_fp(1i128 << 63)], &[]).accepted, "outside the window");
     // A comparison after an asserted bound uses the bound.
     let bounded: Box<Op> = Box::new(|s, c| {
