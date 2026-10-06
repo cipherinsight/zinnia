@@ -133,6 +133,35 @@ fn every_plan_is_the_stable_sort_with_ties() {
     }
 }
 
+/// A payload gathered by the stable argsort (`b[np.argsort(a)]`) is
+/// carried by every stable network and read at the pinned indices of every
+/// hinted plan: NumPy's gather, ties in original order, alone or with the
+/// sort's other outputs, every rank or some.
+#[test]
+fn payloads_are_gathered_in_stable_order() {
+    let n = TIED.len() as u32;
+    let every_payload: Vec<Output> = (0..n).map(Output::Payload).collect();
+    let some: Vec<Output> = [0, 4, 8].map(Output::Payload).to_vec();
+    let mixed = vec![Output::Payload(2), Output::Index(2), Output::Value(5), Output::Payload(7)];
+    for outputs in [&every_payload, &some, &mixed] {
+        for forced in [Forced::Batcher, Forced::AdjacentSwap, Forced::Permutation, Forced::Runs] {
+            assert_computes_numpy(&TIED, outputs, forced);
+        }
+        for target in [Target::Halo2Base, Target::Noir] {
+            assert_computes_numpy(&TIED, outputs, Forced::CostRule(target));
+        }
+    }
+    assert_computes_numpy(&TIED, &every_payload, Forced::PackedBatcher);
+    assert_computes_numpy(&TIED, &some, Forced::PackedBatcher);
+    for n in 1..=4u32 {
+        let values: Vec<i64> = TIED[..n as usize].to_vec();
+        let outputs: Vec<Output> = (0..n).map(Output::Payload).collect();
+        for forced in [Forced::AdjacentSwap, Forced::Permutation, Forced::CostRule(Target::Noir)] {
+            assert_computes_numpy(&values, &outputs, forced);
+        }
+    }
+}
+
 /// The packed-key network yields the stable argsort (ties in original
 /// order) for every rank, some ranks, runtime ranks, every small length
 /// and window-extreme values.
@@ -201,6 +230,8 @@ fn demand(n: usize, values: &[usize], indices: &[usize], runtime_values: usize) 
         indices: indices.iter().copied().collect(),
         runtime_values,
         runtime_indices: 0,
+        payloads: Vec::new(),
+        masked_extremes: Default::default(),
     }
 }
 
@@ -318,6 +349,27 @@ fn counts_reject_every_other_value() {
     }
     for r in [0u32, 8] {
         assert_pinned(&TIED, &[Output::Value(r)], Forced::Extremes, wrong_values(&TIED));
+    }
+}
+
+/// An extreme whose value the program compares with every element takes
+/// its membership from those equality bits: NumPy's mask, ties included,
+/// and every other hinted value rejected.
+#[test]
+fn extremes_with_equality_bits_are_pinned() {
+    let n = TIED.len() as u32;
+    for r in [0, n - 1] {
+        let outputs = [Output::EqualsEach(r)];
+        assert_computes_numpy(&TIED, &outputs, Forced::Extremes);
+        let sort = sort_graph(&TIED, &outputs, Forced::Extremes);
+        assert!(
+            !sort.graph.stmts.iter().any(|s| matches!(s.ir, IR::MulI)),
+            "membership by the equality bits, not a product"
+        );
+        assert_pinned(&TIED, &outputs, Forced::Extremes, wrong_values(&TIED));
+        for target in [Target::Halo2Base, Target::Noir] {
+            assert_computes_numpy(&TIED, &outputs, Forced::CostRule(target));
+        }
     }
 }
 

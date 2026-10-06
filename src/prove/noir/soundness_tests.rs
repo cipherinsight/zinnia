@@ -1085,7 +1085,9 @@ fn sort_hints_are_pinned_in_noir() {
         (Forced::Runs, vec![Output::Index(3), Output::Index(4)]),
         (Forced::Counting, vec![Output::Value(2)]),
         (Forced::Extremes, vec![Output::Value(0), Output::Value(4)]),
+        (Forced::Extremes, vec![Output::EqualsEach(0)]),
         (Forced::Runs, vec![Output::ValueAt(1), Output::IndexAt(3)]),
+        (Forced::Runs, vec![Output::Payload(1), Output::Payload(4)]),
     ];
     for (forced, outputs) in cases {
         let sort = sort_graph(&values, &outputs, forced);

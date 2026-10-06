@@ -555,6 +555,9 @@ fn try_fancy_subscript(
         let out_coords = decode_coords(flat_out, &out_shape, &out_strides);
         let mut static_addr = offset as i64;
         let mut dynamic_parts: Vec<Value> = Vec::new();
+        // The runtime indices of this read with their axis (for a gather by
+        // an argsort lane, below).
+        let mut dynamic_axes: Vec<(Value, usize)> = Vec::new();
 
         for (src_axis, plan) in plans.iter().enumerate() {
             match plan {
@@ -566,6 +569,7 @@ fn try_fancy_subscript(
                         // Already wrapped + bounds-checked above.
                         let stride_val = b.ir_constant_int(strides[src_axis] as i64);
                         dynamic_parts.push(b.ir_mul_i(v, &stride_val));
+                        dynamic_axes.push((v.clone(), src_axis));
                     }
                 }
                 FancyAxisPlan::Range { coords } => {
@@ -596,8 +600,23 @@ fn try_fancy_subscript(
                         // Already wrapped + bounds-checked above.
                         let stride_val = b.ir_constant_int(strides[src_axis] as i64);
                         dynamic_parts.push(b.ir_mul_i(&idx_val, &stride_val));
+                        dynamic_axes.push((idx_val, src_axis));
                     }
                 }
+            }
+        }
+
+        // One runtime index that is an argsort lane: the gathered line is a
+        // payload carried by that sort (`lower::sort::payload`).
+        if let ([(index, axis)], false) = (&dynamic_axes[..], dtype == NumberType::Complex) {
+            let line: Option<Vec<Value>> = b.static_array_payload.get(&segment_id).and_then(|cells| {
+                (0..shape[*axis])
+                    .map(|j| cells.get(static_addr as usize + j * strides[*axis]).cloned())
+                    .collect()
+            });
+            if let Some(gathered) = line.and_then(|line| crate::lower::sort::payload_at_argsort_lane(b, index, &line)) {
+                leaves.push(gathered);
+                continue;
             }
         }
 

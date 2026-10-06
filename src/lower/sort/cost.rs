@@ -43,6 +43,8 @@ pub(crate) struct UnitCosts {
     exchange_packed: u32,
     pack: u32,
     unpack: u32,
+    /// Exchanging one payload's two slots on a comparator's result.
+    exchange_payload: u32,
     /// A hinted key: its index bounded and its value read, a fixed part and
     /// a part per slot of the segment read.
     key_read_fixed: u32,
@@ -62,6 +64,11 @@ pub(crate) struct UnitCosts {
     /// product; once, the hint's range check and the product's zero test.
     extreme_term: u32,
     extreme_fixed: u32,
+    /// The extreme pin when the program's equality bits give the
+    /// membership: per element the asserted bound only; once the hint's
+    /// window check and the bits' sum tested non-zero.
+    masked_extreme_term: u32,
+    masked_extreme_fixed: u32,
 }
 
 /// halo2-base: an argsort of 100 by Batcher's network costs 84,600 cells
@@ -80,6 +87,7 @@ const HALO2_BASE: UnitCosts = UnitCosts {
     exchange_packed: 55,
     pack: 4,
     unpack: 46,
+    exchange_payload: 12,
     key_read_fixed: 10,
     key_read_per_slot: 20,
     segment_per_slot: 0,
@@ -88,6 +96,8 @@ const HALO2_BASE: UnitCosts = UnitCosts {
     rank_count_term: 50,
     extreme_term: 42,
     extreme_fixed: 38,
+    masked_extreme_term: 22,
+    masked_extreme_fixed: 30,
 };
 
 /// Noir: an argsort of 100 by the permutation check costs 1,520 gates (a
@@ -103,6 +113,7 @@ const NOIR: UnitCosts = UnitCosts {
     exchange_packed: 22,
     pack: 0,
     unpack: 10,
+    exchange_payload: 2,
     key_read_fixed: 7,
     key_read_per_slot: 0,
     segment_per_slot: 3,
@@ -111,6 +122,8 @@ const NOIR: UnitCosts = UnitCosts {
     rank_count_term: 9,
     extreme_term: 5,
     extreme_fixed: 3,
+    masked_extreme_term: 3,
+    masked_extreme_fixed: 4,
 };
 
 /// The outputs of one sort that are still live after dead-code
@@ -125,6 +138,30 @@ pub(super) struct Demand {
     /// Live outputs at runtime ranks (values, indices).
     pub runtime_values: usize,
     pub runtime_indices: usize,
+    /// The live ranks of each payload the sort carries (`emit::Payload`).
+    pub payloads: Vec<BTreeSet<usize>>,
+    /// The extreme ranks (0, `n - 1`) whose value the program compares for
+    /// equality with every element (`a.max(axis) == a`), with whether the
+    /// value is the comparisons' first operand: their pin can take its
+    /// membership from those equality bits (`emit::extreme_value`).
+    pub masked_extremes: std::collections::BTreeMap<usize, bool>,
+}
+
+impl Demand {
+    /// The demand a hinted plan meets: a payload's rank is read at that
+    /// rank's argsort index, so the index is needed.
+    pub(super) fn with_payload_indices(&self) -> Demand {
+        let mut demand = self.clone();
+        for ranks in &self.payloads {
+            demand.indices.extend(ranks);
+        }
+        demand
+    }
+
+    /// One read of each live payload rank (and a segment per payload).
+    fn payload_reads(&self, costs: &UnitCosts) -> u64 {
+        self.payloads.iter().map(|ranks| costs.reads(self.n, ranks.len())).sum()
+    }
 }
 
 /// A run of consecutive ranks lowered together.
@@ -198,6 +235,12 @@ impl Network {
         matches!(self, Network::MergeExchangeTieBreak | Network::AdjacentSwap | Network::PackedMergeExchange)
     }
 
+    /// Whether equal values keep their original order (what a payload or an
+    /// argsort needs).
+    pub(super) fn is_stable(self) -> bool {
+        self.tracks_indices()
+    }
+
     pub(super) fn tie_break(self) -> bool {
         matches!(self, Network::MergeExchangeTieBreak)
     }
@@ -238,6 +281,12 @@ impl UnitCosts {
     /// The smallest or largest of `n` values.
     fn extreme(&self, n: usize) -> u64 {
         n as u64 * u64::from(self.extreme_term) + u64::from(self.extreme_fixed)
+    }
+
+    /// The smallest or largest of `n` values, membership by the program's
+    /// equality bits.
+    fn masked_extreme(&self, n: usize) -> u64 {
+        n as u64 * u64::from(self.masked_extreme_term) + u64::from(self.masked_extreme_fixed)
     }
 
     /// The runtime-rank index whose key has exactly `r` keys below it,
@@ -348,16 +397,20 @@ fn runtime_reads_of_outputs(demand: &Demand, costs: &UnitCosts) -> u64 {
 pub(super) fn network_plans(demand: &Demand, costs: &UnitCosts) -> Vec<(Plan, u64)> {
     let n = demand.n;
     let runtime = demand.runtime_values + demand.runtime_indices;
-    let live: BTreeSet<usize> = if runtime > 0 {
+    let mut live: BTreeSet<usize> = if runtime > 0 {
         (0..n).collect()
     } else {
         demand.values.union(&demand.indices).copied().collect()
     };
+    for ranks in &demand.payloads {
+        live.extend(ranks);
+    }
     let needs_indices = !demand.indices.is_empty() || demand.runtime_indices > 0;
     let needs_values = !demand.values.is_empty() || demand.runtime_values > 0;
-    let candidates: &[Network] = if needs_indices && !needs_values {
+    let needs_stable = needs_indices || !demand.payloads.is_empty();
+    let candidates: &[Network] = if needs_stable && !needs_values {
         &[Network::MergeExchangeTieBreak, Network::PackedMergeExchange, Network::AdjacentSwap]
-    } else if needs_indices {
+    } else if needs_stable {
         &[Network::MergeExchangeTieBreak, Network::AdjacentSwap]
     } else {
         &[Network::MergeExchange, Network::AdjacentSwapValues, Network::ReverseAdjacentSwapValues]
@@ -366,13 +419,27 @@ pub(super) fn network_plans(demand: &Demand, costs: &UnitCosts) -> Vec<(Plan, u6
     candidates
         .iter()
         .map(|&network| {
-            let comparators = cone_size(&network.pairs(n), n, &live) as u64;
+            let pairs = network.pairs(n);
+            let comparators = cone_size(&pairs, n, &live) as u64;
             let packing = if network == Network::PackedMergeExchange {
-                n as u64 * u64::from(costs.pack) + live.len() as u64 * u64::from(costs.unpack)
+                let unpacked = if demand.runtime_indices > 0 { n } else { demand.indices.len() };
+                n as u64 * u64::from(costs.pack) + unpacked as u64 * u64::from(costs.unpack)
             } else {
                 0
             };
-            (Plan::Network { network }, comparators * costs.comparator(network) + packing + reads)
+            let carried: u64 = demand
+                .payloads
+                .iter()
+                .map(|ranks| cone_size(&pairs, n, ranks) as u64 * u64::from(costs.exchange_payload))
+                .sum();
+            // The adjacent-swap network is stable without its indices: when
+            // none is live, dead-code elimination drops their selects.
+            let per_comparator = if network == Network::AdjacentSwap && !needs_indices {
+                u64::from(costs.exchange)
+            } else {
+                costs.comparator(network)
+            };
+            (Plan::Network { network }, comparators * per_comparator + packing + carried + reads)
         })
         .collect()
 }
@@ -382,7 +449,10 @@ pub(super) fn network_plans(demand: &Demand, costs: &UnitCosts) -> Vec<(Plan, u6
 pub(super) fn full_permutation(demand: &Demand, costs: &UnitCosts) -> Option<(Plan, u64)> {
     let n = demand.n;
     let run = Run { first: 0, last: n - 1, pin: Pin::Keys };
-    let cost = costs.key_run(n, 0, n - 1) + costs.reads(n, n) + runtime_reads_of_outputs(demand, costs);
+    let cost = costs.key_run(n, 0, n - 1)
+        + costs.reads(n, n)
+        + runtime_reads_of_outputs(demand, costs)
+        + demand.payload_reads(costs);
     Some((Plan::Hinted { runs: vec![run] }, cost))
 }
 
@@ -392,6 +462,8 @@ pub(super) fn full_permutation(demand: &Demand, costs: &UnitCosts) -> Option<(Pl
 /// key (a run's rank, a runtime-rank index) reads one shared segment of the
 /// elements.
 pub(super) fn selection_plans(demand: &Demand, costs: &UnitCosts) -> Vec<(Plan, u64)> {
+    let payload_reads = demand.payload_reads(costs);
+    let demand = &demand.with_payload_indices();
     let n = demand.n;
     let per_output = demand.runtime_values as u64 * costs.order_statistic(n)
         + demand.runtime_indices as u64 * costs.index_at_rank(n);
@@ -405,7 +477,7 @@ pub(super) fn selection_plans(demand: &Demand, costs: &UnitCosts) -> Vec<(Plan, 
                 .map(|run| run.last - run.first + 1)
                 .sum::<usize>()
                 + demand.runtime_indices;
-            Some((Plan::Hinted { runs }, runs_cost + per_output + costs.reads(n, keys)))
+            Some((Plan::Hinted { runs }, runs_cost + per_output + costs.reads(n, keys) + payload_reads))
         })
         .collect()
 }
@@ -436,7 +508,12 @@ fn cheapest_runs(demand: &Demand, costs: &UnitCosts, allow_keys: bool) -> Option
             if values_only {
                 options.push(((end - start) as u64 * costs.order_statistic(n), Pin::Counts));
                 if first == last && (first == 0 || first + 1 == n) {
-                    options.push((costs.extreme(n), Pin::Extreme));
+                    let extreme = if demand.masked_extremes.contains_key(&first) {
+                        costs.masked_extreme(n)
+                    } else {
+                        costs.extreme(n)
+                    };
+                    options.push((extreme, Pin::Extreme));
                 }
             }
             let Some(&(cost, pin)) = options.iter().min_by_key(|(cost, _)| *cost) else {

@@ -32,12 +32,13 @@ use crate::builder::IRBuilder;
 use crate::types::Value;
 
 use super::cost::merge_exchange_pairs;
-use super::emit::Elements;
+use super::emit::{Elements, Payload};
 
 /// The stable argsort of `elements`, every rank, by Batcher's merge
-/// exchange on packed keys. Comparators and unpacks no live output needs
+/// exchange on packed keys; each payload is exchanged with the keys (see
+/// `emit::sort_by_network`). Comparators and unpacks no live output needs
 /// are removed by dead-code elimination.
-pub(super) fn argsort_by_packed_keys(b: &mut IRBuilder, elements: &Elements) -> Vec<Value> {
+pub(super) fn argsort_by_packed_keys(b: &mut IRBuilder, elements: &Elements, payloads: &mut [Payload]) -> Vec<Value> {
     let n = elements.values.len();
     let bits = elements.index_bits();
     let mut keys: Vec<Value> = elements
@@ -55,6 +56,9 @@ pub(super) fn argsort_by_packed_keys(b: &mut IRBuilder, elements: &Elements) -> 
         let high = b.ir_select_i(&swap, &keys[i], &keys[j]);
         keys[i] = low;
         keys[j] = high;
+        for payload in payloads.iter_mut() {
+            payload.exchange(b, &swap, i, j);
+        }
     }
     keys.iter().map(|key| b.ir_packed_key_index(key, bits)).collect()
 }

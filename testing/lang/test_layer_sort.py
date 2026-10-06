@@ -114,3 +114,45 @@ def test_comparisons_with_sorted_values_match_numpy(target):
         expected = [(s > e).argmax(), (s >= e).argmax(), e < s[0], e >= s[6], s[3] < e, e <= s[2],
                     s[5] <= e, e > s[1]]
         assert [int(o) for o in outputs] == [int(x) for x in expected], e
+
+
+# ── payloads gathered by an argsort ─────────────────────────────────────
+
+PAYLOAD_KERNELS = [
+    ('def kernel(a: Float[Array, "3 3 3"], b: Integer[Array, "3 3 3"]):\n'
+     '    sort_indices = np.argsort(a, axis=0)\n'
+     '    static_indices = np.indices(a.shape)\n'
+     '    return b[sort_indices, static_indices[1], static_indices[2]]\n'),
+    ('def kernel(a: Float[Array, "3 3 3"], b: Integer[Array, "3 3 3"]):\n'
+     '    index = np.argsort(a.sum(axis=(1, 2)))\n'
+     '    return b[index, :, :]\n'),
+    ('def kernel(a: Float[Array, "8"], b: Integer[Array, "8"]):\n'
+     '    return b[np.argsort(a)]\n'),
+    ('def kernel(a: Float[Array, "8"], b: Integer[Array, "8"]):\n'
+     '    i = np.argsort(a)\n'
+     '    return [b[i[0]], b[i[7]], i[3]]\n'),
+]
+
+
+def payload_inputs(source, seed):
+    rng = np.random.default_rng(seed)
+    if "3 3 3" in source:
+        a = np.round(rng.normal(size=(3, 3, 3)))  # ties along every axis
+        a[1] = a[0]  # equal matrices: equal sums, a tie in every column
+        return a, np.arange(27).reshape(3, 3, 3) * 10 - 50
+    return np.round(rng.normal(size=8)), np.arange(8) * 7 - 20
+
+
+@pytest.mark.parametrize("target", TARGETS)
+@pytest.mark.parametrize("source", PAYLOAD_KERNELS)
+def test_payload_gathers_match_numpy_with_ties(source, target):
+    from testing.lang.test_sort_hints import assert_numpy
+    for seed in range(4):
+        assert_numpy(source, target, *payload_inputs(source, seed))
+
+
+def test_payload_is_carried_not_read_on_halo2():
+    # The gathered matrices move with the sort: no read at a computed index.
+    classes = ir_classes(compile_for(PAYLOAD_KERNELS[1], "halo2"))
+    assert "ReadMemoryIR" not in classes
+    assert "HintIR" not in classes

@@ -15,6 +15,10 @@ pub const VALUES: u8 = 0;
 /// the lane's one own operand `e` (position `None`).
 pub const COUNT_AT_MOST: u8 = 2;
 pub const COUNT_BELOW: u8 = 3;
+/// A payload carried by the sort (`payload`): position `r` is `p[argsort[r]]`
+/// for the lane's own operands `p` (as many as the elements), the gather of
+/// `p` by the stable argsort (`b[np.argsort(a)]`).
+pub const PAYLOAD: u8 = 4;
 
 pub struct SortSemantics;
 
@@ -24,12 +28,31 @@ impl OperatorSemantics for SortSemantics {
         if op.output == COUNT_AT_MOST || op.output == COUNT_BELOW {
             return fold_count(&args[..n], args.get(n)?, op.output == COUNT_AT_MOST);
         }
+        if op.output == PAYLOAD {
+            let Some(Constant::Int(index)) = fold_sorted(&args[..n], op.position.map(i64::from), true) else {
+                return None;
+            };
+            let picked = args.get(n + usize::try_from(index).ok()?)?;
+            return picked
+                .int_val()
+                .map(Constant::Int)
+                .or_else(|| picked.float_val().map(Constant::Float))
+                .or_else(|| picked.bool_val().map(Constant::Bool));
+        }
         let rank = op.position.map(i64::from).or_else(|| args.get(n)?.int_val());
         fold_sorted(&args[..n], rank, op.output == INDICES)
     }
 
     fn number_type(&self, op: &ArrayOp, args: &[Value]) -> NumberType {
-        let elements = &args[..op.shared as usize];
+        let n = op.shared as usize;
+        if op.output == PAYLOAD {
+            return if args[n..].iter().any(|v| matches!(v, Value::Float(_))) {
+                NumberType::Float
+            } else {
+                NumberType::Integer
+            };
+        }
+        let elements = &args[..n];
         if op.output == VALUES && elements.iter().any(|v| matches!(v, Value::Float(_))) {
             NumberType::Float
         } else {
@@ -44,6 +67,9 @@ impl OperatorSemantics for SortSemantics {
         if op.output == COUNT_AT_MOST || op.output == COUNT_BELOW {
             return Some(Interval { lo: 0, hi: n as i64 });
         }
+        if op.output == PAYLOAD {
+            return operands[n..].iter().copied().reduce(|x, y| Some(Interval::union(x?, y?))).flatten();
+        }
         if op.output == INDICES {
             return Some(Interval { lo: 0, hi: n as i64 - 1 });
         }
@@ -51,7 +77,12 @@ impl OperatorSemantics for SortSemantics {
     }
 
     fn picks_from(&self, op: &ArrayOp) -> Option<Range<usize>> {
-        (op.output == VALUES).then_some(0..op.shared as usize)
+        let n = op.shared as usize;
+        match op.output {
+            VALUES => Some(0..n),
+            PAYLOAD => Some(n..2 * n),
+            _ => None,
+        }
     }
 }
 
