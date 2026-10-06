@@ -486,14 +486,19 @@ impl IRGenerator {
                     *dtype,
                 );
 
+                // Buffer layout (`zinnia/exec/input_parser.py`,
+                // `_pad_dynamic_array_payload`): with per-axis bounds the
+                // input is padded, element (c_0, ..., c_k) at its row-major
+                // position in `max_shape`; without them it is compact, the
+                // elements in C order over the runtime extents.
+                let padded = max_shape.is_some();
                 let max_shape = max_shape
                     .clone()
                     .unwrap_or_else(|| vec![*max_length; *max_rank]);
                 let strides = crate::ops::dyn_ndarray::dyn_row_major_strides(&max_shape);
-                // Dynamic inputs use a compact flat buffer of max_length
-                // payload slots. Runtime shape metadata carries the actual
-                // rank-width axes; product(runtime_shape) is asserted against
-                // the compact bound by dynamic metadata consumers.
+                // Runtime shape metadata carries the actual rank-width axes;
+                // product(runtime_shape) is asserted against the buffer bound
+                // by dynamic metadata consumers.
                 let envelope = crate::types::Envelope::new_with_bound(
                     max_shape
                         .iter()
@@ -546,9 +551,17 @@ impl IRGenerator {
                     .iter()
                     .map(crate::ops::dyn_ndarray::value_to_scalar_i64)
                     .collect();
+                // The strides that address the buffer: the padded ones are
+                // the constants of `max_shape`; the compact ones are C-order
+                // over the runtime extents.
                 let mut runtime_strides: Vec<crate::types::ScalarValue<i64>> =
                     vec![crate::types::ScalarValue::new(Some(1), None); *max_rank];
-                for axis in (0..max_rank.saturating_sub(1)).rev() {
+                if padded {
+                    for (axis, stride) in strides.iter().enumerate() {
+                        runtime_strides[axis] = crate::types::ScalarValue::new(Some(*stride as i64), None);
+                    }
+                }
+                for axis in (0..max_rank.saturating_sub(1)).rev().filter(|_| !padded) {
                     let next_stride = if let Some(n) = runtime_strides[axis + 1].static_val {
                         self.builder.ir_constant_int(n)
                     } else if let Some(stmt_id) = runtime_strides[axis + 1].stmt_id {

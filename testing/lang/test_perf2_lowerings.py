@@ -47,3 +47,56 @@ def test_domain_ops_match_numpy_and_reject_outside_inputs(source, op, good, bad)
     assert_backends_agree(source, good)
     assert proves(source, good)
     assert not proves(source, bad)
+
+
+# ── bounded inputs with per-axis bounds: padded buffer, padded strides ───
+
+BOUNDED = 'def kernel(x: Integer[Array, "N<=4 M<=3"]):\n    return {}\n'
+X22 = np.array([[1, 2], [3, 4]])
+X32 = np.array([[5, -1], [0, 7], [2, 2]])
+
+
+@pytest.mark.parametrize("expr", ["x", "x + 1", "x * x", "x.T", "x.sum(axis=0)", "np.argmax(x)", "np.argmin(x)"])
+@pytest.mark.parametrize("x", [X22, X32])
+def test_bounded_input_reads_its_padded_buffer(expr, x):
+    """The input parser fills `N<=4 M<=3` padded (element (i, j) at 3i + j);
+    the array records those strides, so returning it (decoded by its
+    strides) and flat argextrema (C-order positions) equal NumPy. Before,
+    `x` returned [1, 2, 0, 3] for [[1, 2], [3, 4]] and argmax 4."""
+    from testing.lang.mock_outputs import run_mock_layout, numpy_kernel
+    source = BOUNDED.format(expr)
+    satisfied, values, shapes = run_mock_layout(compile_kernel(source), x)
+    expected = np.asarray(numpy_kernel(source)(x))
+    assert satisfied
+    assert list(shapes[0]) == list(expected.shape)
+    assert list(values[: expected.size]) == expected.ravel().tolist()
+
+
+def test_argmax_of_a_runtime_box_is_its_c_order_position():
+    from testing.lang.mock_outputs import run_mock_layout
+    source = ('def kernel(x: Integer[Array, "4 3"], r: Integer, c: Integer):\n'
+              '    return np.argmax(x[0:r, 0:c])\n')
+    x = np.array([[1, 9, 0], [3, 4, 8], [0, 0, 0], [7, 7, 7]])
+    satisfied, values, _ = run_mock_layout(compile_kernel(source), x, 2, 2)
+    assert satisfied and values[0] == int(np.argmax(x[0:2, 0:2]))
+
+
+@pytest.mark.parametrize("source", [
+    BOUNDED.format("x.reshape(-1)"),
+    BOUNDED.format("x.reshape(1, -1)"),
+    'def kernel(x: Integer[Array, "4 3"], r: Integer, c: Integer):\n    return x[0:r, 0:c].reshape(-1)\n',
+])
+def test_reshape_of_a_padded_buffer_with_holes_is_refused(source):
+    """Reshape reads its source as a C-order sequence; a padded buffer whose
+    inner extents are runtime values has holes, so the compiler refuses it
+    (it returned [1, 2, 0, 3] for [[1, 2], [3, 4]] before)."""
+    with pytest.raises(Exception, match="padded buffer"):
+        compile_kernel(source)
+
+
+def test_reshape_of_a_row_prefix_still_compiles():
+    source = 'def kernel(x: Integer[Array, "4 3"], r: Integer):\n    return x[0:r, :].reshape(-1)\n'
+    from testing.lang.mock_outputs import run_mock_layout
+    x = np.arange(12).reshape(4, 3)
+    satisfied, values, shapes = run_mock_layout(compile_kernel(source), x, 2)
+    assert satisfied and list(shapes[0]) == [6] and list(values[:6]) == list(range(6))
