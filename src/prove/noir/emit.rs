@@ -1319,7 +1319,7 @@ impl<'a> NoirEmitter<'a> {
         (negative, mag)
     }
 
-    /// `|x|` (library `abs_int64`, one 63-bit range check): no proof for
+    /// `|x|` (library `abs_int64`, one 64-bit range check): no proof for
     /// `x = i64::MIN`, whose magnitude overflows int64 (the raw Q32 value of
     /// a float lives in the same window). `sign_abs`'s magnitude is not used
     /// here because it admits `2^63`.
