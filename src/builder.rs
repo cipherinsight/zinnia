@@ -3067,6 +3067,18 @@ impl IRBuilder {
         self.create_ir(&IR::PackedKeyIndex { index_bits }, std::slice::from_ref(key))
     }
 
+    /// `IR::IdentityCheck`: assert `identity` among `operands` (checked at
+    /// verifier challenges on halo2-base; see `lower::challenge`).
+    pub fn ir_identity_check(&mut self, identity: crate::ir_defs::Identity, operands: &[Value]) {
+        assert_eq!(operands.len(), identity.operands(), "{} operands", identity.describe());
+        self.create_ir(&IR::IdentityCheck(identity), operands);
+    }
+
+    /// `IR::RescaleRawF`: `floor(raw / 2^P)` of a raw product sum.
+    pub fn ir_rescale_raw_f(&mut self, raw: &Value) -> Value {
+        self.create_ir(&IR::RescaleRawF, std::slice::from_ref(raw))
+    }
+
     /// Start allocating memory segment ids at `next` (a pass that rebuilds a
     /// graph and adds segments must not reuse the graph's ids).
     pub fn reserve_segment_ids_below(&mut self, next: u32) {

@@ -42,6 +42,8 @@ pub(crate) enum Forced {
     MaskedExtremes,
     /// The routed Waksman network (`routed`).
     Routed,
+    /// Hinted sorted keys checked by a grand product (`grand_product`).
+    GrandProduct,
     /// The cost rule of a target.
     CostRule(Target),
 }
@@ -112,6 +114,7 @@ fn plan_for(forced: Forced, demand: &Demand) -> Plan {
             Plan::Hinted { runs: live.iter().map(|&r| Run { first: r, last: r, pin: Pin::MaskedExtreme }).collect() }
         }
         Forced::Routed => Plan::Routed,
+        Forced::GrandProduct => Plan::GrandProduct,
         Forced::CostRule(target) => cost::choose_plan(demand, &cost::unit_costs(target)).0,
     }
 }
