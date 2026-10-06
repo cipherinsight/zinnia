@@ -746,6 +746,7 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
         }
         TupleIndex::Axes(expanded) => return static_array_subscript(b, val, &expanded),
     }
+    crate::helpers::array_ops::reject_unsupported_index_arrays(b, indices);
 
     // Expand a single Ellipsis (`...`) into the right number of full-range
     // slices, based on the source rank.

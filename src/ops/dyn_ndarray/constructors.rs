@@ -496,7 +496,7 @@ pub fn parse_shape_arg(b: &mut IRBuilder, val: &Value) -> Vec<usize> {
 }
 
 pub fn parse_dtype_kwarg(kwargs: &HashMap<String, Value>) -> NumberType {
-    if let Some(Value::Class(ZinniaType::Integer)) = kwargs.get("dtype") {
+    if let Some(Value::Class(ZinniaType::Integer | ZinniaType::Boolean)) = kwargs.get("dtype") {
         NumberType::Integer
     } else if let Some(Value::Class(ZinniaType::Float)) = kwargs.get("dtype") {
         NumberType::Float

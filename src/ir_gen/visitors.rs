@@ -1490,33 +1490,25 @@ impl IRGenerator {
         // P2 segarr-read-paths: native StaticArray dispatch BEFORE the
         // legacy boundary shim. Element / view / slice / multi-dim reads
         // operate directly on the segment without materialising a List.
-        //
-        // P5b: boolean-mask read on StaticArray dispatches to the native
-        // mask path BEFORE the materialise-index shim below, so the cached
-        // Boolean cells stay live.
         if matches!(val, Value::StaticArray { .. }) {
-            if slice_values.len() == 1 {
-                if let SliceIndex::Single(idx_val) = &slice_values[0] {
-                    if matches!(idx_val, Value::StaticArray { .. })
-                        && crate::helpers::static_array::mask::is_boolean_mask_static_array(
-                            &mut self.builder,
-                            idx_val,
-                        )
-                    {
-                        if let Some(out) =
-                            crate::helpers::static_array::mask::try_apply_boolean_mask_read(
-                                &mut self.builder,
-                                &val,
-                                idx_val,
-                            )
-                        {
-                            return out;
-                        }
-                    }
+            // An array-valued index: a boolean mask or integer positions,
+            // by its dtype (`subscript_with_index_array`); `a[m, :]` is `a[m]`.
+            let index_array = match slice_values.as_slice() {
+                [SliceIndex::Single(idx_val)] => Some(idx_val),
+                _ => crate::helpers::array_ops::leading_index_array(&self.builder, &slice_values),
+            };
+            if let Some(idx_val) = index_array {
+                if let Some(out) = crate::helpers::ndarray::subscript_with_index_array(
+                    &mut self.builder,
+                    &val,
+                    idx_val,
+                ) {
+                    return out;
                 }
             }
-            // Fall back to converting StaticArray indices to lists for
-            // the existing fancy-index path (see P4a notes).
+            // Several indices: integer index arrays among them (`a[idx, 1]`)
+            // read through `static_array_subscript`'s fancy path as lists.
+            crate::helpers::array_ops::reject_unsupported_index_arrays(&self.builder, &slice_values);
             let slice_values: Vec<SliceIndex> = slice_values
                 .into_iter()
                 .map(|si| match si {
@@ -1529,64 +1521,6 @@ impl IRGenerator {
                     other => other,
                 })
                 .collect();
-
-            // Fancy indexing (`arr[idx_array]` where `idx_array` is an
-            // integer composite) is not handled by `static_array_subscript`
-            // — its single-Single path only understands an integer scalar
-            // or a dynamic integer. Detect the composite-index case here
-            // and route through `try_advanced_index_static` on the
-            // materialised List representation, matching the `Value::List`
-            // arm below. Without this, a `List`-shaped index value falls
-            // into the "dynamic 1-D" arm and produces garbage addresses.
-            if slice_values.len() == 1 {
-                if let SliceIndex::Single(idx_value) = &slice_values[0] {
-                    if matches!(idx_value, Value::List(_) | Value::Tuple(_)) {
-                        let val_list = crate::helpers::static_array::base::to_value_list(
-                            &mut self.builder,
-                            &val,
-                        );
-                        if let Value::List(data) | Value::Tuple(data) = &val_list {
-                            match crate::helpers::ndarray::try_advanced_index_static(
-                                data, idx_value,
-                            ) {
-                                Ok(Some(result)) => {
-                                    self.relay_forall_eq_const_to_shaped_subscript_output(
-                                        &val, &result,
-                                    );
-                                    return result;
-                                }
-                                Ok(Option::None) => {}
-                                Err(msg) => {
-                                    if let Some(result) =
-                                        crate::helpers::ndarray::try_dynamic_boolean_mask_from_static(
-                                            &mut self.builder,
-                                            data,
-                                            idx_value,
-                                        )
-                                    {
-                                        return result;
-                                    }
-                                    if crate::helpers::static_array::mask::is_boolean_mask_static_array(
-                                        &mut self.builder,
-                                        idx_value,
-                                    ) {
-                                        if let Some(out) =
-                                            crate::helpers::static_array::mask::try_apply_boolean_mask_read(
-                                                &mut self.builder,
-                                                &val,
-                                                idx_value,
-                                            )
-                                        {
-                                            return out;
-                                        }
-                                    }
-                                    panic!("{}", msg);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
 
             let array_identity = Self::static_array_identity(&val);
             if let Some(array_identity) = array_identity.as_ref() {
@@ -1643,46 +1577,15 @@ impl IRGenerator {
 
         match &val {
             Value::List(data) | Value::Tuple(data) => {
-                // Advanced indexing: `array[bool_mask]` or `array[idx_array]`
-                // where the index itself is a static-shape composite. Try to
-                // resolve at compile time; on shape/typing errors return Err
-                // which we surface as a hard error to the user.
-                if slice_values.len() == 1 {
-                    if let SliceIndex::Single(idx_value) = &slice_values[0] {
-                        if matches!(idx_value, Value::List(_) | Value::Tuple(_)) {
-                            match crate::helpers::ndarray::try_advanced_index_static(
-                                data, idx_value,
-                            ) {
-                                Ok(Some(result)) => {
-                                    // Group 5c (E-axis): content fact relay for
-                                    // gather (boolean mask or fancy index) of a
-                                    // `forall_eq_const(arr, k)` input.
-                                    if let (Some(in_vid), Some(out_vid)) =
-                                        (val.value_id(), result.value_id())
-                                    {
-                                        crate::optim::resolver::relay_forall_eq_const_from_input(
-                                            &mut self.builder,
-                                            in_vid,
-                                            out_vid,
-                                        );
-                                    }
-                                    return result;
-                                }
-                                Ok(Option::None) => {} // not advanced indexing — fall through
-                                Err(msg) => {
-                                    if let Some(result) =
-                                        crate::helpers::ndarray::try_dynamic_boolean_mask_from_static(
-                                            &mut self.builder,
-                                            data,
-                                            idx_value,
-                                        )
-                                    {
-                                        return result;
-                                    }
-                                    panic!("{}", msg);
-                                }
-                            }
-                        }
+                // An array-valued index: a boolean mask or integer
+                // positions, by its dtype (`subscript_with_index_array`).
+                if let [SliceIndex::Single(idx_value)] = slice_values.as_slice() {
+                    if let Some(out) = crate::helpers::ndarray::subscript_with_index_array(
+                        &mut self.builder,
+                        &val,
+                        idx_value,
+                    ) {
+                        return out;
                     }
                 }
 
@@ -2336,45 +2239,26 @@ impl IRGenerator {
     }
 
     /// Write into a segment-backed static array (element, multi-dim, slice,
-    /// boolean-mask). Returns the array value to rebind.
+    /// boolean-mask, integer index array). Returns the array value to rebind.
     fn static_array_setitem(&mut self, current: &Value, indices: &[SliceIndex], value: Value) -> Value {
-        // Boolean-mask write (`arr[mask] = v`): dispatch before the generic
-        // setitem so the cached Boolean cells are seen, not materialised to
-        // a List that collapses the bool/int distinction. Snapshot the
-        // pre-write element bounds and deposit their widened union on the
-        // post-write value so downstream reductions keep bounds.
-        if let [SliceIndex::Single(mask)] = indices {
-            if matches!(mask, Value::StaticArray { .. })
-                && crate::helpers::static_array::mask::is_boolean_mask_static_array(
-                    &mut self.builder,
-                    mask,
-                )
-            {
-                let pre = crate::helpers::static_array::mask::capture_mask_write_pre_bounds(
-                    &mut self.builder,
-                    current,
-                    &value,
-                );
-                let updated = crate::helpers::static_array::mask::try_apply_boolean_mask_write(
-                    &mut self.builder,
-                    current,
-                    mask,
-                    &value,
-                )
-                .unwrap_or_else(|| {
-                    crate::helpers::static_array::write::static_array_setitem(
-                        &mut self.builder,
-                        current,
-                        indices,
-                        &value,
-                    )
-                });
-                crate::helpers::static_array::mask::deposit_mask_write_post(
-                    &mut self.builder,
-                    pre,
-                    &updated,
-                );
-                return updated;
+        use crate::helpers::array_ops::ArrayIndexKind;
+        // A single index array, by its dtype: a boolean mask, or the
+        // positions of a runtime-shaped index array. (Static index arrays
+        // scatter in `static_array_setitem` below.)
+        if let [SliceIndex::Single(idx)] = indices {
+            match crate::helpers::array_ops::array_index_kind(&self.builder, idx) {
+                Some(ArrayIndexKind::Mask) => return self.static_array_mask_setitem(current, idx, value),
+                Some(ArrayIndexKind::Positions) => {
+                    if let Value::DynamicNDArray(positions) = idx {
+                        return crate::helpers::array_ops::setitem_runtime_positions(
+                            &mut self.builder,
+                            current,
+                            positions,
+                            &value,
+                        );
+                    }
+                }
+                None => {}
             }
         }
         if indices.iter().any(|i| matches!(i, SliceIndex::NewAxis)) {
@@ -2392,6 +2276,40 @@ impl IRGenerator {
         )
     }
 
+    /// `current[mask] = value` for a boolean mask on a static array. Snapshot
+    /// the pre-write element bounds and deposit their widened union on the
+    /// post-write value so downstream reductions keep bounds.
+    fn static_array_mask_setitem(&mut self, current: &Value, mask: &Value, value: Value) -> Value {
+        let mask = match mask {
+            Value::DynamicNDArray(_) => {
+                panic!("assigning through a runtime-shaped boolean mask is not supported")
+            }
+            _ => crate::helpers::static_array::base::to_static_array(&mut self.builder, mask)
+                .expect("a boolean mask is an array of booleans"),
+        };
+        let pre = crate::helpers::static_array::mask::capture_mask_write_pre_bounds(
+            &mut self.builder,
+            current,
+            &value,
+        );
+        let updated = crate::helpers::static_array::mask::try_apply_boolean_mask_write(
+            &mut self.builder,
+            current,
+            &mask,
+            &value,
+        )
+        .unwrap_or_else(|| {
+            crate::helpers::static_array::write::static_array_setitem(
+                &mut self.builder,
+                current,
+                &[SliceIndex::Single(mask.clone())],
+                &value,
+            )
+        });
+        crate::helpers::static_array::mask::deposit_mask_write_post(&mut self.builder, pre, &updated);
+        updated
+    }
+
     /// Write into a bounded-dynamic array (boolean mask, slice or element).
     fn dynamic_array_setitem(
         &mut self,
@@ -2399,9 +2317,23 @@ impl IRGenerator {
         indices: &[SliceIndex],
         value: &Value,
     ) -> Value {
-        if let [SliceIndex::Single(mask)] = indices {
-            if crate::helpers::array_ops::is_boolean_mask_with(&mut self.builder, mask) {
-                return crate::helpers::array_ops::dyn_setitem_mask(&mut self.builder, data, mask, value);
+        use crate::helpers::array_ops::ArrayIndexKind;
+        if let [SliceIndex::Single(idx)] = indices {
+            match crate::helpers::array_ops::array_index_kind(&self.builder, idx) {
+                Some(ArrayIndexKind::Mask) => {
+                    return crate::helpers::array_ops::dyn_setitem_mask(&mut self.builder, data, idx, value)
+                }
+                Some(ArrayIndexKind::Positions) => {
+                    if let Value::DynamicNDArray(positions) = idx {
+                        return crate::helpers::array_ops::setitem_runtime_positions(
+                            &mut self.builder,
+                            &Value::DynamicNDArray(data.clone()),
+                            positions,
+                            value,
+                        );
+                    }
+                }
+                None => {}
             }
         }
         if indices.iter().any(|i| matches!(i, SliceIndex::Range(..))) {

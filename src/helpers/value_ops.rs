@@ -385,7 +385,12 @@ pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> 
                 let ff = ensure_float(b, fv);
                 b.ir_select_f(cond, &tf, &ff)
             } else {
-                b.ir_select_i(cond, tv, fv)
+                let out = b.ir_select_i(cond, tv, fv);
+                // A choice between two NumPy bools is a bool (`np.where(c, m1, m2)`).
+                if b.is_bool_cell(tv) && b.is_bool_cell(fv) {
+                    b.record_bool_cell(&out);
+                }
+                out
             }
         }
     }

@@ -836,11 +836,13 @@ impl IRGenerator {
                         }
                     }
                     // Handle dtype kwarg for type casting
-                    let cast_val = if let Some(dtype) = _visited_kwargs.get("dtype") {
-                        let to_float = matches!(dtype, Value::Class(ZinniaType::Float));
-                        self.cast_composite(val, to_float)
-                    } else {
-                        val.clone()
+                    let cast_val = match _visited_kwargs.get("dtype") {
+                        Some(Value::Class(ZinniaType::Boolean)) => self.truth_composite(val),
+                        Some(dtype) => {
+                            let to_float = matches!(dtype, Value::Class(ZinniaType::Float));
+                            self.cast_composite(val, to_float)
+                        }
+                        None => val.clone(),
                     };
                     // P1 segarr-foundation: numeric Python list/tuple inputs
                     // become segment-backed `Value::StaticArray`. Falls back
@@ -1486,12 +1488,10 @@ impl IRGenerator {
                 }
             }
             ("np", "where") => {
-                // 1-arg `np.where(cond)` forwards the boolean mask (for the
-                // `a[np.where(cond)] = v` pattern). Use the ORIGINAL,
-                // un-materialised arg: the legacy-materialised List view
-                // loses the StaticArray representation the boolean-mask
-                // write dispatch recognizes, silently degrading the mask
-                // to a scalar dynamic index (binding-audit case 0490).
+                // 1-arg `np.where(cond)` is `np.nonzero(cond)`: a tuple of
+                // index arrays, which indexes like the mask `cond`
+                // (`static_array::read::tuple_index`). Use the ORIGINAL,
+                // un-materialised arg (binding-audit case 0490).
                 if visited_args_orig.len() == 1 {
                     crate::ops::static_ndarray_ops::np_where(&mut self.builder, visited_args_orig)
                 } else {

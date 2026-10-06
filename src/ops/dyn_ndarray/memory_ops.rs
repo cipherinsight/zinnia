@@ -241,6 +241,10 @@ pub fn dyn_filter(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) 
     } = compact_by_mask(b, &elements, &mask_elements, &default_val, 1);
 
     let segment_id = crate::helpers::segment::alloc_and_write_values(b, &acc, data.dtype);
+    // The kept elements keep their dtype (the compaction's selects do not).
+    if b.is_bool_segment(data.segment_id) {
+        b.mark_bool_segment(segment_id);
+    }
 
     // Deposit the mask-read view so an `a[mask] op= v` round trip can cancel
     // the shift network into per-element selects at the write (see

@@ -26,8 +26,9 @@ pub fn dyn_ndim(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
     b.ir_constant_int(data.meta.logical_shape.len() as i64)
 }
 
-pub fn dyn_dtype(data: &DynamicNDArrayData) -> Value {
+pub fn dyn_dtype(b: &IRBuilder, data: &DynamicNDArrayData) -> Value {
     match data.dtype {
+        NumberType::Integer if b.is_bool_segment(data.segment_id) => Value::Class(ZinniaType::Boolean),
         NumberType::Integer => Value::Class(ZinniaType::Integer),
         NumberType::Float => Value::Class(ZinniaType::Float),
         NumberType::Complex => Value::Class(ZinniaType::Complex),
@@ -72,6 +73,7 @@ pub fn dyn_size(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
 // ── Phase 2: simple value ops ─────────────────────────────────────
 
 pub fn dyn_astype(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) -> Value {
+    let to_bool = matches!(args.first(), Some(Value::Class(ZinniaType::Boolean)));
     let new_dtype = match args.first() {
         Some(Value::Class(ZinniaType::Complex)) => NumberType::Complex,
         Some(Value::Class(ZinniaType::Float)) => NumberType::Float,
@@ -88,7 +90,13 @@ pub fn dyn_astype(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) 
                 crate::helpers::value_ops::pack_complex_value(real, imag)
             }
             NumberType::Float => b.ir_float_cast(&val),
-            NumberType::Integer => b.ir_int_cast(&val),
+            // `astype(bool)` is each element's truth value (NumPy: `x != 0`);
+            // `astype(int)` of a bool array has integer cells.
+            NumberType::Integer if to_bool => b.bool_dtype_cell(val),
+            NumberType::Integer if matches!(val, Value::Integer(_) | Value::Boolean(_)) => {
+                b.int_dtype_cell(val)
+            }
+            NumberType::Integer => b.ir_int_cast(val),
         })
         .collect();
 
