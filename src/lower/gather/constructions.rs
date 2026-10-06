@@ -60,7 +60,7 @@ impl Construction for ScanByRunningProducts {
         vec![Candidate {
             pre: Vec::new(),
             post: lanes(group).chain([Requirement::Shared { group: group.id, name: ENCODING }]).collect(),
-            cost: cost::scan_running_products(group.shared.len() as u64, cx.target),
+            cost: cost::scan_running_products(group.shared.len() as u64, kind == ScanKind::Argmax, cx.target),
             emitter: Box::new(ScanEmitter { kind, flags: group.shared.clone(), by_products: true, result: None }),
         }]
     }

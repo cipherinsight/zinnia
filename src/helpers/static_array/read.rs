@@ -2174,9 +2174,13 @@ fn finish_multi_axis_slice(
                 break;
             }
             let diff = b.ir_sub_i(e_ir, s_ir);
-            let zero = b.ir_constant_int(0);
-            let neg = b.ir_less_than_i(&diff, &zero);
-            let extent = b.ir_select_i(&neg, &zero, &diff);
+            let extent = if crate::lower::gather::scan_bounds_ordered(b, s_ir, e_ir) {
+                diff
+            } else {
+                let zero = b.ir_constant_int(0);
+                let neg = b.ir_less_than_i(&diff, &zero);
+                b.ir_select_i(&neg, &zero, &diff)
+            };
             match extent.value_id() {
                 Some(vid) if *out_axis < by_out_axis.len() => by_out_axis[*out_axis] = Some(vid),
                 _ => {

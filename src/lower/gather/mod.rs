@@ -43,7 +43,7 @@ use crate::builder::IRBuilder;
 use crate::ir_defs::IR;
 use crate::lower::{ArrayOp, OpKind};
 use crate::optim::predicates::formula::{BoolOp, CmpOp, ContractTerm, ContractVar};
-use crate::types::Value;
+use crate::types::{StmtId, Value};
 
 /// The `kind` position of the 0/1 values `flags` (not empty): a placeholder
 /// the layer lowers by `scan`. The fact `0 <= v < n` is recorded (every
@@ -102,18 +102,49 @@ pub fn element_lane(b: &mut IRBuilder, cells: &[Value], index: &Value) -> Option
 
 /// Whether `v` is a scan placeholder's lane plus a constant.
 pub fn is_scan_result(b: &IRBuilder, v: &Value) -> bool {
-    let Some(mut stmt) = v.stmt_id() else { return false };
+    scan_source(b, v).is_some()
+}
+
+/// `true` when `stop - start >= 0` wherever both are used: `start` is the
+/// first set position of some flags plus `c1` and `stop` the last set
+/// position of the same flags plus `c2 >= c1`. Both scans require a set
+/// flag (asserted by the frontend where they are used), and then the first
+/// set position is at most the last. A slice's extent `max(0, stop - start)`
+/// is then `stop - start`.
+pub fn scan_bounds_ordered(b: &IRBuilder, start: &Value, stop: &Value) -> bool {
+    let (Some((first, c1)), Some((last, c2))) = (scan_source(b, start), scan_source(b, stop)) else {
+        return false;
+    };
+    let lane = |s: StmtId| match &b.stmts[s as usize].ir {
+        IR::ArrayOp(op) => Some((op.kind, b.stmts[s as usize].arguments.clone())),
+        _ => None,
+    };
+    match (lane(first), lane(last)) {
+        (Some((OpKind::FirstSet, flags)), Some((OpKind::LastSet, same))) => flags == same && c2 >= c1,
+        _ => false,
+    }
+}
+
+/// `(lane, c)` when `v` is a scan placeholder's lane `lane` plus the
+/// constant `c` (through `+`/`-` of constants).
+fn scan_source(b: &IRBuilder, v: &Value) -> Option<(StmtId, i64)> {
+    let mut stmt = v.stmt_id()?;
+    let mut offset = 0i64;
     for _ in 0..8 {
-        let Some(s) = b.stmts.get(stmt as usize) else { return false };
-        let constant = |id: u32| matches!(b.stmts.get(id as usize).map(|s| &s.ir), Some(IR::ConstantInt { .. }));
-        stmt = match (&s.ir, s.arguments.as_slice()) {
-            (IR::ArrayOp(op), _) => return ScanKind::of(op.kind).is_some(),
-            (IR::AddI | IR::SubI, [x, c]) if constant(*c) => *x,
-            (IR::AddI, [c, x]) if constant(*c) => *x,
-            _ => return false,
+        let s = b.stmts.get(stmt as usize)?;
+        let constant = |id: StmtId| match b.stmts.get(id as usize).map(|s| &s.ir) {
+            Some(IR::ConstantInt { value }) => Some(*value),
+            _ => None,
+        };
+        (stmt, offset) = match (&s.ir, s.arguments.as_slice()) {
+            (IR::ArrayOp(op), _) => return ScanKind::of(op.kind).map(|_| (stmt, offset)),
+            (IR::AddI, [x, c]) if constant(*c).is_some() => (*x, offset + constant(*c)?),
+            (IR::AddI, [c, x]) if constant(*c).is_some() => (*x, offset + constant(*c)?),
+            (IR::SubI, [x, c]) if constant(*c).is_some() => (*x, offset - constant(*c)?),
+            _ => return None,
         };
     }
-    false
+    None
 }
 
 /// The fact `lo <= v <= hi`, which every construction's result satisfies.

@@ -45,7 +45,7 @@ pub(super) fn units(target: Target) -> Units {
             mul_add: 1,
             add: 1,
             eq_const: 3,
-            select: 2,
+            select: 1,
             less_than: 8,
             native_read: 10,
             native_element: 3,
@@ -58,9 +58,11 @@ pub(super) fn units(target: Target) -> Units {
 /// has[i]`) and the result's sum. The one-hot bits `lead[i-1] has[i]` are
 /// then not cells; a consumer of the encoding pays for them
 /// (`onehot_cells`).
-pub(super) fn scan_running_products(n: u64, target: Target) -> u64 {
+pub(super) fn scan_running_products(n: u64, argmax: bool, target: Target) -> u64 {
     let u = units(target);
-    n * u.mul + n.saturating_sub(1) * u.add
+    // argmax: `(n - 1) lead[n-1]` off the sum and `lead[n-1]` onto [v == 0].
+    let none_set = if argmax { u.mul + u.add } else { 0 };
+    n * u.mul + n.saturating_sub(1) * u.add + none_set
 }
 
 /// The scan's one-hot bits as cells, paid by a consumer of its encoding.
