@@ -1107,7 +1107,7 @@ impl IRBuilder {
             | IR::FloorDivF
             | IR::ModF
             | IR::PowF
-            | IR::PowFI
+            | IR::PowFI { .. }
             | IR::AbsF
             | IR::SignF
             | IR::SinF
@@ -1741,7 +1741,22 @@ impl IRBuilder {
     /// the code runs; the halo2-base lowering of a runtime exponent also
     /// decomposes it into 6 bits, so where the code does not run the
     /// exponent is 0 (see `builder/guard.rs`).
+    /// Integer power. NumPy raises `ValueError` for an integer to a negative
+    /// integer power: a negative constant exponent is a compile error, and a
+    /// runtime exponent not proven non-negative is asserted to be (no proof
+    /// where the power runs with a negative exponent).
     pub fn ir_pow_i(&mut self, base: &Value, exp: &Value) -> Value {
+        match exp.int_val() {
+            Some(e) if e < 0 => panic!(
+                "Integers to negative integer powers are not allowed (NumPy raises ValueError for an integer `** {e}`)"
+            ),
+            Some(_) => {}
+            None => {
+                if !self.ask_bounds(exp).is_some_and(|(lo, _)| lo >= 0) {
+                    self.ir_assert_non_neg_i(exp);
+                }
+            }
+        }
         self.power(&IR::PowI, "pow_i", base, exp)
     }
 
@@ -2092,27 +2107,47 @@ impl IRBuilder {
     /// `|e| <= MAX_UNROLLED_POWER` (`x ** 2.0`, `x ** -2.0`) is the exact
     /// fixed-point chain of [`Self::constant_power_f`]; any other exponent
     /// (fractional or runtime) is `PowF`, `exp(b * log a)` on every backend.
+    ///
+    /// A constant `0.5` is the square root (`SqrtF`: the exact floor root,
+    /// whose `x >= 0` requirement leaves no proof for a negative base, where
+    /// NumPy gives `nan`; `0 ** 0.5 == 0`).
     pub fn ir_pow_f(&mut self, base: &Value, exp: &Value) -> Value {
         match exp.float_val() {
             Some(e) if e.fract() == 0.0 && e.abs() <= MAX_UNROLLED_POWER as f64 => {
                 self.constant_power_f(base, e as i64)
             }
+            Some(e) if e == 0.5 => self.ir_sqrt_f(base),
             _ => self.power(&IR::PowF, "pow_f", base, exp),
         }
     }
 
     /// Float base raised to an Integer exponent. A compile-time exponent with
     /// `|e| <= MAX_UNROLLED_POWER` is the chain of
-    /// [`Self::constant_power_f`]; the backends' `PowFI` lowering computes
-    /// every power up to its largest supported exponent and selects one,
-    /// which only a runtime exponent needs (halo2-base accepts exponents
-    /// below 9). The `pow_f` contract's requirement (`base != 0 or
-    /// exp >= 0`) holds for every non-negative exponent, and a negative one
-    /// gets the reciprocal's `div_f` requirement instead.
+    /// [`Self::constant_power_f`]; any other is `PowFI`
+    /// (`kernel::fp_pow_int`, the same chain over the exponent's bits, run
+    /// by every backend), with as many bits as the exponent's proven range
+    /// needs ([`Self::exponent_bits`]). The `pow_f` contract's requirement
+    /// (`base != 0 or exp >= 0`) is NumPy's `inf` case.
     pub fn ir_pow_f_int(&mut self, base: &Value, exp: &Value) -> Value {
         match exp.int_val() {
             Some(e) if e.abs() <= MAX_UNROLLED_POWER => self.constant_power_f(base, e),
-            _ => self.power(&IR::PowFI, "pow_f", base, exp),
+            _ => {
+                let exponent_bits = self.exponent_bits(exp);
+                self.power(&IR::PowFI { exponent_bits }, "pow_f", base, exp)
+            }
+        }
+    }
+
+    /// Bits of `|e|` for an integer exponent: from its proven range
+    /// (`ask_bounds`: facts, preconditions, the dtype bound), else the full
+    /// int64 magnitude (64 bits, `|i64::MIN| = 2^63`).
+    fn exponent_bits(&mut self, exp: &Value) -> u32 {
+        match self.ask_bounds(exp) {
+            Some((lo, hi)) => {
+                let magnitude = lo.unsigned_abs().max(hi.unsigned_abs());
+                (u64::BITS - magnitude.leading_zeros()).max(1)
+            }
+            None => 64,
         }
     }
 
@@ -3224,7 +3259,7 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
             }
         }),
         IR::PowF => float_binary_ir(ir_id, args, |a, b| a.powf(b)),
-        IR::PowFI => {
+        IR::PowFI { .. } => {
             // Float base ^ Integer exponent. Constant-fold from
             // (float_val(args[0]), int_val(args[1])).
             let la = args[0].float_val();
@@ -3617,7 +3652,7 @@ fn min_required_arity(ir: &IR) -> usize {
         | IR::FloorDivF
         | IR::ModF
         | IR::PowF
-        | IR::PowFI
+        | IR::PowFI { .. }
         | IR::ArcTan2F
         | IR::SqrtProductIF
         | IR::EqI
@@ -3675,7 +3710,7 @@ fn unknown_value_for_ir(ir: &IR, ir_id: StmtId) -> Value {
         | IR::FloorDivF
         | IR::ModF
         | IR::PowF
-        | IR::PowFI
+        | IR::PowFI { .. }
         | IR::AbsF
         | IR::SignF
         | IR::SinF

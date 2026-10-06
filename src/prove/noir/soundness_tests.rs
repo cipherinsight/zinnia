@@ -1023,7 +1023,7 @@ fn every_lowered_op_matches_the_mock() {
         (IR::ArcSinF, vec![s], false),
         (IR::ArcSinF, vec![f], false),
         (IR::PowF, vec![h, s], true),
-        (IR::PowFI, vec![h, three], true),
+        (IR::PowFI { exponent_bits: 2 }, vec![h, three], true),
         (IR::SinHF, vec![f], true),
         (IR::CosHF, vec![s], true),
         (IR::TanHF, vec![f], true),

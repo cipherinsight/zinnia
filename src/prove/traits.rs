@@ -236,14 +236,15 @@ pub trait Synthesizer {
         a: &Self::CellRef,
         b: &Self::CellRef,
     ) -> Result<Self::CellRef, ProvingError>;
-    /// Float base raised to an Integer exponent. Backends that don't
-    /// special-case integer exponents may fall back to `pow_f` after a
-    /// float-cast on the exponent, but lowering as integer-exponent
-    /// square-and-multiply avoids `exp(b * log(a))` overhead.
+    /// Float base raised to an Integer exponent with `|b| < 2^exponent_bits`
+    /// (`IR::PowFI`, `kernel::fp_pow_int`). The mock, halo2-base and Noir
+    /// implement the kernel's chain; the default (the legacy halo2
+    /// backend) falls back to `pow_f` after a float cast.
     fn pow_f_int(
         &mut self,
         a: &Self::CellRef,
         b: &Self::CellRef,
+        _exponent_bits: u32,
     ) -> Result<Self::CellRef, ProvingError> {
         let bf = self.float_cast(b)?;
         self.pow_f(a, &bf)

@@ -37,7 +37,7 @@ def test_constant_integer_powers_are_chains(body):
     assert "ExpFIR" not in classes and "LogFIR" not in classes
 
 
-@pytest.mark.parametrize("body", ["x ** 0.5", "x ** 65.0", "x ** -1.5"])
+@pytest.mark.parametrize("body", ["x ** 0.25", "x ** 65.0", "x ** -1.5"])
 def test_other_constant_exponents_keep_exp_log(body):
     assert "PowFIR" in ir_classes(kernel(body))
 
@@ -63,3 +63,78 @@ def test_zero_to_a_negative_power_has_no_proof(body):
     if nargo_available():
         with pytest.raises(Exception):
             noir_field_publics(program, 0.0)
+
+
+# ── runtime integer exponents (PowFI): one definition on every backend ───
+
+def runtime_kernel():
+    return 'def kernel(x: Float[Array, "4"], n: Integer):\n    return x ** n\n', None
+
+
+@pytest.mark.parametrize("n", [0, 1, 5, -3, 13])
+def test_runtime_integer_powers_match_numpy_on_every_backend(n):
+    source, _ = runtime_kernel()
+    assert_all_backends_match_numpy(source, X, n, atol=1e-6 * max(1.0, float(np.max(np.abs(X) ** abs(n)))))
+
+
+@pytest.mark.parametrize("n", [3, -2, 7])
+def test_a_runtime_exponent_gives_the_constant_chains_value(n):
+    runtime = run_mock(compile_kernel(runtime_kernel()[0]), X, n)
+    constant = run_mock(compile_kernel(kernel(f"x ** {n}")), X)
+    assert runtime == constant
+
+
+def test_runtime_zero_to_a_negative_power_has_no_proof():
+    program = compile_kernel('def kernel(x: Float, n: Integer):\n    return x ** n\n')
+    assert program.prove(0.0, -2, backend="mock").proof_bytes_hex != "mock_satisfied"
+    with pytest.raises(Exception):
+        halo2_field_publics(program, 0.0, -2)
+    if nargo_available():
+        with pytest.raises(Exception):
+            noir_field_publics(program, 0.0, -2)
+    assert program.prove(0.0, 0, backend="mock").proof_bytes_hex == "mock_satisfied"  # 0 ** 0 == 1
+
+
+def test_the_exponent_width_comes_from_its_proven_range():
+    from zinnia import ZKCircuit
+    narrow = ZKCircuit.from_source(
+        "kernel", "@requires(lambda n: 0 <= n <= 6)\ndef kernel(x: Float, n: Integer):\n    return x ** n\n").compile()
+    wide = compile_kernel('def kernel(x: Float, n: Integer):\n    return x ** n\n')
+    bits = lambda p: [s["ir_instance"]["ir_data"]["exponent_bits"] for s in p.get_ir_stmts()
+                      if s["ir_instance"]["__class__"] == "PowFIIR"]
+    assert bits(narrow) == [3]
+    assert bits(wide) == [64]
+
+
+# ── integer ** negative integer: NumPy raises ────────────────────────────
+
+def test_integer_to_a_negative_constant_power_is_rejected():
+    from zinnia.debug.exception.base import ZinniaException
+    with pytest.raises(ZinniaException, match="negative integer powers are not allowed"):
+        compile_kernel('def kernel(k: Integer):\n    return k ** -2\n')
+
+
+def test_integer_to_a_negative_runtime_power_has_no_proof():
+    program = compile_kernel('def kernel(k: Integer, n: Integer):\n    return k ** n\n')
+    assert program.prove(3, 2, backend="mock").proof_bytes_hex == "mock_satisfied"
+    assert program.prove(3, -1, backend="mock").proof_bytes_hex != "mock_satisfied"
+    with pytest.raises(Exception):
+        halo2_field_publics(program, 3, -1)
+
+
+# ── a constant ** 0.5 is the square root ─────────────────────────────────
+
+def test_half_power_is_the_exact_square_root():
+    classes = ir_classes(kernel("np.abs(x) ** 0.5"))
+    assert "SqrtFIR" in classes and "PowFIR" not in classes
+    y = np.abs(X)
+    assert_all_backends_match_numpy('def kernel(x: Float[Array, "4"]):\n    return x ** 0.5\n', y, atol=1e-9)
+    assert run_mock(compile_kernel(kernel("x ** 0.5")), y) == run_mock(compile_kernel(kernel("np.sqrt(x)")), y)
+
+
+def test_half_power_of_a_negative_number_has_no_proof():
+    program = compile_kernel('def kernel(x: Float):\n    return x ** 0.5\n')
+    assert program.prove(-2.0, backend="mock").proof_bytes_hex != "mock_satisfied"
+    with pytest.raises(Exception):
+        halo2_field_publics(program, -2.0)
+    assert program.prove(0.0, backend="mock").proof_bytes_hex == "mock_satisfied"

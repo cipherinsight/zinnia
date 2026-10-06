@@ -1225,8 +1225,8 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn pow_f(&mut self, base: &Self::CellRef, exp: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         self.fixed_pow(base, exp)
     }
-    fn pow_f_int(&mut self, base: &Self::CellRef, exp: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        self.fixed_pow_int(base, exp)
+    fn pow_f_int(&mut self, base: &Self::CellRef, exp: &Self::CellRef, exponent_bits: u32) -> Result<Self::CellRef, ProvingError> {
+        self.fixed_pow_int(base, exp, exponent_bits)
     }
     fn abs_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.abs_i(a) }
     fn sign_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.sign_i(a) }

@@ -260,36 +260,14 @@ impl Synthesizer for MockSynthesizer {
         Ok(self.domain_result(value, || format!("{x} ** {y} has no real value inside the fixed-point window")))
     }
 
-    /// Float base, integer exponent: repeated fixed-point multiplication,
-    /// rescaling after each product as the circuits do (the trait default
-    /// went through `exp(n * log a)` in f64, which differs in the low bits;
-    /// cases 0329/0330). A negative exponent divides 1 by the power.
-    fn pow_f_int(&mut self, base: &MockCell, exp: &MockCell) -> Result<MockCell, ProvingError> {
-        let e = kernel::fp_to_i64(exp.fp());
-        let one = kernel::quantize_to_fp(1.0, self.prec());
-        let mut power = one;
-        // The circuit multiplies one factor at a time (and accepts only
-        // small exponents); a huge witness exponent must not hang the mock,
-        // so beyond 64 factors square-and-multiply is used instead.
-        if e.unsigned_abs() <= 64 {
-            for _ in 0..e.unsigned_abs() {
-                power = kernel::fp_mul_rescale(power, base.fp(), self.prec()).0;
-            }
-        } else {
-            let mut square = base.fp();
-            let mut rest = e.unsigned_abs();
-            while rest > 0 {
-                if rest & 1 == 1 {
-                    power = kernel::fp_mul_rescale(power, square, self.prec()).0;
-                }
-                square = kernel::fp_mul_rescale(square, square, self.prec()).0;
-                rest >>= 1;
-            }
-        }
-        if e < 0 {
-            return self.div_f(&MockCell(one), &MockCell(power));
-        }
-        Ok(MockCell(power))
+    /// `kernel::fp_pow_int`; outside its domain every backend has no proof.
+    fn pow_f_int(&mut self, base: &MockCell, exp: &MockCell, exponent_bits: u32) -> Result<MockCell, ProvingError> {
+        let prec = self.prec();
+        let value = kernel::fp_pow_int(base.fp(), exp.fp(), exponent_bits, prec);
+        let (x, e) = (kernel::dequantize_from_fp(base.fp(), prec), kernel::fp_to_i64(exp.fp()));
+        Ok(self.domain_result(value, || {
+            format!("{x} ** {e}: zero to a negative power, |e| >= 2^{exponent_bits}, or beyond the fixed-point window")
+        }))
     }
 
     fn abs_f(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {

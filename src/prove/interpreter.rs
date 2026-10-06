@@ -158,7 +158,7 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
             IR::FloorDivF => Some(synth.floor_div_f(&args[0], &args[1])?),
             IR::ModF => Some(synth.mod_f(&args[0], &args[1])?),
             IR::PowF => Some(synth.pow_f(&args[0], &args[1])?),
-            IR::PowFI => Some(synth.pow_f_int(&args[0], &args[1])?),
+            IR::PowFI { exponent_bits } => Some(synth.pow_f_int(&args[0], &args[1], *exponent_bits)?),
             IR::AbsF => Some(synth.abs_f(&args[0])?),
             IR::SignF => Some(synth.sign_f(&args[0])?),
 

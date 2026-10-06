@@ -247,16 +247,6 @@ fn fixed_point_multiplication_is_pinned() {
     assert_sound("product_sum", &*dot, &inputs, &[expected], &[]);
 }
 
-/// The mock's power: 1.0 multiplied by the base |e| times, `1 / power`
-/// for a negative exponent.
-fn mock_power(base: Fp, e: i64) -> Fp {
-    let mut power = q(1.0);
-    for _ in 0..e.unsigned_abs() {
-        power = kernel::fp_mul_rescale(power, base, PRECISION_BITS).0;
-    }
-    if e < 0 { kernel::fp_div_prescale(q(1.0), power, PRECISION_BITS) } else { power }
-}
-
 /// `x * float(n)` is the exact `x·n`; a constant `m·2^s` factor rescales by
 /// `P - s` bits only; both equal the kernel's `fp_mul_rescale` and every
 /// remaining hint is pinned.
@@ -314,20 +304,26 @@ fn divisions_by_integer_valued_divisors_are_pinned() {
     }
 }
 
+/// `PowFI` proves `kernel::fp_pow_int` (the mock's and Noir's value) with
+/// every hint pinned; no witness for `|e| >= 2^bits` or `0 ** -n`.
 #[test]
 fn powers_follow_the_mock_and_are_pinned() {
-    for e in [0i64, 1, 2, 6, -2] {
-        let by_constant = with_constant_rhs(|s, a, b| s.pow_f_int(a, b), int(e));
-        for base in [1.5, -0.7, 2.0] {
-            assert_sound(&format!("{base} ** {e}"), &*by_constant, &[q(base)], &[mock_power(q(base), e)], &[]);
-        }
+    let with_bits = |bits: u32| -> Box<Op> { Box::new(move |s, c| Ok(vec![s.pow_f_int(&c[0], &c[1], bits)?])) };
+    let four = with_bits(4);
+    for (base, e) in [(1.25, 0i64), (1.25, 5), (-0.7, 15), (2.0, -3), (-1.5, -1)] {
+        let expected = kernel::fp_pow_int(q(base), int(e), 4, PRECISION_BITS).unwrap();
+        assert_sound(&format!("{base} ** {e} (4 bits)"), &*four, &[q(base), int(e)], &[expected], &[]);
     }
-    let dynamic = binary(|s, a, b| s.pow_f_int(a, b));
-    for e in [0i64, 1, 5, 8] {
-        assert_sound(&format!("1.25 ** {e} (runtime)"), &*dynamic, &[q(1.25), int(e)], &[mock_power(q(1.25), e)], &[]);
+    let wide = with_bits(64);
+    for (base, e) in [(1.0000001, 1000i64), (0.5, -20), (-1.0, i64::MAX)] {
+        let honest = synthesize(&*wide, &[q(base), int(e)], &[]);
+        assert!(honest.accepted, "{base} ** {e}: honest witness rejected");
+        assert_eq!(honest.outputs, vec![kernel::fp_pow_int(q(base), int(e), 64, PRECISION_BITS).unwrap()]);
     }
-    assert!(!synthesize(&*dynamic, &[q(1.25), int(9)], &[]).accepted, "an exponent above 8 has no witness");
-    assert!(!synthesize(&*dynamic, &[q(1.25), int(-1)], &[]).accepted);
+    assert!(!synthesize(&*four, &[q(1.25), int(16)], &[]).accepted, "|e| = 16 needs 5 bits");
+    assert!(!synthesize(&*four, &[q(1.25), int(-16)], &[]).accepted);
+    assert!(!synthesize(&*four, &[q(0.0), int(-1)], &[]).accepted, "0 ** -1 is NumPy's inf");
+    assert!(!synthesize(&*wide, &[q(2.0), int(40)], &[]).accepted, "2 ** 40 leaves the window");
     // A float exponent (`PowF`), constant or not, is `kernel::fp_pow`
     // (exp/log), the mock's and Noir's value; fractional exponents included.
     for (base, e) in [(1.5, 3.0), (2.0, 0.5), (2.0, -2.0)] {
@@ -1278,6 +1274,7 @@ fn new_lowerings_are_witness_independent() {
         ("exp", unary(|s, a| s.exp_f(a)), vec![q(-3.5)]),
         ("log", unary(|s, a| s.log_f(a)), vec![q(7.25)]),
         ("pow_f", binary(|s, a, b| s.pow_f(a, b)), vec![q(-1.5), q(3.0)]),
+        ("pow_f_int", binary(|s, a, b| s.pow_f_int(a, b, 5)), vec![q(-1.5), int(-7)]),
         ("pow", binary(|s, a, b| s.pow_i(a, b)), vec![int(3), int(5)]),
         ("int_cast", unary(|s, a| s.int_cast(a)), vec![q(-2.5)]),
     ];

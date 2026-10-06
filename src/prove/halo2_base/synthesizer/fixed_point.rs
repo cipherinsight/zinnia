@@ -569,47 +569,48 @@ impl Halo2BaseSynthesizer<'_> {
         self.mul_by_constant(x, 1i128 << bits)
     }
 
-    /// Float base, integer exponent, as the mock: `power = 1` multiplied by
-    /// the base `|e|` times with the fixed-point product, then `1 / power`
-    /// for a negative exponent. A constant exponent unrolls exactly that
-    /// chain (the first product, `1 · base`, is the base itself). A runtime
-    /// exponent is asserted into `[0, 8]` (larger ones have no witness), all
-    /// nine powers are computed, and the result is the inner product of the
-    /// indicators `[e == i]` with them: the bound leaves exactly one
-    /// indicator equal to 1.
-    pub(super) fn fixed_pow_int(&mut self, base: &Halo2BaseCell, exp: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
-        if self.is_const_cell(exp) {
-            let e = kernel::fp_to_i64(exp.value);
-            let power = self.power_chain(base, e.unsigned_abs())?;
-            if e >= 0 {
-                return Ok(power);
-            }
-            let one = self.constant_float(1.0)?;
-            return self.fixed_div(&one, &power);
+    /// `a ** e` for a float `a` and an integer `e`, by `kernel::fp_pow_int`
+    /// (Noir's `qpow_int` is the same): square-and-multiply over the
+    /// `exponent_bits` low bits of `|e|`, most significant first, from 1.0,
+    /// on `r = a` (`e >= 0`) or `r = 1.0 / a` (`e < 0`).
+    ///
+    /// Soundness: the sign and magnitude of `e` are pinned (`sign_and_abs`);
+    /// `num_to_bits` decomposes `|e|` into `exponent_bits` booleans that
+    /// recompose it, so there is no witness for `|e| >= 2^exponent_bits`.
+    /// The reciprocal divides by `a` only when `e < 0` (by 1.0 otherwise), and
+    /// `e < 0` with `a == 0` (NumPy's `inf`) is an asserted bit. Every `mul_f`
+    /// and the division pin their quotients (and window-check them, the
+    /// kernel's `None`), and the multiplier of each step is a select on a
+    /// pinned bit, so the output is a function of `(a, e)`: the kernel's value.
+    pub(super) fn fixed_pow_int(&mut self, a: &Halo2BaseCell, e: &Halo2BaseCell, exponent_bits: u32) -> Result<Halo2BaseCell, ProvingError> {
+        let precision_bits = self.params.precision_bits;
+        if !(1..=64).contains(&exponent_bits) {
+            return Err(ProvingError::synthesis(format!("pow_f_int: unsupported exponent width {exponent_bits}")));
         }
-        const MAX_EXP: u64 = 8;
-        self.assert_less(exp, Operand::Constant(MAX_EXP as i128 + 1))?;
-        let mut choices = Vec::with_capacity(MAX_EXP as usize + 1);
-        let mut power = self.constant_float(1.0)?;
-        for i in 0..=MAX_EXP {
-            if i > 0 {
-                power = if i == 1 { *base } else { self.fixed_mul(&power, base)? };
-            }
-            let index = self.constant_int(i as i64)?;
-            choices.push((self.eq_i(exp, &index)?, power));
+        if kernel::fp_pow_int(a.value, e.value, exponent_bits, precision_bits).is_none() {
+            let (x, n) = (kernel::dequantize_from_fp(a.value, precision_bits), kernel::fp_to_i64(e.value));
+            self.note_unsat(move || format!("{x} ** {n}: zero to a negative power, |e| >= 2^{exponent_bits}, or beyond the window"));
         }
-        Ok(self.one_hot_combination(&choices))
-    }
+        let one = self.constant_float(1.0)?;
+        let (negative, magnitude) = self.sign_and_abs(e)?;
+        let a_is_zero = self.is_zero_bit(a);
+        let infinite = self.logical_and(&negative, &a_is_zero)?;
+        let finite = self.logical_not(&infinite)?;
+        self.assert_true(&finite)?;
+        let divisor = self.select_bit(&negative, a, &one)?;
+        let reciprocal = self.fixed_div(&one, &divisor)?;
+        let factor = self.select_bit(&negative, &reciprocal, a)?;
 
-    /// `base^e` by `e - 1` fixed-point products, left to right (`1.0` for
-    /// `e = 0`), the mock's rounding.
-    fn power_chain(&mut self, base: &Halo2BaseCell, e: u64) -> Result<Halo2BaseCell, ProvingError> {
-        if e == 0 {
-            return self.constant_float(1.0);
-        }
-        let mut power = *base;
-        for _ in 1..e {
-            power = self.fixed_mul(&power, base)?;
+        let magnitude_cell = self.assigned(&magnitude);
+        let bits = self.gate.num_to_bits(self.builder.main(0), magnitude_cell, exponent_bits as usize);
+        let mut power = one;
+        for assigned in bits.into_iter().rev() {
+            let value = *assigned.value();
+            let bit = self.wrap(assigned, value);
+            self.mark_bit(&bit);
+            power = self.fixed_mul(&power, &power)?;
+            let multiplier = self.select_bit(&bit, &factor, &one)?;
+            power = self.fixed_mul(&power, &multiplier)?;
         }
         Ok(power)
     }

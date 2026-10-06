@@ -153,7 +153,7 @@ fn role(ir: &IR, operands: usize) -> Role {
         | IR::FloorDivF
         | IR::ModF
         | IR::PowF
-        | IR::PowFI
+        | IR::PowFI { .. }
         | IR::AbsF
         | IR::SignF
         | IR::SinF

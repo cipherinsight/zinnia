@@ -306,7 +306,7 @@ impl IROp for IR {
             | IR::FloorDivF
             | IR::ModF
             | IR::PowF
-            | IR::PowFI
+            | IR::PowFI { .. }
             | IR::AbsF
             | IR::SignF => {
                 let _ = args;

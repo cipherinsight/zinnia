@@ -914,6 +914,28 @@ pub fn qpow(base: Field, exp_q: Field) -> Field {
     }
 }
 
+/// Q32 a ** e for an integer e (Zinnia's IR::PowFI), bit for bit
+/// kernel::fp_pow_int: square-and-multiply over the B low bits of |e|, most
+/// significant first, from 1.0, on r = a (e >= 0) or the reciprocal qdiv(Q, a)
+/// (e < 0). No proof for |e| >= 2^B (to_le_bits recomposes |e| from B bits),
+/// for a == 0 with e < 0 (NumPy's inf), or where a product leaves the window.
+/// A product under a zero bit is skipped (multiplying by 1.0 is exact), as in
+/// the kernel; its window check then does not apply either.
+pub fn qpow_int<let B: u32>(base: Field, e: Field) -> Field {
+    let (negative, magnitude) = sign_abs(e);
+    assert(!negative | (base != 0), "qpow_int: zero to a negative power");
+    let factor = if negative { qdiv(Q, base) } else { base };
+    let bits: [bool; B] = magnitude.to_le_bits();
+    let mut acc: Field = Q;
+    for j in 0..B {
+        acc = qmul(acc, acc);
+        if bits[B - 1 - j] {
+            acc = qmul(acc, factor);
+        }
+    }
+    acc
+}
+
 /// Float base raised to a non-negative integer exponent below 2^32 (not
 /// Q-scaled), by square-and-multiply with Q32 rescaling. 0^0 = 1.
 pub fn qpow_int_q32(base: Field, exp: u64) -> Field {
@@ -1672,6 +1694,25 @@ fn test_qpow_zero_to_a_negative_power_has_no_proof() {
 #[test(should_fail)]
 fn test_qlog_of_zero_has_no_proof() {
     let _ = qlog(0);
+}
+
+#[test]
+fn test_qpow_int_matches_the_kernel() {
+    // kernel::fp_pow_int at the same inputs.
+    assert(qpow_int::<4>(6442450944, 5) == 32614907904); // 1.5 ** 5
+    assert(qpow_int::<4>(6442450944, 13) == 835884417024); // 1.5 ** 13
+    assert(qpow_int::<3>(q_from_int(2), -3) == 536870912); // 2 ** -3
+    assert(qpow_int::<4>(0, 0) == Q);
+}
+
+#[test(should_fail)]
+fn test_qpow_int_exponent_beyond_its_bits_has_no_proof() {
+    let _ = qpow_int::<4>(Q, 16);
+}
+
+#[test(should_fail)]
+fn test_qpow_int_zero_to_a_negative_power_has_no_proof() {
+    let _ = qpow_int::<4>(0, -1);
 }
 
 #[test]

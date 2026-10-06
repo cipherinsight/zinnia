@@ -686,6 +686,48 @@ pub fn fp_exp(x: Fp, precision_bits: u32) -> Option<Fp> {
     Some(i128_to_fp(value))
 }
 
+/// `a ** e` for a float `a` and an integer `e` (`IR::PowFI`), by the
+/// circuits' algorithm (halo2-base `fixed_pow_int`, Noir `qpow_int`):
+/// square-and-multiply over the `exponent_bits` low bits of `|e|`, most
+/// significant first, starting from 1.0: `acc = acc * acc`, then
+/// `acc = acc * r` where the bit is set, every product rounded down as
+/// `mul_f`, with `r = a` for `e >= 0` and the fixed-point reciprocal
+/// `r = 1.0 / a` ([`fp_div_prescale`]) for `e < 0`. Leading zero bits keep
+/// `acc = 1.0` exactly, so a runtime `e` gives the same value as the
+/// constant chain of the same `e` (`IRBuilder::constant_power_f`).
+///
+/// `None` (no proof on any backend) for `|e| >= 2^exponent_bits` (outside
+/// the range the compiler proved), `a == 0` with `e < 0` (NumPy's `inf`),
+/// and wherever the reciprocal or a product leaves the signed 64-bit
+/// window. `0 ** 0 == 1`, as NumPy.
+pub fn fp_pow_int(a: Fp, e: Fp, exponent_bits: u32, precision_bits: u32) -> Option<Fp> {
+    let window = -(1i128 << 63)..(1i128 << 63);
+    let q = 1i128 << precision_bits;
+    let av = fp_to_i128(a).filter(|v| window.contains(v))?;
+    let ev = fp_to_i128(e).filter(|v| window.contains(v))?;
+    let magnitude = ev.unsigned_abs();
+    if exponent_bits < 128 && magnitude >> exponent_bits != 0 {
+        return None;
+    }
+    let factor = if ev < 0 {
+        if av == 0 {
+            return None;
+        }
+        fp_to_i128(fp_div_prescale(i128_to_fp(q), a, precision_bits)).filter(|v| window.contains(v))?
+    } else {
+        av
+    };
+    let mul = |x: i128, y: i128| Some((x * y).div_euclid(q)).filter(|v| window.contains(v));
+    let mut acc = q;
+    for bit in (0..exponent_bits).rev() {
+        acc = mul(acc, acc)?;
+        if (magnitude >> bit) & 1 == 1 {
+            acc = mul(acc, factor)?;
+        }
+    }
+    Some(i128_to_fp(acc))
+}
+
 /// `round(ln 2 * 2^64)`: `k ln 2` is formed in Q64 and rounded once to Q
 /// (noir_fpc's `LN2_Q64`).
 pub const LN2_Q64: i128 = 12786308645202655660;
@@ -1164,6 +1206,37 @@ mod tests {
             worst = worst.max((got - exact).abs());
         }
         assert!(worst < 1.5e-9, "log error {worst}");
+    }
+
+    #[test]
+    fn integer_powers_follow_the_constant_chain() {
+        let p = 32;
+        let chain = |a: Fp, e: i64| {
+            // IRBuilder::constant_power_f: MSB-first square-and-multiply.
+            let r = if e < 0 { fp_div_prescale(quantize_to_fp(1.0, p), a, p) } else { a };
+            let n = e.unsigned_abs();
+            if n == 0 {
+                return quantize_to_fp(1.0, p);
+            }
+            let mut acc = r;
+            for bit in (0..63 - n.leading_zeros()).rev() {
+                acc = fp_mul_rescale(acc, acc, p).0;
+                if (n >> bit) & 1 == 1 {
+                    acc = fp_mul_rescale(acc, r, p).0;
+                }
+            }
+            acc
+        };
+        for a in [1.5, -0.75, 3.0, 0.3, -1.1] {
+            for e in [-7i64, -3, -1, 0, 1, 2, 5, 13] {
+                let got = fp_pow_int(quantize_to_fp(a, p), i64_to_fp(e), 6, p);
+                assert_eq!(got, Some(chain(quantize_to_fp(a, p), e)), "{a} ** {e}");
+            }
+        }
+        assert_eq!(fp_pow_int(quantize_to_fp(2.0, p), i64_to_fp(8), 3, p), None); // 8 needs 4 bits
+        assert_eq!(fp_pow_int(Fp::zero(), i64_to_fp(-1), 4, p), None);
+        assert_eq!(fp_pow_int(Fp::zero(), i64_to_fp(0), 4, p), Some(quantize_to_fp(1.0, p)));
+        assert_eq!(fp_pow_int(quantize_to_fp(2.0, p), i64_to_fp(40), 6, p), None); // 2^40 leaves the window
     }
 
     #[test]

@@ -2702,15 +2702,11 @@ impl Synthesizer for NoirEmitter<'_> {
         let v = self.bind(&format!("qpow({}, {})", a, b));
         Ok(v)
     }
-    fn pow_f_int(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        // Float base ^ integer exponent by square-and-multiply. The exponent
-        // must be a non-negative value below 2^32: the range-checked
-        // conversion fails the proof otherwise (a truncating cast would have
-        // used the low bits of a negative exponent's field encoding).
-        self.use_lib("qpow_int_q32");
-        let e = self.to_uint(b, UintWidth::U32);
-        let af = a;
-        Ok(self.bind(&format!("qpow_int_q32({}, {} as u64)", af, e)))
+    /// `kernel::fp_pow_int` (`qpow_int`): square-and-multiply over the
+    /// `exponent_bits` low bits of `|b|`.
+    fn pow_f_int(&mut self, a: &CellRef, b: &CellRef, exponent_bits: u32) -> Result<CellRef, ProvingError> {
+        self.use_lib("qpow_int");
+        Ok(self.bind(&format!("qpow_int::<{exponent_bits}>({a}, {b})")))
     }
     fn abs_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         let v = self.abs_int64(a);

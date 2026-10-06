@@ -89,10 +89,11 @@ pub enum IR {
     FloorDivF,
     ModF,
     PowF,
-    /// Float base raised to an Integer exponent. The exponent stays in
-    /// integer representation (not Q-scaled) so backends can lower to
-    /// integer-exponent square-and-multiply instead of `exp(b*log(a))`.
-    PowFI,
+    /// Float base raised to an Integer exponent (not Q-scaled):
+    /// `kernel::fp_pow_int`, square-and-multiply over the `exponent_bits`
+    /// low bits of `|e|` (the bound the compiler proved for the exponent;
+    /// no proof for a larger `|e|`), on the reciprocal for `e < 0`.
+    PowFI { exponent_bits: u32 },
     AbsF,
     SignF,
 
@@ -606,7 +607,7 @@ impl IR {
             IR::FloorDivF => "floor_divide_f".to_string(),
             IR::ModF => "mod_f".to_string(),
             IR::PowF => "pow_f".to_string(),
-            IR::PowFI => "pow_f_int".to_string(),
+            IR::PowFI { exponent_bits } => format!("pow_f_int[{}]", exponent_bits),
             IR::AbsF => "abs_f".to_string(),
             IR::SignF => "sign_f".to_string(),
 
@@ -902,7 +903,7 @@ impl IR {
             IR::FloorDivF => "FloorDivFIR",
             IR::ModF => "ModFIR",
             IR::PowF => "PowFIR",
-            IR::PowFI => "PowFIIR",
+            IR::PowFI { .. } => "PowFIIR",
             IR::AbsF => "AbsFIR",
             IR::SignF => "SignFIR",
             IR::EqI => "EqualIIR",
@@ -1047,6 +1048,7 @@ impl IR {
             IR::ProductSumF { len } => serde_json::json!({ "len": len }),
             IR::SumF { len } => serde_json::json!({ "len": len }),
             IR::FloorDivIPinned { divisor_bits } => serde_json::json!({ "divisor_bits": divisor_bits }),
+            IR::PowFI { exponent_bits } => serde_json::json!({ "exponent_bits": exponent_bits }),
             IR::AssertU128LtBit { hi, bit, bits } => {
                 serde_json::json!({ "hi": hi, "bit": bit, "bits": bits })
             }
@@ -1236,7 +1238,9 @@ impl IR {
             "FloorDivFIR" => Ok(IR::FloorDivF),
             "ModFIR" => Ok(IR::ModF),
             "PowFIR" => Ok(IR::PowF),
-            "PowFIIR" => Ok(IR::PowFI),
+            "PowFIIR" => Ok(IR::PowFI {
+                exponent_bits: data["exponent_bits"].as_u64().unwrap_or(64) as u32,
+            }),
             "AbsFIR" => Ok(IR::AbsF),
             "SignFIR" => Ok(IR::SignF),
 

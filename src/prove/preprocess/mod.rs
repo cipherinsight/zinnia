@@ -285,33 +285,10 @@ impl<'a> Preprocessor<'a> {
             // Outside the domain there is no proof; the witness value is then
             // irrelevant (0).
             IR::PowF => Ok(Some(kernel::fp_pow(args[0], args[1], prec).unwrap_or(Fp::zero()))),
-            IR::PowFI => {
-                // Float base ^ Integer exponent: square-and-multiply over the
-                // unscaled integer. args[0] is Q-scaled float, args[1] is raw
-                // integer field element.
-                let e = kernel::fp_to_i64(args[1]);
-                let mut result = kernel::quantize_to_fp(1.0, prec);
-                let mut base = args[0];
-                let mut e_rem = e.unsigned_abs();
-                let mut iters = 0;
-                while e_rem != 0 && iters < 64 {
-                    if (e_rem & 1) == 1 {
-                        let (rb, _) = kernel::fp_mul_rescale(result, base, prec);
-                        result = rb;
-                    }
-                    e_rem >>= 1;
-                    if e_rem != 0 {
-                        let (bb, _) = kernel::fp_mul_rescale(base, base, prec);
-                        base = bb;
-                    }
-                    iters += 1;
-                }
-                if e < 0 {
-                    // Negative exponent: invert in Q-scaled float (== Q^2 / result).
-                    let one_q = kernel::quantize_to_fp(1.0, prec);
-                    result = kernel::fp_div_prescale(one_q, result, prec);
-                }
-                Ok(Some(result))
+            // Outside the domain there is no proof; the witness value is then
+            // irrelevant (0).
+            IR::PowFI { exponent_bits } => {
+                Ok(Some(kernel::fp_pow_int(args[0], args[1], *exponent_bits, prec).unwrap_or(Fp::zero())))
             }
             IR::AbsF => {
                 let (abs, _) = kernel::signed_decompose(args[0]);
