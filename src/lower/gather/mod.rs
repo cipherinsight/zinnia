@@ -5,7 +5,8 @@
 //! of booleans).
 //!
 //! The frontend emits placeholders through the functions below
-//! ([`scan_lane`], [`window_lanes`], [`element_lane`]); after dead-code
+//! ([`scan_lane`], [`window_lanes`], [`element_lane`],
+//! [`checked_element_lane`]); after dead-code
 //! elimination the layer lowers them by the constructions of
 //! [`constructions`], which emit the generators:
 //!
@@ -13,8 +14,9 @@
 //!   thermometer, [`encoding`]) or by a select chain;
 //! * [`window`]: a slice with runtime bounds as a shift by a shared one-hot
 //!   per axis;
-//! * [`element`]: a read at a scan's result as an inner product with the
-//!   scan's one-hot;
+//! * [`element`]: a read at a runtime index: an inner product with a scan's
+//!   one-hot, a select chain over the index's equality bits, or their inner
+//!   product with the cells;
 //! * [`vanishing`]: which cells a flag being 0 forces to 0 (lets a window
 //!   skip the mask on padding that is 0 anyway).
 //!
@@ -118,9 +120,19 @@ pub fn element_lane(b: &mut IRBuilder, cells: &[Value], index: &Value) -> Option
     if cells.is_empty() || !has_encoding(b, index) {
         return None;
     }
+    Some(checked_element_lane(b, cells, index))
+}
+
+/// `cells[index]` as a placeholder (not empty), for a runtime `index` the
+/// caller has wrapped and checked into `[0, cells.len())` where the read
+/// runs. The layer picks how to read it per target: a select chain over
+/// the index's equality bits, an inner product with them, the index's
+/// recorded one-hot, or a memory read (`constructions.rs`).
+pub fn checked_element_lane(b: &mut IRBuilder, cells: &[Value], index: &Value) -> Value {
+    assert!(!cells.is_empty(), "an element read over no cells");
     let shared: Arc<[Value]> = cells.iter().map(|c| b.ensure_ptr(c)).collect();
     let op = ArrayOp { kind: OpKind::Element, shared: shared.len() as u32, output: 0, position: None };
-    Some(b.ir_array_op(op, &shared, std::slice::from_ref(index)))
+    b.ir_array_op(op, &shared, std::slice::from_ref(index))
 }
 
 /// Whether `v` is, plus a constant, a lane whose one-hot a construction can

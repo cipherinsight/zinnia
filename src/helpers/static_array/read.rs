@@ -189,25 +189,25 @@ struct GatherAxis {
 }
 
 /// Runtime-index reads of a static array whose cells are known values
-/// (`IRBuilder::static_array_payload`), as select chains instead of a
-/// memory read.
+/// (`IRBuilder::static_array_payload`), as element reads over those cells
+/// instead of a memory read.
 ///
 /// `cells[base + sum_k i_k * stride_k]` is selected one index axis at a
 /// time, outermost axis last: for the inner axes the selection is a
 /// "plane" `cells[base' + ...]`, cached per (base', inner indices), so reads
 /// that differ only in their outer indices share their inner selections
-/// (a 2-D gather costs one chain per distinct row and column index instead
-/// of one chain over the product of the two axes per read). Each chain
-/// starts from coordinate 0 and selects coordinate `p` under `index == p`.
+/// (a 2-D gather costs one selection per distinct row and column index
+/// instead of one over the product of the two axes per read). Each
+/// selection over an axis is an element placeholder
+/// (`lower::gather::checked_element_lane`) over the axis's candidates; the
+/// array lowering layer reads it per target (a select chain over the
+/// index's equality bits, or their inner product with the candidates).
 ///
 /// Soundness: every index is wrapped and bounds-checked on its axis before
-/// it reaches the gather, so exactly one coordinate test holds per axis and
-/// the chain yields the indexed cell; the equality tests are shared by
-/// every chain over the same index.
+/// it reaches the gather (where the read runs), which is the element
+/// placeholder's precondition.
 struct PayloadGather {
     cells: Vec<Value>,
-    dtype: NumberType,
-    hits: std::collections::HashMap<(crate::types::StmtId, usize), Value>,
     planes: std::collections::HashMap<(i64, Vec<crate::types::StmtId>), Value>,
 }
 
@@ -225,8 +225,6 @@ impl PayloadGather {
         let cells = b.static_array_payload.get(&segment_id)?.clone();
         Some(Self {
             cells,
-            dtype,
-            hits: std::collections::HashMap::new(),
             planes: std::collections::HashMap::new(),
         })
     }
@@ -235,17 +233,6 @@ impl PayloadGather {
     fn affordable(axes: &[GatherAxis]) -> bool {
         let choices: usize = axes.iter().map(|a| a.len).product();
         !axes.is_empty() && choices > 0 && choices <= SMALL_DYNAMIC_SINGLE_READ_SELECT_LIMIT
-    }
-
-    fn hit(&mut self, b: &mut IRBuilder, index: &Value, coord: usize) -> Option<Value> {
-        let key = (index.stmt_id()?, coord);
-        if let Some(hit) = self.hits.get(&key) {
-            return Some(hit.clone());
-        }
-        let coord_v = b.ir_constant_int(coord as i64);
-        let hit = b.ir_equal_i(index, &coord_v);
-        self.hits.insert(key, hit.clone());
-        Some(hit)
     }
 
     /// `cells[base + sum_k axes[k].index * axes[k].stride]`, or `None` when
@@ -265,14 +252,15 @@ impl PayloadGather {
         if let Some(plane) = self.planes.get(&key) {
             return Some(plane.clone());
         }
-        let mut acc = self.read(b, base, inner)?;
-        for coord in 1..outer.len {
-            let candidate = self.read(b, base + (coord * outer.stride) as i64, inner)?;
-            let hit = self.hit(b, &outer.index, coord)?;
-            acc = select_typed(b, self.dtype, &hit, &candidate, &acc);
-        }
-        self.planes.insert(key, acc.clone());
-        Some(acc)
+        let candidates = (0..outer.len)
+            .map(|coord| self.read(b, base + (coord * outer.stride) as i64, inner))
+            .collect::<Option<Vec<Value>>>()?;
+        let plane = match candidates.as_slice() {
+            [only] => only.clone(),
+            _ => crate::lower::gather::checked_element_lane(b, &candidates, &outer.index),
+        };
+        self.planes.insert(key, plane.clone());
+        Some(plane)
     }
 }
 

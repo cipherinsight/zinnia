@@ -26,7 +26,7 @@ use optim::{
     AlwaysSatisfiedElimination, AssertSubsumption, AssertedEqualityConstantPropagation,
     ConstantFold, DeadCodeElimination, DoubleNotElimination, DuplicateCodeElimination,
     DynamicNDArrayMemoryLowering, DynamicNDArrayMetaAssertInjection, ExternalCallRemover, IRPass,
-    MemoryTraceInjection, PatternMatchOptim, SelectChainForwarding,
+    MemoryTraceInjection, PatternMatchOptim, PredicatedSimplification, SelectChainForwarding,
     UnreadMemoryEliminator,
 };
 
@@ -138,6 +138,7 @@ fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32, target: Targe
         "MemoryTraceInjection" => MemoryTraceInjection.exec(graph),
         "PatternMatchOptim" => PatternMatchOptim.exec(graph),
         "SelectChainForwarding" => SelectChainForwarding.exec(graph),
+        "PredicatedSimplification" => PredicatedSimplification.exec(graph),
         "ArrayLowering" => ArrayLowering { target }.exec(graph),
         "SortCountQueries" => lower::sort::SortCountQueries.exec(graph),
         "ArgmaxQueries" => lower::sort::ArgmaxQueries.exec(graph),
@@ -450,6 +451,11 @@ fn compile_circuit_impl(
     // dead-code elimination, which decides which lanes are live. The
     // constructions are chosen by their cost on the compile target.
     passes.push("ArrayLowering");
+    // Each select's branches simplified under its condition (a guarded
+    // index wrap the guard decides; `optim/predicated_simplification.rs`),
+    // then what that leaves unread removed.
+    passes.push("PredicatedSimplification");
+    passes.push("DeadCodeElimination");
     // Collapse `AssertU128Lt(stride_k + base, hi)` chains to the tightest
     // (max-stride) member: see `optim/assert_subsumption.rs`. Runs after
     // DCE so the redundant asserts are visible side-by-side.

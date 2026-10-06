@@ -15,7 +15,10 @@ use crate::lower::{Construction, Target};
 use crate::prove::types::ProvingParams;
 use crate::types::{NumberType, Value};
 
-use super::constructions::{ElementByMemory, ElementByOneHot, ScanByRunningProducts, ScanBySelectChain, WindowShift};
+use super::constructions::{
+    ElementByIndicators, ElementByMemory, ElementByOneHot, ElementBySelectChain, ElementOfWrite, ScanByRunningProducts,
+    ScanBySelectChain, WindowShift,
+};
 use super::encoding::IndexEncoding;
 use super::scan::{self, ScanKind};
 use super::vanishing::forced_zero_by_unset;
@@ -377,6 +380,170 @@ fn argmax_read_placeholders_match_numpy_under_every_construction_choice() {
             }
         }
     }
+}
+
+// ── Reads at a checked runtime index ──────────────────────────────────
+
+/// `x[i]` and `y[i]` for inputs `x`, `y` of `n` cells (two element groups at
+/// one index) and an index `i` wrapped and checked as the frontend does
+/// (NumPy's negative indices included), then `x[i]` again with `i` as a
+/// second lane of `x`'s group at the index `n - 1 - w`.
+fn checked_reads(n: usize) -> IRGraph {
+    let mut b = IRBuilder::new();
+    let x: Vec<Value> = (0..n).map(|k| input(&mut b, format!("x{k}"))).collect();
+    let y: Vec<Value> = (0..n).map(|k| input(&mut b, format!("y{k}"))).collect();
+    let i = input(&mut b, "i".to_string());
+    let w = crate::helpers::static_array::base::normalize_dynamic_index(&mut b, &i, n);
+    let last = b.ir_constant_int(n as i64 - 1);
+    let mirrored = b.ir_sub_i(&last, &w);
+    let reads = [
+        super::checked_element_lane(&mut b, &x, &w),
+        super::checked_element_lane(&mut b, &y, &w),
+        super::checked_element_lane(&mut b, &x, &mirrored),
+    ];
+    for read in &reads {
+        b.ir_expose_public_i(read);
+    }
+    b.export_ir_graph()
+}
+
+#[test]
+fn checked_reads_match_numpy_under_every_construction_choice() {
+    let choices: [&[&dyn Construction]; 4] = [
+        &[&ElementBySelectChain],
+        &[&ElementByIndicators],
+        &[&ElementByMemory],
+        &[&ElementOfWrite, &ElementByOneHot, &ElementBySelectChain, &ElementByIndicators, &ElementByMemory],
+    ];
+    for n in 1..=5usize {
+        let graph = checked_reads(n);
+        let xs: Vec<i64> = (0..n as i64).map(|k| 7 * k - 11).collect();
+        let ys: Vec<i64> = (0..n as i64).map(|k| 100 - 3 * k).collect();
+        for constructions in choices {
+            for target in [Target::Halo2Base, Target::Noir] {
+                let lowered = crate::lower::emit::lower(&graph, target, constructions).expect("placeholders");
+                for i in -(n as i64) - 2..n as i64 + 2 {
+                    let mut inputs = named("x", &xs);
+                    inputs.extend(named("y", &ys));
+                    inputs.push(("i".to_string(), i));
+                    let (ok, outputs) = mock_run(&lowered, &inputs);
+                    // NumPy raises outside [-n, n): no witness.
+                    assert_eq!(ok, -(n as i64) <= i && i < n as i64, "n={n} i={i}");
+                    if ok {
+                        let w = i.rem_euclid(n as i64) as usize;
+                        assert_eq!(outputs, vec![xs[w], ys[w], xs[n - 1 - w]], "n={n} i={i}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The whole pass (lowering, then deduplication and dead-code elimination).
+fn pass(graph: &IRGraph, target: Target) -> IRGraph {
+    use crate::optim::IRPass;
+    crate::lower::ArrayLowering { target }.exec(graph.clone())
+}
+
+/// `rows` reads of `cols` cells each, all at one checked index.
+fn reads_at_one_index(rows: usize, cols: usize) -> IRGraph {
+    let mut b = IRBuilder::new();
+    let i = input(&mut b, "i".to_string());
+    let w = crate::helpers::static_array::base::normalize_dynamic_index(&mut b, &i, cols);
+    for r in 0..rows {
+        let cells: Vec<Value> = (0..cols).map(|k| input(&mut b, format!("x{}", r * cols + k))).collect();
+        let read = super::checked_element_lane(&mut b, &cells, &w);
+        b.ir_expose_public_i(&read);
+    }
+    b.export_ir_graph()
+}
+
+#[test]
+fn reads_sharing_an_index_are_inner_products_on_noir_and_select_chains_on_halo2_base() {
+    // 0345's column read: 8 rows of 6 cells at one column index. On Noir a
+    // select of two variable branches is two gates and a multiply-add one,
+    // so the shared indicators win; halo2-base already turns a select chain
+    // over a bounded index into an inner product, one equality test fewer.
+    let graph = reads_at_one_index(8, 6);
+    let count = |g: &IRGraph, f: fn(&IR) -> bool| g.stmts.iter().filter(|s| f(&s.ir)).count();
+    let noir = pass(&graph, Target::Noir);
+    assert_eq!(count(&noir, |ir| matches!(ir, IR::SelectI)), 1, "only the index wrap selects");
+    assert_eq!(count(&noir, |ir| matches!(ir, IR::EqI)), 6, "one shared equality test per column");
+    let halo2 = pass(&graph, Target::Halo2Base);
+    assert_eq!(count(&halo2, |ir| matches!(ir, IR::SelectI)), 1 + 8 * 5);
+    assert_eq!(count(&halo2, |ir| matches!(ir, IR::EqI)), 5);
+}
+
+/// The cells of `a[w] = v` (the frontend's one-hot write: cell `k` is
+/// `select([w == k], v, a[k])`), read at `w` and at `n - 1 - w`.
+fn read_after_write(n: usize) -> IRGraph {
+    let mut b = IRBuilder::new();
+    let a: Vec<Value> = (0..n).map(|k| input(&mut b, format!("a{k}"))).collect();
+    let v = input(&mut b, "v".to_string());
+    let i = input(&mut b, "i".to_string());
+    let w = crate::helpers::static_array::base::normalize_dynamic_index(&mut b, &i, n);
+    let written: Vec<Value> = a
+        .iter()
+        .enumerate()
+        .map(|(k, old)| {
+            let k = b.ir_constant_int(k as i64);
+            let hit = b.ir_equal_i(&w, &k);
+            b.ir_select_i(&hit, &v, old)
+        })
+        .collect();
+    let last = b.ir_constant_int(n as i64 - 1);
+    let mirrored = b.ir_sub_i(&last, &w);
+    let same = super::checked_element_lane(&mut b, &written, &w);
+    let other = super::checked_element_lane(&mut b, &written, &mirrored);
+    b.ir_expose_public_i(&same);
+    b.ir_expose_public_i(&other);
+    b.export_ir_graph()
+}
+
+#[test]
+fn a_read_at_the_index_just_written_is_the_written_value() {
+    for n in 1..=4usize {
+        let graph = read_after_write(n);
+        for target in [Target::Halo2Base, Target::Noir] {
+            let lowered = crate::lower::emit::lower(&graph, target, &crate::lower::registry()).unwrap();
+            let a: Vec<i64> = (0..n as i64).map(|k| 3 * k + 1).collect();
+            for i in -(n as i64) - 1..=n as i64 {
+                let mut inputs = named("a", &a);
+                inputs.push(("v".to_string(), -50));
+                inputs.push(("i".to_string(), i));
+                let (ok, outputs) = mock_run(&lowered, &inputs);
+                assert_eq!(ok, -(n as i64) <= i && i < n as i64, "n={n} i={i}");
+                if ok {
+                    let w = i.rem_euclid(n as i64) as usize;
+                    let mut after = a.clone();
+                    after[w] = -50;
+                    assert_eq!(outputs, vec![after[w], after[n - 1 - w]], "n={n} i={i}");
+                }
+            }
+        }
+    }
+    // The read at the written index needs nothing; the other read keeps
+    // the written cells.
+    let only_same = {
+        let mut b = IRBuilder::new();
+        let a: Vec<Value> = (0..3).map(|k| input(&mut b, format!("a{k}"))).collect();
+        let v = input(&mut b, "v".to_string());
+        let w = input(&mut b, "w".to_string());
+        let written: Vec<Value> = a
+            .iter()
+            .enumerate()
+            .map(|(k, old)| {
+                let k = b.ir_constant_int(k as i64);
+                let hit = b.ir_equal_i(&w, &k);
+                b.ir_select_i(&hit, &v, old)
+            })
+            .collect();
+        let read = super::checked_element_lane(&mut b, &written, &w);
+        b.ir_expose_public_i(&read);
+        b.export_ir_graph()
+    };
+    let lowered = pass(&only_same, Target::Noir);
+    assert!(!lowered.stmts.iter().any(|s| matches!(s.ir, IR::SelectI | IR::EqI)));
 }
 
 // ── Permutation scatter ───────────────────────────────────────────────
