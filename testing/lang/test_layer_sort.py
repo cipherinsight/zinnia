@@ -65,3 +65,52 @@ def test_constant_table_search_proves_on_halo2_base():
     for template in (ECDF, TIED):
         for t in (0.25, 0.7, -3.0, 9.0):
             assert_halo2_base_agrees(template.format(cmp=">"), "halo2", t)
+
+
+# ── comparisons with sorted values answered from counts ─────────────────
+
+ECDF_LOOKUP = ('def kernel(grades: Float[Array, "12"], ev: Integer[Array, "4"]):\n'
+               '    xs = np.sort(grades)\n'
+               '    ys = np.arange(1, 13) / 12.0\n'
+               '    result = np.zeros_like(ev, dtype=float)\n'
+               '    for i, element in enumerate(ev):\n'
+               '        if element < xs[0]:\n'
+               '            result[i] = 0\n'
+               '        elif element >= xs[-1]:\n'
+               '            result[i] = 1\n'
+               '        else:\n'
+               '            result[i] = ys[(xs > element).argmax() - 1]\n'
+               '    return result\n')
+COMPARISONS = ('def kernel(a: Integer[Array, "7"], e: Integer):\n'
+               '    s = np.sort(a)\n'
+               '    c = (s > e).argmax()\n'
+               '    d = (s >= e).argmax()\n'
+               '    return [c, d, e < s[0], e >= s[6], s[3] < e, e <= s[2], s[5] <= e, e > s[1]]\n')
+
+
+@pytest.mark.parametrize("target", TARGETS)
+def test_ecdf_lookups_answered_by_counts_match_numpy(target):
+    grades = np.array([3.0, 1.5, 3.0, 7.0, 2.0, 2.0, 9.5, 1.5, 4.0, 6.0, 3.0, 8.0])
+    program = compile_for(ECDF_LOOKUP, target)
+    for ev in ([0, 1, 2, 3], [3, 6, 9, 10], [-5, 4, 8, 100]):
+        ev = np.array(ev)
+        satisfied, outputs = run_mock(program, grades, ev)
+        assert satisfied
+        env = {"np": np}
+        exec(ECDF_LOOKUP.replace('Float[Array, "12"]', "object").replace('Integer[Array, "4"]', "object"), env)
+        np.testing.assert_allclose(outputs, env["kernel"](grades, ev), atol=1e-9, rtol=0)
+    # The extremes are not pinned: no product over the elements.
+    assert "MulIIR" not in ir_classes(program)
+
+
+@pytest.mark.parametrize("target", TARGETS)
+def test_comparisons_with_sorted_values_match_numpy(target):
+    a = np.array([5, -3, 5, 0, -3, 7, 5])
+    program = compile_for(COMPARISONS, target)
+    for e in range(-5, 10):
+        satisfied, outputs = run_mock(program, a, e)
+        assert satisfied, e
+        s = np.sort(a)
+        expected = [(s > e).argmax(), (s >= e).argmax(), e < s[0], e >= s[6], s[3] < e, e <= s[2],
+                    s[5] <= e, e > s[1]]
+        assert [int(o) for o in outputs] == [int(x) for x in expected], e
