@@ -21,6 +21,7 @@ mod list_methods;
 mod list_sharing;
 mod named_attr;
 pub mod outputs;
+mod preconditions;
 mod visitors;
 
 #[cfg(test)]
@@ -647,9 +648,10 @@ impl IRGenerator {
                 }
             }
             let bound_term = crate::optim::predicates::substitute_inputs(&term, &inputs_to_values);
-            let anchors = crate::optim::predicates::collect_value_ids(&bound_term);
-            for anchor in &anchors {
-                self.builder.facts.insert_for(*anchor, bound_term.clone());
+            for fact in preconditions::precondition_facts(&bound_term) {
+                for anchor in crate::optim::predicates::collect_value_ids(&fact) {
+                    self.builder.facts.insert_for(anchor, fact.clone());
+                }
             }
 
             match crate::optim::predicates::witness::lower_precondition_to_ir(
