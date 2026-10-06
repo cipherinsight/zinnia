@@ -1337,7 +1337,16 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn eq_hash(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.eq_i(a, b) }
 
     fn key_less(&mut self, v1: &Self::CellRef, i1: &Self::CellRef, v2: &Self::CellRef, i2: &Self::CellRef, index_bits: u32) -> Result<Self::CellRef, ProvingError> {
-        self.packed_key_less(v1, i1, v2, i2, index_bits)
+        self.key_less_by_packing(v1, i1, v2, i2, index_bits)
+    }
+    fn pack_key(&mut self, v: &Self::CellRef, i: &Self::CellRef, index_bits: u32) -> Result<Self::CellRef, ProvingError> {
+        self.packed_key(v, i, index_bits)
+    }
+    fn packed_key_less(&mut self, k1: &Self::CellRef, k2: &Self::CellRef, _index_bits: u32) -> Result<Self::CellRef, ProvingError> {
+        self.less_of_packed_keys(k1, k2)
+    }
+    fn packed_key_index(&mut self, key: &Self::CellRef, index_bits: u32) -> Result<Self::CellRef, ProvingError> {
+        self.index_of_packed_key(key, index_bits)
     }
 
     /// A free cell holding the hint's lane (`kernel::hint_lane` of the

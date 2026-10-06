@@ -612,6 +612,40 @@ pub trait Synthesizer {
         self.logical_or(&value_less, &tie_less)
     }
 
+    /// `IR::PackKey`: `v * 2^index_bits + i`, in field arithmetic.
+    fn pack_key(
+        &mut self,
+        v: &Self::CellRef,
+        i: &Self::CellRef,
+        index_bits: u32,
+    ) -> Result<Self::CellRef, ProvingError> {
+        let scale = self.constant_int(1i64 << index_bits)?;
+        let shifted = self.mul_i(v, &scale)?;
+        self.add_i(&shifted, i)
+    }
+
+    /// `IR::PackedKeyLess`: `[K1 < K2]` for packed keys. The default is the
+    /// sign of the field difference (the mock's `lt_i`); backends that
+    /// bound their comparisons to the 64-bit window override it.
+    fn packed_key_less(
+        &mut self,
+        k1: &Self::CellRef,
+        k2: &Self::CellRef,
+        _index_bits: u32,
+    ) -> Result<Self::CellRef, ProvingError> {
+        self.lt_i(k1, k2)
+    }
+
+    /// `IR::PackedKeyIndex`: the index `i` of a packed key
+    /// `K = v * 2^index_bits + i`.
+    fn packed_key_index(
+        &mut self,
+        _key: &Self::CellRef,
+        _index_bits: u32,
+    ) -> Result<Self::CellRef, ProvingError> {
+        Err(ProvingError::synthesis("packed sort keys are not supported by this backend"))
+    }
+
     // ── Prover hints ──────────────────────────────────────────────────
 
     /// `IR::Hint`: a free value holding lane `rank` of `kind` applied to

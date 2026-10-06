@@ -23,6 +23,7 @@
 
 mod cost;
 mod emit;
+mod packed;
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]
@@ -38,7 +39,7 @@ use crate::ir::IRGraph;
 use crate::ir_defs::IR;
 use crate::types::{NumberType, StmtId, Value};
 
-use self::cost::{Demand, Pin, Plan, Run};
+use self::cost::{Demand, Network, Pin, Plan, Run};
 use self::emit::{ElementMemory, Elements, OutputMemory};
 use super::IRPass;
 
@@ -190,6 +191,11 @@ impl LoweredSort {
         };
         let n = elements.len();
         match &group.plan {
+            Plan::Network { network: Network::PackedMergeExchange } => {
+                let indices = packed::argsort_by_packed_keys(b, &sort.as_elements());
+                sort.indices = indices.into_iter().enumerate().collect();
+                sort.complete = true;
+            }
             Plan::Network { network } => {
                 let (values, indices) =
                     emit::sort_by_network(b, &sort.as_elements(), *network);

@@ -223,6 +223,9 @@ fn role(ir: &IR, operands: usize) -> Role {
         | IR::GtF
         | IR::GteF
         | IR::KeyLess { .. }
+        | IR::PackKey { .. }
+        | IR::PackedKeyLess { .. }
+        | IR::PackedKeyIndex { .. }
         | IR::LogicalAnd
         | IR::LogicalOr
         | IR::LogicalNot

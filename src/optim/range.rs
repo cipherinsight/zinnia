@@ -527,7 +527,9 @@ impl RangeResolver {
             | IR::GtF
             | IR::GteF
             | IR::KeyLess { .. }
+            | IR::PackedKeyLess { .. }
             | IR::EqHash => IntInterval::bool_domain(),
+            IR::PackedKeyIndex { index_bits } => IntInterval { min: 0, max: (1i64 << index_bits) - 1 },
 
             // SelectB returns a bool; project to [0, 1].
             IR::SelectB => IntInterval::bool_domain(),

@@ -25,7 +25,7 @@ impl Halo2BaseSynthesizer<'_> {
     /// check sized by the keys' proven ranges (its own argument), far below
     /// `p / 2`. One comparison replaces the three comparisons and two logic
     /// gates of the composed form.
-    pub(super) fn packed_key_less(
+    pub(super) fn key_less_by_packing(
         &mut self,
         v1: &Halo2BaseCell,
         i1: &Halo2BaseCell,
@@ -35,10 +35,67 @@ impl Halo2BaseSynthesizer<'_> {
     ) -> Result<Halo2BaseCell, ProvingError> {
         let k1 = self.packed_key(v1, i1, index_bits)?;
         let k2 = self.packed_key(v2, i2, index_bits)?;
+        self.less_of_packed_keys(&k1, &k2)
+    }
+
+    /// `[K1 < K2]` for packed keys (`IR::PackedKeyLess`, and the second half
+    /// of `IR::KeyLess`): `less_than` on the keys' proven ranges, which
+    /// `packed_key` establishes and selections among keys keep (a select's
+    /// output is one of its branches), or one gap range check when asserted.
+    pub(super) fn less_of_packed_keys(
+        &mut self,
+        k1: &Halo2BaseCell,
+        k2: &Halo2BaseCell,
+    ) -> Result<Halo2BaseCell, ProvingError> {
         if self.is_asserted_comparison() {
-            return self.assert_packed_less(&k1, &k2);
+            return self.assert_packed_less(k1, k2);
         }
-        self.less_than(Operand::Cell(k1), Operand::Cell(k2), None)
+        self.less_than(Operand::Cell(*k1), Operand::Cell(*k2), None)
+    }
+
+    /// The index `i` of a packed key `K` (`IR::PackedKeyIndex`).
+    ///
+    /// The prover supplies `q` and `i`; the circuit range-checks `i` to
+    /// `index_bits` bits and `q` into the signed 64-bit window and asserts
+    /// `q·2^b + i == K`.
+    ///
+    /// Soundness. `K` is a packed key (`packed_key`) or a selection among
+    /// packed keys, so in every accepted witness `K = v·2^b + j` with `v` in
+    /// the window and `j` in `[0, 2^b)`, as integers, and `|K| < 2^(63+b)`.
+    /// The checks admit `q·2^b + i` only in `[-2^(63+b), 2^(63+b))` with the
+    /// same bounds on its parts; on that range the map `(q, i) ↦ q·2^b + i`
+    /// is injective and below `p / 2` in magnitude, so the field equation
+    /// is an integer equation and `(q, i) = (v, j)` is its only solution.
+    /// The key's proven range (required) is what guarantees the packing.
+    pub(super) fn index_of_packed_key(
+        &mut self,
+        key: &Halo2BaseCell,
+        index_bits: u32,
+    ) -> Result<Halo2BaseCell, ProvingError> {
+        let indices = Interval::bits(index_bits as usize)
+            .filter(|_| index_bits <= 32)
+            .ok_or_else(|| ProvingError::synthesis("packed key: index width above 32 bits"))?;
+        let scale = 1i128 << index_bits;
+        let keys = Interval::new(Interval::SIGNED64.lo * scale, Interval::SIGNED64.hi * scale + scale - 1)
+            .ok_or_else(|| ProvingError::synthesis("packed key: key range overflow"))?;
+        if !self.proven_range(key).is_some_and(|r| r.within(&keys)) {
+            return Err(ProvingError::synthesis("packed key index: operand is not a packed key"));
+        }
+        let (q_value, i_value) = kernel::packed_key_parts(key.value, index_bits);
+        let q = self.hint(q_value);
+        let i = self.hint(i_value);
+        self.range_check(&i, index_bits as usize);
+        self.prove_range(&i, indices);
+        self.ensure_signed64(&q)?;
+        let scale_fp = kernel::i128_to_fp(scale);
+        let rebuilt = self.gate_cell(q.value * scale_fp + i.value, |gate, ctx| {
+            gate.mul_add(ctx, q.assigned, QuantumCell::Constant(scale_fp), i.assigned)
+        });
+        if rebuilt.value != key.value {
+            self.note_unsat(|| "Witness does not satisfy circuit constraints: a packed key's parts".to_string());
+        }
+        self.constrain_equal(&rebuilt, key);
+        Ok(i)
     }
 
     /// `K1 < K2` asserted (the comparison's only use is `Assert`, see
@@ -68,7 +125,7 @@ impl Halo2BaseSynthesizer<'_> {
 
     /// `v·2^b + i`, with `v` in the window and `i` in `[0, 2^b)`, and the
     /// range that follows from those.
-    fn packed_key(&mut self, v: &Halo2BaseCell, i: &Halo2BaseCell, index_bits: u32) -> Result<Halo2BaseCell, ProvingError> {
+    pub(super) fn packed_key(&mut self, v: &Halo2BaseCell, i: &Halo2BaseCell, index_bits: u32) -> Result<Halo2BaseCell, ProvingError> {
         if let Some(key) = self.packed_keys.get(&(v.id, i.id, index_bits)) {
             return Ok(*key);
         }

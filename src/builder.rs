@@ -1293,6 +1293,7 @@ impl IRBuilder {
             | IR::LogicalNot
             | IR::BoolCast
             | IR::KeyLess { .. }
+            | IR::PackedKeyLess { .. }
             | IR::EqHash => {
                 if let Some(vid) = out.value_id() {
                     self.provenance.set_interval(vid, Interval::BIT);
@@ -2952,6 +2953,21 @@ impl IRBuilder {
         )
     }
 
+    /// `IR::PackKey`: the packed sort key `v * 2^index_bits + i`.
+    pub fn ir_pack_key(&mut self, v: &Value, i: &Value, index_bits: u32) -> Value {
+        self.create_ir(&IR::PackKey { index_bits }, &[v.clone(), i.clone()])
+    }
+
+    /// `IR::PackedKeyLess`: `[K1 < K2]` for packed keys.
+    pub fn ir_packed_key_less(&mut self, k1: &Value, k2: &Value, index_bits: u32) -> Value {
+        self.create_ir(&IR::PackedKeyLess { index_bits }, &[k1.clone(), k2.clone()])
+    }
+
+    /// `IR::PackedKeyIndex`: the index a packed key was packed from.
+    pub fn ir_packed_key_index(&mut self, key: &Value, index_bits: u32) -> Value {
+        self.create_ir(&IR::PackedKeyIndex { index_bits }, std::slice::from_ref(key))
+    }
+
     /// Start allocating memory segment ids at `next` (a pass that rebuilds a
     /// graph and adds segments must not reuse the graph's ids).
     pub fn reserve_segment_ids_below(&mut self, next: u32) {
@@ -3340,6 +3356,11 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
                 unknown_like_elements(&args[..*len as usize / 2], ir_id)
             }
         },
+        // A packed key is not an int64 value: never folded.
+        IR::PackKey { .. } | IR::PackedKeyIndex { .. } => {
+            Value::Integer(ScalarValue::new(None, Some(ir_id)))
+        }
+        IR::PackedKeyLess { .. } => Value::Boolean(ScalarValue::new(None, Some(ir_id))),
         IR::KeyLess { .. } => {
             let key = |v: &Value, i: &Value| Some((v.int_val()?, i.int_val()?));
             let inferred = key(&args[0], &args[1]).zip(key(&args[2], &args[3])).map(|(x, y)| x < y);
@@ -3517,6 +3538,8 @@ fn min_required_arity(ir: &IR) -> usize {
         IR::IndexInBox { rank } => rank.saturating_mul(3),
         IR::Hint { len, .. } => *len as usize + 1,
         IR::KeyLess { .. } => 4,
+        IR::PackKey { .. } | IR::PackedKeyLess { .. } => 2,
+        IR::PackedKeyIndex { .. } => 1,
         IR::Sorted { len, rank, .. } => *len as usize + usize::from(rank.is_none()),
     }
 }

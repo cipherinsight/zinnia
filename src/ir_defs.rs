@@ -366,6 +366,30 @@ pub enum IR {
     KeyLess {
         index_bits: u32,
     },
+    /// The packed sort key `v * 2^index_bits + i` of the operands `[v, i]`:
+    /// a signed value `v` (int64 or Q32; a backend rejects values outside
+    /// the 64-bit window, as for `LtI`) and an index the producer
+    /// guarantees in `[0, 2^index_bits)` (a constant). A packed key needs
+    /// `64 + index_bits` bits: it is not an int64 value, and only
+    /// `SelectI`, `PackedKeyLess` and `PackedKeyIndex` may consume it.
+    /// The integer order of packed keys is the lexicographic order of the
+    /// pairs (see `KeyLess`), so a sorting network can exchange one packed
+    /// key instead of a value and an index.
+    PackKey {
+        index_bits: u32,
+    },
+    /// `[K1 < K2]` for packed keys `[K1, K2]` (results of `PackKey` with the
+    /// same `index_bits`, or selections among them).
+    PackedKeyLess {
+        index_bits: u32,
+    },
+    /// The index `i` of a packed key `K = v * 2^index_bits + i` (a result
+    /// of `PackKey`, or a selection among such results): the unique
+    /// decomposition with `v` in the signed 64-bit window and `i` in
+    /// `[0, 2^index_bits)`.
+    PackedKeyIndex {
+        index_bits: u32,
+    },
 }
 
 /// The deterministic function an [`IR::Hint`] takes a lane of. Both order
@@ -659,6 +683,9 @@ impl IR {
             // Prover hints and their placeholders
             IR::Hint { kind, len } => format!("hint[{}][{}]", kind.name(), len),
             IR::KeyLess { index_bits } => format!("key_less[{}]", index_bits),
+            IR::PackKey { index_bits } => format!("pack_key[{}]", index_bits),
+            IR::PackedKeyLess { index_bits } => format!("packed_key_less[{}]", index_bits),
+            IR::PackedKeyIndex { index_bits } => format!("packed_key_index[{}]", index_bits),
             IR::Sorted { len, rank, index } => format!(
                 "sorted[{}][{}][{}]",
                 len,
@@ -825,6 +852,9 @@ impl IR {
             IR::Hint { .. } => "HintIR",
             IR::Sorted { .. } => "SortedIR",
             IR::KeyLess { .. } => "KeyLessIR",
+            IR::PackKey { .. } => "PackKeyIR",
+            IR::PackedKeyLess { .. } => "PackedKeyLessIR",
+            IR::PackedKeyIndex { .. } => "PackedKeyIndexIR",
         }
     }
 
@@ -996,7 +1026,10 @@ impl IR {
             IR::Sorted { len, rank, index } => {
                 serde_json::json!({ "len": len, "rank": rank, "index": index })
             }
-            IR::KeyLess { index_bits } => serde_json::json!({ "index_bits": index_bits }),
+            IR::KeyLess { index_bits }
+            | IR::PackKey { index_bits }
+            | IR::PackedKeyLess { index_bits }
+            | IR::PackedKeyIndex { index_bits } => serde_json::json!({ "index_bits": index_bits }),
 
             // All parameterless IRs export empty dicts
             _ => serde_json::json!({}),
@@ -1305,6 +1338,15 @@ impl IR {
             "KeyLessIR" => Ok(IR::KeyLess {
                 index_bits: data["index_bits"].as_u64().ok_or("KeyLess: missing index_bits")? as u32,
             }),
+            "PackKeyIR" | "PackedKeyLessIR" | "PackedKeyIndexIR" => {
+                let index_bits =
+                    data["index_bits"].as_u64().ok_or("packed key: missing index_bits")? as u32;
+                Ok(match class_name {
+                    "PackKeyIR" => IR::PackKey { index_bits },
+                    "PackedKeyLessIR" => IR::PackedKeyLess { index_bits },
+                    _ => IR::PackedKeyIndex { index_bits },
+                })
+            }
             "SortedIR" => Ok(IR::Sorted {
                 len: data["len"].as_u64().ok_or("Sorted: missing len")? as u32,
                 rank: data["rank"].as_u64().map(|r| r as u32),
@@ -1497,6 +1539,9 @@ mod tests {
             IR::Sorted { len: 5, rank: Some(3), index: true },
             IR::Sorted { len: 5, rank: None, index: false },
             IR::KeyLess { index_bits: 7 },
+            IR::PackKey { index_bits: 7 },
+            IR::PackedKeyLess { index_bits: 7 },
+            IR::PackedKeyIndex { index_bits: 7 },
         ];
         for ir in irs {
             let exported = ir.export();

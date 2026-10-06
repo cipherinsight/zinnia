@@ -55,6 +55,11 @@ pub(super) struct UnitCosts {
     /// One compare-exchange of values that also moves the indices (the
     /// adjacent-swap argsort).
     exchange_tracked: u32,
+    /// One compare-exchange of packed keys (`packed::argsort_by_packed_keys`),
+    /// the packing of one element, and the unpacking of one output index.
+    exchange_packed: u32,
+    pack: u32,
+    unpack: u32,
     /// A hinted key: its index bounded and its value read, a fixed part and
     /// a part per slot of the segment read.
     key_read_fixed: u32,
@@ -77,8 +82,9 @@ pub(super) struct UnitCosts {
 }
 
 /// halo2-base: an argsort of 100 by Batcher's network costs 84,600 cells
-/// (78.5 per exchange with the `KeyLess` tie-break), a sort 54,900 (51 per
-/// exchange); a read at a hinted index is a one-hot selection over the 100
+/// (78.5 per exchange with the `KeyLess` tie-break), 67,800 on packed keys
+/// (55 per exchange, 4 per packing, 46 per unpacked index), a sort 54,900
+/// (51 per exchange); a read at a hinted index is a one-hot selection over the 100
 /// slots (about 2,000 cells); `KeyLess` is about 55 cells; an order
 /// statistic of 100 about 4,700-6,500; the extreme pin about 42 cells per
 /// element plus 38 (fitted on maxima of 5 and minima of 48 values in the
@@ -88,6 +94,9 @@ const HALO2_BASE: UnitCosts = UnitCosts {
     exchange: 51,
     exchange_keys: 79,
     exchange_tracked: 63,
+    exchange_packed: 55,
+    pack: 4,
+    unpack: 46,
     key_read_fixed: 10,
     key_read_per_slot: 20,
     segment_per_slot: 0,
@@ -108,6 +117,9 @@ const NOIR: UnitCosts = UnitCosts {
     exchange: 17,
     exchange_keys: 24,
     exchange_tracked: 20,
+    exchange_packed: 22,
+    pack: 0,
+    unpack: 10,
     key_read_fixed: 7,
     key_read_per_slot: 0,
     segment_per_slot: 3,
@@ -175,6 +187,9 @@ pub(super) enum Network {
     MergeExchange,
     /// Batcher's merge exchange on `(value, index)` keys (stable).
     MergeExchangeTieBreak,
+    /// Batcher's merge exchange on packed keys `v·2^b + j` (stable); for
+    /// sorts whose live outputs are indices only.
+    PackedMergeExchange,
     /// The adjacent-swap network, stable by construction, moving indices.
     AdjacentSwap,
     /// The adjacent-swap network on values only (its first pass is the
@@ -188,14 +203,16 @@ pub(super) enum Network {
 impl Network {
     pub(super) fn pairs(self, n: usize) -> Vec<(usize, usize)> {
         match self {
-            Network::MergeExchange | Network::MergeExchangeTieBreak => merge_exchange_pairs(n),
+            Network::MergeExchange | Network::MergeExchangeTieBreak | Network::PackedMergeExchange => {
+                merge_exchange_pairs(n)
+            }
             Network::AdjacentSwap | Network::AdjacentSwapValues => adjacent_swap_pairs(n),
             Network::ReverseAdjacentSwapValues => reverse_adjacent_swap_pairs(n),
         }
     }
 
     pub(super) fn tracks_indices(self) -> bool {
-        matches!(self, Network::MergeExchangeTieBreak | Network::AdjacentSwap)
+        matches!(self, Network::MergeExchangeTieBreak | Network::AdjacentSwap | Network::PackedMergeExchange)
     }
 
     pub(super) fn tie_break(self) -> bool {
@@ -225,6 +242,7 @@ impl UnitCosts {
             | Network::AdjacentSwapValues
             | Network::ReverseAdjacentSwapValues => self.exchange,
             Network::MergeExchangeTieBreak => self.exchange_keys,
+            Network::PackedMergeExchange => self.exchange_packed,
             Network::AdjacentSwap => self.exchange_tracked,
         })
     }
@@ -352,7 +370,10 @@ fn cheapest_network(demand: &Demand, costs: &UnitCosts) -> Option<(Plan, u64)> {
         demand.values.union(&demand.indices).copied().collect()
     };
     let needs_indices = !demand.indices.is_empty() || demand.runtime_indices > 0;
-    let candidates: &[Network] = if needs_indices {
+    let needs_values = !demand.values.is_empty() || demand.runtime_values > 0;
+    let candidates: &[Network] = if needs_indices && !needs_values {
+        &[Network::MergeExchangeTieBreak, Network::PackedMergeExchange, Network::AdjacentSwap]
+    } else if needs_indices {
         &[Network::MergeExchangeTieBreak, Network::AdjacentSwap]
     } else {
         &[Network::MergeExchange, Network::AdjacentSwapValues, Network::ReverseAdjacentSwapValues]
@@ -362,7 +383,12 @@ fn cheapest_network(demand: &Demand, costs: &UnitCosts) -> Option<(Plan, u64)> {
         .iter()
         .map(|&network| {
             let comparators = cone_size(&network.pairs(n), n, &live) as u64;
-            (Plan::Network { network }, comparators * costs.comparator(network) + reads)
+            let packing = if network == Network::PackedMergeExchange {
+                n as u64 * u64::from(costs.pack) + live.len() as u64 * u64::from(costs.unpack)
+            } else {
+                0
+            };
+            (Plan::Network { network }, comparators * costs.comparator(network) + packing + reads)
         })
         .min_by_key(|(_, cost)| *cost)
 }

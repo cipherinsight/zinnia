@@ -21,6 +21,8 @@ use super::cost::{self, Demand, Network, Pin, Plan, Run};
 pub(crate) enum Forced {
     /// Batcher's network (with the tie-break when indices are live).
     Batcher,
+    /// Batcher's network on packed keys (indices only).
+    PackedBatcher,
     /// The adjacent-swap network.
     AdjacentSwap,
     /// One pinned run over every rank (the permutation check).
@@ -63,6 +65,7 @@ fn plan_for(forced: Forced, demand: &Demand) -> Plan {
         Forced::Batcher => Plan::Network {
             network: if needs_indices { Network::MergeExchangeTieBreak } else { Network::MergeExchange },
         },
+        Forced::PackedBatcher => Plan::Network { network: Network::PackedMergeExchange },
         Forced::AdjacentSwap => Plan::Network { network: Network::AdjacentSwap },
         Forced::Permutation => {
             Plan::Hinted { runs: vec![Run { first: 0, last: demand.n - 1, pin: Pin::Keys }] }

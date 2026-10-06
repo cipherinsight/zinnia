@@ -1074,6 +1074,25 @@ fn sort_hints_are_pinned_in_noir() {
     }
 }
 
+/// The argsort by Batcher's network on packed keys (`IR::PackKey`,
+/// `IR::PackedKeyLess`, `IR::PackedKeyIndex`): equal to the mock and to
+/// NumPy's stable argsort on ties and window extremes.
+#[test]
+fn packed_key_network_matches_the_mock() {
+    use crate::optim::sort_lowering::test_support::{sort_graph, Forced, Output};
+    if !toolchain_present(false) {
+        return;
+    }
+    for values in [vec![3, 1, 3, 0, 1], vec![i64::MAX, i64::MIN, 0, i64::MAX, -1]] {
+        let outputs: Vec<Output> = (0..values.len() as u32).map(Output::Index).collect();
+        let sort = sort_graph(&values, &outputs, Forced::PackedBatcher);
+        let named: Vec<(&str, i64)> = sort.inputs.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+        let got = execute(&sort.graph, &witness(&named)).expect("nargo execute");
+        let expected: Vec<i128> = sort.expected.as_ref().unwrap().iter().map(|&v| v as i128).collect();
+        assert_eq!(got, expected, "{values:?}");
+    }
+}
+
 /// `IR::KeyLess` by one gap check of packed keys: equal to the mock on ties,
 /// index order and window extremes; asserted, it rejects a false order.
 #[test]

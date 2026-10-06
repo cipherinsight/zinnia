@@ -30,7 +30,7 @@ impl Elements<'_> {
     }
 
     /// Bits that hold every index `0..n` (at least one).
-    fn index_bits(&self) -> u32 {
+    pub(super) fn index_bits(&self) -> u32 {
         (usize::BITS - self.len().saturating_sub(1).leading_zeros()).max(1)
     }
 

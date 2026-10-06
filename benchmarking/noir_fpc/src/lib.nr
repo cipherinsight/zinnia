@@ -725,6 +725,32 @@ unconstrained fn hint_divmod_nonneg(v: Field, m: Field) -> (Field, Field) {
     ((vv / mm) as Field, (vv % mm) as Field)
 }
 
+/// The index `i` of a packed sort key `K = v * 2^B + i` (Zinnia's
+/// `IR::PackKey`: `v` in the signed 64-bit window, `0 <= i < 2^B`, B <= 32).
+/// Uniqueness: with `o = 2^63 * 2^B`, `K + o = (v + 2^63) * 2^B + i`; the
+/// hint `(q, i)` is checked by `q < 2^64`, `i < 2^B` and `q * 2^B + i == K + o`,
+/// whose left side stays below `2^(64+B) < p`, so the field equation is an
+/// integer equation with the single solution `(v + 2^63, i)`.
+pub fn packed_key_index<let B: u32>(key: Field) -> Field {
+    let scale = 2.pow_32(B as Field);
+    let shifted = key + 9223372036854775808 * scale;
+    // Safety: the three checks below pin (q, i) (see above).
+    let (q, i) = unsafe { hint_divmod_nonneg(shifted, scale) };
+    i.assert_max_bit_size::<B>();
+    q.assert_max_bit_size::<64>();
+    assert(q * scale + i == shifted, "packed_key_index: reconstruction failed");
+    i
+}
+
+#[test]
+fn test_packed_key_index() {
+    for v in [0, 5, -5, 9223372036854775807, -9223372036854775808] {
+        for i in [0, 1, 99, 127] {
+            assert(packed_key_index::<7>(v * 128 + i) == i);
+        }
+    }
+}
+
 /// floor(v / m) for 0 <= v < 2^40 and a power of two 1 <= m <= 2^127.
 /// Uniqueness: q < 2^40, 0 <= r <= m - 1 (two 128-bit range checks) and
 /// q * m + r == v, which stays below 2^168 < p, so (q, r) is unique.

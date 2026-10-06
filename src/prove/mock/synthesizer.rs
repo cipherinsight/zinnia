@@ -647,6 +647,10 @@ impl Synthesizer for MockSynthesizer {
         self.eq_i(a, b)
     }
 
+    fn packed_key_index(&mut self, key: &MockCell, index_bits: u32) -> Result<MockCell, ProvingError> {
+        Ok(MockCell(kernel::packed_key_parts(key.fp(), index_bits).1))
+    }
+
     // ── Prover hints ──────────────────────────────────────────────────
 
     fn prover_hint(

@@ -132,6 +132,34 @@ fn every_plan_is_the_stable_sort_with_ties() {
     }
 }
 
+/// The packed-key network yields the stable argsort (ties in original
+/// order) for every rank, some ranks, runtime ranks, every small length
+/// and window-extreme values.
+#[test]
+fn packed_network_is_the_stable_argsort() {
+    let indices = |ranks: &[u32]| ranks.iter().map(|&r| Output::Index(r)).collect::<Vec<_>>();
+    let n = TIED.len() as u32;
+    assert_computes_numpy(&TIED, &indices(&(0..n).collect::<Vec<_>>()), Forced::PackedBatcher);
+    for ranks in [vec![0], vec![8], vec![7, 8], vec![0, 4, 8]] {
+        assert_computes_numpy(&TIED, &indices(&ranks), Forced::PackedBatcher);
+    }
+    for r in [0, 4, 8, -1, 9] {
+        assert_computes_numpy(&TIED, &[Output::IndexAt(r)], Forced::PackedBatcher);
+    }
+    let extremes = [i64::MAX, i64::MIN, 0, i64::MAX, -1, i64::MIN];
+    assert_computes_numpy(&extremes, &indices(&[0, 1, 2, 3, 4, 5]), Forced::PackedBatcher);
+    let mut state = 0x2545F4914F6CDD1Du64;
+    for n in 1..=17usize {
+        let values: Vec<i64> = (0..n)
+            .map(|_| {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                ((state >> 33) % 5) as i64 - 2
+            })
+            .collect();
+        assert_computes_numpy(&values, &indices(&(0..n as u32).collect::<Vec<_>>()), Forced::PackedBatcher);
+    }
+}
+
 #[test]
 fn runtime_ranks_are_the_stable_sort_and_out_of_range_has_no_proof() {
     for forced in [Forced::Batcher, Forced::Permutation, Forced::Runs] {
@@ -180,10 +208,13 @@ fn cost_rule_picks_by_target_and_live_outputs() {
     let halo2 = SortTarget::Halo2Base.costs();
     let noir = SortTarget::Noir.costs();
     let every: Vec<usize> = (0..100).collect();
-    // A full argsort of 100: Batcher on halo2-base (a read is a one-hot
-    // selection over 100 slots), the permutation check on Noir.
+    // A full argsort of 100: Batcher on packed keys on halo2-base (a read is
+    // a one-hot selection over 100 slots), the permutation check on Noir.
     let full = demand(100, &[], &every, 0);
-    assert_eq!(choose_plan(&full, &halo2).0, Plan::Network { network: Network::MergeExchangeTieBreak });
+    assert_eq!(choose_plan(&full, &halo2).0, Plan::Network { network: Network::PackedMergeExchange });
+    // With the sorted values live too: the (value, index) network.
+    let both = demand(100, &every, &every, 0);
+    assert_eq!(choose_plan(&both, &halo2).0, Plan::Network { network: Network::MergeExchangeTieBreak });
     assert_eq!(
         choose_plan(&full, &noir).0,
         Plan::Hinted { runs: vec![Run { first: 0, last: 99, pin: Pin::Keys }] }
