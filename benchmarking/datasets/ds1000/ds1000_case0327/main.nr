@@ -4,5 +4,7 @@
 // @outputs: float[10]; const float[7] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
 fn main(A: [Field; 10]) -> pub [Field; 10] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(A);
     A
 }

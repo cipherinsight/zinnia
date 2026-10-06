@@ -15,7 +15,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    let arr = q.load_floats(ctx, &arr);
+    let arr = q.load_floats_bounded(ctx, &arr);
     let (n1, n2) = (q.load_ints(ctx, &n1), q.load_ints(ctx, &n2));
     let mut result = Vec::with_capacity(arr.len());
     for (row, (t1, t2)) in arr.chunks(50).zip(n1.into_iter().zip(n2)) {
@@ -23,8 +23,8 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         let t1 = q.bound(ctx, t1);
         let t2 = q.int_to_float(ctx, t2);
         let t2 = q.bound(ctx, t2);
-        for x in row {
-            let xb = q.bound(ctx, *x);
+        for &xb in row {
+            let x = &xb.cell;
             let below_t1 = q.lt(ctx, xb, t1);
             let below_t2 = q.lt(ctx, xb, t2);
             // t1 <= x < t2: x + 5; x >= t2: 30; otherwise 0.

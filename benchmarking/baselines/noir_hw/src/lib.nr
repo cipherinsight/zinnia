@@ -101,6 +101,31 @@ fn check_max<let N: u32>(xs: [Field; N], m: Field) {
     assert(prod == 0, "max: not one of the values");
 }
 
+// ------------------------------------------------------------ input domain
+
+// Every input element the circuit reads is checked to its dtype's domain, so a
+// proof means "some valid NumPy input gives these outputs": an int64, or a
+// float whose Q32 code lies in the same signed 64-bit window. The check is the
+// window check (one 64-bit range check of x + 2^63), which Noir shares with any
+// later `window(x)` of the same value, so inputs that are compared cost nothing
+// more. Inputs the circuit never reads are not checked.
+pub fn check_input(x: Field) {
+    let _ = window(x);
+}
+
+// `check_input` for every element.
+pub fn check_inputs<let N: u32>(xs: [Field; N]) {
+    for i in 0..N {
+        check_input(xs[i]);
+    }
+}
+
+// `x` after `check_input(x)`: for kernels that read only part of an input.
+pub fn checked(x: Field) -> Field {
+    check_input(x);
+    x
+}
+
 // --------------------------------------------------------------- arithmetic
 
 // (negative, magnitude) of a Field encoding a signed integer below 2^127.
@@ -599,6 +624,21 @@ fn test_pick_out_of_bounds() {
 #[test(should_fail)]
 fn test_pick_too_negative() {
     let _ = pick([10, 11, 12], -4);
+}
+
+#[test]
+fn test_input_domain() {
+    check_inputs([-9223372036854775808, 9223372036854775807, 0]);
+}
+
+#[test(should_fail)]
+fn test_input_above_window() {
+    check_input(9223372036854775808);
+}
+
+#[test(should_fail)]
+fn test_input_below_window() {
+    check_input(-9223372036854775809);
 }
 
 #[test(should_fail)]

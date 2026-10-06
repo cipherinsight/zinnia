@@ -3,7 +3,8 @@
 //! private `Integer[5]` `index`; the `Float[8, 9, 8, 8, 8]` parameter `a` is
 //! never read by the kernel and is not loaded. NumPy raises unless
 //! `0 <= index[k] < dims[k]`, so each index is proven to lie there
-//! (`assert_below`); the flat index is the inner product with the constant
+//! (`assert_below`), which also implies the input domain (an int64); the
+//! flat index is the inner product with the constant
 //! Fortran strides (1, 8, 72, 576, 4608), which also assigns the indices.
 
 use crate::prelude::*;

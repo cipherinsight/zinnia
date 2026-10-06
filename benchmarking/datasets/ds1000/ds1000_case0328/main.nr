@@ -5,5 +5,5 @@
 // @outputs: float[3]; const float[2] = [0.0, 0.0]
 
 fn main(A: [Field; 5]) -> pub [Field; 3] {
-    [A[0], A[1], A[2]]
+    [noir_hw::checked(A[0]), noir_hw::checked(A[1]), noir_hw::checked(A[2])]
 }

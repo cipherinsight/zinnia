@@ -11,6 +11,10 @@
 use noir_hw::{from_int, window, SCALE};
 
 fn main(arr: [Field; 250], n1: [Field; 5], n2: [Field; 5]) -> pub [Field; 250] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(arr);
+    noir_hw::check_inputs(n1);
+    noir_hw::check_inputs(n2);
     let mut result: [Field; 250] = [0; 250];
     for r in 0..5 {
         let t1 = window(from_int(n1[r]));

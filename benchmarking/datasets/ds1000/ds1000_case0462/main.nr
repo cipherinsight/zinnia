@@ -12,6 +12,8 @@ use noir_hw::select_kept;
 global N: u32 = 20;
 
 fn main(a: [Field; N]) -> pub [Field; N + 1] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
     let mut keep: [bool; N] = [false; N];
     keep[0] = a[0] != 0;
     for i in 1..N {

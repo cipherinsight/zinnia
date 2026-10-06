@@ -128,23 +128,49 @@ impl Q32 {
     }
 
     // ---------------------------------------------------------------- loading
+    //
+    // Every private input element the circuit reads is checked to lie in its
+    // dtype's domain when it is loaded, so a proof means "some valid NumPy input
+    // gives these outputs": an integer is an int64 and a float's Q32 code lies
+    // in the same signed 64-bit window (both are the window check of
+    // `Q32::bound`), a boolean is 0 or 1. The `*_bounded` loaders return the
+    // window proof so comparisons reuse it instead of checking again. Inputs
+    // the circuit never reads are not loaded and get no check.
 
-    /// Private float inputs.
+    /// Private float inputs, each checked to the Q32 window.
     pub fn load_floats(&self, ctx: &mut Ctx, values: &[f64]) -> Vec<Cell> {
-        values.iter().map(|v| ctx.load_witness(fe(quantize(*v)))).collect()
+        self.load_floats_bounded(ctx, values).iter().map(|x| x.cell).collect()
+    }
+
+    /// [`Q32::load_floats`], returning the window proofs.
+    pub fn load_floats_bounded(&self, ctx: &mut Ctx, values: &[f64]) -> Vec<I64> {
+        values.iter().map(|v| self.load_input(ctx, quantize(*v))).collect()
     }
 
     pub fn load_float(&self, ctx: &mut Ctx, value: f64) -> Cell {
-        ctx.load_witness(fe(quantize(value)))
+        self.load_input(ctx, quantize(value)).cell
     }
 
-    /// Private integer inputs.
+    pub fn load_float_bounded(&self, ctx: &mut Ctx, value: f64) -> I64 {
+        self.load_input(ctx, quantize(value))
+    }
+
+    /// Private integer inputs, each checked to be an int64.
     pub fn load_ints(&self, ctx: &mut Ctx, values: &[i64]) -> Vec<Cell> {
-        values.iter().map(|v| ctx.load_witness(fe(*v as i128))).collect()
+        self.load_ints_bounded(ctx, values).iter().map(|x| x.cell).collect()
+    }
+
+    /// [`Q32::load_ints`], returning the window proofs.
+    pub fn load_ints_bounded(&self, ctx: &mut Ctx, values: &[i64]) -> Vec<I64> {
+        values.iter().map(|v| self.load_input(ctx, *v as i128)).collect()
     }
 
     pub fn load_int(&self, ctx: &mut Ctx, value: i64) -> Cell {
-        ctx.load_witness(fe(value as i128))
+        self.load_input(ctx, value as i128).cell
+    }
+
+    pub fn load_int_bounded(&self, ctx: &mut Ctx, value: i64) -> I64 {
+        self.load_input(ctx, value as i128)
     }
 
     /// Private boolean inputs, each constrained to `{0, 1}`.
@@ -157,6 +183,14 @@ impl Q32 {
                 cell
             })
             .collect()
+    }
+
+    /// One input element: loaded and checked to the window.
+    fn load_input(&self, ctx: &mut Ctx, value: i128) -> I64 {
+        let cell = ctx.load_witness(fe(input_tamper::apply(value)));
+        let bounded = self.bound_unchecked_reuse(ctx, cell);
+        input_reuse::loaded(&cell);
+        bounded
     }
 
     /// A float constant (fixed by the circuit, not chosen by the prover).
@@ -172,7 +206,15 @@ impl Q32 {
     // ------------------------------------------------------------- the window
 
     /// Proves `x` lies in `[-2^63, 2^63)`: one 64-bit range check of `x + 2^63`.
+    /// An input loaded by the `load_*` functions is already checked: use the
+    /// `I64` from `load_*_bounded` instead (the mock run counts re-checks of
+    /// inputs, see [`input_reuse`]).
     pub fn bound(&self, ctx: &mut Ctx, x: Cell) -> I64 {
+        input_reuse::bounded(&x);
+        self.bound_unchecked_reuse(ctx, x)
+    }
+
+    fn bound_unchecked_reuse(&self, ctx: &mut Ctx, x: Cell) -> I64 {
         let offset = self.gate.add(ctx, x, Constant(Fr::from_u128(OFFSET)));
         self.range.range_check(ctx, offset, 64);
         I64 { cell: x, offset }
@@ -738,6 +780,77 @@ impl Q32 {
     }
 }
 
+/// Diagnostic: counts window checks of cells that were already checked when
+/// loaded as inputs (a wasted 64-bit range check each). Cells carry their
+/// position only outside the prover stage, so this is read from mock runs
+/// (`halo2_hw mock` reports `redundant_input_checks`) and never changes the
+/// circuit.
+pub mod input_reuse {
+    use super::Cell;
+    use halo2_base::ContextCell;
+    use std::cell::RefCell;
+    use std::collections::HashSet;
+
+    thread_local! {
+        static LOADED: RefCell<HashSet<ContextCell>> = RefCell::new(HashSet::new());
+        static REDUNDANT: RefCell<usize> = const { RefCell::new(0) };
+    }
+
+    pub(super) fn loaded(cell: &Cell) {
+        if let Some(c) = cell.cell {
+            LOADED.with(|l| l.borrow_mut().insert(c));
+        }
+    }
+
+    pub(super) fn bounded(cell: &Cell) {
+        if let Some(c) = cell.cell {
+            if LOADED.with(|l| l.borrow().contains(&c)) {
+                REDUNDANT.with(|r| *r.borrow_mut() += 1);
+            }
+        }
+    }
+
+    /// Starts a new synthesis.
+    pub fn reset() {
+        LOADED.with(|l| l.borrow_mut().clear());
+        REDUNDANT.with(|r| *r.borrow_mut() = 0);
+    }
+
+    /// Re-checks of inputs since the last [`reset`].
+    pub fn redundant_checks() -> usize {
+        REDUNDANT.with(|r| *r.borrow())
+    }
+}
+
+/// Test hook for the input-domain check (`halo2_hw mock --tamper-input`): the
+/// fixture reader marks one integer input element with [`SENTINEL`] and arms
+/// the hook; the loader then loads that element as `SENTINEL + 2^64`, a value
+/// outside every input domain, which the circuit must reject. (An out-of-range
+/// float needs no hook: the fixture value 2^31 has the code 2^63.) Disarmed,
+/// the hook is the identity.
+pub mod input_tamper {
+    use std::cell::RefCell;
+
+    /// An int64 value no fixture uses, standing for the tampered element.
+    pub const SENTINEL: i64 = -0x7357_7357_7357_7357;
+
+    thread_local! {
+        static ARMED: RefCell<bool> = const { RefCell::new(false) };
+    }
+
+    pub fn arm(on: bool) {
+        ARMED.with(|a| *a.borrow_mut() = on);
+    }
+
+    pub(super) fn apply(value: i128) -> i128 {
+        if value == SENTINEL as i128 && ARMED.with(|a| *a.borrow()) {
+            value + (1i128 << 64)
+        } else {
+            value
+        }
+    }
+}
+
 /// Degree-14 minimax polynomial for `sin` on `[0, pi]` (lolremez), highest
 /// degree first. Identical to Zinnia's `kernel::SIN_COEFS` and halo2-graph's
 /// `generate_sin_poly`.
@@ -825,6 +938,26 @@ mod tests {
             let r = isqrt(n);
             assert!(r * r <= n && (r + 1) * (r + 1) > n, "{n}");
         }
+    }
+
+    #[test]
+    fn inputs_are_checked_to_their_domain() {
+        // The int64 and Q32 extremes load.
+        assert!(accepts(|q, ctx| {
+            q.load_ints(ctx, &[i64::MIN, i64::MAX, 0]);
+            q.load_floats(ctx, &[-2147483648.0, 2147483647.5, 0.0]);
+        }));
+        // A float whose Q32 code is 2^63 does not.
+        assert!(!accepts(|q, ctx| {
+            q.load_floats(ctx, &[2147483648.0]);
+        }));
+        // Nor an int64 moved out of the window (the checker's tamper hook adds 2^64).
+        input_tamper::arm(true);
+        let ok = accepts(|q, ctx| {
+            q.load_ints(ctx, &[input_tamper::SENTINEL]);
+        });
+        input_tamper::arm(false);
+        assert!(!ok);
     }
 
     #[test]

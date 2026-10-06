@@ -5,6 +5,8 @@
 // @outputs: float[72]
 
 fn main(a: [Field; 72]) -> pub [Field; 72] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
     let mut grid = [0; 72];
     for row in 0..6 {
         for col in 0..12 {

@@ -12,6 +12,13 @@ For every requested case and system with a baseline:
 Keys always come from input A and proofs from input B, so a circuit whose
 structure depends on the input values fails (H-11).
 
+Input domain: one input element the kernel reads (the first, in parameter
+order, whose change changes NumPy's output) is moved out of its dtype's domain
+(halo2: `mock --tamper-input`, a float to Q32 code 2^63 or an integer to
+2^64 + v; Noir: `prove --tamper-input`, the field value + 2^64); both systems
+must reject it. The halo2 mock also reports `redundant_input_checks`, which
+must be 0 (each input checked once).
+
 Outputs are compared position by position against the kernel body run as
 plain NumPy (`hw_check.reference`): integers and booleans exactly, floats
 within `atol + rtol * |reference|` with the case's `float_tolerance` from
@@ -39,7 +46,9 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
-from .reference import reference_outputs
+import copy
+
+from .reference import fixture_arguments, flatten_output, load_kernel, reference_outputs
 
 BENCH = Path(__file__).resolve().parents[2]
 DATASET = BENCH / "datasets" / "ds1000"
@@ -118,6 +127,41 @@ class CaseCheck:
             problems.append(f"tampered public accepted: {bad}")
         return bad
 
+    def read_input(self) -> tuple[str, int] | None:
+        """An input element the kernel reads: the first (parameter order; first,
+        last and middle element) whose change changes NumPy's output on B."""
+        kernel = load_kernel(self.dir / "kernel.py")
+        base = self.expected["B"]
+        for p in self.fixture["parameters"]:
+            values = self.fixture["inputs"]["B"][p["name"]]
+            n = 1
+            for d in p.get("shape", []):
+                n *= d
+            for index in dict.fromkeys([0, n - 1, n // 2]):
+                for delta in (1000, -1000, 1, -1):
+                    fx = copy.deepcopy(self.fixture)
+                    flat = fx["inputs"]["B"][p["name"]]
+                    if p["kind"] == "scalar":
+                        fx["inputs"]["B"][p["name"]] = flat + delta
+                    else:
+                        cell = flat
+                        idx = []
+                        rem = index
+                        for d in reversed(p["shape"]):
+                            idx.append(rem % d)
+                            rem //= d
+                        idx.reverse()
+                        for i in idx[:-1]:
+                            cell = cell[i]
+                        cell[idx[-1]] = cell[idx[-1]] + delta
+                    try:
+                        out = flatten_output(kernel(*fixture_arguments(fx, "B")))
+                    except Exception:
+                        continue
+                    if out != base:
+                        return p["name"], index
+        return None
+
     def halo2(self) -> dict:
         b = str(self.halo2_bin)
         common = ["--case", str(self.dir), "--fixture", str(self.fixture_path)]
@@ -143,6 +187,14 @@ class CaseCheck:
                 steps["verify_tampered"] = self._tamper(
                     lambda i: run_json([b, "verify", "--case", str(self.dir), *wd, "--tamper-index", str(i)]),
                     n, problems)
+        if steps["mock_B"].get("redundant_input_checks"):
+            problems.append(f"{steps['mock_B']['redundant_input_checks']} inputs checked twice")
+        target = self.read_input()
+        if target is not None:
+            spec = f"{target[0]}:{target[1]}"
+            steps["mock_out_of_domain"] = run_json([b, "mock", *common, "--input", "B", "--tamper-input", spec])
+            if steps["mock_out_of_domain"].get("satisfied") is not False:
+                problems.append(f"out-of-domain input {spec} accepted")
         return {
             "verdict": "pass" if not problems else "FAIL",
             "problems": problems,
@@ -172,6 +224,14 @@ class CaseCheck:
                 n = len(Path(steps["prove_B"]["public_inputs_path"]).read_bytes()) // 32
                 steps["verify_tampered"] = self._tamper(
                     lambda i: run_json([*drv, "verify", *common, "--tamper-index", str(i)], cwd), n, problems)
+            target = self.read_input()
+            if target is not None:
+                spec = f"{target[0]}:{target[1]}"
+                steps["prove_out_of_domain"] = run_json(
+                    [*drv, "prove", *common, "--fixture", str(self.fixture_path), "--input", "B",
+                     "--tamper-input", spec], cwd)
+                if steps["prove_out_of_domain"].get("ok") is not False:
+                    problems.append(f"out-of-domain input {spec} accepted")
         return {
             "verdict": "pass" if not problems else "FAIL",
             "problems": problems,

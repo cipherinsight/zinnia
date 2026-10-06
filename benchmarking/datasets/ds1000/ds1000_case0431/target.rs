@@ -11,7 +11,8 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    let a = q.load_floats(ctx, &a);
+    let ab = q.load_floats_bounded(ctx, &a);
+    let a: Vec<Cell> = ab.iter().map(|x| x.cell).collect();
     let total = q.sum(ctx, a.iter().copied());
     let mean = q.floor_div_const(ctx, total, 8).0.cell;
     let dev: Vec<Cell> = a.iter().map(|x| q.sub(ctx, *x, mean)).collect();
@@ -24,8 +25,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let high = q.add(ctx, mean, spread);
     let high = q.bound(ctx, high);
     let mut outlier = Vec::with_capacity(8);
-    for x in &a {
-        let x = q.bound(ctx, *x);
+    for &x in &ab {
         let above_low = q.lt(ctx, low, x);
         let below_high = q.lt(ctx, x, high);
         let inside = q.gate.and(ctx, above_low, below_high);

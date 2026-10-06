@@ -12,6 +12,9 @@
 use noir_hw::window;
 
 fn main(a: [Field; 27], b: [Field; 27]) -> pub [Field; 27] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
+    noir_hw::check_inputs(b);
     let mut c = [0; 27];
     for col in 0..9 {
         let (a0, a1, a2) = (window(a[col]), window(a[9 + col]), window(a[18 + col]));

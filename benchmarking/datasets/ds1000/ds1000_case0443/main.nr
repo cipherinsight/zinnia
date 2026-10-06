@@ -9,6 +9,9 @@
 use noir_hw::compact;
 
 fn main(A: [Field; 20], B: [Field; 3]) -> pub [Field; 21] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(A);
+    noir_hw::check_inputs(B);
     let mut keep: [Field; 20] = [0; 20];
     let mut w: [Field; 20] = [0; 20];
     let mut count: Field = 0;

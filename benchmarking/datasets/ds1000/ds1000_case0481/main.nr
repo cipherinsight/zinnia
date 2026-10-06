@@ -8,6 +8,11 @@
 use noir_hw::compact;
 
 fn main(x: [Field; 9], y: [Field; 9], a: Field, b: Field) -> pub [Field; 10] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(x);
+    noir_hw::check_inputs(y);
+    noir_hw::check_input(a);
+    noir_hw::check_input(b);
     let mut hit: [Field; 9] = [0; 9];
     let mut w: [Field; 9] = [0; 9];
     let mut count: Field = 0;

@@ -14,6 +14,10 @@ global ROWS: u32 = 8;
 global COLS: u32 = 6;
 
 fn main(a: [Field; 48], row: Field, multiply_number: Field) -> pub [Field; 6] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
+    noir_hw::check_input(row);
+    noir_hw::check_input(multiply_number);
     let mut cumsum = [0; COLS];
     let mut acc: Field = 0;
     for j in 0..COLS {

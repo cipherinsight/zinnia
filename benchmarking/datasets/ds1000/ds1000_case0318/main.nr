@@ -13,6 +13,9 @@
 // @outputs: float[48]
 
 fn main(a: [Field; 48], permutation: [Field; 6]) -> pub [Field; 48] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
+    noir_hw::check_inputs(permutation);
     let mut hit: [[Field; 6]; 6] = [[0; 6]; 6];
     for j in 0..6 {
         let mut total: Field = 0;

@@ -21,7 +21,8 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    let grades = q.load_floats(ctx, &grades);
+    let grades_bounded = q.load_floats_bounded(ctx, &grades);
+    let grades: Vec<Cell> = grades_bounded.iter().map(|g| g.cell).collect();
     let threshold = q.load_float(ctx, threshold);
 
     let low = q.min_of(ctx, &grades);
@@ -33,8 +34,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let in_range = q.gate.mul_not(ctx, negative, below_len);
     let t = q.gate.mul(ctx, in_range, u.cell);
 
-    let grades = q.bound_all(ctx, &grades);
-    let high = kth_smallest(&q, ctx, &grades, t);
+    let high = kth_smallest(&q, ctx, &grades_bounded, t);
     out.floats(&[low, high.cell]);
     Ok(())
 }

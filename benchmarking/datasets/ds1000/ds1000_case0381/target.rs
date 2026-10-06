@@ -24,7 +24,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    let a = q.load_floats(ctx, &a);
+    let a = q.load_floats(ctx, &a); // each a_i in the window, so each key is an integer
     let mut order = argsort(&q, ctx, &a);
     order.reverse();
     out.ints(&order);
@@ -37,7 +37,6 @@ fn argsort(q: &Q32, ctx: &mut Ctx, a: &[Cell]) -> Vec<Cell> {
         .iter()
         .enumerate()
         .map(|(i, x)| {
-            q.bound(ctx, *x); // a_i in the window, so the key is an integer
             q.gate.mul_add(ctx, *x, Constant(fe(128)), Constant(fe(KEY_SHIFT + i as i128)))
         })
         .collect();

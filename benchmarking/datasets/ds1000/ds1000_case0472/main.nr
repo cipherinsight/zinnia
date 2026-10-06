@@ -8,7 +8,7 @@ global SLICE: u32 = 1512;
 fn main(a: [Field; 9072]) -> pub [Field; 1512] {
     let mut out = [0; 1512];
     for k in 0..SLICE {
-        out[k] = a[5 * SLICE + k];
+        out[k] = noir_hw::checked(a[5 * SLICE + k]);
     }
     out
 }

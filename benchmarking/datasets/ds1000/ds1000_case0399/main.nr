@@ -8,6 +8,11 @@
 global N: u32 = 30;
 
 fn main(A: [Field; 30], a: Field, b: Field, c: Field) -> pub [Field; 30] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(A);
+    noir_hw::check_input(a);
+    noir_hw::check_input(b);
+    noir_hw::check_input(c);
     let mut B = [0; N];
     B[0] = a * A[0];
     B[1] = a * A[1] + b * B[0];

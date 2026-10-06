@@ -85,6 +85,7 @@ pub fn synthesize(
         }
     };
     let mut outputs = Outputs::default();
+    crate::q32::input_reuse::reset();
     circuit(&mut builder, inputs, &mut outputs)?;
     builder.assigned_instances[0] = outputs.instance_cells().to_vec();
     if stage != CircuitBuilderStage::Prover {
@@ -393,6 +394,7 @@ pub fn mock(
     let (builder, outputs) = t.time("synthesize_s", || {
         synthesize(circuit, inputs, CircuitBuilderStage::Mock, &Shape::Fresh { k, lookup_bits })
     })?;
+    let redundant_input_checks = crate::q32::input_reuse::redundant_checks();
     let instance = instance_values(&outputs);
     let result = t.time("mock_s", || {
         MockProver::run(k, &builder, vec![instance.clone()]).map(|p| p.verify())
@@ -410,6 +412,7 @@ pub fn mock(
         "lookup_bits": lookup_bits,
         "satisfied": failures.is_empty(),
         "failures": failures,
+        "redundant_input_checks": redundant_input_checks,
         "cells": cells,
         "publics": outputs.layout().decode(&instance).map_err(Error::new)?,
     }))

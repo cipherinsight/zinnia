@@ -6,7 +6,7 @@
 fn main(Z: [Field; 9072]) -> pub [Field; 2268] {
     let mut out = [0; 2268];
     for k in 0..2268 {
-        out[k] = Z[k * 4 + 3];
+        out[k] = noir_hw::checked(Z[k * 4 + 3]);
     }
     out
 }

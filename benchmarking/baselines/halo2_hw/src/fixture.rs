@@ -139,6 +139,31 @@ pub struct Inputs {
 }
 
 impl Inputs {
+    /// Replaces element `index` (row-major) of parameter `name` by a value
+    /// outside its dtype's domain, for the input-domain tamper test: a float
+    /// becomes 2^31 (Q32 code 2^63, one past the window); an integer becomes
+    /// [`crate::q32::input_tamper::SENTINEL`], which the armed loader turns
+    /// into `SENTINEL + 2^64`.
+    pub fn tamper(&mut self, name: &str, index: usize) -> Result<(), Error> {
+        let value = self
+            .values
+            .get_mut(name)
+            .ok_or_else(|| Error::new(format!("no parameter named {name:?}")))?;
+        let slot = value
+            .data
+            .get_mut(index)
+            .ok_or_else(|| Error::new(format!("parameter {name:?} has no element {index}")))?;
+        *slot = match value.dtype {
+            Dtype::Float => serde_json::json!(2147483648.0),
+            Dtype::Int => {
+                crate::q32::input_tamper::arm(true);
+                serde_json::json!(crate::q32::input_tamper::SENTINEL)
+            }
+            Dtype::Bool => return Err(Error::new("tampering a boolean input is not supported")),
+        };
+        Ok(())
+    }
+
     fn get(&self, name: &str, dtype: Dtype, shape: &[usize]) -> Result<&ParamValue, Error> {
         let value = self
             .values

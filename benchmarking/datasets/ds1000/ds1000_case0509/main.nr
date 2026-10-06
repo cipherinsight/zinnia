@@ -29,6 +29,8 @@ global R: u32 = 10;
 global C: u32 = 10;
 
 fn main(im: [Field; R * C]) -> pub [Field; 2 + R * C] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(im);
     let mut row_hit: [Field; R] = [0; R];
     for i in 0..R {
         let mut prod: Field = 1;

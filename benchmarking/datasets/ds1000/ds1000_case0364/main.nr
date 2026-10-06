@@ -50,6 +50,10 @@ fn check_insertion_point(pos: Field, neg: bool, g: [bool; N]) {
 }
 
 fn main(a: [Field; N * W], pos: Field, element: [Field; W]) -> pub [Field; (N + 1) * W] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
+    noir_hw::check_input(pos);
+    noir_hw::check_inputs(element);
     let g = insertion_point(pos);
     // out[k] = a[k] + h[k] - h[k-1] with h[k] = g_{k+1} (e - a[k]): k < P gives
     // a[k], k = P gives e, k > P gives a[k-1] (g_0 = 0, g_{N+1} = 1).

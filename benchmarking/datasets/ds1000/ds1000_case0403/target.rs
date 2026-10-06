@@ -3,7 +3,8 @@
 //! private `Integer[5]` `index`; the `Float[8, 9, 8, 8, 8]` parameter `a` is
 //! never read by the kernel and is not loaded. NumPy raises unless
 //! `0 <= index[k] < dims[k]`, so each index is proven to lie there
-//! (`assert_below`); the flat index is the inner product with the constant
+//! (`assert_below`), which also implies the input domain (an int64); the
+//! flat index is the inner product with the constant
 //! C strides (4608, 512, 64, 8, 1), taken last index first so that the leading
 //! stride 1 costs no cell; the inner product also assigns the indices.
 

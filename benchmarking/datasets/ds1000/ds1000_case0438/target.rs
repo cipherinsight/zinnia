@@ -21,9 +21,6 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
 
     let x = q.load_ints(ctx, &post);
     let y = q.load_ints(ctx, &distance);
-    for v in x.iter().chain(&y) {
-        q.bound(ctx, *v);
-    }
     let dot = |ctx: &mut Ctx, a: &[Cell], b: &[Cell]| {
         q.gate.inner_product(ctx, a.iter().map(|c| Existing(*c)), b.iter().map(|c| Existing(*c)))
     };

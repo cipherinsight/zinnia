@@ -20,8 +20,8 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    let a = q.load_floats(ctx, &a);
-    let ab = q.bound_all(ctx, &a);
+    let ab = q.load_floats_bounded(ctx, &a);
+    let a: Vec<Cell> = ab.iter().map(|x| x.cell).collect();
     // lt[i][j] = [a_i < a_j], eq[i][j] = [a_i == a_j] for i < j.
     let mut less = vec![vec![None; N]; N];
     let mut same = vec![vec![None; N]; N];

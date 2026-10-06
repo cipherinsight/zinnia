@@ -8,6 +8,8 @@
 use noir_hw::mul;
 
 fn main(X: [Field; 200]) -> pub [Field; 2000] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(X);
     let mut r = [0; 2000];
     for k in 0..20 {
         for i in 0..10 {

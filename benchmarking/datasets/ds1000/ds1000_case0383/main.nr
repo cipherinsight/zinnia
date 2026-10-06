@@ -45,6 +45,8 @@ unconstrained fn argsort_hint(a: [Field; N]) -> [Field; N] {
 }
 
 fn main(a: [Field; N]) -> pub [Field; TOP] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
     // Safety: pinned by `check_order`.
     let order = unsafe { argsort_hint(a) };
     check_order(a, order);

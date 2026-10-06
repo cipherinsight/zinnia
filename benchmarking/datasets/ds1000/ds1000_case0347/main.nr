@@ -14,6 +14,10 @@ global ROWS: u32 = 8;
 global COLS: u32 = 6;
 
 fn main(a: [Field; 48], row: Field, divide_number: Field) -> pub Field {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
+    noir_hw::check_input(row);
+    noir_hw::check_input(divide_number);
     // noir_hw::div with the divisor's sign test hoisted: the quotient
     // floor(x * 2^32 / d) with remainder in [0, |d|) is the floor quotient by
     // |d|, negated for d < 0.

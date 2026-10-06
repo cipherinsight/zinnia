@@ -19,6 +19,8 @@ global ATAN_U_Q: [Field; 10] = [
 global DEGREES_PER_HALF_RADIAN_Q: Field = 492166998415; // round(360 / pi * 2^32)
 
 fn main(value: Field) -> pub Field {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_input(value);
     // -1 <= value <= 1: value + 1 lies in [0, 2] (as a Q32 integer).
     let shifted = value + SCALE;
     shifted.assert_max_bit_size::<64>();

@@ -9,6 +9,9 @@ global RTOL_Q: Field = 42950; // round(1e-5 * 2^32)
 global ATOL_Q: Field = 43; // round(1e-8 * 2^32)
 
 fn main(s1: [Field; 6], s2: [Field; 6]) -> pub Field {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(s1);
+    noir_hw::check_inputs(s2);
     let mut count: Field = 0;
     for i in 0..6 {
         let tol = mul(abs(s2[i]), RTOL_Q) + ATOL_Q;

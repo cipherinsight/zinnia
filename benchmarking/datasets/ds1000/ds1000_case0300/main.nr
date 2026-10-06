@@ -48,6 +48,9 @@ unconstrained fn rank_hint(p: Field) -> (Field, Field) {
 }
 
 fn main(a: [Field; N], p: Field) -> pub Field {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
+    noir_hw::check_input(p);
     // Safety: pinned by `sorted`.
     let order = unsafe { argsort_hint(a) };
     let s = sorted(a, order);

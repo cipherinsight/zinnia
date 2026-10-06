@@ -46,6 +46,18 @@ Terms:
    runtime.
 5. **Input-independent structure.** The circuit's gates and layout never depend on
    input values. The checker generates keys with input A and proves with input B.
+6. **Input domain.** Every input element the circuit reads is checked to lie in its
+   dtype's domain, so a proof means "some valid NumPy input gives these outputs"
+   (author's decision; Zinnia does the same since `frontend-2`): an integer is an
+   int64, a float's Q32 code lies in the same signed 64-bit window (that is,
+   -2^31 <= v < 2^31), a boolean is 0 or 1. One check per element, and none for
+   elements the kernel never reads. halo2: the `q.load_*` loaders do it (the
+   `*_bounded` variants return the window proof for comparisons to reuse; a mock
+   run reports `redundant_input_checks`, which must be 0); Noir:
+   `noir_hw::check_inputs` / `check_input` / `checked` (the window check, which
+   Noir shares with any later `window` of the same value). A check that the kernel's
+   own semantics already impose and that implies the domain replaces it (0402/0403:
+   NumPy's `0 <= index < dim`).
 
 ## 2. Numbers
 
@@ -108,7 +120,7 @@ gadgets. Concretely:
   `q = 2h + bit` with `h` range-checked.
 - Private inputs are whatever field elements the prover loads. A construction
   may rely on an input lying in its declared range (an int64, a Q32 value) only
-  where the circuit checks it, as the window bound does before a comparison.
+  where the circuit checks it (section 1.6 checks every read input).
   Field identities that hold for every field element need no range (equality,
   a product of differences being zero); identities that hold only for small
   integers do (a sum of squares being zero means all-zero only below 2^64:
@@ -231,7 +243,10 @@ python -m hw_check.check 0309 0310                   # or --all
 
 `hw_check.check` runs, per case and system: halo2 `mock` with A and B, `setup`
 with A, `prove` with B, `verify`, and `verify` with public value 0 tampered;
-Noir `setup`, `prove` with A and B, `verify`, tampered `verify`. Every proved
+Noir `setup`, `prove` with A and B, `verify`, tampered `verify`. It also moves
+one input element the kernel reads out of its domain (halo2 `mock
+--tamper-input name:index`, Noir `prove --tamper-input name:index`) and requires
+both systems to reject it. Every proved
 output must equal the NumPy reference position by position (integers and booleans
 exactly, floats within `1e-6 + 1e-6 * |x|` unless the case set gives a tolerance),
 and the tampered public must be rejected. A baseline that fails is wrong.

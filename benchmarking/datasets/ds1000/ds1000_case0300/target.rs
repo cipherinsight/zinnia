@@ -26,13 +26,12 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    let a = q.load_floats(ctx, &a);
+    let a = q.load_floats(ctx, &a); // each a_i in the window, so each key is an integer
     let p = q.load_int(ctx, p);
     let keys: Vec<Cell> = a
         .iter()
         .enumerate()
         .map(|(i, x)| {
-            q.bound(ctx, *x); // a_i in the window, so the key is an integer
             q.gate.mul_add(ctx, *x, Constant(fe(32)), Constant(fe(KEY_SHIFT + i as i128)))
         })
         .collect();

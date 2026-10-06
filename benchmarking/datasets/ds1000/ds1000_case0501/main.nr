@@ -8,6 +8,9 @@
 use noir_hw::pick;
 
 fn main(a: [Field; 338], b: [Field; 169]) -> pub [Field; 169] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
+    noir_hw::check_inputs(b);
     let mut picked = [0; 169];
     for ij in 0..169 {
         picked[ij] = pick([a[ij * 2 + 0], a[ij * 2 + 1]], b[ij]);

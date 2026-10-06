@@ -5,6 +5,8 @@
 use noir_hw::window;
 
 fn main(a: [Field; 48]) -> pub Field {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
     let mut best = window(a[0]);
     let mut best_idx: Field = 0;
     for k in 1..48 {

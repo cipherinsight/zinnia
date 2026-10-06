@@ -5,6 +5,8 @@
 // 0 <= index[k] < dims[k]: a 3-bit range check proves it for a dim of 8, two
 // 4-bit checks (index and 8 - index) for the dim of 9. The flat index uses the
 // constant Fortran strides (1, 8, 72, 576, 4608).
+// These bounds also imply the input domain (an int64), so index needs no
+// separate domain check; a is never read and gets none.
 // @outputs: int[1]
 
 fn main(a: [Field; 36864], index: [Field; 5]) -> pub Field {

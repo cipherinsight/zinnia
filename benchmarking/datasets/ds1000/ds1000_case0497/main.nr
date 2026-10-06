@@ -10,6 +10,9 @@
 use noir_hw::from_int;
 
 fn main(a: [Field; 420], element: Field) -> pub [Field; 1209] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
+    noir_hw::check_input(element);
     let fill = from_int(element);
     let mut result = [fill; 1209];
     for i in 0..42 {

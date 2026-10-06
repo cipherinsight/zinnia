@@ -11,14 +11,13 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    let x = q.load_floats(ctx, &x);
+    let x = q.load_floats_bounded(ctx, &x);
     let mut keep = Vec::with_capacity(10);
     let mut weights = Vec::with_capacity(10);
     for xi in &x {
-        let b = q.bound(ctx, *xi);
-        let neg = q.is_neg(ctx, b);
+        let neg = q.is_neg(ctx, *xi);
         let k = q.gate.not(ctx, neg);
-        weights.push(vec![Some(q.gate.mul(ctx, k, *xi))]);
+        weights.push(vec![Some(q.gate.mul(ctx, k, xi.cell))]);
         keep.push(k);
     }
     let count = q.sum(ctx, keep.iter().copied());

@@ -35,6 +35,10 @@ fn check_axis_pos<let L: u32>(idx: Field, p: Field, neg: bool) {
 }
 
 fn main(a: [Field; 7 * D1 * D2], second: [Field; 2], third: [Field; 2]) -> pub [Field; 28] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
+    noir_hw::check_inputs(second);
+    noir_hw::check_inputs(third);
     let p = [axis_pos::<D1>(second[0]), axis_pos::<D1>(second[1])];
     let q = [axis_pos::<D2>(third[0]), axis_pos::<D2>(third[1])];
     let mut out: [Field; 28] = [0; 28];

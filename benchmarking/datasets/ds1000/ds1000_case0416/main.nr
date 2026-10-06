@@ -16,6 +16,8 @@ global BIN_BITS: u32 = 1; // BIN_SIZE = 2^BIN_BITS
 global BINS: u32 = 3; // COLS / BIN_SIZE
 
 fn main(data: [Field; 48]) -> pub [Field; 24] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(data);
     let mut means = [0; 24];
     for i in 0..ROWS {
         for k in 0..BINS {

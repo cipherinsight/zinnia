@@ -6,6 +6,8 @@
 use noir_hw::window;
 
 fn main(a: [Field; 48]) -> pub [Field; 2] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
     let mut w: [u64; 48] = [0; 48];
     for k in 0..48 {
         w[k] = window(a[k]);

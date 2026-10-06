@@ -13,6 +13,8 @@ use noir_hw::OFFSET;
 global M: u32 = 11;
 
 fn main(a: [Field; 20]) -> pub [Field; 220] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
     let mut result: [Field; 220] = [0; 220];
     for i in 0..20 {
         let bytes: [u8; 8] = (a[i] + OFFSET).to_le_bytes();

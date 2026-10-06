@@ -7,6 +7,8 @@
 use noir_hw::{divmod_pos, rescale, sqrt, window};
 
 fn main(a: [Field; 8]) -> pub [bool; 8] {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
     let mut total: Field = 0;
     for i in 0..8 {
         total += a[i];
