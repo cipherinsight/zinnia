@@ -729,6 +729,13 @@ pub fn hint_values(kind: crate::ir_defs::HintKind, operands: &[Fp]) -> Vec<Fp> {
         }
         HintKind::SortedValues => stable_argsort(operands).into_iter().map(|i| operands[i]).collect(),
         HintKind::CountAtMost => Vec::new(), // not lanes; see `hint_lane`
+        HintKind::RoutingBits => {
+            let mut dest = vec![0; operands.len()];
+            for (rank, position) in stable_argsort(operands).into_iter().enumerate() {
+                dest[position] = rank;
+            }
+            crate::lower::sort::waksman::route(&dest).into_iter().map(|crossed| Fp::from(crossed as u64)).collect()
+        }
         HintKind::MaskedSortedValues => {
             let (values, active) = operands.split_at(operands.len() / 2);
             let active: Vec<Fp> = values
@@ -784,11 +791,33 @@ pub fn hint_lane(kind: crate::ir_defs::HintKind, operands: &[Fp], rank: Fp) -> F
         let count = operands.iter().filter(|&&a| signed_cmp(a, rank) != std::cmp::Ordering::Greater).count();
         return Fp::from(count as u64);
     }
-    let lanes = hint_values(kind, operands);
-    fp_to_i128(rank)
-        .and_then(|r| usize::try_from(r).ok())
-        .and_then(|r| lanes.get(r).copied())
-        .unwrap_or(Fp::zero())
+    let Some(rank) = fp_to_i128(rank).and_then(|r| usize::try_from(r).ok()) else {
+        return Fp::zero();
+    };
+    with_hint_values(kind, operands, |lanes| lanes.get(rank).copied().unwrap_or(Fp::zero()))
+}
+
+/// `f(&hint_values(kind, operands))`, with the lanes of the last
+/// `(kind, operands)` remembered on this thread. A vector hint is one
+/// `IR::Hint` statement per lane, all with the same operands, and backends
+/// evaluate them one by one: without the memo an argsort of `n` elements
+/// would be sorted `n` times, and a Waksman routing (`RoutingBits`, about
+/// `n log2 n` lanes) routed once per lane. The memo is keyed on the whole
+/// input of the pure function `hint_values`, so it never changes a value.
+fn with_hint_values<R>(kind: crate::ir_defs::HintKind, operands: &[Fp], f: impl FnOnce(&[Fp]) -> R) -> R {
+    use std::cell::RefCell;
+    type Memo = Option<(crate::ir_defs::HintKind, Vec<Fp>, Vec<Fp>)>;
+    thread_local! {
+        static LAST: RefCell<Memo> = const { RefCell::new(None) };
+    }
+    LAST.with(|last| {
+        let mut last = last.borrow_mut();
+        let fresh = last.as_ref().is_some_and(|(k, seen, _)| *k == kind && seen.as_slice() == operands);
+        if !fresh {
+            *last = Some((kind, operands.to_vec(), hint_values(kind, operands)));
+        }
+        f(&last.as_ref().expect("just set").2)
+    })
 }
 
 /// Simplified Poseidon permutation (4 rounds, t=3).
@@ -1226,5 +1255,36 @@ mod tests {
         masked.extend(ints(&[1, 0, 1, 0, 1]));
         let masked_lane = |rank: i64| fp_to_i64(hint_lane(HintKind::MaskedSortedValues, &masked, i64_to_fp(rank)));
         assert_eq!((0..5).map(masked_lane).collect::<Vec<_>>(), vec![-40, 20, 30, 0, 0]);
+    }
+
+    /// The memo of `hint_lane` never answers for other operands or another
+    /// kind, and the routing bits route the stable argsort.
+    #[test]
+    fn hint_lanes_are_remembered_per_kind_and_operands() {
+        use crate::ir_defs::HintKind;
+        let a = ints(&[30, 10, 20, 10, -40]);
+        let b = ints(&[1, 2, 3, 4, 5, 0]);
+        for _ in 0..2 {
+            for (kind, operands) in [
+                (HintKind::StableArgsort, &a),
+                (HintKind::SortedValues, &a),
+                (HintKind::StableArgsort, &b),
+                (HintKind::RoutingBits, &a),
+                (HintKind::RoutingBits, &b),
+            ] {
+                let fresh = hint_values(kind, operands);
+                for r in -1..10i64 {
+                    let want = usize::try_from(r).ok().and_then(|r| fresh.get(r).copied()).unwrap_or(Fp::zero());
+                    assert_eq!(hint_lane(kind, operands, i64_to_fp(r)), want, "{kind:?} lane {r}");
+                }
+            }
+        }
+        for operands in [&a, &b] {
+            let mut bits = hint_values(HintKind::RoutingBits, operands).into_iter();
+            let routed = crate::lower::sort::waksman::apply((0..operands.len()).collect(), &mut |x, y| {
+                if bits.next().expect("a bit per switch") == Fp::one() { (y, x) } else { (x, y) }
+            });
+            assert_eq!(routed, stable_argsort(operands));
+        }
     }
 }

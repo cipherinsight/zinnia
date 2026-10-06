@@ -3615,6 +3615,11 @@ impl Synthesizer for NoirEmitter<'_> {
             HintKind::SortedValues => ("sorted_hint", "sorted_hint_at"),
             HintKind::MaskedSortedValues => ("masked_sorted_hint", "masked_sorted_hint_at"),
             HintKind::PositionOneHot | HintKind::Negative => unreachable!("handled above"),
+            HintKind::RoutingBits => {
+                return Err(ProvingError::synthesis(
+                    "routing-bit hints (the routed Waksman sort) are not emitted for Noir; the sort family offers that plan on halo2-base only",
+                ));
+            }
             HintKind::CountAtMost => {
                 self.use_lib("count_at_most_hint");
                 return Ok(self.bind(&format!("count_at_most_hint([{}], {rank})", operands.join(", "))));

@@ -40,6 +40,8 @@ pub(crate) enum Forced {
     Extremes,
     /// The same, membership by the program's equality bits.
     MaskedExtremes,
+    /// The routed Waksman network (`routed`).
+    Routed,
     /// The cost rule of a target.
     CostRule(Target),
 }
@@ -109,6 +111,7 @@ fn plan_for(forced: Forced, demand: &Demand) -> Plan {
             assert!(live.iter().all(|r| demand.masked_extremes.contains_key(r)), "no equality bits");
             Plan::Hinted { runs: live.iter().map(|&r| Run { first: r, last: r, pin: Pin::MaskedExtreme }).collect() }
         }
+        Forced::Routed => Plan::Routed,
         Forced::CostRule(target) => cost::choose_plan(demand, &cost::unit_costs(target)).0,
     }
 }
@@ -299,5 +302,15 @@ pub(crate) fn tampered_inputs(sort: &SortGraph, sites: &[HintSite], site: usize,
     for (k, s) in sites.iter().enumerate() {
         inputs.push((s.input.clone(), if k == site { value } else { s.honest }));
     }
+    inputs
+}
+
+/// The inputs of the hinted graph with hint `k` set to `hints[k]` (every
+/// hint chosen by the prover at once, e.g. a whole setting of a routing
+/// network's switches).
+pub(crate) fn inputs_with_hints(sort: &SortGraph, sites: &[HintSite], hints: &[i64]) -> Vec<(String, i64)> {
+    assert_eq!(sites.len(), hints.len(), "one value per hint");
+    let mut inputs = sort.inputs.clone();
+    inputs.extend(sites.iter().zip(hints).map(|(s, &v)| (s.input.clone(), v)));
     inputs
 }
