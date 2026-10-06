@@ -536,10 +536,13 @@ pub fn try_apply_boolean_mask_write(
             // over this cell a sum over the masks' atoms).
             mask_write_lane(b, &cur_cast, &new_cast, &mask_bool)
         };
-        b.ir_write_memory(arr_seg, &addr, &selected);
+        // Under a runtime execution predicate (`if c: arr[mask] = v`) the
+        // stored value is `select(c, selected, old)`: the cache must hold
+        // that, not `selected` (which applied the write on every path).
+        let stored = b.ir_write_memory(arr_seg, &addr, &selected);
         if let Some(cells) = payload.as_mut() {
             match cells.get_mut(abs) {
-                Some(cell) => *cell = selected.clone(),
+                Some(cell) => *cell = stored,
                 None => payload = None,
             }
         }
