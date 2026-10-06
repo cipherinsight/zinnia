@@ -192,3 +192,23 @@ def test_decoder_accepts_shared_shape_entries_only():
                       "dynamic": {"length": i(0), "rank": {"constant": 1}, "dims": [i(0)], "cells": [i(1), i(1)]}}]
     with pytest.raises(ValueError, match="exactly once"):
         decode_with_layout([1, 5], repeated_cell)
+
+
+# ── long product sums (nargo's elaboration recursion limit) ─────────────
+
+@pytest.mark.parametrize("source, args, good", [
+    ('def kernel(a: Float[Array, "256"], b: Float[Array, "256"], expected: Float):\n'
+     '    assert np.dot(a, b) == expected\n',
+     (np.arange(256) % 7 - 3.0, np.arange(256) % 5 - 2.0), None),
+    ('def kernel(a: Float[Array, "256"], expected: Float):\n'
+     '    assert np.var(a) == expected\n',
+     (np.where(np.arange(256) % 2 == 0, 1.0, -1.0),), 1.0),
+])
+def test_long_product_sums_compile_on_noir(source, args, good):
+    """`np.dot` of length 256 and `np.var` of 256 values used to be one
+    256-term expression that nargo rejects ("Reached the recursion limit")."""
+    programs = Programs(source)
+    good = float(np.dot(*args)) if good is None else good
+    assert "qscale_down_raw" in programs.noir_text(*args, good)
+    assert mock_accepts(programs.noir, *args, good) and noir_accepts(programs.noir, *args, good)
+    assert not noir_accepts(programs.noir, *args, good + 1.0)

@@ -523,19 +523,59 @@ fn magnitudes_of_unproven_differences_are_pinned() {
         s.ensure_signed64(&c[1])?;
         Ok(vec![s.sub_i(&c[0], &c[1])?])
     });
-    // The same gadget as `|x|` of a window value whose range spans the
-    // whole window (one 63-bit check), with no window check of the difference.
-    let window_abs: Box<Op> = Box::new(|s, c| {
-        s.ensure_signed64(&c[0])?;
-        Ok(vec![s.abs_i(&c[0])?])
+    // One 63-bit range check plus two gates, not `sign_and_abs`'s two checks.
+    let check63: Box<Op> = Box::new(|s, c| {
+        s.range_check(&c[0], 63);
+        Ok(vec![])
     });
+    let gap_cost = cells_of(&*gap, &[int(-5), int(9)]).0 - cells_of(&*differences, &[int(-5), int(9)]).0;
+    let check_cost = cells_of(&*check63, &[int(5)]).0;
+    assert!(gap_cost < 2 * check_cost, "|a - b| costs {gap_cost} advice cells, a 63-bit check {check_cost}");
+}
+
+/// Sign tests and `|x|` of a window-checked value read the top limb of the
+/// window check (`sign_from_window`): the hinted bit `[x >= 0]` and, for
+/// `|x|` at the bottom of the window, the inverse proving `x != i64::MIN`
+/// are pinned (every perturbation rejected, `x = 0` included: the limb
+/// decides its sign); `|i64::MIN|` has no proof; the sign test is cheaper
+/// than a 64-bit comparison.
+#[test]
+fn window_signs_read_the_top_limb() {
+    let sign_and_abs: Box<Op> = Box::new(|s, c| {
+        s.ensure_signed64(&c[0])?;
+        let zero = s.constant_int(0)?;
+        let negative = s.lt_i(&c[0], &zero)?;
+        let magnitude = s.abs_i(&c[0])?;
+        Ok(vec![negative, magnitude])
+    });
+    for x in [-5i64, 5, 0, -1, 1, i64::MAX, i64::MIN + 1, -(1 << 40), 1 << 40] {
+        let expected = [bit(x < 0), int((x as i128).abs() as i64)];
+        assert_sound(&format!("x < 0, |x| at {x}"), &*sign_and_abs, &[int(x)], &expected, &[]);
+    }
+    assert!(!synthesize(&*sign_and_abs, &[int(i64::MIN)], &[]).accepted, "|i64::MIN| overflows int64");
+    let sign_only: Box<Op> = Box::new(|s, c| {
+        s.ensure_signed64(&c[0])?;
+        let zero = s.constant_int(0)?;
+        Ok(vec![s.lt_i(&c[0], &zero)?])
+    });
+    assert_sound("i64::MIN < 0", &*sign_only, &[int(i64::MIN)], &[bit(true)], &[]);
     let window_only: Box<Op> = Box::new(|s, c| {
         s.ensure_signed64(&c[0])?;
         Ok(vec![])
     });
-    let gap_cost = cells_of(&*gap, &[int(-5), int(9)]).0 - cells_of(&*differences, &[int(-5), int(9)]).0;
-    let window_cost = cells_of(&*window_abs, &[int(-5)]).0 - cells_of(&*window_only, &[int(-5)]).0;
-    assert_eq!(gap_cost, window_cost, "|a - b| costs {gap_cost} advice cells, |x| {window_cost}");
+    let cost = cells_of(&*sign_only, &[int(-5)]).0 - cells_of(&*window_only, &[int(-5)]).0;
+    let comparison: Box<Op> = Box::new(|s, c| {
+        s.ensure_signed64(&c[0])?;
+        s.ensure_signed64(&c[1])?;
+        Ok(vec![s.lt_i(&c[0], &c[1])?])
+    });
+    let two_windows: Box<Op> = Box::new(|s, c| {
+        s.ensure_signed64(&c[0])?;
+        s.ensure_signed64(&c[1])?;
+        Ok(vec![])
+    });
+    let compare_cost = cells_of(&*comparison, &[int(-5), int(3)]).0 - cells_of(&*two_windows, &[int(-5), int(3)]).0;
+    assert!(2 * cost < compare_cost, "a window sign costs {cost} advice cells, a comparison {compare_cost}");
 }
 
 #[test]

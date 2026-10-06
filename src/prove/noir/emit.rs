@@ -63,6 +63,12 @@ pub struct EmitOutput {
     pub return_count: usize,
 }
 
+/// Sums of more terms than this are bound in chunks (`NoirEmitter::bind_sum`)
+/// before a library call reads them: nargo 1.0.0-beta.20 stops with
+/// "Reached the recursion limit during elaboration" on one expression of a
+/// few hundred terms. Shorter sums stay one expression (no change in gates).
+const LONG_SUM_TERMS: usize = 64;
+
 /// Top-level entry point: emit a complete Noir package source pair.
 pub fn emit_circuit(
     ir: &IRGraph,
@@ -1717,6 +1723,7 @@ impl<'a> NoirEmitter<'a> {
         if let Some(d) = self.raw_constant(b).filter(|d| *d > 0) {
             return self.divide_by_positive_constant(a, d);
         }
+        self.witness_divisor(b);
         if self.nonzero.contains(b) {
             let (negative, mag) = self.sign_abs(b);
             self.use_lib("floor_divmod_nonzero_of");
@@ -1758,6 +1765,40 @@ impl<'a> NoirEmitter<'a> {
             format!("divmod_by_positive::<{width}>({n}, {d})")
         };
         self.divmod_call(call)
+    }
+
+    /// An integer divisor must be an int64: `b` in `[-2^63, 2^63)`, with no
+    /// proof otherwise (`assert_in_window`, one 64-bit check of `b + 2^63`;
+    /// nothing when a constant or an earlier check already proves the range,
+    /// e.g. an input's domain check).
+    ///
+    /// Why. The IR's integer `+ - *` are exact in the field, NumPy's int64
+    /// arithmetic wraps; the two agree modulo 2^64, so a value that left the
+    /// window (a row sum of `|x|` reaching 2^63) must not be observed by an
+    /// operation that does not commute with the wrap. The division gadgets
+    /// bound the divisor only by about 2^64 (`d - 1 - r` or `sign_abs`), so
+    /// `x / sum(|x|)` divided by the unwrapped 2^63 and proved `0.5` where
+    /// NumPy gives `-0.5`. Inside the window the field value's signed reading
+    /// is NumPy's int64, so the division is NumPy's.
+    /// A dynamic divisor that is a sum gets a witness before its first
+    /// division: the division gadgets read it in several constraints
+    /// (`q * d + r == n`, the remainder bound `d - 1 - r`, a window check),
+    /// and Noir would otherwise expand every term of the sum into each of
+    /// them (0452: two gates per remainder bound instead of one). The
+    /// constraints are unchanged; only where Noir cuts the expression.
+    fn witness_divisor(&mut self, b: &str) {
+        self.materialize_sum(b);
+    }
+
+    fn ensure_int64_divisor(&mut self, b: &str) {
+        self.witness_divisor(b);
+        let window = (-(1i128 << 63), (1i128 << 63) - 1);
+        if self.known_range(b).is_some_and(|(lo, hi)| lo >= window.0 && hi <= window.1) {
+            return;
+        }
+        self.use_lib("assert_in_window");
+        let _ = writeln!(self.body, "    assert_in_window({b});");
+        self.narrow_proven_range(b, window.0, window.1);
     }
 
     /// Bind `let (q, r) = <call>;` once per call text.
@@ -2469,6 +2510,7 @@ impl Synthesizer for NoirEmitter<'_> {
         if let Some((q, _r)) = self.constant_floor_divmod(a, b) {
             return Ok(self.literal_int(q));
         }
+        self.ensure_int64_divisor(b);
         let (q, _r) = self.floor_divmod_cells(a, b);
         Ok(q)
     }
@@ -2496,6 +2538,7 @@ impl Synthesizer for NoirEmitter<'_> {
         if let Some((_q, r)) = self.constant_floor_divmod(a, b) {
             return Ok(self.literal_int(r));
         }
+        self.ensure_int64_divisor(b);
         let (_q, r) = self.floor_divmod_cells(a, b);
         Ok(r)
     }
@@ -2594,7 +2637,12 @@ impl Synthesizer for NoirEmitter<'_> {
         }
         if !raw.is_empty() {
             self.use_lib("qscale_down_raw");
-            let rescaled = self.bind(&format!("qscale_down_raw({})", raw.join(" + ")));
+            // A long sum is bound in chunks first (`bind_sum`): nargo's
+            // elaborator hits its recursion limit on one expression of a
+            // few hundred terms (`np.dot` of length 256), and the chunks are
+            // the same linear combination.
+            let sum = if raw.len() > LONG_SUM_TERMS { self.bind_sum(&raw) } else { raw.join(" + ") };
+            let rescaled = self.bind(&format!("qscale_down_raw({sum})"));
             exact.push(rescaled);
         }
         if let [single] = exact.as_slice() {
@@ -2618,8 +2666,11 @@ impl Synthesizer for NoirEmitter<'_> {
             // float `b = n * 2^32` cancels the scale, as halo2-base's
             // `fixed_div` does: the Euclidean quotient of `a` by `n` equals
             // that of `a * 2^32` by `b`.
-            let (numerator, divisor) = match self.integral_float.get(b.as_str()) {
-                Some(n) => (a.to_string(), n.clone()),
+            let (numerator, divisor) = match self.integral_float.get(b.as_str()).cloned() {
+                Some(n) => {
+                    self.ensure_int64_divisor(&n);
+                    (a.to_string(), n)
+                }
                 None => (format!("{a} * {Q_U64}"), b.clone()),
             };
             if self.known_non_negative(&divisor) {
