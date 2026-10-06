@@ -192,13 +192,16 @@ unconstrained fn hint_lt(a: Field, b: Field) -> bool {
     hint_is_negative(a - b)
 }
 
-/// Constraints for `qlt_bits::<W>`: the claimed answer c selects which of
-/// b - a - 1 (c = true) and a - b (c = false) must be a W-bit value. The two
-/// sum to -1, so when one of them is a value in [0, 2^W) the other is a field
-/// element above p - 2^(W+1): for W <= 250 at most one c passes, and one does
-/// exactly when a - b reads as an integer in [-2^W, 2^W).
+/// Constraints for `qlt_bits::<W>`: the claimed answer c shifts the
+/// difference, and t = a - b + c * 2^W must be a W-bit value. For c = false
+/// that is a - b in [0, 2^W), for c = true it is a - b in [-2^W, 0): the two
+/// ranges are disjoint, so at most one c passes, and one does exactly when
+/// a - b reads as an integer in [-2^W, 2^W) (W <= 250 keeps |t| far below p,
+/// so no other field element of a - b lands in either range). t is linear in
+/// a, b and c, one arithmetic gate before the range check (the form Noir uses
+/// for its own integer comparisons).
 fn constrain_lt<let W: u32>(a: Field, b: Field, c: bool) {
-    let gap = if c { b - a - 1 } else { a - b };
+    let gap = a - b + (c as Field) * 2.pow_32(W as Field);
     gap.assert_max_bit_size::<W>();
 }
 
@@ -1269,6 +1272,27 @@ fn test_qlt_bits_rejects_a_difference_beyond_its_width() {
 #[test(should_fail)]
 fn test_lt_narrow_rejects_a_wrong_answer() {
     constrain_lt::<3>(2, 1, true);
+}
+
+#[test(should_fail)]
+fn test_lt_narrow_rejects_a_missed_less() {
+    constrain_lt::<3>(1, 2, false);
+}
+
+#[test(should_fail)]
+fn test_lt_narrow_rejects_equal_claimed_less() {
+    constrain_lt::<3>(2, 2, true);
+}
+
+#[test]
+fn test_qlt_bits_accepts_the_edges_of_its_width() {
+    // a - b = -2^3 and 2^3 - 1, the ends of [-2^W, 2^W).
+    assert(qlt_bits::<3>(-4, 4) & !qlt_bits::<3>(4, -3));
+}
+
+#[test(should_fail)]
+fn test_qlt_bits_rejects_a_difference_of_2_pow_w() {
+    let _ = qlt_bits::<3>(4, -4);
 }
 
 #[test]
