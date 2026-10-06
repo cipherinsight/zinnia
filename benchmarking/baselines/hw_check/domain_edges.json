@@ -1,0 +1,339 @@
+{
+ "description": "Inputs at the edge of the int64 / Q32 domain and the outcome every baseline must give (see domain_edges.py). Each entry changes input B of the case's fixture.",
+ "cases": {
+  "ds1000_case0438": [
+   {
+    "name": "wrapped_root",
+    "expect": "reject",
+    "why": "B*C*2^64 wraps the field to t mod p < 2^126 (B, C < 2^64 not both checked): the old halo2/Noir baselines proved r = 13.72 where NumPy gives 0.0; Zinnia's domain is 1 <= B*C < 2^62",
+    "set": {
+     "post": [
+      881764177,
+      881764177,
+      -881764177,
+      -881764177
+     ],
+     "distance": [
+      8869936752571206775,
+      -8869936752571206774,
+      2187109164613750925,
+      -2187109164613750926
+     ]
+    }
+   },
+   {
+    "name": "variance_product_below_2_62",
+    "expect": "numpy",
+    "why": "B*C = (3 * 32768 * 21845)^2 < 2^62: inside the domain, r = 1",
+    "set": {
+     "post": [
+      0,
+      0,
+      0,
+      32768
+     ],
+     "distance": [
+      0,
+      0,
+      0,
+      21845
+     ]
+    }
+   },
+   {
+    "name": "variance_product_above_2_62",
+    "expect": "reject",
+    "why": "B*C = (3 * 32768 * 21846)^2 >= 2^62: sqrt(B*C) * 2^32 leaves the Q32 window",
+    "set": {
+     "post": [
+      0,
+      0,
+      0,
+      32768
+     ],
+     "distance": [
+      0,
+      0,
+      0,
+      21846
+     ]
+    }
+   },
+   {
+    "name": "inputs_at_11585",
+    "expect": "numpy",
+    "why": "inputs within +-11585 are always inside the domain; the old zkVM programs overflowed Q32 here",
+    "set": {
+     "post": [
+      -11585,
+      11585,
+      3,
+      -7
+     ],
+     "distance": [
+      11585,
+      -11585,
+      100,
+      5
+     ]
+    }
+   },
+   {
+    "name": "int64_min",
+    "expect": "reject",
+    "why": "B >= 2^62",
+    "set": {
+     "post": {
+      "0": -9223372036854775808
+     }
+    }
+   }
+  ],
+  "ds1000_case0452": [
+   {
+    "name": "int64_min",
+    "expect": "reject",
+    "why": "|i64::MIN| = 2^63 overflows int64 (NumPy wraps it); Zinnia has no proof",
+    "set": {
+     "X": {
+      "0": -9223372036854775808
+     }
+    }
+   },
+   {
+    "name": "l1_sum_overflows_int64",
+    "expect": "reject",
+    "why": "the row's L1 norm 2^63 + 1 overflows int64 (NumPy wraps it)",
+    "set": {
+     "X": {
+      "0": 4611686018427387904,
+      "1": 4611686018427387904,
+      "2": 1,
+      "3": 0
+     }
+    }
+   },
+   {
+    "name": "l1_above_q32",
+    "expect": "reject",
+    "expect_by_system": {
+     "halo2": "numpy",
+     "noir": "numpy"
+    },
+    "why": "float(l1) = 2^40 has no Q32 code, so Zinnia has no proof; the halo2/Noir baselines compute floor(x * 2^32 / l1) without converting l1 and prove NumPy's value (a known difference, not the |i64::MIN| policy)",
+    "set": {
+     "X": {
+      "0": 1099511627776,
+      "1": 3,
+      "2": -5,
+      "3": 7
+     }
+    }
+   },
+   {
+    "name": "l1_below_2_31",
+    "expect": "numpy",
+    "why": "large values, l1 < 2^31",
+    "set": {
+     "X": {
+      "0": 1073741824,
+      "1": -3,
+      "2": 5,
+      "3": -536870912
+     }
+    }
+   }
+  ],
+  "ds1000_case0454": [
+   {
+    "name": "int64_min",
+    "expect": "reject",
+    "why": "|i64::MIN| = 2^63 overflows int64 (NumPy wraps it); Zinnia has no proof",
+    "set": {
+     "X": {
+      "0": -9223372036854775808
+     }
+    }
+   },
+   {
+    "name": "linf_above_q32",
+    "expect": "reject",
+    "expect_by_system": {
+     "halo2": "numpy",
+     "noir": "numpy"
+    },
+    "why": "float(linf) = 2^40 has no Q32 code, so Zinnia has no proof; the halo2/Noir baselines compute floor(x * 2^32 / linf) without converting linf and prove NumPy's value (a known difference, not the |i64::MIN| policy)",
+    "set": {
+     "X": {
+      "0": 1099511627776,
+      "1": 3,
+      "2": -5,
+      "3": 7
+     }
+    }
+   },
+   {
+    "name": "linf_below_2_31",
+    "expect": "numpy",
+    "why": "large values, linf < 2^31",
+    "set": {
+     "X": {
+      "0": 1073741824,
+      "1": -3,
+      "2": 5,
+      "3": -536870912
+     }
+    }
+   }
+  ],
+  "ds1000_case0322": [
+   {
+    "name": "int64_min",
+    "expect": "numpy",
+    "why": "np.min of i64::MIN needs no negation; the old Noir baseline negated it (-max(-a))",
+    "set": {
+     "a": {
+      "0": -9223372036854775808
+     }
+    }
+   }
+  ],
+  "ds1000_case0437": [
+   {
+    "name": "float_min",
+    "expect": "numpy",
+    "why": "row minimum -2^31 (Q32 code i64::MIN); the old Noir baseline negated it (-max(-a))",
+    "set": {
+     "a": {
+      "0": -2147483648.0
+     }
+    }
+   }
+  ],
+  "ds1000_case0375": [
+   {
+    "name": "float_min",
+    "expect": "numpy",
+    "why": "the minimum grade -2^31 (Q32 code i64::MIN); the old Noir baseline negated it (-max(-grades))",
+    "set": {
+     "grades": {
+      "0": -2147483648.0
+     }
+    }
+   }
+  ],
+  "ds1000_case0368": [
+   {
+    "name": "difference_at_min",
+    "expect": "reject",
+    "why": "x - y has Q32 code -2^63, so |x - y| = 2^63 overflows; Zinnia has no proof",
+    "set": {
+     "a": {
+      "0": 0.5,
+      "3": -2147483647.5
+     }
+    }
+   },
+   {
+    "name": "reference_at_min",
+    "expect": "reject",
+    "why": "y = -2^31 (code i64::MIN), so |y| = 2^63 overflows; Zinnia has no proof",
+    "set": {
+     "a": {
+      "0": -2147483648.0,
+      "3": -1.0,
+      "6": -1.0
+     }
+    }
+   },
+   {
+    "name": "difference_near_min",
+    "expect": "numpy",
+    "why": "control: |x - y| = 2^63 - 2^11 (codes)",
+    "set": {
+     "a": {
+      "0": 0.5,
+      "3": -2147483647.4999995
+     }
+    }
+   }
+  ],
+  "ds1000_case0369": [
+   {
+    "name": "difference_at_min",
+    "expect": "reject",
+    "why": "x - y has Q32 code -2^63, so |x - y| = 2^63 overflows; Zinnia has no proof",
+    "set": {
+     "a": {
+      "0": 0.5,
+      "1": -2147483647.5
+     }
+    }
+   },
+   {
+    "name": "reference_at_min",
+    "expect": "reject",
+    "why": "y = -2^31 (code i64::MIN), so |y| = 2^63 overflows; Zinnia has no proof",
+    "set": {
+     "a": {
+      "0": -2147483648.0,
+      "1": -1.0,
+      "2": -1.0
+     }
+    }
+   },
+   {
+    "name": "difference_near_min",
+    "expect": "numpy",
+    "why": "control: |x - y| = 2^63 - 2^11 (codes)",
+    "set": {
+     "a": {
+      "0": 0.5,
+      "1": -2147483647.4999995
+     }
+    }
+   }
+  ],
+  "ds1000_case0491": [
+   {
+    "name": "difference_at_min",
+    "expect": "reject",
+    "why": "s1 - s2 has Q32 code -2^63, so |s1 - s2| = 2^63 overflows; Zinnia has no proof",
+    "set": {
+     "s1": {
+      "0": -2147483647.5
+     },
+     "s2": {
+      "0": 0.5
+     }
+    }
+   },
+   {
+    "name": "reference_at_min",
+    "expect": "reject",
+    "why": "s2 = -2^31 (code i64::MIN), so |s2| = 2^63 overflows; Zinnia has no proof",
+    "set": {
+     "s1": {
+      "0": -1.0
+     },
+     "s2": {
+      "0": -2147483648.0
+     }
+    }
+   },
+   {
+    "name": "difference_near_min",
+    "expect": "numpy",
+    "why": "control: |s1 - s2| = 2^63 - 2^11 (codes)",
+    "set": {
+     "s1": {
+      "0": -2147483647.4999995
+     },
+     "s2": {
+      "0": 0.5
+     }
+    }
+   }
+  ]
+ }
+}
