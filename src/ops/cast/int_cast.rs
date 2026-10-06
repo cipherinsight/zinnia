@@ -19,8 +19,9 @@ impl Op for IntCastOp {
     fn build(&self, builder: &mut IRBuilder, args: &OpArgs) -> Value {
         let x = args.require("x");
         match x {
-            Value::Integer(_) => x.clone(),
-            Value::Boolean(_) => x.clone(), // Bool is already integer-like
+            // `int(flag)` of a bool is an integer, not a bool cell (an
+            // array of them indexes by position).
+            Value::Integer(_) | Value::Boolean(_) => builder.int_dtype_cell(x),
             Value::Float(_) => builder.ir_int_cast(x),
             _ => panic!("int(): unsupported type {:?}", x.zinnia_type()),
         }

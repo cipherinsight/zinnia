@@ -53,6 +53,18 @@ fn materialize_before_predicated_write(b: &mut IRBuilder, val: &Value) {
     }
 }
 
+/// `v` converted to the dtype of the array stored in `segment_id` before it
+/// is stored there (NumPy converts an assigned value to the array's dtype).
+/// A bool array stores truth values as bool cells
+/// (`IRBuilder::bool_dtype_cell`), which keeps its cached cells bool cells
+/// (see `builder/bool_dtype.rs`).
+fn cast_for_segment(b: &mut IRBuilder, segment_id: u32, v: &Value, dtype: NumberType) -> Value {
+    if dtype == NumberType::Integer && b.is_bool_segment(segment_id) {
+        return b.bool_dtype_cell(v);
+    }
+    cast_to_dtype(b, v, dtype)
+}
+
 /// Cast a value to match the target dtype before storing it in a segment.
 fn cast_to_dtype(b: &mut IRBuilder, v: &Value, dtype: NumberType) -> Value {
     match dtype {
@@ -133,7 +145,15 @@ fn select_typed(
 ) -> Value {
     match dtype {
         NumberType::Float => b.ir_select_f(cond, true_val, false_val),
-        NumberType::Integer => b.ir_select_i(cond, true_val, false_val),
+        NumberType::Integer => {
+            let out = b.ir_select_i(cond, true_val, false_val);
+            // A choice between two NumPy bools is a bool (a write into a
+            // bool array keeps its cached cells bool cells).
+            if b.is_bool_cell(true_val) && b.is_bool_cell(false_val) {
+                b.record_bool_cell(&out);
+            }
+            out
+        }
         NumberType::Complex => {
             panic!("select_typed does not handle Complex StaticArray overlays")
         }
@@ -349,37 +369,27 @@ pub fn static_array_setitem(
         .iter()
         .any(|i| matches!(i, SliceIndex::Range(_, _, _)));
 
-    // Fancy-index assignment: any axis indexed by an INTEGER StaticArray (or
-    // an integer List/Tuple) is a scatter. NumPy semantics:
-    //   for k in 0..len(idx): val[idx_axis_0[k], idx_axis_1[k], ...] = rhs[k]
-    // Pre-StaticArray, this came through `set_nested_value` on a materialised
-    // List; the segment-write fast-path above didn't recognise it and routed
-    // an array-shaped RHS straight into the scalar setitem, producing
-    // malformed zero-arg IR statements. Dispatch fancy here before falling
-    // through to the scalar / slice paths.
-    //
-    // Boolean StaticArrays are explicitly NOT fancy-index: they're boolean
-    // masks (handled at the visitor P5b path before reaching this dispatcher;
-    // see visitors.rs). Probe each Single-array index via
-    // `is_boolean_mask_static_array` — if any axis index is a bool mask, this
-    // call is NOT fancy-index and we let it fall through to the slice path
-    // (e.g. aug-assign desugar after the visitor's bool-mask attempt declined).
+    // An index array on any axis, read by its dtype
+    // (`array_ops::array_index_kind`): integer positions make this a
+    // scatter, `val[i0[k], i1[k], ...] = rhs[k]` (`static_array_fancy_setitem`).
+    // A boolean mask is written by the visitor's mask path
+    // (`mask::try_apply_boolean_mask_write`); one that reaches here (with
+    // other indices, or a value that path does not take) is rejected rather
+    // than read as positions. Runtime-shaped index arrays are written
+    // through the visitor too (`assignment::setitem_runtime_positions`).
     let mut any_fancy = false;
     for i in indices {
-        match i {
-            SliceIndex::Single(v @ Value::StaticArray { .. }) => {
-                if !crate::helpers::static_array::mask::is_boolean_mask_static_array(b, v) {
-                    any_fancy = true;
-                    break;
-                }
+        let SliceIndex::Single(v) = i else { continue };
+        match crate::helpers::array_ops::array_index_kind(b, v) {
+            Some(crate::helpers::array_ops::ArrayIndexKind::Mask) => {
+                panic!("this assignment through a boolean mask is not supported")
             }
-            SliceIndex::Single(Value::List(d) | Value::Tuple(d)) => {
-                if d.values.iter().any(|v| matches!(v, Value::Integer(_))) {
-                    any_fancy = true;
-                    break;
-                }
-            }
-            _ => {}
+            Some(_) if matches!(v, Value::DynamicNDArray(_)) => panic!(
+                "assigning through a runtime-shaped index array combined with other \
+                 indices is not supported"
+            ),
+            Some(crate::helpers::array_ops::ArrayIndexKind::Positions) => any_fancy = true,
+            None => {}
         }
     }
     if any_fancy {
@@ -694,7 +704,7 @@ fn slice_setitem_via_legacy(
     for (i, leaf) in flat.iter().enumerate() {
         let abs = offset + i;
         let addr = b.ir_constant_int(abs as i64);
-        let cast = cast_to_dtype(b, leaf, dtype);
+        let cast = cast_for_segment(b, segment_id, leaf, dtype);
         b.ir_write_memory(segment_id, &addr, &cast);
     }
     cache_invalidate(b, segment_id);
@@ -861,7 +871,16 @@ fn static_array_fancy_setitem(
         let elems = match idx {
             SliceIndex::Single(v @ Value::StaticArray { .. })
             | SliceIndex::Single(v @ Value::List(_))
-            | SliceIndex::Single(v @ Value::Tuple(_)) => Some(read_index_array_elements(b, v)),
+            | SliceIndex::Single(v @ Value::Tuple(_)) => {
+                // NumPy reads the index list `[True, 2]` as positions `[1, 2]`.
+                let entries = read_index_array_elements(b, v);
+                Some(
+                    entries
+                        .iter()
+                        .map(|e| if matches!(e, Value::Boolean(_)) { b.ir_int_cast(e) } else { e.clone() })
+                        .collect::<Vec<_>>(),
+                )
+            }
             _ => None,
         };
         if let Some(ref es) = elems {
@@ -968,7 +987,7 @@ fn static_array_element_setitem(
     }
 
     // Cast the RHS value to the segment's dtype.
-    let cast_val = cast_to_dtype(b, value, dtype);
+    let cast_val = cast_for_segment(b, segment_id, value, dtype);
 
     // All-static path: use the cached-wire-update strategy.
     let all_static = idx_vals.iter().all(|v| v.int_val().is_some());
@@ -1327,9 +1346,9 @@ fn static_array_slice_setitem(
             };
 
             let write_val = if value_is_scalar {
-                cast_to_dtype(b, value, dtype)
+                cast_for_segment(b, segment_id, value, dtype)
             } else {
-                cast_to_dtype(b, &value_elements[val_flat], dtype)
+                cast_for_segment(b, segment_id, &value_elements[val_flat], dtype)
             };
             // Cache what was actually stored (predicated under a branch).
             let stored = b.ir_write_memory(segment_id, &addr, &write_val);
@@ -1432,9 +1451,9 @@ fn static_array_slice_setitem(
 
             let current = b.ir_read_memory(segment_id, &addr);
             let write_val = if value_is_scalar {
-                cast_to_dtype(b, value, dtype)
+                cast_for_segment(b, segment_id, value, dtype)
             } else {
-                cast_to_dtype(b, &value_elements[val_flat], dtype)
+                cast_for_segment(b, segment_id, &value_elements[val_flat], dtype)
             };
             let selected = if dtype == NumberType::Float {
                 b.ir_select_f(&in_bounds, &write_val, &current)
@@ -1534,7 +1553,7 @@ fn try_overlay_dynamic_single_slice_setitem(
             }
             value_elements[rhs_flat].clone()
         };
-        let write_val = cast_to_dtype(b, &raw_write, dtype);
+        let write_val = cast_for_segment(b, segment_id, &raw_write, dtype);
         let old = cells[abs].clone();
         cells[abs] = select_typed(b, dtype, &cond, &write_val, &old);
     }

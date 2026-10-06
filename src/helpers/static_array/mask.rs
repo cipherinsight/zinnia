@@ -71,27 +71,6 @@ fn cell_static_truth(c: &Value) -> bool {
     }
 }
 
-/// Detect whether `mask` is a Boolean-shaped StaticArray. We accept any
-/// StaticArray dtype because P4a comparisons output `dtype: Integer` with
-/// `Value::Boolean` cells; we determine "boolean-ness" by inspecting the
-/// cached cells, not the dtype tag.
-pub fn is_boolean_mask_static_array(b: &mut IRBuilder, mask: &Value) -> bool {
-    let segment_id = match mask {
-        Value::StaticArray { segment_id, .. } => *segment_id,
-        _ => return false,
-    };
-    if let Some(cells) = b.static_array_payload.get(&segment_id) {
-        if cells.is_empty() {
-            return false;
-        }
-        return cells.iter().all(|c| matches!(c, Value::Boolean(_)));
-    }
-    // No cache entry — conservatively say no, the legacy path will pick
-    // it up. (In practice the cache is always populated for a StaticArray
-    // that came out of `build_static_array_from_flat`.)
-    false
-}
-
 // ────────────────────────────────────────────────────────────────────────
 // Public entry points
 // ────────────────────────────────────────────────────────────────────────
@@ -116,7 +95,7 @@ pub fn try_apply_boolean_mask_read(b: &mut IRBuilder, arr: &Value, mask: &Value)
         Value::StaticArray { shape, .. } => shape.clone(),
         _ => return None,
     };
-    if !is_boolean_mask_static_array(b, mask) {
+    if !crate::helpers::array_ops::is_bool_array(b, mask) {
         return None;
     }
     // numpy boolean-mask read accepts a `mask_shape` that is a prefix of
@@ -180,6 +159,7 @@ pub fn try_apply_boolean_mask_read(b: &mut IRBuilder, arr: &Value, mask: &Value)
     // bounds from the input array to the output via
     // `array_in_range` on the new value_id.
     let input_bounds = super::reductions::read_array_element_bounds(b, arr);
+    let keeps_bool = crate::helpers::array_ops::is_bool_array(b, arr);
     let out = dynamic_mask_read(
         b,
         &arr_cells,
@@ -190,6 +170,10 @@ pub fn try_apply_boolean_mask_read(b: &mut IRBuilder, arr: &Value, mask: &Value)
     );
     if let (Some((lo, hi)), Some(out_vid)) = (input_bounds, out.value_id()) {
         super::reductions::deposit_array_in_range_fact(b, out_vid, lo, hi);
+    }
+    // The kept elements keep their dtype (the compaction's selects do not).
+    if let (true, Value::DynamicNDArray(d)) = (keeps_bool, &out) {
+        b.mark_bool_segment(d.segment_id);
     }
     Some(out)
 }
@@ -302,7 +286,7 @@ pub fn try_apply_boolean_mask_write(
         Value::StaticArray { shape, .. } => shape.clone(),
         _ => return None,
     };
-    if !is_boolean_mask_static_array(b, mask) {
+    if !crate::helpers::array_ops::is_bool_array(b, mask) {
         return None;
     }
     if arr_shape != mask_shape {
@@ -512,6 +496,13 @@ pub fn try_apply_boolean_mask_write(
                     acc
                 }
             }
+        };
+        // NumPy converts the assigned value to the array's dtype (a bool
+        // array stores truth values).
+        let new_raw = if b.is_bool_segment(arr_seg) {
+            b.bool_dtype_cell(&new_raw)
+        } else {
+            new_raw
         };
         let new_cast = cast_to_dtype(b, &new_raw, arr_dtype);
         let cur_cast = cast_to_dtype(b, &arr_cells[i], arr_dtype);
@@ -727,7 +718,7 @@ mod tests {
         for c in &cells {
             assert!(matches!(c, Value::Boolean(_)));
         }
-        assert!(is_boolean_mask_static_array(&mut b, &m));
+        assert!(crate::helpers::array_ops::is_bool_array(&b, &m));
     }
 
     #[test]

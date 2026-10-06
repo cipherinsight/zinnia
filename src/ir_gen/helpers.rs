@@ -250,6 +250,10 @@ impl IRGenerator {
                 let value = self.builder.ir_read_integer(path, is_public);
                 let domain = if boolean { &ZinniaType::Boolean } else { dt };
                 self.check_input_domain(&value, domain);
+                if boolean {
+                    // A Boolean parameter holds a NumPy bool (0 or 1, checked).
+                    self.builder.record_bool_cell(&value);
+                }
                 value
             }
             ZinniaType::Float => {

@@ -48,7 +48,8 @@ impl IRGenerator {
                     self.builder.ir_constant_int(0)
                 } else {
                     reject_complex_conversion("int", &visited_args[0]);
-                    // A Python int: unbounded, so int64 arithmetic on it is
+                    // A Python int: an integer cell (a bool's indexes by
+                    // position), unbounded, so int64 arithmetic on it is
                     // Python's even for a fixed-width NumPy value.
                     crate::helpers::dtype::to_int64(&mut self.builder, &visited_args[0])
                 }

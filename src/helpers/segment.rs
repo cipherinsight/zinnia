@@ -20,11 +20,12 @@ pub fn alloc_and_write(b: &mut IRBuilder, values: &[ScalarValue<i64>], dtype: Nu
         NumberType::Integer | NumberType::Float => values.len(),
     };
     b.ir_allocate_memory(seg, storage_len as u32, 0);
-    for (i, elem) in values.iter().enumerate() {
-        let val = scalar_i64_to_value(elem, dtype);
+    let values: Vec<Value> = values.iter().map(|elem| scalar_i64_to_value(elem, dtype)).collect();
+    for (i, val) in values.iter().enumerate() {
         let addr = b.ir_constant_int(i as i64);
-        write_typed(b, seg, &addr, &val, dtype);
+        write_typed(b, seg, &addr, val, dtype);
     }
+    b.note_segment_cells(seg, &values);
     seg
 }
 
@@ -42,6 +43,7 @@ pub fn alloc_and_write_values(b: &mut IRBuilder, values: &[Value], dtype: Number
         let addr = b.ir_constant_int(i as i64);
         write_typed(b, seg, &addr, val, dtype);
     }
+    b.note_segment_cells(seg, values);
     seg
 }
 

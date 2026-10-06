@@ -97,17 +97,31 @@ fn requested_dtype(arg: Option<&Value>, context: &str) -> Option<Dtype> {
     arg.filter(|v| !matches!(v, Value::None)).map(|v| Dtype::required(v, context))
 }
 
-/// A constructor's runtime-shaped result of a fixed-width integer dtype:
-/// its buffer holds the fill value (0 or 1, in every type's range) and is
-/// tracked as that type (`builder/fixed_width.rs`).
-fn track_fixed_width_fill(b: &mut IRBuilder, out: Value, dtype: Dtype) -> Value {
-    if let Dtype::FixedInt(t) = dtype {
-        b.track_fixed_width_array(&out, t);
+/// Record a constructor's result as an array of `dtype` where its storage
+/// does not say so: a bool array (`builder/bool_dtype.rs`; a runtime-shaped
+/// one stores its fill as 0/1 integers) or an array of a fixed-width integer
+/// type (`builder/fixed_width.rs`; its fill, already converted, is in the
+/// type's range).
+fn mark_array_dtype(b: &mut IRBuilder, out: Value, dtype: Dtype) -> Value {
+    match dtype {
+        Dtype::Bool => b.mark_bool_array(&out),
+        Dtype::FixedInt(t) => b.track_fixed_width_array(&out, t),
+        Dtype::Int64 | Dtype::Float | Dtype::Complex => {}
     }
     out
 }
 
 pub fn np_fill(
+    b: &mut IRBuilder,
+    args: &[Value],
+    kwargs: &HashMap<String, Value>,
+    fill_value: i64,
+) -> Value {
+    let out = fill_array(b, args, kwargs, fill_value);
+    mark_array_dtype(b, out, fill_dtype(args, kwargs))
+}
+
+fn fill_array(
     b: &mut IRBuilder,
     args: &[Value],
     kwargs: &HashMap<String, Value>,
@@ -161,14 +175,13 @@ pub fn np_fill(
                         };
                     // dyn_fill_with_active itself fires the content contract
                     // (zeros_content / ones_content) when fill_value is 0 or 1.
-                    let out = crate::ops::dyn_ndarray::constructors::dyn_fill_with_active(
+                    return crate::ops::dyn_ndarray::constructors::dyn_fill_with_active(
                         b,
                         max as usize,
                         arg.clone(),
                         fill_value,
                         dtype,
                     );
-                    return track_fixed_width_fill(b, out, req_dtype);
                 }
                 BoundedInt::Neither => {
                     // Same diagnostic as the prior `require_static_int`
@@ -257,7 +270,7 @@ pub fn np_fill(
                                 dtype,
                             );
                             fire_fill_content_contract(b, &out, fill_value);
-                            return track_fixed_width_fill(b, out, req_dtype);
+                            return out;
                         }
                     }
                     BoundedInt::Bounded { max, .. } => {
@@ -272,7 +285,7 @@ pub fn np_fill(
                                 dtype,
                             );
                             fire_fill_content_contract(b, &out, fill_value);
-                            return track_fixed_width_fill(b, out, req_dtype);
+                            return out;
                         }
                     }
                     BoundedInt::Neither => {}
@@ -287,7 +300,7 @@ pub fn np_fill(
                     dtype,
                 );
                 fire_fill_content_contract(b, &out, fill_value);
-                return track_fixed_width_fill(b, out, req_dtype);
+                return out;
             }
             max_shape
         }
@@ -344,7 +357,7 @@ pub fn np_full(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
     let fill_value = fill_of_dtype(b, fill_arg, dtype);
     let out = np_full_with_value(b, shape_arg, &fill_value, dtype.storage());
     fire_full_static_content_fact(b, &out, &fill_value);
-    out
+    mark_array_dtype(b, out, dtype)
 }
 
 fn np_full_with_value(
@@ -542,7 +555,6 @@ pub fn np_full_like(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, 
     let dtype = requested_dtype(args.get(2).or_else(|| kwargs.get("dtype")), "np.full_like")
         .unwrap_or_else(|| crate::helpers::dtype::element_dtype(b, x));
     let fill_value = fill_of_dtype(b, fill_arg, dtype);
-    let dtype = dtype.storage();
     let shape_arg = match x {
         Value::StaticArray { shape, .. } => {
             let values = shape
@@ -581,9 +593,9 @@ pub fn np_full_like(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, 
             })
         }
     };
-    let out = np_full_with_value(b, &shape_arg, &fill_value, dtype);
+    let out = np_full_with_value(b, &shape_arg, &fill_value, dtype.storage());
     fire_full_static_content_fact(b, &out, &fill_value);
-    out
+    mark_array_dtype(b, out, dtype)
 }
 
 pub fn np_identity(b: &mut IRBuilder, args: &[Value]) -> Value {

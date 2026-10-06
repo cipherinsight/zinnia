@@ -3,7 +3,7 @@
 //!
 //! Sibling modules:
 //! * [`super::bounded_axis`] — stride-layout dispatch + strict-mode env var.
-//! * [`super::boolean_mask`] — boolean-mask classification predicate.
+//! * [`super::array_index`] — how an array-valued index is read (mask or positions).
 
 use crate::builder::IRBuilder;
 use crate::helpers::shape_arith::row_major_strides;
@@ -11,7 +11,7 @@ use crate::types::{
     DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, SliceIndex, Value, ValueId,
 };
 
-use super::boolean_mask::is_boolean_mask;
+use super::array_index::{array_index_kind, ArrayIndexKind};
 use super::bounded_axis::{bounded_axis_strict, select_stride_mode, stride_value, StrideMode};
 use super::memory::filter;
 
@@ -93,45 +93,9 @@ pub fn dyn_subscript(
         );
     }
 
-    // Single-index special cases: boolean mask, fancy indexing.
-    if indices.len() == 1 {
-        if let SliceIndex::Single(idx_val) = &indices[0] {
-            if crate::helpers::array_ops::is_boolean_mask_with(b, idx_val) {
-                return filter(b, &Value::DynamicNDArray(data.clone()), &[idx_val.clone()]);
-            }
-            if is_fancy_index(b, idx_val) {
-                return dyn_fancy_index(b, data, idx_val);
-            }
-        }
-    }
-
-    // Multi-dim fancy: dyn[[r0,r1], [c0,c1]].
-    if indices.len() >= 2 {
-        let mut all_fancy = true;
-        for idx in indices {
-            match idx {
-                SliceIndex::Single(v) => {
-                    if !is_fancy_index(b, v) {
-                        all_fancy = false;
-                        break;
-                    }
-                }
-                _ => {
-                    all_fancy = false;
-                    break;
-                }
-            }
-        }
-        if all_fancy {
-            let idx_arrays: Vec<&Value> = indices
-                .iter()
-                .map(|s| match s {
-                    SliceIndex::Single(v) => v,
-                    _ => unreachable!(),
-                })
-                .collect();
-            return dyn_fancy_index_multidim(b, data, &idx_arrays);
-        }
+    // Array-valued indices: a boolean mask, or integer index arrays.
+    if let Some(out) = dyn_subscript_with_index_arrays(b, data, indices) {
+        return out;
     }
 
     let all_single = indices.iter().all(|s| matches!(s, SliceIndex::Single(_)));
@@ -154,52 +118,6 @@ pub fn dyn_subscript(
         }
     } else {
         dyn_subscript_multidim(b, data, indices)
-    }
-}
-
-// ── Classification ──────────────────────────────────────────────────────
-
-fn is_fancy_index(b: &mut IRBuilder, val: &Value) -> bool {
-    match val {
-        Value::List(d) | Value::Tuple(d) => {
-            !d.values.is_empty() && d.values.iter().all(|v| matches!(v, Value::Integer(_)))
-        }
-        // P4a: list literals arrive as segment-backed StaticArrays now;
-        // a 1-D integer StaticArray that is not a boolean mask is a fancy
-        // index (`dyn[[0, 2, 4]]`).
-        Value::StaticArray {
-            dtype: crate::types::NumberType::Integer,
-            shape,
-            ..
-        } => {
-            shape.len() == 1
-                && shape[0] > 0
-                && !crate::helpers::static_array::mask::is_boolean_mask_static_array(b, val)
-        }
-        // A promoted 1-D integer dyn array with a full (static) runtime
-        // length acts as a fancy index of its cells.
-        Value::DynamicNDArray(d) => {
-            d.envelope.rank() == 1
-                && d.dtype == crate::types::NumberType::Integer
-                && d.meta.runtime_length.static_val == Some(d.max_length() as i64)
-        }
-        _ => false,
-    }
-}
-
-fn extract_index_values(b: &mut IRBuilder, val: &Value) -> Vec<Value> {
-    match val {
-        Value::List(d) | Value::Tuple(d) => d.values.clone(),
-        Value::StaticArray { .. } => {
-            crate::helpers::static_array::elementwise::payload_cells(b, val)
-        }
-        Value::DynamicNDArray(d) => crate::helpers::segment::read_all_typed(
-            b,
-            d.segment_id,
-            d.max_length(),
-            d.dtype,
-        ),
-        _ => panic!("extract_index_values: expected List/Tuple/StaticArray/DynamicNDArray"),
     }
 }
 
@@ -1311,19 +1229,153 @@ fn dyn_subscript_multidim_static(
     })
 }
 
-// ── Fancy indexing ──────────────────────────────────────────────────────
+// ── Array-valued indices ────────────────────────────────────────────────
 
-#[derive(Clone)]
-struct DynFancyIndexInputs {
-    data: DynamicNDArrayData,
-    idx_array: Value,
+/// `data[indices]` when an index is array-valued (`array_index_kind`): a
+/// boolean mask keeps the elements where it is true (`filter`); integer
+/// index arrays gather (`dyn_gather_rows`, `dyn_gather_elements`). `None`
+/// when no index is array-valued.
+fn dyn_subscript_with_index_arrays(
+    b: &mut IRBuilder,
+    data: &DynamicNDArrayData,
+    indices: &[SliceIndex],
+) -> Option<Value> {
+    let kinds: Vec<Option<ArrayIndexKind>> = indices
+        .iter()
+        .map(|idx| match idx {
+            SliceIndex::Single(v) => array_index_kind(b, v),
+            _ => None,
+        })
+        .collect();
+    if kinds.iter().all(Option::is_none) {
+        return None;
+    }
+    let arrays: Vec<&Value> = indices
+        .iter()
+        .filter_map(|idx| match idx {
+            SliceIndex::Single(v) => Some(v),
+            _ => None,
+        })
+        .collect();
+    match kinds.as_slice() {
+        [Some(ArrayIndexKind::Mask)] => {
+            Some(filter(b, &Value::DynamicNDArray(data.clone()), &[arrays[0].clone()]))
+        }
+        [Some(ArrayIndexKind::Positions)] => Some(dyn_gather_rows(b, data, arrays[0])),
+        _ if kinds.iter().all(|k| *k == Some(ArrayIndexKind::Positions)) => {
+            Some(dyn_gather_elements(b, data, &arrays))
+        }
+        _ => panic!(
+            "indexing a runtime-shaped array with index arrays mixed with slices, \
+             scalars or boolean masks is not supported"
+        ),
+    }
 }
 
-fn dyn_fancy_index(b: &mut IRBuilder, data: &DynamicNDArrayData, idx_array: &Value) -> Value {
-    let Some(indices_vid) = idx_array.value_id() else {
-        return dyn_fancy_index_lower(b, data, idx_array, true);
-    };
+/// The entries of an integer index array, with the shape NumPy gives it and
+/// its runtime number of entries: all of them for a list or static array; for
+/// a runtime-shaped (rank-one) array, its first `len` slots, the others
+/// being padding.
+struct IndexArray {
+    entries: Vec<Value>,
+    shape: Vec<usize>,
+    /// `None` when every entry is in use.
+    runtime_len: Option<Value>,
+    /// The envelope dims of a runtime-shaped index array (its shape's
+    /// symbolic length), reused by the result.
+    dims: Option<Vec<crate::types::Dim>>,
+}
 
+fn index_array(b: &mut IRBuilder, idx: &Value) -> IndexArray {
+    match idx {
+        Value::List(_) | Value::Tuple(_) => IndexArray {
+            entries: crate::helpers::composite::flatten_composite(idx)
+                .iter()
+                .map(|v| integer_index(b, v))
+                .collect(),
+            shape: crate::helpers::composite::get_composite_shape(idx),
+            runtime_len: None,
+            dims: None,
+        },
+        Value::StaticArray { shape, .. } => IndexArray {
+            entries: crate::helpers::static_array::elementwise::payload_cells(b, idx)
+                .iter()
+                .map(|v| integer_index(b, v))
+                .collect(),
+            shape: shape.clone(),
+            runtime_len: None,
+            dims: None,
+        },
+        Value::DynamicNDArray(d) => {
+            assert!(
+                d.envelope.rank() == 1,
+                "indexing with a runtime-shaped index array of rank {} is not supported",
+                d.envelope.rank()
+            );
+            let d = crate::ops::dyn_ndarray::force_contiguous(b, d);
+            let len = d.meta.runtime_length.clone();
+            let all_in_use = len.static_val == Some(d.max_length() as i64);
+            IndexArray {
+                entries: crate::helpers::segment::read_all_typed(
+                    b,
+                    d.segment_id,
+                    d.max_length(),
+                    d.dtype,
+                ),
+                shape: vec![d.max_length()],
+                runtime_len: (!all_in_use).then(|| scalar_i64_value(b, &len)),
+                dims: Some(d.envelope.dims.clone()),
+            }
+        }
+        _ => unreachable!("array_index_kind classified a non-array index"),
+    }
+}
+
+/// An entry of an integer index array as an integer (NumPy converts the
+/// index list `[True, 2]` to the integer array `[1, 2]`).
+fn integer_index(b: &mut IRBuilder, v: &Value) -> Value {
+    match v {
+        Value::Boolean(_) => b.ir_int_cast(v),
+        _ => v.clone(),
+    }
+}
+
+/// Run `f` for slot `k` of an index array: where the slot is padding
+/// (`k >= len`), its index is not checked and the access reads row 0.
+fn for_index_slot<T>(
+    b: &mut IRBuilder,
+    index: &IndexArray,
+    k: usize,
+    f: impl FnOnce(&mut IRBuilder) -> T,
+) -> T {
+    match &index.runtime_len {
+        None => f(b),
+        Some(len) => {
+            let k_v = b.ir_constant_int(k as i64);
+            let in_use = b.ir_less_than_i(&k_v, len);
+            b.under_condition(&in_use, f)
+        }
+    }
+}
+
+/// `data[idx]` for an integer index array `idx`: NumPy integer-array
+/// indexing on axis 0. Entry `k` of `idx` selects row `idx[k]` of `data`,
+/// counted from the end when negative, and the result has shape
+/// `idx.shape + data.shape[1:]`. Every index in use must lie in
+/// `[-n, n)` for the runtime length `n` of axis 0
+/// (`wrap_and_check_dynamic_indices`, checked where the access runs).
+///
+/// When the facts prove every index of a fully used `idx` in `[0, n)` and
+/// `n` is a compile-time constant, the checks are skipped
+/// (`gather_skip_bounds_check`).
+fn dyn_gather_rows(b: &mut IRBuilder, data: &DynamicNDArrayData, idx: &Value) -> Value {
+    let axis0_static = data.meta.runtime_shape[0].static_val
+        == Some(data.meta.logical_shape[0] as i64);
+    let fully_used = !matches!(idx, Value::DynamicNDArray(d)
+        if d.meta.runtime_length.static_val != Some(d.max_length() as i64));
+    let (Some(indices_vid), true) = (idx.value_id(), axis0_static && fully_used) else {
+        return dyn_gather_rows_lower(b, data, idx, true);
+    };
     let precondition = {
         use crate::optim::predicates::formula::{ContractTerm, ContractVar};
         ContractTerm::PredicateApp {
@@ -1335,241 +1387,174 @@ fn dyn_fancy_index(b: &mut IRBuilder, data: &DynamicNDArrayData, idx_array: &Val
             ],
         }
     };
-    let inputs = DynFancyIndexInputs {
-        data: data.clone(),
-        idx_array: idx_array.clone(),
-    };
+    let inputs = DynGatherInputs { data: data.clone(), idx: idx.clone() };
     let set = crate::optim::OpStrategySet {
         strategies: vec![crate::optim::OpStrategy {
             name: "gather_skip_bounds_check",
             precondition,
             cost_hint: crate::optim::CostHint::ON,
-            lower: dyn_fancy_index_unchecked_lowering,
+            lower: |b, inputs: &DynGatherInputs| {
+                dyn_gather_rows_lower(b, &inputs.data, &inputs.idx, false)
+            },
         }],
-        default: dyn_fancy_index_checked_lowering,
+        default: |b, inputs: &DynGatherInputs| {
+            dyn_gather_rows_lower(b, &inputs.data, &inputs.idx, true)
+        },
     };
     crate::optim::dispatch_strategy(b, "dyn_fancy_index", &inputs, &set)
 }
 
-fn dyn_fancy_index_checked_lowering(b: &mut IRBuilder, inputs: &DynFancyIndexInputs) -> Value {
-    dyn_fancy_index_lower(b, &inputs.data, &inputs.idx_array, true)
+#[derive(Clone)]
+struct DynGatherInputs {
+    data: DynamicNDArrayData,
+    idx: Value,
 }
 
-fn dyn_fancy_index_unchecked_lowering(b: &mut IRBuilder, inputs: &DynFancyIndexInputs) -> Value {
-    dyn_fancy_index_lower(b, &inputs.data, &inputs.idx_array, false)
-}
-
-fn normalize_axis0_index(b: &mut IRBuilder, data: &DynamicNDArrayData, idx: &Value) -> Value {
-    if let Some(i) = idx.int_val() {
-        let i = if i < 0 {
-            data.meta.logical_shape[0] as i64 + i
-        } else {
-            i
-        };
-        b.ir_constant_int(i)
-    } else {
-        idx.clone()
-    }
-}
-
-fn dyn_fancy_index_lower(
+fn dyn_gather_rows_lower(
     b: &mut IRBuilder,
     data: &DynamicNDArrayData,
-    idx_array: &Value,
+    idx: &Value,
     check_bounds: bool,
 ) -> Value {
-    let indices = extract_index_values(b, idx_array);
-    let rank = data.envelope.rank();
-
-    if rank == 1 {
-        let out_len = indices.len();
-        let mut out_elements = Vec::with_capacity(out_len);
-        for idx in &indices {
-            let addr = normalize_axis0_index(b, data, idx);
-            if check_bounds {
-                crate::optim::resolver::discharge_index_in_range(
-                    b,
-                    &addr,
-                    0,
-                    data.meta.logical_shape[0] as i64,
-                    "dyn_fancy_index",
-                );
-            }
-            let elem = crate::helpers::segment::read_typed(b, data.segment_id, &addr, data.dtype);
-            out_elements.push(elem.clone());
-        }
-        let segment_id =
-            crate::helpers::segment::alloc_and_write_values(b, &out_elements, data.dtype);
-        let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &[out_len]);
-        return Value::DynamicNDArray(DynamicNDArrayData {
-            envelope,
-            dtype: data.dtype,
-            segment_id,
-            meta: DynArrayMeta {
-                logical_shape: vec![out_len],
-                logical_offset: 0,
-                logical_strides: vec![1],
-                runtime_length: ScalarValue::new(Some(out_len as i64), None),
-                runtime_rank: ScalarValue::new(Some(1), None),
-                runtime_shape: vec![ScalarValue::new(Some(out_len as i64), None)],
-                runtime_strides: vec![ScalarValue::new(Some(1), None)],
-                runtime_offset: ScalarValue::new(Some(0), None),
-            },
-            value_id: ValueId::next(),
-        });
-    }
-
-    // Multi-dim: each index selects a row along axis 0.
+    let index = index_array(b, idx);
+    let data = &crate::ops::dyn_ndarray::force_contiguous(b, data);
     let mode = select_stride_mode(data);
+    if data.envelope.rank() >= 2 && matches!(mode, StrideMode::SymbolicRuntime(_)) {
+        panic!("indexing the rows of a compact runtime-shaped array with an index array is not supported");
+    }
     let row_shape: Vec<usize> = data.meta.logical_shape[1..].to_vec();
     let row_size: usize = row_shape.iter().product();
-    let num_indices = indices.len();
-    let out_total = num_indices * row_size;
-    let mut out_elements = Vec::with_capacity(out_total);
 
-    for idx in &indices {
-        let idx_v = normalize_axis0_index(b, data, idx);
-        if check_bounds {
-            crate::optim::resolver::discharge_index_in_range(
-                b,
-                &idx_v,
-                0,
-                data.meta.logical_shape[0] as i64,
-                "dyn_fancy_index",
-            );
-        }
-        let base = match &mode {
-            StrideMode::LiteralLogical(strides) => {
-                let row_stride = strides[0];
-                let stride_val = b.ir_constant_int(row_stride as i64);
-                b.ir_mul_i(&idx_v, &stride_val)
-            }
-            StrideMode::SymbolicRuntime(_) => {
-                let stride_v = stride_value(b, &mode, 0);
-                b.ir_mul_i(&idx_v, &stride_v)
-            }
-        };
-        for j in 0..row_size {
-            let offset = b.ir_constant_int(j as i64);
-            let addr = b.ir_add_i(&base, &offset);
-            let elem = crate::helpers::segment::read_typed(b, data.segment_id, &addr, data.dtype);
-            out_elements.push(elem.clone());
-        }
+    let mut cells = Vec::with_capacity(index.entries.len() * row_size);
+    for (k, entry) in index.entries.iter().enumerate() {
+        let row_cells = for_index_slot(b, &index, k, |b| {
+            let row = if check_bounds {
+                checked_index(b, data, 0, entry)
+            } else {
+                entry.clone()
+            };
+            let base = row_base_address(b, &mode, &row);
+            (0..row_size)
+                .map(|j| {
+                    let offset = b.ir_constant_int(j as i64);
+                    let addr = b.ir_add_i(&base, &offset);
+                    crate::helpers::segment::read_typed(b, data.segment_id, &addr, data.dtype)
+                })
+                .collect::<Vec<_>>()
+        });
+        cells.extend(row_cells);
     }
+    let segment_id = crate::helpers::segment::alloc_and_write_values(b, &cells, data.dtype);
 
-    let mut out_shape = vec![num_indices];
+    // Result shape: the index array's shape, then a row of `data`.
+    let mut out_shape = index.shape.clone();
     out_shape.extend(&row_shape);
-    let out_strides = row_major_strides(&out_shape);
-    let segment_id = crate::helpers::segment::alloc_and_write_values(b, &out_elements, data.dtype);
-    let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &out_shape);
-
-    Value::DynamicNDArray(DynamicNDArrayData {
-        envelope,
-        dtype: data.dtype,
-        segment_id,
-        meta: DynArrayMeta {
-            logical_shape: out_shape.clone(),
-            logical_offset: 0,
-            logical_strides: out_strides.clone(),
-            runtime_length: ScalarValue::new(Some(out_total as i64), None),
-            runtime_rank: ScalarValue::new(Some(out_shape.len() as i64), None),
-            runtime_shape: out_shape
-                .iter()
-                .map(|&s| ScalarValue::new(Some(s as i64), None))
-                .collect(),
-            runtime_strides: out_strides
-                .iter()
-                .map(|&s| ScalarValue::new(Some(s as i64), None))
-                .collect(),
-            runtime_offset: ScalarValue::new(Some(0), None),
-        },
-        value_id: ValueId::next(),
-    })
+    let mut dims = match &index.dims {
+        Some(dims) => dims.clone(),
+        None => index
+            .shape
+            .iter()
+            .map(|&n| crate::types::Dim::new_static(&mut b.dim_table, n))
+            .collect(),
+    };
+    dims.extend(data.envelope.dims[1..].iter().cloned());
+    let mut runtime_shape: Vec<ScalarValue<i64>> = match &index.runtime_len {
+        Some(len) => vec![crate::ops::dyn_ndarray::value_to_scalar_i64(len)],
+        None => index.shape.iter().map(|&n| ScalarValue::new(Some(n as i64), None)).collect(),
+    };
+    runtime_shape.extend(data.meta.runtime_shape[1..].iter().cloned());
+    dyn_array_with_shape(b, segment_id, data.dtype, out_shape, dims, runtime_shape)
 }
 
-fn dyn_fancy_index_multidim(
-    b: &mut IRBuilder,
-    data: &DynamicNDArrayData,
-    idx_arrays: &[&Value],
-) -> Value {
-    let mode = select_stride_mode(data);
-    let shape = &data.meta.logical_shape;
-    let arrays: Vec<Vec<Value>> = idx_arrays
-        .iter()
-        .map(|v| extract_index_values(b, v))
-        .collect();
-    let out_len = arrays[0].len();
+/// `data[i0, i1, ...]` with one integer index array per leading axis, all of
+/// one length `L`: entry `k` of the result is
+/// `data[i0[k], i1[k], ...]`, each index wrapped and checked against its
+/// axis's runtime length. Index arrays of different shapes (NumPy would
+/// broadcast them) are rejected.
+fn dyn_gather_elements(b: &mut IRBuilder, data: &DynamicNDArrayData, arrays: &[&Value]) -> Value {
+    let axes: Vec<IndexArray> = arrays.iter().map(|v| index_array(b, v)).collect();
+    let shape = axes[0].shape.clone();
     assert!(
-        arrays.iter().all(|a| a.len() == out_len),
-        "fancy indexing: all index arrays must have the same length"
+        axes.iter().all(|a| a.shape == shape && a.runtime_len.is_none()),
+        "indexing a runtime-shaped array with several index arrays requires index arrays \
+         of one static shape"
     );
+    assert!(
+        arrays.len() == data.envelope.rank(),
+        "indexing a runtime-shaped array with fewer index arrays than axes is not supported"
+    );
+    let cells: Vec<Value> = (0..axes[0].entries.len())
+        .map(|k| {
+            let element: Vec<SliceIndex> =
+                axes.iter().map(|a| SliceIndex::Single(a.entries[k].clone())).collect();
+            dyn_getitem_element(b, data, &element)
+        })
+        .collect();
+    let segment_id = crate::helpers::segment::alloc_and_write_values(b, &cells, data.dtype);
+    let dims = shape
+        .iter()
+        .map(|&n| crate::types::Dim::new_static(&mut b.dim_table, n))
+        .collect();
+    let runtime_shape = shape.iter().map(|&n| ScalarValue::new(Some(n as i64), None)).collect();
+    dyn_array_with_shape(b, segment_id, data.dtype, shape, dims, runtime_shape)
+}
 
-    let mut out_elements = Vec::with_capacity(out_len);
-    for i in 0..out_len {
-        let addr = match &mode {
-            StrideMode::LiteralLogical(strides) => {
-                let mut static_sum: i64 = 0;
-                let mut dynamic_parts: Vec<Value> = Vec::new();
-                for (ax, arr) in arrays.iter().enumerate() {
-                    let idx_val = &arr[i];
-                    let stride = strides[ax] as i64;
-                    if let Some(v) = idx_val.int_val() {
-                        let v = if v < 0 { shape[ax] as i64 + v } else { v };
-                        static_sum += v * stride;
-                    } else {
-                        let stride_val = b.ir_constant_int(stride);
-                        dynamic_parts.push(b.ir_mul_i(idx_val, &stride_val));
-                    }
-                }
-                if dynamic_parts.is_empty() {
-                    b.ir_constant_int(static_sum)
-                } else {
-                    let mut acc = b.ir_constant_int(static_sum);
-                    for part in &dynamic_parts {
-                        acc = b.ir_add_i(&acc, part);
-                    }
-                    acc
-                }
-            }
-            StrideMode::SymbolicRuntime(_) => {
-                let mut acc: Option<Value> = None;
-                for (ax, arr) in arrays.iter().enumerate() {
-                    let idx_val = &arr[i];
-                    let v = if let Some(vi) = idx_val.int_val() {
-                        let vi = if vi < 0 { shape[ax] as i64 + vi } else { vi };
-                        b.ir_constant_int(vi)
-                    } else {
-                        idx_val.clone()
-                    };
-                    let stride_v = stride_value(b, &mode, ax);
-                    let contrib = b.ir_mul_i(&v, &stride_v);
-                    acc = Some(match acc.take() {
-                        None => contrib,
-                        Some(prev) => b.ir_add_i(&prev, &contrib),
-                    });
-                }
-                acc.unwrap_or_else(|| b.ir_constant_int(0))
-            }
-        };
-        let elem = crate::helpers::segment::read_typed(b, data.segment_id, &addr, data.dtype);
-        out_elements.push(elem.clone());
+/// Index `idx` on `axis`, wrapped (NumPy's one negative wrap) and checked
+/// against the axis's runtime length where the access runs.
+fn checked_index(b: &mut IRBuilder, data: &DynamicNDArrayData, axis: usize, idx: &Value) -> Value {
+    let mut padded = vec![SliceIndex::Range(None, None, None); axis];
+    padded.push(SliceIndex::Single(idx.clone()));
+    match wrap_and_check_dynamic_indices(b, data, &padded, "fancy_index").pop() {
+        Some(SliceIndex::Single(v)) => v,
+        _ => unreachable!(),
     }
+}
 
-    let segment_id = crate::helpers::segment::alloc_and_write_values(b, &out_elements, data.dtype);
-    let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &[out_len]);
+/// The flat address of the first cell of row `row` (already wrapped and in
+/// range) of a contiguous array with stride mode `mode`.
+fn row_base_address(b: &mut IRBuilder, mode: &StrideMode, row: &Value) -> Value {
+    let stride = match mode {
+        StrideMode::LiteralLogical(strides) => b.ir_constant_int(strides[0] as i64),
+        StrideMode::SymbolicRuntime(_) => stride_value(b, mode, 0),
+    };
+    match (row.int_val(), stride.int_val()) {
+        (Some(r), Some(s)) => b.ir_constant_int(r * s),
+        _ => b.ir_mul_i(row, &stride),
+    }
+}
 
+/// A fresh, contiguous `DynamicNDArray` over `segment_id` with padded
+/// shape `shape`, envelope `dims` and runtime shape `runtime_shape`.
+fn dyn_array_with_shape(
+    b: &mut IRBuilder,
+    segment_id: u32,
+    dtype: NumberType,
+    shape: Vec<usize>,
+    dims: Vec<crate::types::Dim>,
+    runtime_shape: Vec<ScalarValue<i64>>,
+) -> Value {
+    let total: usize = shape.iter().product();
+    let strides = row_major_strides(&shape);
+    let mut runtime_length = b.ir_constant_int(1);
+    for dim in &runtime_shape {
+        let dim = scalar_i64_value(b, dim);
+        runtime_length = b.ir_mul_i(&runtime_length, &dim);
+    }
     Value::DynamicNDArray(DynamicNDArrayData {
-        envelope,
-        dtype: data.dtype,
+        envelope: crate::types::Envelope::new_with_bound(dims, total),
+        dtype,
         segment_id,
         meta: DynArrayMeta {
-            logical_shape: vec![out_len],
+            logical_shape: shape.clone(),
             logical_offset: 0,
-            logical_strides: vec![1],
-            runtime_length: ScalarValue::new(Some(out_len as i64), None),
-            runtime_rank: ScalarValue::new(Some(1), None),
-            runtime_shape: vec![ScalarValue::new(Some(out_len as i64), None)],
-            runtime_strides: vec![ScalarValue::new(Some(1), None)],
+            logical_strides: strides.clone(),
+            runtime_length: crate::ops::dyn_ndarray::value_to_scalar_i64(&runtime_length),
+            runtime_rank: ScalarValue::new(Some(shape.len() as i64), None),
+            runtime_shape,
+            runtime_strides: strides
+                .iter()
+                .map(|&s| ScalarValue::new(Some(s as i64), None))
+                .collect(),
             runtime_offset: ScalarValue::new(Some(0), None),
         },
         value_id: ValueId::next(),
@@ -1830,8 +1815,10 @@ mod tests_case_b {
         b.facts.insert_for(indices_vid, fact);
     }
 
+    /// Bounds checks: an index check is one `AssertU128Lt` (or an `Assert`
+    /// of a comparison chain for a non-zero lower bound).
     fn count_asserts(irs: &[IR]) -> usize {
-        irs.iter().filter(|ir| matches!(ir, IR::Assert)).count()
+        irs.iter().filter(|ir| matches!(ir, IR::Assert | IR::AssertU128Lt)).count()
     }
 
     struct ScopedTelemetryDir {
@@ -1878,7 +1865,7 @@ mod tests_case_b {
         };
         let indices = make_dynamic_index_list(&mut b, 3);
 
-        let (_out, irs) = emitted_during(&mut b, |b| dyn_fancy_index(b, &data, &indices));
+        let (_out, irs) = emitted_during(&mut b, |b| dyn_gather_rows(b, &data, &indices));
         let assert_count = count_asserts(&irs);
         assert_eq!(
             assert_count, 3,
@@ -1900,7 +1887,7 @@ mod tests_case_b {
         let indices_vid = indices.value_id().expect("index composite has value_id");
         plant_forall_in_range(&mut b, indices_vid, 0, 4);
 
-        let (_out, irs) = emitted_during(&mut b, |b| dyn_fancy_index(b, &data, &indices));
+        let (_out, irs) = emitted_during(&mut b, |b| dyn_gather_rows(b, &data, &indices));
         let assert_count = count_asserts(&irs);
         assert_eq!(
             assert_count, 0,
@@ -1942,7 +1929,7 @@ mod tests_case_b {
             vec![b.ir_constant_int(9)],
         ));
 
-        let _ = dyn_fancy_index(&mut b, &data, &indices);
+        let _ = dyn_gather_rows(&mut b, &data, &indices);
     }
 
     #[test]

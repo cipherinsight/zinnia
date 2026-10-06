@@ -71,6 +71,7 @@ pub fn build_static_array_from_flat(
     let segment_id = build_segment_for_payload(b, &cells, dtype);
     let strides = row_major_strides(&shape);
     b.note_static_array_cells(segment_id, &flat);
+    b.note_segment_cells(segment_id, &flat);
     b.static_array_payload.insert(segment_id, flat);
     Value::StaticArray {
         dtype,

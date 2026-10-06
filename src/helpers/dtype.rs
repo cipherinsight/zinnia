@@ -247,11 +247,8 @@ pub fn convert_scalar(b: &mut IRBuilder, x: &Value, to: Dtype) -> Value {
 /// `x != 0` (NumPy's and Python's truthiness of a number).
 fn to_bool(b: &mut IRBuilder, x: &Value) -> Value {
     match x {
-        Value::Boolean(_) => x.clone(),
-        Value::Integer(s) => match s.static_val {
-            Some(v) => b.ir_constant_bool(v != 0),
-            None => b.ir_bool_cast(x),
-        },
+        // A bool cell of NumPy's bool dtype (`builder/bool_dtype.rs`).
+        Value::Boolean(_) | Value::Integer(_) => b.bool_dtype_cell(x),
         Value::Float(s) => match s.static_val {
             Some(v) => b.ir_constant_bool(v != 0.0),
             None => {
@@ -269,13 +266,16 @@ fn to_bool(b: &mut IRBuilder, x: &Value) -> Value {
 }
 
 /// `x` as an int64 value: truncated toward zero from a float (the real part
-/// of a complex), 0/1 from a boolean. A fixed-width integer value becomes an
-/// untracked copy: as an int64 it takes part in arithmetic as NumPy's int64
-/// values do (see `builder/fixed_width.rs`).
+/// of a complex), 0/1 from a boolean, as an integer cell (a bool's indexes
+/// by position: `builder/bool_dtype.rs`). A fixed-width integer value
+/// becomes an untracked copy: as an int64 it takes part in arithmetic as
+/// NumPy's int64 values do (`builder/fixed_width.rs`).
 pub fn to_int64(b: &mut IRBuilder, x: &Value) -> Value {
     match x {
+        Value::Integer(_) if b.is_bool_cell(x) => b.int_dtype_cell(x),
         Value::Integer(_) => b.untracked_int64(x),
-        Value::Boolean(_) | Value::Float(_) => b.ir_int_cast(x),
+        Value::Boolean(_) => b.int_dtype_cell(x),
+        Value::Float(_) => b.ir_int_cast(x),
         Value::Complex { real, .. } => b.ir_int_cast(&Value::Float(real.clone())),
         other => panic!("cannot convert a {} to an integer", other.zinnia_type()),
     }
@@ -469,42 +469,38 @@ pub fn dtype_of(b: &mut IRBuilder, x: &Value) -> Value {
 }
 
 /// The dtype of the elements of `x` (an array, a list or a scalar): a
-/// fixed-width integer type when the compiler tracks them as one, bool when
-/// every element is a boolean, else from the storage or the elements.
+/// fixed-width integer type when the compiler tracks them as one
+/// (`builder/fixed_width.rs`), bool for a bool array or bool cells
+/// (`builder/bool_dtype.rs`), else from the storage or the elements.
 pub fn element_dtype(b: &mut IRBuilder, x: &Value) -> Dtype {
     if let Some(t) = b.fixed_width_content(x) {
         return Dtype::FixedInt(t);
     }
-    let of_cells = |cells: &[Value]| {
-        if cells.iter().any(|v| matches!(v, Value::Complex { .. })) {
-            Dtype::Complex
-        } else if cells.iter().any(|v| matches!(v, Value::Float(_))) {
-            Dtype::Float
-        } else if !cells.is_empty() && cells.iter().all(|v| matches!(v, Value::Boolean(_))) {
-            Dtype::Bool
-        } else {
-            Dtype::Int64
+    let is_bool = match x {
+        Value::Integer(_) | Value::Boolean(_) => b.is_bool_cell(x),
+        _ => crate::helpers::array_ops::is_bool_array(b, x),
+    };
+    if is_bool {
+        return Dtype::Bool;
+    }
+    let storage = match x {
+        Value::StaticArray { dtype, .. } => *dtype,
+        Value::DynamicNDArray(data) => data.dtype,
+        _ => {
+            let cells = crate::helpers::composite::flatten_composite(x);
+            if cells.iter().any(|v| matches!(v, Value::Complex { .. })) {
+                NumberType::Complex
+            } else if cells.iter().any(|v| matches!(v, Value::Float(_))) {
+                NumberType::Float
+            } else {
+                NumberType::Integer
+            }
         }
     };
-    let of_storage = |storage: NumberType| match storage {
+    match storage {
         NumberType::Integer => Dtype::Int64,
         NumberType::Float => Dtype::Float,
         NumberType::Complex => Dtype::Complex,
-    };
-    match x {
-        Value::DynamicNDArray(data) => of_storage(data.dtype),
-        // The cells of an integer array are booleans when it holds a
-        // comparison's result; they are known from the compile-time payload.
-        Value::StaticArray {
-            dtype: NumberType::Integer,
-            segment_id,
-            ..
-        } => b
-            .static_array_payload
-            .get(segment_id)
-            .map_or(Dtype::Int64, |cells| of_cells(cells)),
-        Value::StaticArray { dtype, .. } => of_storage(*dtype),
-        _ => of_cells(&crate::helpers::composite::flatten_composite(x)),
     }
 }
 
