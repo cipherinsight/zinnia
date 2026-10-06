@@ -31,6 +31,7 @@
 
 pub mod error;
 pub mod field;
+pub mod guards;
 pub mod interpreter;
 pub mod ir_hash;
 pub mod kernel;

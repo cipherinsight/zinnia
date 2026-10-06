@@ -282,7 +282,8 @@ def test_insert_position_out_of_range_is_rejected():
 
 def test_insert_uses_no_comparison_per_slot():
     # [pos <= i] is the running or of the equality tests [pos == k], k <= i.
-    assert "LessThanIIR" not in ir_classes(compile_kernel(INSERT_1D))
+    # The one comparison is the sign test that wraps a negative pos.
+    assert ir_classes(compile_kernel(INSERT_1D)).count("LessThanIIR") <= 1
 
 
 def test_insert_halo2_base_matches_mock():

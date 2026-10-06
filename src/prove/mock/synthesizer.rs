@@ -128,8 +128,16 @@ impl Synthesizer for MockSynthesizer {
         Ok(MockCell(base.fp().pow_vartime([e as u64])))
     }
 
+    /// `|a|`. `|i64::MIN| = 2^63` overflows int64 (NumPy wraps it back to
+    /// `i64::MIN`); like every int64 overflow it has no proof, on every
+    /// backend, so the mock reports it unsatisfied. The same holds for a
+    /// Q32 float (`abs_f`), whose raw value lives in the same window.
     fn abs_i(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
         let (abs, _) = kernel::signed_decompose(a.fp());
+        if kernel::fp_to_i128(abs).is_none_or(|m| m >= 1i128 << 63) {
+            self.satisfied = false;
+            self.assertion_failures.push("abs: |i64::MIN| overflows int64".to_string());
+        }
         Ok(MockCell(abs))
     }
 

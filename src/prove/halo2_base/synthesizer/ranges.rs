@@ -138,7 +138,7 @@ pub(super) enum Operand {
 impl Operand {
     fn quantum(&self) -> QuantumCell<Fp> {
         match self {
-            Operand::Cell(c) => QuantumCell::Existing(c.assigned),
+            Operand::Cell(c) => c.quantum(),
             Operand::Constant(v) => QuantumCell::Constant(kernel::i128_to_fp(*v)),
         }
     }
@@ -278,8 +278,9 @@ impl Halo2BaseSynthesizer<'_> {
 
     /// Constrain `0 <= x < 2^bits` (and record it).
     pub(super) fn range_check(&mut self, x: &Halo2BaseCell, bits: usize) {
+        let x_cell = self.assigned(x);
         let range = self.range_chip();
-        range.range_check(self.ctx(), x.assigned, bits);
+        range.range_check(self.ctx(), x_cell, bits);
         if let Some(iv) = Interval::bits(bits) {
             self.prove_range(x, iv);
         }
@@ -302,7 +303,7 @@ impl Halo2BaseSynthesizer<'_> {
         } else if domain == Interval::SIGNED64 {
             let shift = Fp::from(1u64 << 63);
             let shifted = self.gate_cell(x.value + shift, |gate, ctx| {
-                gate.add(ctx, x.assigned, QuantumCell::Constant(shift))
+                gate.add(ctx, x.quantum(), QuantumCell::Constant(shift))
             });
             self.range_check(&shifted, 64);
         } else {
@@ -337,7 +338,7 @@ impl Halo2BaseSynthesizer<'_> {
                     *q
                 } else {
                     let lo = kernel::i128_to_fp(range.lo);
-                    self.gate_cell(q.value - lo, |gate, ctx| gate.sub(ctx, q.assigned, QuantumCell::Constant(lo)))
+                    self.gate_cell(q.value - lo, |gate, ctx| gate.sub(ctx, q.quantum(), QuantumCell::Constant(lo)))
                 };
                 self.range_check(&shifted, width);
                 if let Some(checked) = Interval::new(range.lo, range.lo + (1i128 << width) - 1) {
@@ -355,7 +356,7 @@ impl Halo2BaseSynthesizer<'_> {
         if let Some(diff) = self.differences.get(&(a.id, b.id)) {
             return *diff;
         }
-        let out = self.gate_cell(a.value - b.value, |gate, ctx| gate.sub(ctx, a.assigned, b.assigned));
+        let out = self.gate_cell(a.value - b.value, |gate, ctx| gate.sub(ctx, a.quantum(), b.quantum()));
         self.propagate_range(&out, a, b, Interval::sub);
         self.differences.insert((a.id, b.id), out);
         out
@@ -365,7 +366,7 @@ impl Halo2BaseSynthesizer<'_> {
     /// two-valued facts shifted.
     pub(super) fn add_constant(&mut self, x: &Halo2BaseCell, c: i128) -> Halo2BaseCell {
         let c_fp = kernel::i128_to_fp(c);
-        let out = self.gate_cell(x.value + c_fp, |gate, ctx| gate.add(ctx, x.assigned, QuantumCell::Constant(c_fp)));
+        let out = self.gate_cell(x.value + c_fp, |gate, ctx| gate.add(ctx, x.quantum(), QuantumCell::Constant(c_fp)));
         if let Some(range) = self.proven_range(x).and_then(|r| r.offset(c)) {
             self.prove_range(&out, range);
         }
@@ -378,7 +379,7 @@ impl Halo2BaseSynthesizer<'_> {
     /// `c - x` for a constant `c` (one gate), with the range carried over.
     pub(super) fn constant_minus(&mut self, c: i128, x: &Halo2BaseCell) -> Halo2BaseCell {
         let c_fp = kernel::i128_to_fp(c);
-        let out = self.gate_cell(c_fp - x.value, |gate, ctx| gate.sub(ctx, QuantumCell::Constant(c_fp), x.assigned));
+        let out = self.gate_cell(c_fp - x.value, |gate, ctx| gate.sub(ctx, QuantumCell::Constant(c_fp), x.quantum()));
         if let Some(range) = self.proven_range(x).and_then(|r| r.neg().offset(c)) {
             self.prove_range(&out, range);
         }
@@ -451,12 +452,12 @@ impl Halo2BaseSynthesizer<'_> {
         let power = kernel::i128_to_fp(1i128 << n);
         let diff = match (a, b) {
             (_, Operand::Constant(0)) => a.quantum(),
-            (Operand::Cell(x), Operand::Cell(y)) => QuantumCell::Existing(self.difference(&x, &y).assigned),
-            _ => QuantumCell::Existing(self.gate_cell(a.value() - b.value(), |gate, ctx| gate.sub(ctx, a.quantum(), b.quantum())).assigned),
+            (Operand::Cell(x), Operand::Cell(y)) => self.difference(&x, &y).quantum(),
+            _ => self.gate_cell(a.value() - b.value(), |gate, ctx| gate.sub(ctx, a.quantum(), b.quantum())).quantum(),
         };
         let diff_value = a.value() - b.value();
         let t = self.gate_cell(diff_value + s.value * power, |gate, ctx| {
-            gate.mul_add(ctx, s.assigned, QuantumCell::Constant(power), diff)
+            gate.mul_add(ctx, s.quantum(), QuantumCell::Constant(power), diff)
         });
         self.range_check(&t, n);
         self.record_comparison(&s, a, b);
@@ -529,7 +530,7 @@ impl Halo2BaseSynthesizer<'_> {
         let s = self.hint_bit(kernel::fp_is_negative(x.value));
         let power = kernel::i128_to_fp(1i128 << 63);
         let shifted = self.gate_cell(x.value + s.value * power, |gate, ctx| {
-            gate.mul_add(ctx, s.assigned, QuantumCell::Constant(power), x.assigned)
+            gate.mul_add(ctx, s.quantum(), QuantumCell::Constant(power), x.quantum())
         });
         self.range_check(&shifted, 63);
         self.prove_range(x, Interval::SIGNED64);
@@ -616,10 +617,10 @@ impl Halo2BaseSynthesizer<'_> {
             let gap = match b {
                 Operand::Constant(c) => {
                     let limit = kernel::i128_to_fp(c - 1);
-                    self.gate_cell(gap_value, |gate, ctx| gate.sub(ctx, QuantumCell::Constant(limit), a.assigned))
+                    self.gate_cell(gap_value, |gate, ctx| gate.sub(ctx, QuantumCell::Constant(limit), a.quantum()))
                 }
                 Operand::Cell(bc) => self.gate_cell(gap_value, |gate, ctx| {
-                    let diff = gate.sub(ctx, bc.assigned, a.assigned);
+                    let diff = gate.sub(ctx, bc.quantum(), a.quantum());
                     gate.sub(ctx, diff, QuantumCell::Constant(Fp::one()))
                 }),
             };

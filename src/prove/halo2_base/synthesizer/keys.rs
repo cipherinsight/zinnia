@@ -89,7 +89,7 @@ impl Halo2BaseSynthesizer<'_> {
         self.ensure_signed64(&q)?;
         let scale_fp = kernel::i128_to_fp(scale);
         let rebuilt = self.gate_cell(q.value * scale_fp + i.value, |gate, ctx| {
-            gate.mul_add(ctx, q.assigned, QuantumCell::Constant(scale_fp), i.assigned)
+            gate.mul_add(ctx, q.quantum(), QuantumCell::Constant(scale_fp), i.quantum())
         });
         if rebuilt.value != key.value {
             self.note_unsat(|| "Witness does not satisfy circuit constraints: a packed key's parts".to_string());
@@ -139,7 +139,7 @@ impl Halo2BaseSynthesizer<'_> {
         let scale = 1i128 << index_bits;
         let scale_fp = kernel::i128_to_fp(scale);
         let key = self.gate_cell(v.value * scale_fp + i.value, |gate, ctx| {
-            gate.mul_add(ctx, v.assigned, QuantumCell::Constant(scale_fp), i.assigned)
+            gate.mul_add(ctx, v.quantum(), QuantumCell::Constant(scale_fp), i.quantum())
         });
         let (vr, ir) = (Interval::SIGNED64, indices);
         let range = Interval::new(vr.lo * scale + ir.lo, vr.hi * scale + ir.hi)

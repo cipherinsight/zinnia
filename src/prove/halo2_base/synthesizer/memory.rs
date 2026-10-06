@@ -32,6 +32,12 @@ use crate::prove::traits::Synthesizer;
 /// this backend does not have.
 const OVERLAY_TEST_BUDGET: usize = 1 << 20;
 
+/// A dynamic read whose root has at most this many reads in the program is
+/// a multiplexer (`mux_read`, ~8 cells per slot per read); with more reads
+/// the one-hot form's shared equality bits (~14 cells per slot once, then ~3
+/// per slot per read) are cheaper.
+const MUX_MAX_READS_PER_ROOT: usize = 2;
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum OverlayReadKey {
     Cell(u64),
@@ -133,6 +139,12 @@ impl Halo2BaseSynthesizer<'_> {
             Some(_) => {}
             None => self.assert_less(addr, Operand::Constant(len as i128))?,
         }
+        // An overlay entry is compared with later reads by its cell.
+        let addr = &if const_addr.is_some() && self.segment(segment_id)?.overlay.is_empty() {
+            *addr
+        } else {
+            self.materialize_address(addr)?
+        };
         let segment = self.memory.segments.get_mut(&segment_id).expect("checked above");
         match const_addr {
             Some(a) if segment.overlay.is_empty() => {
@@ -151,6 +163,8 @@ impl Halo2BaseSynthesizer<'_> {
         } else {
             self.gather_slots(segment_id, addr)?
         };
+        // The overlay compares the read address with write addresses by cell.
+        let addr = &if self.segment(segment_id)?.overlay.is_empty() { *addr } else { self.materialize_address(addr)? };
         self.apply_overlay(segment_id, addr, base)
     }
 
@@ -211,7 +225,7 @@ impl Halo2BaseSynthesizer<'_> {
     }
 
     /// `[root == v]`, shared by every read on the same root.
-    fn root_indicator(&mut self, root: &Halo2BaseCell, v: i64) -> Result<Halo2BaseCell, ProvingError> {
+    pub(super) fn root_indicator(&mut self, root: &Halo2BaseCell, v: i64) -> Result<Halo2BaseCell, ProvingError> {
         if let Some(ind) = self.memory.indicators.get(&(root.id, v)) {
             return Ok(*ind);
         }
@@ -236,7 +250,7 @@ impl Halo2BaseSynthesizer<'_> {
             .collect::<Result<Vec<_>, _>>()?;
         let total: Fp = indicators.iter().map(|ind| ind.value).sum();
         let sum = self.gate_cell(total, |gate, ctx| {
-            gate.sum(ctx, indicators.iter().map(|ind| QuantumCell::Existing(ind.assigned)))
+            gate.sum(ctx, indicators.iter().map(|ind| ind.quantum()))
         });
         self.assert_const(&sum, Fp::one());
         self.memory.memberships.insert(key);
@@ -262,7 +276,7 @@ impl Halo2BaseSynthesizer<'_> {
         let terms: Vec<(Halo2BaseCell, QuantumCell<Fp>, Fp)> = choices
             .iter()
             .filter_map(|(ind, value)| match value {
-                SlotValue::Cell(cell) => Some((*ind, QuantumCell::Existing(cell.assigned), cell.value)),
+                SlotValue::Cell(cell) => Some((*ind, cell.quantum(), cell.value)),
                 SlotValue::Init(v) if *v == Fp::zero() => None,
                 SlotValue::Init(v) => Some((*ind, QuantumCell::Constant(*v), *v)),
             })
@@ -275,7 +289,7 @@ impl Halo2BaseSynthesizer<'_> {
             gate.inner_product(
                 ctx,
                 terms.iter().map(|(_, q, _)| *q),
-                terms.iter().map(|(ind, _, _)| QuantumCell::Existing(ind.assigned)),
+                terms.iter().map(|(ind, _, _)| ind.quantum()),
             )
         })
     }
@@ -317,11 +331,15 @@ impl Halo2BaseSynthesizer<'_> {
         }
         let (root, scale, offset) = match lin.terms.len() {
             1 => (lin.terms[0].0, lin.terms[0].1, lin.offset),
-            _ => (*addr, 1, 0),
+            _ => (self.materialize_address(addr)?, 1, 0),
         };
         let choices = self.root_choices(&root, scale, offset, len);
         if choices.is_empty() {
             return Err(ProvingError::synthesis("dynamic memory read can never be in bounds"));
+        }
+        let contiguous = choices.windows(2).all(|w| w[1].0 == w[0].0 + 1);
+        if choices.len() >= 2 && contiguous && self.reads_on_root(&root) <= MUX_MAX_READS_PER_ROOT {
+            return self.mux_read(segment_id, &root, &choices);
         }
         let vs: Vec<i64> = choices.iter().map(|(v, _)| *v).collect();
         self.assert_one_hot(&root, &vs)?;
@@ -330,6 +348,77 @@ impl Halo2BaseSynthesizer<'_> {
             selected.push((self.root_indicator(&root, *v)?, self.slot_value(segment_id, *idx)?));
         }
         Ok(self.one_hot_sum(&selected))
+    }
+
+    /// The `ReadMemory` statements on `root` in the whole program (from the
+    /// plan); a root the plan does not know counts as shared.
+    fn reads_on_root(&self, root: &Halo2BaseCell) -> usize {
+        self.vid_of_cell
+            .get(&root.id)
+            .and_then(|vid| self.plan.reads_per_root.get(vid))
+            .copied()
+            .unwrap_or(usize::MAX)
+    }
+
+    /// The slot a read reaches when `root == v`, for the root's choices
+    /// `(v, slot)` with consecutive `v` (see `root_choices`), by a binary
+    /// multiplexer: the position `root - v_0` is asserted below the number
+    /// of choices `m` and decomposed into `w = ceil(log2 m)` bits
+    /// (`num_to_bits`: booleans that recompose it), and level `k` of the tree
+    /// selects between neighbouring entries of level `k - 1` by bit `k`.
+    /// Entry `j` of the last level is the choice whose position has the bits
+    /// of `j`. An entry without a right neighbour passes up unchanged: its
+    /// neighbour's position is at least `m`, so the bit that would pick it is
+    /// 0 for every position below `m`. The bound plays the role of the
+    /// one-hot form's membership assertion (no position, no proof).
+    /// `m - 1` selects (8 cells; 4 between two constants) against the
+    /// one-hot form's ~17 cells per choice when no other read shares its
+    /// equality bits.
+    fn mux_read(&mut self, segment_id: u32, root: &Halo2BaseCell, choices: &[(i64, usize)]) -> Result<Halo2BaseCell, ProvingError> {
+        let m = choices.len();
+        let first = choices[0].0;
+        let position = if first == 0 { *root } else { self.add_constant(root, -(first as i128)) };
+        self.assert_less(&position, Operand::Constant(m as i128))?;
+        let width = (usize::BITS - (m - 1).leading_zeros()) as usize;
+        let position = self.assigned(&position);
+        let bits = self.gate.num_to_bits(self.builder.main(0), position, width);
+        let mut level: Vec<(QuantumCell<Fp>, Fp)> = Vec::with_capacity(m);
+        for (_, slot) in choices {
+            level.push(match self.slot_value(segment_id, *slot)? {
+                SlotValue::Cell(cell) => (cell.quantum(), cell.value),
+                SlotValue::Init(v) => (QuantumCell::Constant(v), v),
+            });
+        }
+        for bit in bits {
+            let b = *bit.value();
+            let mut next = Vec::with_capacity(level.len().div_ceil(2));
+            for pair in level.chunks(2) {
+                let [(lo, lo_v), (hi, hi_v)] = match pair {
+                    [one] => {
+                        next.push(*one);
+                        continue;
+                    }
+                    [lo, hi] => [*lo, *hi],
+                    _ => unreachable!("chunks of two"),
+                };
+                let value = lo_v + b * (hi_v - lo_v);
+                let ctx = self.builder.main(0);
+                let out = match (lo, hi) {
+                    (QuantumCell::Constant(a), QuantumCell::Constant(c)) if a == c => (lo, lo_v),
+                    (QuantumCell::Constant(a), QuantumCell::Constant(c)) => (
+                        QuantumCell::Existing(self.gate.mul_add(ctx, QuantumCell::Existing(bit), QuantumCell::Constant(c - a), QuantumCell::Constant(a))),
+                        value,
+                    ),
+                    _ => (QuantumCell::Existing(self.gate.select(ctx, hi, lo, QuantumCell::Existing(bit))), value),
+                };
+                next.push(out);
+            }
+            level = next;
+        }
+        Ok(match level[0] {
+            (QuantumCell::Existing(assigned), value) => self.wrap(assigned, value),
+            (_, value) => self.const_cell(value),
+        })
     }
 
     /// The two-root gather of [`Self::gather_slots`]; `None` when the view
@@ -367,9 +456,19 @@ impl Halo2BaseSynthesizer<'_> {
         if ws.is_empty() || vs.is_empty() {
             return Ok(None);
         }
-        self.assert_less(addr, Operand::Constant(len as i128))?;
         self.assert_one_hot(&root2, &ws)?;
         self.assert_one_hot(&root1, &vs)?;
+        // The memberships just asserted pin both roots; when every pair they
+        // allow lands in bounds, a placeholder address needs no cell and no
+        // check.
+        let (vlo, vhi) = (*vs.first().expect("non-empty") as i128, *vs.last().expect("non-empty") as i128);
+        let (wlo, whi) = (*ws.iter().min().expect("non-empty") as i128, *ws.iter().max().expect("non-empty") as i128);
+        let lo = vlo * s1 as i128 + wlo * s2 as i128 + lin.offset as i128;
+        let hi = vhi * s1 as i128 + whi * s2 as i128 + lin.offset as i128;
+        if !(self.is_address_placeholder(addr) && lo >= 0 && hi < len as i128) {
+            let addr = self.materialize_address(addr)?;
+            self.assert_less(&addr, Operand::Constant(len as i128))?;
+        }
         let mut planes = Vec::with_capacity(ws.len());
         for w in &ws {
             let plane = self.gathered_plane(segment_id, &root1, s1, w * s2 + lin.offset, len)?;

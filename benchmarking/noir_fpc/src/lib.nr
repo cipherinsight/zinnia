@@ -147,6 +147,25 @@ pub fn sign_abs(v: Field) -> (bool, Field) {
     (negative, constrain_sign_abs(v, negative))
 }
 
+/// |v| for v in (-2^63, 2^63), the int64 values whose magnitude is itself
+/// an int64; the proof fails for any other v (|i64::MIN| = 2^63 overflows
+/// int64 and, like every int64 overflow, has no proof). With the hinted sign
+/// and m = (negative ? -v : v), one 64-bit range check of t = 2m + negative
+/// (64 bits, a whole number of the backend's range limbs; a 63-bit check of m
+/// costs more gates). For negative = false that is m in [0, 2^63); for
+/// negative = true, 2m + 1 < 2^64, i.e. m in [0, 2^63 - 1]: together exactly
+/// |v| <= 2^63 - 1. Uniqueness: for v != 0 the wrong sign gives
+/// m = p - |v| and t = p - 2|v| (+1), far above 2^64. At v = 0 both signs give
+/// m = 0, so the result is a function of v even where the sign hint is not
+/// (which is why the sign is not returned).
+pub fn abs_int64(v: Field) -> Field {
+    // Safety: the range check pins m (see above).
+    let negative = unsafe { hint_is_negative(v) };
+    let mag = if negative { -v } else { v };
+    (2 * mag + (negative as Field)).assert_max_bit_size::<64>();
+    mag
+}
+
 pub fn is_negative(v: Field) -> bool {
     sign_abs(v).0
 }
@@ -192,13 +211,16 @@ unconstrained fn hint_lt(a: Field, b: Field) -> bool {
     hint_is_negative(a - b)
 }
 
-/// Constraints for `qlt_bits::<W>`: the claimed answer c selects which of
-/// b - a - 1 (c = true) and a - b (c = false) must be a W-bit value. The two
-/// sum to -1, so when one of them is a value in [0, 2^W) the other is a field
-/// element above p - 2^(W+1): for W <= 250 at most one c passes, and one does
-/// exactly when a - b reads as an integer in [-2^W, 2^W).
+/// Constraints for `qlt_bits::<W>`: the claimed answer c shifts the
+/// difference, and t = a - b + c * 2^W must be a W-bit value. For c = false
+/// that is a - b in [0, 2^W), for c = true it is a - b in [-2^W, 0): the two
+/// ranges are disjoint, so at most one c passes, and one does exactly when
+/// a - b reads as an integer in [-2^W, 2^W) (W <= 250 keeps |t| far below p,
+/// so no other field element of a - b lands in either range). t is linear in
+/// a, b and c, one arithmetic gate before the range check (the form Noir uses
+/// for its own integer comparisons).
 fn constrain_lt<let W: u32>(a: Field, b: Field, c: bool) {
-    let gap = if c { b - a - 1 } else { a - b };
+    let gap = a - b + (c as Field) * 2.pow_32(W as Field);
     gap.assert_max_bit_size::<W>();
 }
 
@@ -1323,6 +1345,27 @@ fn test_lt_narrow_rejects_a_wrong_answer() {
     constrain_lt::<3>(2, 1, true);
 }
 
+#[test(should_fail)]
+fn test_lt_narrow_rejects_a_missed_less() {
+    constrain_lt::<3>(1, 2, false);
+}
+
+#[test(should_fail)]
+fn test_lt_narrow_rejects_equal_claimed_less() {
+    constrain_lt::<3>(2, 2, true);
+}
+
+#[test]
+fn test_qlt_bits_accepts_the_edges_of_its_width() {
+    // a - b = -2^3 and 2^3 - 1, the ends of [-2^W, 2^W).
+    assert(qlt_bits::<3>(-4, 4) & !qlt_bits::<3>(4, -3));
+}
+
+#[test(should_fail)]
+fn test_qlt_bits_rejects_a_difference_of_2_pow_w() {
+    let _ = qlt_bits::<3>(4, -4);
+}
+
 #[test]
 fn test_q_floor_div_signs() {
     // Python floor division: -7 // 2 == -4, 7 // -2 == -4, -7 // -2 == 3.
@@ -1862,4 +1905,28 @@ fn test_masked_sorted_hint_sorts_the_active_elements() {
     assert(masked_sorted_hint_at(a, active, 3) == 0);
     let none: [Field; 5] = [0; 5];
     assert(masked_sorted_hint(a, none) == [0; 5]);
+}
+
+#[test]
+fn test_abs_int64() {
+    assert(abs_int64(-5) == 5);
+    assert(abs_int64(7) == 7);
+    assert(abs_int64(0) == 0);
+    assert(abs_int64(-9223372036854775807) == 9223372036854775807);
+}
+
+#[test]
+fn test_abs_int64_accepts_both_edges() {
+    assert(abs_int64(9223372036854775807) == 9223372036854775807);
+    assert(abs_int64(-9223372036854775807) == 9223372036854775807);
+}
+
+#[test(should_fail)]
+fn test_abs_int64_rejects_i64_min() {
+    let _ = abs_int64(-9223372036854775808);
+}
+
+#[test(should_fail)]
+fn test_abs_int64_rejects_2_pow_63() {
+    let _ = abs_int64(9223372036854775808);
 }

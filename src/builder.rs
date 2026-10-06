@@ -3095,7 +3095,8 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
         IR::BitNotI => int_unary_ir(ir_id, args, |a| Some(!a)),
 
         // ── Integer unary arithmetic ──────────────────────────────
-        IR::AbsI => int_unary_ir(ir_id, args, |a| Some(a.abs())),
+        // `|i64::MIN|` overflows: not folded (it has no proof).
+        IR::AbsI => int_unary_ir(ir_id, args, |a| a.checked_abs()),
         IR::SignI => int_unary_ir(ir_id, args, |a| {
             Some(if a > 0 {
                 1

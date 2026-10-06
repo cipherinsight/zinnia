@@ -47,7 +47,7 @@ impl Halo2BaseSynthesizer<'_> {
         x: &Halo2BaseCell,
     ) -> Result<(Halo2BaseCell, Halo2BaseCell), ProvingError> {
         let sign = self.hint_bit(kernel::fp_is_negative(x.value));
-        let neg_x = self.gate_cell(-x.value, |gate, ctx| gate.neg(ctx, x.assigned));
+        let neg_x = self.gate_cell(-x.value, |gate, ctx| gate.neg(ctx, x.quantum()));
         let magnitude = self.select_bit(&sign, &neg_x, x)?;
         Ok((sign, magnitude))
     }
@@ -92,13 +92,62 @@ impl Halo2BaseSynthesizer<'_> {
     }
 
 
+    /// `|x|` alone (no sign bit for later use).
+    ///
+    /// For an `x` already proven inside the signed 64-bit window `[lo, hi]`
+    /// (an input, a checked result): a hinted bit `s`, `m = x·(1 - 2s)` (two
+    /// gates) and `m` range-checked to the lookup-aligned width `w` of
+    /// `max(|lo|, |hi|)`. The right `s` gives `m = |x| < 2^w`; for `x != 0`
+    /// the wrong one gives `m = p - |x|`, far above `2^w`, so `m` is a
+    /// function of `x`. At `x = 0`, `m = 0` for either `s`: `s` is not
+    /// pinned there, which is why it is neither returned nor recorded as
+    /// `x`'s sign (a sign test reusing it would be unsound). Otherwise (the
+    /// window not yet proven, or a sign already known) `sign_and_abs`.
+    pub(super) fn magnitude(&mut self, x: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        let known_sign = self.sign_abs_cache.contains_key(&x.id) || self.sign_bits.contains_key(&x.id);
+        let window = self.proven_range(x).filter(|r| r.within(&Interval::SIGNED64));
+        let (Some(range), false, false) = (window, known_sign, self.is_const_cell(x)) else {
+            let magnitude = self.sign_and_abs(x)?.1;
+            return Ok(self.below_two_pow_63(magnitude));
+        };
+        // `|i64::MIN| = 2^63` overflows int64 (NumPy wraps it to i64::MIN):
+        // like every int64 overflow here it has no proof, so a 63-bit check
+        // when `x` may be `i64::MIN`, keeping `|x|` inside the window.
+        let max_abs = range.lo.unsigned_abs().max(range.hi.unsigned_abs()).min((1u128 << 63) - 1);
+        let bits = (128 - max_abs.leading_zeros()) as usize;
+        let width = if bits >= 63 { 63 } else { self.lookup_aligned(bits.max(1)) };
+        let sign = self.hint_bit(kernel::fp_is_negative(x.value));
+        let two = Fp::from(2u64);
+        let factor = self.gate_cell(Fp::one() - two * sign.value, |gate, ctx| {
+            gate.mul_add(ctx, sign.quantum(), QuantumCell::Constant(-two), QuantumCell::Constant(Fp::one()))
+        });
+        let magnitude = self.gate_cell(x.value * factor.value, |gate, ctx| gate.mul(ctx, x.quantum(), factor.quantum()));
+        self.range_check(&magnitude, width);
+        self.prove_range(&magnitude, Interval { lo: 0, hi: max_abs as i128 });
+        Ok(magnitude)
+    }
+
+    /// `|x|` from `sign_and_abs`, which allows `2^63` (`x = i64::MIN`),
+    /// restricted to `[0, 2^63)`: `|i64::MIN|` overflows int64 and, like
+    /// every int64 overflow, has no proof. One 63-bit range check unless the
+    /// magnitude's proven range already excludes `2^63`.
+    fn below_two_pow_63(&mut self, magnitude: Halo2BaseCell) -> Halo2BaseCell {
+        let limit = (1i128 << 63) - 1;
+        if self.proven_range(&magnitude).is_some_and(|r| r.lo >= 0 && r.hi <= limit) {
+            return magnitude;
+        }
+        self.range_check(&magnitude, 63);
+        self.prove_range(&magnitude, Interval { lo: 0, hi: limit });
+        magnitude
+    }
+
     /// Constrain `0 <= x < n` for a cell `n`. Both `x` and `n - 1 - x` are
     /// range-checked to 64 bits, so `n - 1`, their sum, lies in `[0, 2^65)`
     /// over the integers: the check also proves `1 <= n <= 2^65`.
     pub(super) fn assert_below_cell(&mut self, x: &Halo2BaseCell, n: &Halo2BaseCell) {
         self.range_check(x, 64);
         let gap = self.gate_cell(n.value - Fp::one() - x.value, |gate, ctx| {
-            let n_minus_x = gate.sub(ctx, n.assigned, x.assigned);
+            let n_minus_x = gate.sub(ctx, n.quantum(), x.quantum());
             gate.dec(ctx, n_minus_x)
         });
         self.range_check(&gap, 64);
@@ -151,7 +200,7 @@ impl Halo2BaseSynthesizer<'_> {
                 let b_nonzero = self.add_i(b, &b_is_zero)?;
                 let a_masked = self.gate_cell(
                     (Fp::one() - b_is_zero.value) * a.value,
-                    |gate, ctx| gate.mul_not(ctx, b_is_zero.assigned, a.assigned),
+                    |gate, ctx| gate.mul_not(ctx, b_is_zero.quantum(), a.quantum()),
                 );
                 self.div_rem_nonzero(&a_masked, Divisor::NonZero(b_nonzero), rounding)
             }
@@ -189,17 +238,14 @@ impl Halo2BaseSynthesizer<'_> {
                 (fp, Some(c), QuantumCell::Constant(fp))
             }
             Divisor::Positive(b) | Divisor::NonZero(b) => {
-                (b.value, kernel::fp_to_i128(b.value), QuantumCell::Existing(b.assigned))
+                (b.value, kernel::fp_to_i128(b.value), b.quantum())
             }
         };
         let q_value = match (kernel::fp_to_i128(a.value), b_value) {
             (Some(av), Some(bv)) => kernel::div_rem_or_zero(av, bv, rounding).0,
             _ => 0,
         };
-        let q = self.hint(kernel::i128_to_fp(q_value));
-        let r = self.gate_cell(a.value - b_fp * q.value, |gate, ctx| {
-            gate.sub_mul(ctx, a.assigned, b_quantum, q.assigned)
-        });
+        let (q, r) = self.quotient_gate(a, b_quantum, b_fp, kernel::i128_to_fp(q_value));
         let implied = match divisor {
             Divisor::Constant(c) => self.proven_range(a).and_then(|range| quotient_range(range, c)),
             _ => None,
@@ -246,6 +292,29 @@ impl Halo2BaseSynthesizer<'_> {
     }
 
 
+    /// A hinted quotient `q` of `dividend` by `divisor` and the remainder
+    /// `r = dividend - divisor·q`, as one gate `r + divisor·q = dividend`
+    /// laid out `[r, divisor, q, dividend]`: `q` and `r` are witnesses of the
+    /// gate itself (four cells), not a loaded hint plus a `sub_mul` gate (five).
+    /// The caller bounds `q` and `r`; `q` is a hint (see [`Self::hint`]).
+    fn quotient_gate(
+        &mut self,
+        dividend: &Halo2BaseCell,
+        divisor: QuantumCell<Fp>,
+        divisor_value: Fp,
+        q_value: Fp,
+    ) -> (Halo2BaseCell, Halo2BaseCell) {
+        let q_value = self.hint_value(q_value);
+        let r_value = dividend.value - divisor_value * q_value;
+        let ctx = self.builder.main(0);
+        ctx.assign_region(
+            [QuantumCell::Witness(r_value), divisor, QuantumCell::Witness(q_value), dividend.quantum()],
+            [0],
+        );
+        let (r, q) = (ctx.get(-4), ctx.get(-2));
+        (self.wrap(q, q_value), self.wrap(r, r_value))
+    }
+
     /// `floor(raw / 2^shift)`, for `shift <= 64`.
     ///
     /// Soundness: the hint `q` and `rem = raw - q·2^shift` (one gate), with
@@ -257,10 +326,7 @@ impl Halo2BaseSynthesizer<'_> {
     pub(super) fn rescale_by(&mut self, raw: &Halo2BaseCell, shift: u32) -> Result<Halo2BaseCell, ProvingError> {
         let q_value = kernel::fp_to_i128(raw.value).map_or(0, |v| v >> shift);
         let scale = kernel::i128_to_fp(1i128 << shift);
-        let q = self.hint(kernel::i128_to_fp(q_value));
-        let rem = self.gate_cell(raw.value - q.value * scale, |gate, ctx| {
-            gate.sub_mul(ctx, raw.assigned, q.assigned, QuantumCell::Constant(scale))
-        });
+        let (q, rem) = self.quotient_gate(raw, QuantumCell::Constant(scale), scale, kernel::i128_to_fp(q_value));
         self.range_check(&rem, shift as usize);
         // A proven range [lo, hi] of `raw` bounds the floor to
         // [lo >> shift, hi >> shift]; once the identity holds over the
@@ -291,7 +357,7 @@ impl Halo2BaseSynthesizer<'_> {
     /// `x · m` for a constant `m` (one gate, the constant inline).
     fn mul_by_constant(&mut self, x: &Halo2BaseCell, m: i128) -> Result<Halo2BaseCell, ProvingError> {
         let factor = kernel::i128_to_fp(m);
-        let out = self.gate_cell(x.value * factor, |gate, ctx| gate.mul(ctx, x.assigned, QuantumCell::Constant(factor)));
+        let out = self.gate_cell(x.value * factor, |gate, ctx| gate.mul(ctx, x.quantum(), QuantumCell::Constant(factor)));
         if let Some(range) = self.proven_range(x).zip(Interval::point(m)).and_then(|(r, c)| r.mul(&c)) {
             self.prove_range(&out, range);
         }
@@ -484,7 +550,7 @@ impl Halo2BaseSynthesizer<'_> {
         let precision_bits = self.params.precision_bits;
         let scale = kernel::scale_fp(precision_bits);
         let big_x = self.gate_cell(x.value * scale, |gate, ctx| {
-            gate.mul(ctx, x.assigned, QuantumCell::Constant(scale))
+            gate.mul(ctx, x.quantum(), QuantumCell::Constant(scale))
         });
         self.isqrt(&big_x, x_bits + precision_bits as usize)
     }
@@ -505,7 +571,7 @@ impl Halo2BaseSynthesizer<'_> {
             .map_or(0, |v| kernel::isqrt_u128(v as u128) as i128);
         let y = self.hint(kernel::i128_to_fp(y_value));
         let d = self.gate_cell(n.value - y.value * y.value, |gate, ctx| {
-            gate.sub_mul(ctx, n.assigned, y.assigned, y.assigned)
+            gate.sub_mul(ctx, n.quantum(), y.quantum(), y.quantum())
         });
         let root_bits = n_bits.div_ceil(2);
         let wy = self.lookup_aligned(root_bits + 1);

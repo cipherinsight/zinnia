@@ -7,6 +7,7 @@ import numpy as np
 # test case 2, each dtype wide enough for every DS-1000 test input.
 
 @zk_circuit
+@requires(lambda a, permutation: is_permutation(permutation))
 def kernel(a: Float[Array, "8 6"], permutation: Integer[Array, "6"]):
     c = np.empty_like(permutation)
     c[permutation] = np.arange(len(permutation))

@@ -996,10 +996,11 @@ fn whole_array_argmax_argmin(b: &mut IRBuilder, arr: &Value, is_max: bool) -> Va
     }
     let dtype = dtype_of(arr);
     let len = cells.len();
-    // Boolean-aware fast path: argmax of `{0,1}` cells is "first index where
-    // elem == 1". The generic body would emit `ir_greater_than_i` per step
-    // (sign-aware range checks ~30 gates each); the bool form needs one mul
-    // per step (NOT/AND/OR). Triggered by `(x==a)&(y==b)).argmax()` patterns.
+    // Boolean-aware fast path: argmax of `{0,1}` cells is the first index
+    // where the cell is True, 0 when none is. A select chain from the last
+    // index down to the first, starting at 0, computes it with one select per
+    // cell and no comparison: each True cell overrides the index chosen by
+    // the cells after it, so the earliest True wins.
     let best_idx = if is_max && cells.iter().all(|c| matches!(c, Value::Boolean(_))) {
         if let Some(first_true) = first_true_of_sorted_comparisons(b, &cells) {
             return first_true;
@@ -1008,13 +1009,9 @@ fn whole_array_argmax_argmin(b: &mut IRBuilder, arr: &Value, is_max: bool) -> Va
             return first_true;
         }
         let mut idx = b.ir_constant_int(0);
-        let mut found = cells[0].clone();
-        for (i, elem) in cells.iter().enumerate().skip(1) {
-            let not_found = b.ir_logical_not(&found);
-            let take = b.ir_logical_and(&not_found, elem);
+        for (i, elem) in cells.iter().enumerate().rev() {
             let idx_val = b.ir_constant_int(i as i64);
-            idx = b.ir_select_i(&take, &idx_val, &idx);
-            found = b.ir_logical_or(&found, elem);
+            idx = b.ir_select_i(elem, &idx_val, &idx);
         }
         idx
     } else {
