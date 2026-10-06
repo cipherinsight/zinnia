@@ -144,8 +144,9 @@ def test_full_argsort_is_a_network_on_halo2_and_hinted_on_noir():
     source = 'def kernel(a: Float[Array, "100"]):\n    return np.argsort(a)\n'
     halo2 = ir_classes(compile_for(source, "halo2"))
     noir = ir_classes(compile_for(source, "noir"))
-    # Batcher's 1,077 compare-exchanges of (value, index) keys.
-    assert "HintIR" not in halo2 and halo2.count("KeyLessIR") == 1077
+    # Batcher's 1,077 compare-exchanges of packed keys, each packed once.
+    assert "HintIR" not in halo2 and halo2.count("PackedKeyLessIR") == 1077
+    assert halo2.count("PackKeyIR") == 100 and halo2.count("PackedKeyIndexIR") == 100
     # One hinted index per rank, 99 key comparisons, one native read each.
     assert noir.count("HintIR") == 100 and noir.count("KeyLessIR") == 99
     assert noir.count("ReadMemoryIR") == 100

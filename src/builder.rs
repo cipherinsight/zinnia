@@ -333,10 +333,24 @@ impl IRBuilder {
         }
     }
 
-    /// Reconstruct an integer `Value` wrapper for a recorded `ValueId`
-    /// (static value recovered when the producer is a `ConstantInt`).
-    /// Used by provenance-record consumers (e.g. compaction scans) that
-    /// hold `ValueId`s and need IR-layer references to emit ops.
+    /// The compile-time value of statement `stmt` when it and every
+    /// statement it depends on fold to constants (the value `ConstantFold`
+    /// gives it, by the same folding rules), else `None`. Looks at most
+    /// `depth` statements deep.
+    pub fn constant_value_of(&self, stmt: StmtId, depth: usize) -> Option<Value> {
+        let st = self.stmts.get(stmt as usize)?;
+        let args: Vec<Value> = if st.arguments.is_empty() {
+            Vec::new()
+        } else if depth == 0 {
+            return None;
+        } else {
+            st.arguments.iter().map(|&a| self.constant_value_of(a, depth - 1)).collect::<Option<_>>()?
+        };
+        let value = build_value(&st.ir, stmt, &args);
+        let known = value.int_val().is_some() || value.float_val().is_some() || value.bool_val().is_some();
+        known.then_some(value)
+    }
+
     /// Record that `elements` are asserted (on every path) to be a
     /// permutation of `0..len`, with the range facts `0 <= e < len` for the
     /// index checks that follow.
@@ -368,6 +382,10 @@ impl IRBuilder {
         self.known_permutations.contains(&stmts)
     }
 
+    /// Reconstruct an integer `Value` wrapper for a recorded `ValueId`
+    /// (static value recovered when the producer is a `ConstantInt`).
+    /// Used by provenance-record consumers (e.g. compaction scans) that
+    /// hold `ValueId`s and need IR-layer references to emit ops.
     pub fn value_of_vid(&self, vid: crate::types::ValueId) -> Option<Value> {
         let sid = self.value_to_stmt.get(&vid).copied()?;
         let static_val = match self.stmts.get(sid as usize).map(|st| &st.ir) {
@@ -1357,6 +1375,7 @@ impl IRBuilder {
             | IR::LogicalNot
             | IR::BoolCast
             | IR::KeyLess { .. }
+            | IR::PackedKeyLess { .. }
             | IR::EqHash => {
                 if let Some(vid) = out.value_id() {
                     self.provenance.set_interval(vid, Interval::BIT);
@@ -3024,6 +3043,21 @@ impl IRBuilder {
         )
     }
 
+    /// `IR::PackKey`: the packed sort key `v * 2^index_bits + i`.
+    pub fn ir_pack_key(&mut self, v: &Value, i: &Value, index_bits: u32) -> Value {
+        self.create_ir(&IR::PackKey { index_bits }, &[v.clone(), i.clone()])
+    }
+
+    /// `IR::PackedKeyLess`: `[K1 < K2]` for packed keys.
+    pub fn ir_packed_key_less(&mut self, k1: &Value, k2: &Value, index_bits: u32) -> Value {
+        self.create_ir(&IR::PackedKeyLess { index_bits }, &[k1.clone(), k2.clone()])
+    }
+
+    /// `IR::PackedKeyIndex`: the index a packed key was packed from.
+    pub fn ir_packed_key_index(&mut self, key: &Value, index_bits: u32) -> Value {
+        self.create_ir(&IR::PackedKeyIndex { index_bits }, std::slice::from_ref(key))
+    }
+
     /// Start allocating memory segment ids at `next` (a pass that rebuilds a
     /// graph and adds segments must not reuse the graph's ids).
     pub fn reserve_segment_ids_below(&mut self, next: u32) {
@@ -3405,7 +3439,8 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
         IR::Hint { kind, len } => match kind {
             crate::ir_defs::HintKind::StableArgsort
             | crate::ir_defs::HintKind::PositionOneHot
-            | crate::ir_defs::HintKind::Negative => {
+            | crate::ir_defs::HintKind::Negative
+            | crate::ir_defs::HintKind::CountAtMost => {
                 Value::Integer(ScalarValue::new(None, Some(ir_id)))
             }
             crate::ir_defs::HintKind::SortedValues => {
@@ -3415,6 +3450,11 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
                 unknown_like_elements(&args[..*len as usize / 2], ir_id)
             }
         },
+        // A packed key is not an int64 value: never folded.
+        IR::PackKey { .. } | IR::PackedKeyIndex { .. } => {
+            Value::Integer(ScalarValue::new(None, Some(ir_id)))
+        }
+        IR::PackedKeyLess { .. } => Value::Boolean(ScalarValue::new(None, Some(ir_id))),
         IR::KeyLess { .. } => {
             let key = |v: &Value, i: &Value| Some((v.int_val()?, i.int_val()?));
             let inferred = key(&args[0], &args[1]).zip(key(&args[2], &args[3])).map(|(x, y)| x < y);
@@ -3551,6 +3591,8 @@ fn min_required_arity(ir: &IR) -> usize {
         IR::IndexInBox { rank } => rank.saturating_mul(3),
         IR::Hint { len, .. } => *len as usize + 1,
         IR::KeyLess { .. } => 4,
+        IR::PackKey { .. } | IR::PackedKeyLess { .. } => 2,
+        IR::PackedKeyIndex { .. } => 1,
         IR::ArrayOp(op) => op.shared as usize,
     }
 }

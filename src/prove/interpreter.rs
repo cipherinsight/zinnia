@@ -329,6 +329,11 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
             IR::KeyLess { index_bits } => {
                 Some(synth.key_less(&args[0], &args[1], &args[2], &args[3], *index_bits)?)
             }
+            IR::PackKey { index_bits } => Some(synth.pack_key(&args[0], &args[1], *index_bits)?),
+            IR::PackedKeyLess { index_bits } => {
+                Some(synth.packed_key_less(&args[0], &args[1], *index_bits)?)
+            }
+            IR::PackedKeyIndex { index_bits } => Some(synth.packed_key_index(&args[0], *index_bits)?),
             IR::ArrayOp(_) => {
                 return Err(ProvingError::synthesis(
                     "an ArrayOp placeholder reached the prover; lower::ArrayLowering must lower it",

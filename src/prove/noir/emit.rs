@@ -129,6 +129,7 @@ fn asserted_comparisons(ir: &IRGraph) -> HashSet<u32> {
                 IR::LtI | IR::LteI | IR::GtI | IR::GteI | IR::LtF | IR::LteF | IR::GtF | IR::GteF
                     | IR::LtIBounded | IR::GtIBounded | IR::IndexInBox { .. } | IR::NeI | IR::NeF
                     | IR::EqI | IR::EqF | IR::KeyLess { .. }
+                    | IR::PackedKeyLess { .. }
             )
         })
         .map(|s| s.stmt_id)
@@ -3251,9 +3252,22 @@ impl Synthesizer for NoirEmitter<'_> {
         i2: &CellRef,
         index_bits: u32,
     ) -> Result<CellRef, ProvingError> {
+        let k1 = self.pack_key(v1, i1, index_bits)?;
+        let k2 = self.pack_key(v2, i2, index_bits)?;
+        self.packed_key_less(&k1, &k2, index_bits)
+    }
+
+    /// `v * 2^index_bits + i`; no check (`IR::PackKey`: the value lies in
+    /// the window, as every Noir integer, and the index is a constant).
+    fn pack_key(&mut self, v: &CellRef, i: &CellRef, index_bits: u32) -> Result<CellRef, ProvingError> {
         let scale = 1u128 << index_bits;
-        let k1 = self.bind(&format!("{v1} * {scale} + {i1}"));
-        let k2 = self.bind(&format!("{v2} * {scale} + {i2}"));
+        Ok(self.bind(&format!("{v} * {scale} + {i}")))
+    }
+
+    /// `[K1 < K2]` for packed keys: `|K1 - K2| < 2^(64 + index_bits)`, so
+    /// `qlt_bits` at `64 + index_bits + 1` bits (rounded up to whole 14-bit
+    /// limbs) decides it, or, when asserted, one range check of the gap.
+    fn packed_key_less(&mut self, k1: &CellRef, k2: &CellRef, index_bits: u32) -> Result<CellRef, ProvingError> {
         let width = (64 + index_bits + 1).div_ceil(14) * 14;
         let asserted = self
             .current_stmt
@@ -3267,6 +3281,13 @@ impl Synthesizer for NoirEmitter<'_> {
         self.use_lib("qlt_bits");
         let less = self.bind_typed(&format!("qlt_bits::<{width}>({k1}, {k2})"), "bool");
         Ok(self.bind_flag(&format!("{less} as Field")))
+    }
+
+    /// The index of a packed key, by `noir_fpc::packed_key_index` (a hinted
+    /// decomposition pinned by range checks and a reconstruction).
+    fn packed_key_index(&mut self, key: &CellRef, index_bits: u32) -> Result<CellRef, ProvingError> {
+        self.use_lib("packed_key_index");
+        Ok(self.bind(&format!("packed_key_index::<{index_bits}>({key})")))
     }
 
     /// A hint lane from `noir_fpc`'s unconstrained implementation of
@@ -3301,6 +3322,10 @@ impl Synthesizer for NoirEmitter<'_> {
             HintKind::SortedValues => ("sorted_hint", "sorted_hint_at"),
             HintKind::MaskedSortedValues => ("masked_sorted_hint", "masked_sorted_hint_at"),
             HintKind::PositionOneHot | HintKind::Negative => unreachable!("handled above"),
+            HintKind::CountAtMost => {
+                self.use_lib("count_at_most_hint");
+                return Ok(self.bind(&format!("count_at_most_hint([{}], {rank})", operands.join(", "))));
+            }
         };
         // A masked hint takes the values and their activity flags as two
         // arrays; its lanes are as many as the values.

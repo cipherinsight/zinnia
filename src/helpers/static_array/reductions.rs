@@ -804,6 +804,8 @@ struct Comparison {
     greater: bool,
     /// `==` operands make it False (`>`, `<`).
     strict: bool,
+    /// A float comparison (its operands compared as Q32 codes).
+    float: bool,
 }
 
 /// The statement a float cast reads (`FloatCast(x)` is `x` for identity:
@@ -818,6 +820,7 @@ fn uncast(b: &IRBuilder, stmt: crate::types::StmtId) -> crate::types::StmtId {
 fn comparison_of(b: &IRBuilder, cell: &Value) -> Option<Comparison> {
     use crate::ir_defs::IR;
     let stmt = b.stmts.get(cell.stmt_id()? as usize)?;
+    let float = matches!(stmt.ir, IR::GtF | IR::GteF | IR::LtF | IR::LteF);
     let (greater, strict) = match stmt.ir {
         IR::GtF | IR::GtI => (true, true),
         IR::GteF | IR::GteI => (true, false),
@@ -836,6 +839,7 @@ fn comparison_of(b: &IRBuilder, cell: &Value) -> Option<Comparison> {
         rhs_value: b.value_of_vid(rhs_vid)?,
         greater,
         strict,
+        float,
     })
 }
 
@@ -853,6 +857,43 @@ fn comparison_of(b: &IRBuilder, cell: &Value) -> Option<Comparison> {
 /// argmax of an all-False sequence.
 fn first_true_of_sorted_comparisons(b: &mut IRBuilder, cells: &[Value]) -> Option<Value> {
     let n = cells.len();
+    let MonotoneComparisons { elements, scalar, rising, strict } = monotone_comparisons(b, cells)?;
+    let sort_elements = ascending_sort_outputs(b, &elements)?;
+    if !rising {
+        return Some(b.ir_constant_int(0));
+    }
+    // The Falses, counted over the sort's elements: `a_j <= e` for a strict
+    // comparison, `a_j < e` otherwise. A count lane of the sort
+    // (`lower::sort::counts`): the layer emits it, and comparisons of `e`
+    // with the sorted values may be answered from it.
+    let output = if strict { crate::lower::sort::COUNT_AT_MOST } else { crate::lower::sort::COUNT_BELOW };
+    let op = crate::lower::ArrayOp {
+        kind: crate::lower::OpKind::Sort,
+        shared: n as u32,
+        output,
+        position: None,
+    };
+    let count = b.ir_array_op(op, &sort_elements, &[scalar]);
+    let length = b.ir_constant_int(n as i64);
+    let any_true = b.ir_less_than_i(&count, &length);
+    let zero = b.ir_constant_int(0);
+    Some(b.ir_select_i(&any_true, &count, &zero))
+}
+
+/// Cells `x_k cmp e` (or `e cmp x_k`) of one kind over `n > 1` elements
+/// `x_k` and one scalar `e`.
+struct MonotoneComparisons {
+    elements: Vec<crate::types::StmtId>,
+    scalar: Value,
+    /// `x_k > e` or `x_k >= e` (in either spelling): False then True over
+    /// an ascending sequence.
+    rising: bool,
+    /// The comparison is strict (`>`, `<`).
+    strict: bool,
+}
+
+fn monotone_comparisons(b: &IRBuilder, cells: &[Value]) -> Option<MonotoneComparisons> {
+    let n = cells.len();
     let comparisons: Vec<Comparison> = cells
         .iter()
         .map(|c| comparison_of(b, c))
@@ -869,45 +910,61 @@ fn first_true_of_sorted_comparisons(b: &mut IRBuilder, cells: &[Value]) -> Optio
         } else {
             return None;
         };
-    if !same_kind {
-        return None;
-    }
-    let sort_elements = ascending_sort_outputs(b, &elements)?;
+    same_kind.then_some(MonotoneComparisons { elements, scalar, rising, strict: first.strict })
+}
+
+/// `argmax` of Booleans `Y_k cmp e` over a constant non-decreasing table
+/// `Y` (`(np.arange(1, n + 1) / n > e).argmax()`) and one scalar `e`. As
+/// for a sort's outputs, a rising comparison's first True is the number of
+/// Falses `u` (0 when every cell is False): `u` is `np.searchsorted(Y, e,
+/// 'right')` for `>` and `'left'` for `>=`, a placeholder the layer lowers
+/// (`lower::sort::search`: a count, or a hinted position pinned by the two
+/// entries around it). A falling comparison's argmax is 0. The entries are
+/// the compile-time values of the compared statements (what `ConstantFold`
+/// makes of them), in the comparison's number type.
+fn first_true_of_table_comparisons(b: &mut IRBuilder, cells: &[Value]) -> Option<Value> {
+    use crate::lower::{ArrayOp, OpKind};
+    let MonotoneComparisons { elements, scalar, rising, strict } = monotone_comparisons(b, cells)?;
+    // The entries as constants, non-decreasing.
+    let element_values: Vec<Value> =
+        elements.iter().map(|&e| b.constant_value_of(e, 8)).collect::<Option<_>>()?;
+    let float = cells.first().and_then(|c| comparison_of(b, c)).is_some_and(|c| c.float);
+    let table: Vec<Value> = if float {
+        let entries: Vec<f64> = element_values
+            .iter()
+            .map(|v| match v {
+                Value::Float(f) => f.static_val.filter(|e| !e.is_nan()),
+                _ => None,
+            })
+            .collect::<Option<_>>()?;
+        if !entries.windows(2).all(|w| w[0] <= w[1]) {
+            return None;
+        }
+        entries.iter().map(|&e| b.ir_constant_float(e)).collect()
+    } else {
+        let entries: Vec<i64> = element_values
+            .iter()
+            .map(|v| match v {
+                Value::Integer(i) => i.static_val,
+                _ => None,
+            })
+            .collect::<Option<_>>()?;
+        if !entries.windows(2).all(|w| w[0] <= w[1]) {
+            return None;
+        }
+        entries.iter().map(|&e| b.ir_constant_int(e)).collect()
+    };
     if !rising {
         return Some(b.ir_constant_int(0));
     }
-    // The Falses, counted over the sort's elements: `a_j <= e` for a strict
-    // comparison (`n` minus the number of `e < a_j`, which needs no negation
-    // per element), `a_j < e` otherwise.
+    let n = table.len();
+    let table: std::sync::Arc<[Value]> = table.into();
+    let op = ArrayOp { kind: OpKind::SearchSorted { right: strict }, shared: n as u32, output: 0, position: None };
+    let falses = b.ir_array_op(op, &table, &[scalar]);
     let length = b.ir_constant_int(n as i64);
-    let count_of = |b: &mut IRBuilder, bits: &[Value]| {
-        let mut count = b.ir_constant_int(0);
-        for bit in bits {
-            let as_int = b.ir_int_cast(bit);
-            count = b.ir_add_i(&count, &as_int);
-        }
-        count
-    };
-    let count = if first.strict {
-        let above: Vec<Value> = sort_elements.iter().map(|a| less_than_by_type(b, &scalar, a)).collect();
-        let n_above = count_of(b, &above);
-        b.ir_sub_i(&length, &n_above)
-    } else {
-        let below: Vec<Value> = sort_elements.iter().map(|a| less_than_by_type(b, a, &scalar)).collect();
-        count_of(b, &below)
-    };
-    let any_true = b.ir_less_than_i(&count, &length);
+    let any_true = b.ir_less_than_i(&falses, &length);
     let zero = b.ir_constant_int(0);
-    Some(b.ir_select_i(&any_true, &count, &zero))
-}
-
-/// `x < y` in the number type of the operands (float if either is).
-fn less_than_by_type(b: &mut IRBuilder, x: &Value, y: &Value) -> Value {
-    if matches!(x, Value::Float(_)) || matches!(y, Value::Float(_)) {
-        b.ir_less_than_f(x, y)
-    } else {
-        b.ir_less_than_i(x, y)
-    }
+    Some(b.ir_select_i(&any_true, &falses, &zero))
 }
 
 /// The elements of the sort whose outputs of ranks `0, 1, ..` are exactly
@@ -946,6 +1003,9 @@ fn whole_array_argmax_argmin(b: &mut IRBuilder, arr: &Value, is_max: bool) -> Va
     // products whose one-hot a later read at the result reuses.
     let best_idx = if is_max && cells.iter().all(|c| matches!(c, Value::Boolean(_))) {
         if let Some(first_true) = first_true_of_sorted_comparisons(b, &cells) {
+            return first_true;
+        }
+        if let Some(first_true) = first_true_of_table_comparisons(b, &cells) {
             return first_true;
         }
         // The first set position (0 when none is set): a `lower::gather`

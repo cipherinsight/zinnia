@@ -637,6 +637,19 @@ fn try_fancy_subscript(
             }
         }
 
+        if let (1, Some((axis, index)), false) = (dynamic_parts.len(), &dynamic_index, dtype == NumberType::Complex) {
+            // One runtime index that is an argsort lane: the gathered line is
+            // a payload carried by that sort (`lower::sort::payload`).
+            let line: Option<Vec<Value>> = b.static_array_payload.get(&segment_id).and_then(|cells| {
+                (0..shape[*axis])
+                    .map(|j| cells.get(static_addr as usize + j * strides[*axis]).cloned())
+                    .collect()
+            });
+            if let Some(gathered) = line.and_then(|line| crate::lower::sort::payload_at_argsort_lane(b, index, &line)) {
+                leaves.push(gathered);
+                continue;
+            }
+        }
         if let (1, Some((axis, index))) = (dynamic_parts.len(), &dynamic_index) {
             // One runtime index: a read at an index with a known one-hot
             // (`lower::gather::element_lane`) over the cells along its axis.

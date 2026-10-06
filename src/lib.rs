@@ -139,6 +139,9 @@ fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32, target: Targe
         "PatternMatchOptim" => PatternMatchOptim.exec(graph),
         "SelectChainForwarding" => SelectChainForwarding.exec(graph),
         "ArrayLowering" => ArrayLowering { target }.exec(graph),
+        "SortCountQueries" => lower::sort::SortCountQueries.exec(graph),
+        "ArgmaxQueries" => lower::sort::ArgmaxQueries.exec(graph),
+        "ConstantTableReads" => lower::sort::ConstantTableReads { target }.exec(graph),
         _ => return None,
     };
     out.elided_publics = elided;
@@ -434,6 +437,15 @@ fn compile_circuit_impl(
         passes.push("UnreadMemoryEliminator");
         passes.push("DeadCodeElimination");
     }
+    // Comparisons with sorted values answered from counts the program has
+    // (`lower::sort::counts`), so the values no longer read are not lowered.
+    passes.push("SortCountQueries");
+    // Tests of a gathered element at the first-True index answered by
+    // `any` (`lower::sort::argmax`).
+    passes.push("ArgmaxQueries");
+    // Reads of constant affine tables at runtime indices in closed form
+    // (`lower::sort::table`).
+    passes.push("ConstantTableReads");
     // Lower the array operators' live lanes (`lower`): mandatory, and after
     // dead-code elimination, which decides which lanes are live. The
     // constructions are chosen by their cost on the compile target.
