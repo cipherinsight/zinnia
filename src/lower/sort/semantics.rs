@@ -11,12 +11,19 @@ use crate::lower::op::{ArrayOp, Constant, OperatorSemantics};
 pub const INDICES: u8 = 1;
 /// The output of a sort that holds the sorted values.
 pub const VALUES: u8 = 0;
+/// Count queries (`counts`): the number of elements `<= e`, or `< e`, for
+/// the lane's one own operand `e` (position `None`).
+pub const COUNT_AT_MOST: u8 = 2;
+pub const COUNT_BELOW: u8 = 3;
 
 pub struct SortSemantics;
 
 impl OperatorSemantics for SortSemantics {
     fn fold(&self, op: &ArrayOp, args: &[Value]) -> Option<Constant> {
         let n = op.shared as usize;
+        if op.output == COUNT_AT_MOST || op.output == COUNT_BELOW {
+            return fold_count(&args[..n], args.get(n)?, op.output == COUNT_AT_MOST);
+        }
         let rank = op.position.map(i64::from).or_else(|| args.get(n)?.int_val());
         fold_sorted(&args[..n], rank, op.output == INDICES)
     }
@@ -30,9 +37,13 @@ impl OperatorSemantics for SortSemantics {
         }
     }
 
-    /// An index lies in `[0, n)`; a value is one of the elements.
+    /// An index lies in `[0, n)`, a count in `[0, n]`; a value is one of the
+    /// elements.
     fn bounds(&self, op: &ArrayOp, operands: &[Option<Interval>]) -> Option<Interval> {
         let n = op.shared as usize;
+        if op.output == COUNT_AT_MOST || op.output == COUNT_BELOW {
+            return Some(Interval { lo: 0, hi: n as i64 });
+        }
         if op.output == INDICES {
             return Some(Interval { lo: 0, hi: n as i64 - 1 });
         }
@@ -42,6 +53,15 @@ impl OperatorSemantics for SortSemantics {
     fn picks_from(&self, op: &ArrayOp) -> Option<Range<usize>> {
         (op.output == VALUES).then_some(0..op.shared as usize)
     }
+}
+
+/// The number of constant `elements` `<= e` (`at_most`) or `< e`.
+fn fold_count(elements: &[Value], e: &Value, at_most: bool) -> Option<Constant> {
+    let number = |v: &Value| v.float_val().or_else(|| v.int_val().map(|i| i as f64));
+    let e = number(e)?;
+    let elements: Vec<f64> = elements.iter().map(number).collect::<Option<_>>()?;
+    let count = elements.iter().filter(|&&a| if at_most { a <= e } else { a < e }).count();
+    Some(Constant::Int(count as i64))
 }
 
 /// Output `rank` of NumPy's stable sort of constant `elements` (the value,

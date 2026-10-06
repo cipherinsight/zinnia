@@ -863,23 +863,17 @@ fn first_true_of_sorted_comparisons(b: &mut IRBuilder, cells: &[Value]) -> Optio
         return Some(b.ir_constant_int(0));
     }
     // The Falses, counted over the sort's elements: `a_j <= e` for a strict
-    // comparison, `a_j < e` otherwise.
-    let falses: Vec<Value> = sort_elements
-        .iter()
-        .map(|a| {
-            if strict {
-                let above = less_than_by_type(b, &scalar, a);
-                b.ir_logical_not(&above)
-            } else {
-                less_than_by_type(b, a, &scalar)
-            }
-        })
-        .collect();
-    let mut count = b.ir_constant_int(0);
-    for f in &falses {
-        let as_int = b.ir_int_cast(f);
-        count = b.ir_add_i(&count, &as_int);
-    }
+    // comparison, `a_j < e` otherwise. A count lane of the sort
+    // (`lower::sort::counts`): the layer emits it, and comparisons of `e`
+    // with the sorted values may be answered from it.
+    let output = if strict { crate::lower::sort::COUNT_AT_MOST } else { crate::lower::sort::COUNT_BELOW };
+    let op = crate::lower::ArrayOp {
+        kind: crate::lower::OpKind::Sort,
+        shared: n as u32,
+        output,
+        position: None,
+    };
+    let count = b.ir_array_op(op, &sort_elements, &[scalar]);
     let length = b.ir_constant_int(n as i64);
     let any_true = b.ir_less_than_i(&count, &length);
     let zero = b.ir_constant_int(0);
@@ -971,15 +965,6 @@ fn first_true_of_table_comparisons(b: &mut IRBuilder, cells: &[Value]) -> Option
     let any_true = b.ir_less_than_i(&falses, &length);
     let zero = b.ir_constant_int(0);
     Some(b.ir_select_i(&any_true, &falses, &zero))
-}
-
-/// `x < y` in the number type of the operands (float if either is).
-fn less_than_by_type(b: &mut IRBuilder, x: &Value, y: &Value) -> Value {
-    if matches!(x, Value::Float(_)) || matches!(y, Value::Float(_)) {
-        b.ir_less_than_f(x, y)
-    } else {
-        b.ir_less_than_i(x, y)
-    }
 }
 
 /// The elements of the sort whose outputs of ranks `0, 1, ..` are exactly

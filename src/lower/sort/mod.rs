@@ -23,6 +23,7 @@
 //! argument is next to its pins in `emit`.
 
 mod cost;
+mod counts;
 mod emit;
 mod packed;
 pub(crate) mod search;
@@ -34,7 +35,8 @@ mod tests;
 
 pub(crate) use emit::masked_order_statistic;
 pub use search::SearchSortedSemantics;
-pub use semantics::{SortSemantics, INDICES, VALUES};
+pub use counts::SortCountQueries;
+pub use semantics::{SortSemantics, COUNT_AT_MOST, COUNT_BELOW, INDICES, VALUES};
 
 use std::collections::HashMap;
 
@@ -123,7 +125,7 @@ fn plan_candidate(group: &Group, demand: Demand, plan: Plan, cost: u64) -> Candi
 /// The live outputs of a sort.
 fn demand(group: &Group) -> Demand {
     let mut demand = Demand { n: group.shared.len(), ..Demand::default() };
-    for lane in &group.lanes {
+    for lane in group.lanes.iter().filter(|lane| lane.output == VALUES || lane.output == INDICES) {
         match (lane.position, lane.output == INDICES) {
             (Some(r), false) => {
                 demand.values.insert(r as usize);
@@ -156,6 +158,10 @@ impl Emitter for SortEmitter {
 
     fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, lane: &Lane) -> Value {
         let sort = self.sort.as_mut().expect("started");
+        if lane.output == COUNT_AT_MOST || lane.output == COUNT_BELOW {
+            let e = cx.value(lane.own[0]);
+            return counts::count_query(b, &sort.as_elements(), &e, lane.output == COUNT_AT_MOST);
+        }
         let index = lane.output == INDICES;
         match lane.position {
             Some(r) => sort.output(r as usize, index),

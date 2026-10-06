@@ -41,7 +41,7 @@ impl Elements<'_> {
         b.ir_key_less(v1, i1, v2, i2, self.index_bits())
     }
 
-    fn less(&self, b: &mut IRBuilder, x: &Value, y: &Value) -> Value {
+    pub(super) fn less(&self, b: &mut IRBuilder, x: &Value, y: &Value) -> Value {
         match self.dtype {
             NumberType::Float => b.ir_less_than_f(x, y),
             _ => b.ir_less_than_i(x, y),
@@ -167,7 +167,7 @@ fn count_keys_beyond(b: &mut IRBuilder, elements: &Elements, key: &Key, above: b
 }
 
 /// The sum of 0/1 values, as an integer.
-fn count(b: &mut IRBuilder, bits: &[Value]) -> Value {
+pub(super) fn count(b: &mut IRBuilder, bits: &[Value]) -> Value {
     let mut total = b.ir_constant_int(0);
     for bit in bits {
         let as_int = b.ir_int_cast(bit);
