@@ -22,16 +22,27 @@ def kernel(a: Float[Array, "3"], n: Integer, b: Integer[Array, "2"]):
     return a * n + b[1]
 '''
 
+#: A parameter the backend renames (`v2`, a name of its own values) and complex
+#: inputs (each a flat array of its (real, imaginary) leaves).
+COMPLEX_KERNEL = '''from zinnia import *
+import numpy as np
+
+
+@zk_circuit
+def kernel(v2: Complex[Array, "2 2"], c: Complex, n: Integer):
+    return v2[1, 0] * c + n
+'''
+
 pytestmark = pytest.mark.skipif(
     not (toolchains.nargo_path().exists() and toolchains.bb_path().exists()),
     reason="nargo/bb not installed")
 
 
-def stage_with_backend(tmp_path, monkeypatch, args):
-    """Compile the toy kernel and let Zinnia's Noir backend stage a package for `args`."""
+def stage_with_backend(tmp_path, monkeypatch, args, source=KERNEL):
+    """Compile a toy kernel and let Zinnia's Noir backend stage a package for `args`."""
     kernel = tmp_path / "toy_noir" / "kernel.py"
     kernel.parent.mkdir()
-    kernel.write_text(KERNEL)
+    kernel.write_text(source)
     compiled = compile_kernel(kernel, "kernel")
     staging = tmp_path / "staging"
     staging.mkdir()
@@ -54,9 +65,12 @@ def harness_toml(compiled, args) -> str:
     return prover_toml(build_circuit_inputs(compiled.program_inputs, args))
 
 
-def test_prover_toml_and_main_nr_match_the_backend(tmp_path, monkeypatch):
-    args = [np.array([0.1, -2.75, 1e-3]), -3, np.array([-4, 9])]
-    compiled, staged = stage_with_backend(tmp_path, monkeypatch, args)
+@pytest.mark.parametrize("source, args", [
+    (KERNEL, [np.array([0.1, -2.75, 1e-3]), -3, np.array([-4, 9])]),
+    (COMPLEX_KERNEL, [np.array([[1.5 - 2j, 0.25j], [-3 + 0.5j, 2.0]]), 0.5 - 1.25j, 7]),
+])
+def test_prover_toml_and_main_nr_match_the_backend(tmp_path, monkeypatch, source, args):
+    compiled, staged = stage_with_backend(tmp_path, monkeypatch, args, source)
     assert harness_toml(compiled, args) == (staged / "Prover.toml").read_text()
     assert compiled.emit_structural(*args, backend="noir") == \
         (staged / "src" / "main.nr").read_text()

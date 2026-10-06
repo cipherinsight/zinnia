@@ -203,6 +203,13 @@ pub fn fp_is_negative(v: Fp) -> bool {
 /// 2^126 (the window every fixed-point intermediate of the kernel lives in).
 /// `None` for anything larger, so callers never silently truncate.
 pub fn fp_to_i128(v: Fp) -> Option<i128> {
+    fp_to_i128_wide(v).filter(|m| m.unsigned_abs() < 1u128 << 126)
+}
+
+/// [`fp_to_i128`] for every magnitude below 2^127, for a gadget whose
+/// operands can reach 2^126 (a hint computed from such a value; the
+/// constraints, not this reading, bound it).
+pub fn fp_to_i128_wide(v: Fp) -> Option<i128> {
     let negative = fp_is_negative(v);
     let magnitude = if negative { -v } else { v };
     let bytes = magnitude.to_repr();
@@ -211,7 +218,7 @@ pub fn fp_to_i128(v: Fp) -> Option<i128> {
         return None;
     }
     let m = u128::from_le_bytes(bytes[..16].try_into().unwrap());
-    if m >= 1u128 << 126 {
+    if m >= 1u128 << 127 {
         return None;
     }
     Some(if negative { -(m as i128) } else { m as i128 })
@@ -477,6 +484,53 @@ pub fn fp_int_cast(v: Fp, precision_bits: u32) -> (Fp, Fp) {
 pub fn fp_floor_div(a: Fp, b: Fp) -> (Fp, Fp) {
     let (q, r) = div_rem_or_zero(fp_to_i64(a) as i128, fp_to_i64(b) as i128, Rounding::Floor);
     (i128_to_fp(q), i128_to_fp(r))
+}
+
+// ---------------------------------------------------------------------------
+// int64 shifts (NumPy's `>>` and `<<`)
+// ---------------------------------------------------------------------------
+
+/// The shift count NumPy uses for an int64 shift by `b`: NumPy's
+/// `npy_rshift`/`npy_lshift` (numpy/_core/src/npymath/npy_math_internal.h.src)
+/// compare the count, cast to the unsigned type, with the bit width. So
+/// `Some(b)` for `0 <= b < 64` and `None` for every other `b`, negative counts
+/// included. This is defined behaviour in NumPy, not C's undefined shift.
+pub fn int64_shift_count(b: i64) -> Option<u32> {
+    u32::try_from(b).ok().filter(|c| *c < 64)
+}
+
+/// NumPy's int64 `a >> b`: an arithmetic shift (`floor(a / 2^b)`), and the
+/// sign fill (`0` or `-1`, i.e. a shift by 63) for a count outside `[0, 64)`.
+pub fn int64_shr(a: i64, b: i64) -> i64 {
+    a >> int64_shift_count(b).unwrap_or(63)
+}
+
+/// NumPy's int64 `a << b`: `a * 2^b` wrapped to int64, and `0` for a count
+/// outside `[0, 64)`.
+pub fn int64_shl(a: i64, b: i64) -> i64 {
+    int64_shift_count(b).map_or(0, |c| a.wrapping_shl(c))
+}
+
+/// The int64 a field element holds, if it lies in the signed 64-bit window.
+fn fp_int64(v: Fp) -> Option<i64> {
+    fp_to_i128(v).and_then(|v| i64::try_from(v).ok())
+}
+
+/// `a >> b` and `a << b` ([`int64_shr`], [`int64_shl`]) on field elements,
+/// as the circuits constrain them: `None` (no proof) unless both operands lie
+/// in the signed 64-bit window. The IR's integer `+ - *` are exact in the
+/// field and agree with NumPy's wrapping int64 arithmetic only modulo 2^64;
+/// a shift of a value that left the window is not determined by its residue
+/// (`>>`) or would leave the field's exact range (`<<` by up to 63 bits), so it
+/// has no proof, as for division and the bitwise operators. The result of
+/// `<<` is wrapped into the window exactly as NumPy's.
+pub fn fp_shr(a: Fp, b: Fp) -> Option<Fp> {
+    Some(i64_to_fp(int64_shr(fp_int64(a)?, fp_int64(b)?)))
+}
+
+/// See [`fp_shr`].
+pub fn fp_shl(a: Fp, b: Fp) -> Option<Fp> {
+    Some(i64_to_fp(int64_shl(fp_int64(a)?, fp_int64(b)?)))
 }
 
 /// Float floor division `a // b` on Q-encoded values: `floor(a / b)`,
@@ -857,11 +911,41 @@ pub fn fp_tanh(x: Fp, precision_bits: u32) -> Option<Fp> {
     Some(fp_div_prescale(s, c, precision_bits))
 }
 
-/// Compute atan2(y, x) using native f64 math on the dequantized values.
-pub fn fp_atan2(y: Fp, x: Fp, precision_bits: u32) -> Fp {
-    let yv = dequantize_from_fp(y, precision_bits);
-    let xv = dequantize_from_fp(x, precision_bits);
-    quantize_to_fp(yv.atan2(xv), precision_bits)
+/// `atan2(y, x)` on Q-encoded values, by the circuits' algorithm
+/// (halo2-base `arctan2_f`, Noir `qarctan2`), so every backend computes the
+/// same value:
+///
+/// 1. the magnitudes `|y|`, `|x|` and the signs;
+/// 2. the ratio `t = min(|x|, |y|) / max(|x|, |y|)` in `[0, 1]`, Q-encoded
+///    and rounded down (`floor(min * 2^P / max)`; 0 when both are 0);
+/// 3. `atan(t) = t * P(t^2)` with [`ATAN_ODD_U_COEFS`] by [`horner_eval`]
+///    (every product rounded down, as `mul_f`);
+/// 4. the octant (`π/2 - atan(t)` when `|y| > |x|`), the half plane
+///    (`π - a` when `x < 0`) and the sign of `y` (negated when `y < 0`).
+///
+/// So `atan2(0, 0) = 0` and `atan2(0, x) = π` for `x < 0` (NumPy's values for
+/// `+0`; fixed point has no `-0`). `None` (no proof on any backend) when an
+/// operand leaves the signed 64-bit window.
+///
+/// Measured maximum error against libm at `P = 32`: 3.2e-9 (about 14 Q
+/// units) over every octant and radii from 1e-6 to 1e9 (asserted below
+/// 3.5e-9 by `fixed_point_atan2_is_accurate`): the polynomial's 1.8e-9, the
+/// rounding of `t`, the floored products and the rounding of π and π/2.
+pub fn fp_atan2(y: Fp, x: Fp, precision_bits: u32) -> Option<Fp> {
+    let window = -(1i128 << 63)..(1i128 << 63);
+    let yv = fp_to_i128(y).filter(|v| window.contains(v))?;
+    let xv = fp_to_i128(x).filter(|v| window.contains(v))?;
+    let (my, mx) = (yv.abs(), xv.abs());
+    let swap = mx < my;
+    let (num, den) = if swap { (mx, my) } else { (my, mx) };
+    let t = if den == 0 { 0 } else { (num << precision_bits) / den };
+    let t = i128_to_fp(t);
+    let (u, _) = fp_mul_rescale(t, t, precision_bits);
+    let odd = horner_eval(u, &atan_odd_coefs_q(precision_bits), precision_bits);
+    let poly = fp_to_i128(fp_mul_rescale(t, odd, precision_bits).0)?;
+    let octant = if swap { half_pi_q(precision_bits) - poly } else { poly };
+    let half_plane = if xv < 0 { pi_q(precision_bits) - octant } else { octant };
+    Some(i128_to_fp(if yv < 0 { -half_plane } else { half_plane }))
 }
 
 /// Compute arccos(x) using native f64 math on the dequantized value.
@@ -1300,6 +1384,60 @@ mod tests {
         }
         assert!(worst_relative < 1e-9, "relative error {worst_relative}");
         assert!(worst_absolute < 5.0 / 4294967296.0, "absolute error {worst_absolute}");
+    }
+
+    #[test]
+    fn fixed_point_atan2_values_match_noir_qarctan2() {
+        // The same values are asserted for Noir's `qarctan2` in
+        // benchmarking/noir_fpc (test_qarctan2_matches_the_kernel); the
+        // constants are noir_fpc's PI_Q, HALF_PI_Q and ATAN_ODD_Q.
+        assert_eq!((pi_q(32), half_pi_q(32)), (13493037705, 6746518852));
+        let coefs: Vec<i128> = atan_odd_coefs_q(32).into_iter().map(|c| fp_to_i128(c).unwrap()).collect();
+        assert_eq!(coefs, vec![
+            -7489138, 45873335, -131930687, 246804093, -359577404, 469877966, -612529925, 858917466,
+            -1431653573, 4294967285,
+        ]);
+        let q = 1i128 << 32;
+        let atan2 = |y: i128, x: i128| fp_atan2(i128_to_fp(y), i128_to_fp(x), 32).map(|v| fp_to_i128(v).unwrap());
+        for (y, x, want) in [
+            (q, 2 * q, 1991351319),
+            (2 * q, q, 4755167533),
+            (-q, 2 * q, -1991351319),
+            (-2 * q, -q, -8737870172),
+            (q, -2 * q, 11501686386),
+            (2 * q, -q, 8737870172),
+            (-q, -2 * q, -11501686386),
+            (0, q, 0),
+            (q, 0, 6746518852),
+            (0, -q, 13493037705),
+            (-q, 0, -6746518852),
+            (0, 0, 0),
+            (q, q, 3373259418),
+            (-(1i128 << 63), (1i128 << 63) - 1, -3373259439),
+        ] {
+            assert_eq!(atan2(y, x), Some(want), "atan2({y}, {x})");
+        }
+        assert_eq!(atan2(1i128 << 63, q), None);
+        assert_eq!(atan2(q, -(1i128 << 63) - 1), None);
+    }
+
+    #[test]
+    fn fixed_point_atan2_is_accurate() {
+        let mut worst = 0f64;
+        // Every octant: angles on a fine grid, at radii from 2^-20 to 2^30.
+        for step in 0..20_000 {
+            let angle = -std::f64::consts::PI + step as f64 * (2.0 * std::f64::consts::PI / 20_000.0);
+            for radius in [1e-6, 0.37, 1.0, 13.5, 1e3, 1e9] {
+                let (yq, xq) = (quantize_to_fp(radius * angle.sin(), 32), quantize_to_fp(radius * angle.cos(), 32));
+                let (y, x) = (dequantize_from_fp(yq, 32), dequantize_from_fp(xq, 32));
+                let got = dequantize_from_fp(fp_atan2(yq, xq, 32).expect("inside the window"), 32);
+                let exact = y.atan2(x);
+                // y = 0 with x < 0: NumPy's +0 gives π; libm's -0 would give -π.
+                let exact = if y == 0.0 && x < 0.0 { std::f64::consts::PI } else { exact };
+                worst = worst.max((got - exact).abs());
+            }
+        }
+        assert!(worst < 3.5e-9, "absolute error {worst}");
     }
 
     #[test]

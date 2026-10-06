@@ -404,7 +404,8 @@ impl Halo2BaseSynthesizer<'_> {
         raw: &Halo2BaseCell,
         shift: u32,
     ) -> Result<(Halo2BaseCell, Halo2BaseCell), ProvingError> {
-        let q_value = kernel::fp_to_i128(raw.value).map_or(0, |v| v >> shift);
+        // `raw` may reach 2^126 in magnitude (`wrap_int64`).
+        let q_value = kernel::fp_to_i128_wide(raw.value).map_or(0, |v| v >> shift);
         let scale = kernel::i128_to_fp(1i128 << shift);
         let (q, rem) = self.quotient_gate(raw, QuantumCell::Constant(scale), scale, kernel::i128_to_fp(q_value));
         self.range_check(&rem, shift as usize);
@@ -860,6 +861,50 @@ impl Halo2BaseSynthesizer<'_> {
         let hi = if max_exponent >= 127 { i128::MAX } else { 1i128 << max_exponent };
         self.prove_range(&power, Interval { lo: 1, hi });
         power
+    }
+
+    /// `atan2(y, x)`, as `kernel::fp_atan2` (and Noir's `qarctan2`): the
+    /// ratio `t = floor(min · 2^P / max)` of the magnitudes, `t · P(t^2)` with
+    /// the odd atan polynomial, then the octant, half-plane and sign
+    /// adjustments.
+    ///
+    /// Soundness. `sign_and_abs` pins the signs and magnitudes and admits
+    /// exactly the operands of the signed 64-bit window (the kernel's
+    /// domain). `swap = [|x| < |y|]` is a pinned comparison (both magnitudes
+    /// have proven ranges in `[0, 2^63]`), so `min` and `max` are selects of
+    /// pinned cells. `max = 0` exactly when both operands are 0, and then
+    /// `min = 0`: dividing `min · 2^P` by `max + [max == 0]` (a pinned zero
+    /// test) is the division by a positive divisor that `div_rem_nonzero`
+    /// pins (quotient in the window, remainder in `[0, divisor)`), and gives
+    /// `t = 0` there, the kernel's value. The products are pinned `mul_f`s
+    /// and the adjustments are selects on pinned bits. So the result is a
+    /// function of `(y, x)`.
+    pub(super) fn fixed_atan2(&mut self, y: &Halo2BaseCell, x: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        let precision_bits = self.params.precision_bits;
+        let (y_negative, y_magnitude) = self.sign_and_abs(y)?;
+        let (x_negative, x_magnitude) = self.sign_and_abs(x)?;
+        let swap = self.less_than(Operand::Cell(x_magnitude), Operand::Cell(y_magnitude), None)?;
+        let smaller = self.select(&swap, &x_magnitude, &y_magnitude)?;
+        let larger = self.select(&swap, &y_magnitude, &x_magnitude)?;
+
+        let both_zero = self.is_zero_bit(&larger);
+        let divisor = self.add_i(&larger, &both_zero)?;
+        let one = kernel::scale_fp(precision_bits);
+        let scaled = self.gate_cell(smaller.value * one, |gate, ctx| gate.mul(ctx, smaller.quantum(), QuantumCell::Constant(one)));
+        let (t, _) = self.div_rem_nonzero(&scaled, Divisor::Positive(divisor), Rounding::Euclid)?;
+
+        let t_squared = self.mul_f(&t, &t)?;
+        let odd_part = self.poly_eval_horner(&t_squared, &kernel::atan_odd_coefs_q(precision_bits))?;
+        let angle = self.mul_f(&t, &odd_part)?;
+        let octant = {
+            let mirrored = self.constant_minus(kernel::half_pi_q(precision_bits), &angle);
+            self.select(&swap, &mirrored, &angle)?
+        };
+        let half_plane = {
+            let mirrored = self.constant_minus(kernel::pi_q(precision_bits), &octant);
+            self.select(&x_negative, &mirrored, &octant)?
+        };
+        self.negate_if(&half_plane, &y_negative)
     }
 
     /// `base^e` for a constant `e >= 0`, by square-and-multiply.

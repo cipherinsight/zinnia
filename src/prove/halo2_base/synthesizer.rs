@@ -1190,8 +1190,8 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn bit_and_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.bit_and(a, b) }
     fn bit_or_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.bit_or(a, b) }
     fn bit_xor_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.bit_xor(a, b) }
-    fn shl_i(&mut self, _: &Self::CellRef, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("shl_i") }
-    fn shr_i(&mut self, _: &Self::CellRef, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("shr_i") }
+    fn shl_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.shift_left(a, b) }
+    fn shr_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.shift_right(a, b) }
     fn bit_not_i(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.bit_not(a) }
 
     fn add_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.add_i(a, b) }
@@ -1470,7 +1470,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         self.add_i(&half, &half)
     }
     fn arccos_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("arccos_f") }
-    fn arctan2_f(&mut self, _: &Self::CellRef, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("arctan2_f") }
+    fn arctan2_f(&mut self, y: &Self::CellRef, x: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.fixed_atan2(y, x) }
 
     fn logical_and(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         // `x and true = [x]`, `x and false = false`.
