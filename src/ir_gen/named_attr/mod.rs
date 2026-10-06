@@ -9,6 +9,7 @@ mod builtins;
 mod array_compat;
 mod array_iteration;
 mod dynamic_array_compat;
+mod linalg_norm;
 mod list_methods;
 mod ndarray_methods;
 mod numpy_funcs;
@@ -614,6 +615,9 @@ impl IRGenerator {
         if target.target.as_deref() != Some("np") || target.member != "linalg" {
             return None;
         }
+        if n.member == "norm" {
+            return Some(self.visit_np_linalg_norm(n));
+        }
 
         let mut visited_args: Vec<Value> = Vec::new();
         for a in &n.args {
@@ -629,16 +633,8 @@ impl IRGenerator {
                 visited_args.push(self.visit(a));
             }
         }
-        let _visited_kwargs: HashMap<String, Value> = n
-            .kwargs
-            .iter()
-            .map(|(k, v)| (k.clone(), self.visit(v)))
-            .collect();
-        if !_visited_kwargs.is_empty() {
-            panic!(
-                "np.linalg.{}: keyword arguments are not supported in the first static verification slice",
-                n.member
-            );
+        if !n.kwargs.is_empty() {
+            panic!("np.linalg.{}: keyword arguments are not supported", n.member);
         }
         if visited_args
             .iter()
@@ -667,7 +663,7 @@ impl IRGenerator {
                 &visited_args,
             ),
             other => panic!(
-                "np.linalg.{} is not implemented; supported verification helpers are verify_inverse, verify_solve, and verify_cholesky",
+                "np.linalg.{} is not implemented; supported: norm and the verification helpers verify_inverse, verify_solve, verify_cholesky",
                 other
             ),
         };
@@ -688,14 +684,14 @@ fn is_complex_static_array(value: &Value) -> bool {
 fn returns_one_ndarray(name: &str, positional: usize) -> bool {
     const ONE_NDARRAY: &[&str] = &[
         "add_outer", "subtract_outer", "multiply_outer", "divide_outer", "arange", "argwhere",
-        "bincount", "block", "broadcast_to", "ceil", "clip", "column_stack", "concatenate",
+        "bincount", "block", "broadcast_to", "ceil", "clip", "column_stack", "concatenate", "convolve",
         "copy", "corrcoef", "correlate", "cov", "cumprod", "cumsum", "delete", "diag", "diff",
         "dot", "dstack", "einsum", "empty_like", "expand_dims", "flatnonzero", "flip", "fliplr",
-        "flipud", "floor", "full", "full_like", "hstack", "in1d", "inner", "insert", "isclose",
+        "flipud", "floor", "full", "full_like", "hstack", "in1d", "inner", "insert", "isclose", "isin",
         "linspace", "matmul", "mean", "median", "moveaxis", "ones", "ones_like", "outer", "pad",
         "percentile", "reciprocal", "repeat", "reshape", "rot90", "round", "around", "row_stack", "select",
         "square", "squeeze", "stack", "swapaxes", "take", "take_along_axis", "tensordot", "tile",
-        "transpose", "trunc", "vstack", "zeros", "zeros_like",
+        "transpose", "tril", "triu", "trunc", "vstack", "zeros", "zeros_like",
     ];
     match name {
         "where" => positional == 3,
