@@ -217,8 +217,9 @@ def known_mismatches() -> set[str]:
 
 
 def check_passed(case: str, record: dict, known: set[str]) -> bool:
-    numpy_ok = record.get("numpy") in ("match", "unchecked") or (
-        record.get("numpy") == "mismatch" and case in known)
+    # A NumPy mismatch always fails: the case set's `zinnia_output_mismatches` comes from the generator's
+    # probe and is only reported, never used as an exemption (it would hide a regression).
+    numpy_ok = record.get("numpy") in ("match", "unchecked")
     return (record.get("verified") is True and record.get("tamper_rejected") is not False
             and record.get("mock_equal") is True and numpy_ok)
 
@@ -416,7 +417,7 @@ def run_checks(cases: list[str], entries: dict[str, dict], args: argparse.Namesp
     failed = sorted(c for c, r in results.items() if not check_passed(c, r, known))
     numpy_checked = sum(r.get("numpy") == "match" for r in results.values())
     print(f"\n{len(results) - len(failed)} of {len(results)} pass; {numpy_checked} compared with NumPy "
-          f"position by position; known compiler mismatches (case set): "
+          f"position by position; listed as mismatches by the case set's probe (stale if they pass): "
           f"{sorted(c for c in results if c in known)}; failed: {failed}")
     return 1 if failed else 0
 
