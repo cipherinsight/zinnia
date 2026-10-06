@@ -227,6 +227,138 @@ fn fixed_point_multiplication_is_pinned() {
     assert_sound("product_sum", &*dot, &inputs, &[expected], &[]);
 }
 
+/// The mock's power: 1.0 multiplied by the base |e| times, `1 / power`
+/// for a negative exponent.
+fn mock_power(base: Fp, e: i64) -> Fp {
+    let mut power = q(1.0);
+    for _ in 0..e.unsigned_abs() {
+        power = kernel::fp_mul_rescale(power, base, PRECISION_BITS).0;
+    }
+    if e < 0 { kernel::fp_div_prescale(q(1.0), power, PRECISION_BITS) } else { power }
+}
+
+/// `x * float(n)` is the exact `x·n`; a constant `m·2^s` factor rescales by
+/// `P - s` bits only; both equal the kernel's `fp_mul_rescale` and every
+/// remaining hint is pinned.
+#[test]
+fn products_with_integer_valued_factors_are_exact_and_pinned() {
+    let by_cast: Box<Op> = Box::new(|s, c| {
+        let n = s.float_cast(&c[1])?;
+        Ok(vec![s.mul_f(&c[0], &n)?, s.mul_f(&n, &c[0])?])
+    });
+    for (x, n) in [(1.5, 3i64), (-0.1, 7), (123.456, -2), (0.0, 5)] {
+        let expected = kernel::fp_mul_rescale(q(x), q(n as f64), PRECISION_BITS).0;
+        let outcome = synthesize(&*by_cast, &[q(x), int(n)], &[]);
+        assert!(outcome.accepted && outcome.outputs == vec![expected, expected], "{x} * float({n})");
+        assert_eq!(outcome.hints, 0, "an exact product needs no hint");
+    }
+    for c in [0.5, 3.0, -0.75, 2f64.powi(-32), 0.1, 0.0] {
+        let by_constant = with_constant_rhs(|s, a, b| s.mul_f(a, b), q(c));
+        for x in [1.5, -2.25, 1e6, -3e-9] {
+            let expected = kernel::fp_mul_rescale(q(x), q(c), PRECISION_BITS).0;
+            assert_sound(&format!("{x} * const {c}"), &*by_constant, &[q(x)], &[expected], &[]);
+        }
+    }
+    let generic = binary(|s, a, b| s.mul_f(a, b));
+    let half = with_constant_rhs(|s, a, b| s.mul_f(a, b), q(0.5));
+    assert!(cells_of(&*half, &[q(3.0)]).1 < cells_of(&*generic, &[q(3.0), q(0.5)]).1);
+    let dot: Box<Op> = Box::new(|s, c| {
+        let n = s.float_cast(&c[2])?;
+        Ok(vec![s.product_sum_f(&[(c[0], n), (c[1], c[3])])?])
+    });
+    let inputs = [q(0.75), q(-1.25), int(-3), q(0.3)];
+    let pairs = vec![(inputs[0], q(-3.0)), (inputs[1], inputs[3])];
+    let expected = kernel::fp_product_sum_rescale(&pairs, PRECISION_BITS).0;
+    assert_sound("0.75*float(-3) + -1.25*0.3", &*dot, &inputs, &[expected], &[]);
+}
+
+/// `a / m·2^s` divides `a·2^(P-s)` by `m`; `a / float(n)` divides `a` by `n`;
+/// both equal the kernel's `fp_div_prescale` (0 for a zero divisor).
+#[test]
+fn divisions_by_integer_valued_divisors_are_pinned() {
+    for c in [30.0, -0.75, 0.5, 1.0, -1.0, 3.0e-3] {
+        let by_constant = with_constant_rhs(|s, a, b| s.div_f(a, b), q(c));
+        for a in [5.5, -5.5, 0.0, 1e6] {
+            let expected = kernel::fp_div_prescale(q(a), q(c), PRECISION_BITS);
+            let divisor = kernel::fp_to_i128(q(c)).unwrap().unsigned_abs();
+            assert_sound(&format!("{a} / const {c}"), &*by_constant, &[q(a)], &[expected], &[divisor, 30, 3]);
+        }
+    }
+    let by_cast: Box<Op> = Box::new(|s, c| {
+        let n = s.float_cast(&c[1])?;
+        Ok(vec![s.div_f(&c[0], &n)?])
+    });
+    for (a, n) in [(7.5, 2i64), (-7.5, 2), (7.5, -2), (1.0, 3), (4.0, 0)] {
+        let expected = kernel::fp_div_prescale(q(a), q(n as f64), PRECISION_BITS);
+        assert_sound(&format!("{a} / float({n})"), &*by_cast, &[q(a), int(n)], &[expected], &[n.unsigned_abs().max(1) as u128]);
+    }
+}
+
+#[test]
+fn powers_follow_the_mock_and_are_pinned() {
+    for e in [0i64, 1, 2, 6, -2] {
+        let by_constant = with_constant_rhs(|s, a, b| s.pow_f_int(a, b), int(e));
+        for base in [1.5, -0.7, 2.0] {
+            assert_sound(&format!("{base} ** {e}"), &*by_constant, &[q(base)], &[mock_power(q(base), e)], &[]);
+        }
+    }
+    let dynamic = binary(|s, a, b| s.pow_f_int(a, b));
+    for e in [0i64, 1, 5, 8] {
+        assert_sound(&format!("1.25 ** {e} (runtime)"), &*dynamic, &[q(1.25), int(e)], &[mock_power(q(1.25), e)], &[]);
+    }
+    assert!(!synthesize(&*dynamic, &[q(1.25), int(9)], &[]).accepted, "an exponent above 8 has no witness");
+    assert!(!synthesize(&*dynamic, &[q(1.25), int(-1)], &[]).accepted);
+    let float_exponent = with_constant_rhs(|s, a, b| s.pow_f(a, b), q(3.0));
+    assert_sound("1.5 ** 3.0", &*float_exponent, &[q(1.5)], &[mock_power(q(1.5), 3)], &[]);
+    let fractional = with_constant_rhs(|s, a, b| s.pow_f(a, b), q(0.5));
+    let mut builder = BaseCircuitBuilder::<Fp>::from_stage(CircuitBuilderStage::Keygen);
+    builder.set_k(K as usize);
+    builder.set_lookup_bits(LOOKUP_BITS as usize);
+    let provenance = ProvenanceTable::new();
+    let params = ProvingParams { k: K, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
+    let mut synth = Halo2BaseSynthesizer::new(&mut builder, None, params, &provenance);
+    let x = synth.cell(q(2.0));
+    assert!(fractional(&mut synth, &[x]).is_err(), "a fractional exponent must be rejected, not proved");
+}
+
+/// Quotients of dividends with a proven range are checked against the range
+/// that implies, not the 64-bit window: still pinned, and cheaper.
+#[test]
+fn quotients_of_ranged_dividends_are_pinned_by_narrow_checks() {
+    let ranged: Box<Op> = Box::new(|s, c| {
+        let bound = s.constant_int(1 << 40)?;
+        s.assert_u128_lt(&c[0], &bound)?;
+        s.assert_u128_lt(&c[1], &bound)?;
+        let seven = s.constant_int(7)?;
+        let product = s.mul_f(&c[0], &c[1])?;
+        Ok(vec![product, s.floor_div_i(&c[0], &seven)?, s.mod_i(&c[1], &seven)?])
+    });
+    for (a, b) in [(3i64 << 32, 5i64 << 31), (12345, 678910), (0, (1 << 40) - 1)] {
+        let expected = [
+            kernel::fp_mul_rescale(int(a), int(b), PRECISION_BITS).0,
+            kernel::fp_floor_div(int(a), int(7)).0,
+            kernel::fp_floor_div(int(b), int(7)).1,
+        ];
+        assert_sound(&format!("ranged {a}, {b}"), &*ranged, &[int(a), int(b)], &expected, &[7]);
+    }
+    let unranged: Box<Op> = Box::new(|s, c| Ok(vec![s.mul_f(&c[0], &c[1])?]));
+    let ranged_product: Box<Op> = Box::new(|s, c| {
+        let bound = s.constant_int(1 << 40)?;
+        s.assert_u128_lt(&c[0], &bound)?;
+        s.assert_u128_lt(&c[1], &bound)?;
+        Ok(vec![s.mul_f(&c[0], &c[1])?])
+    });
+    let unranged_cost = cells_of(&*unranged, &[int(3), int(5)]);
+    let ranged_cost = cells_of(&*ranged_product, &[int(3), int(5)]);
+    let bounds_cost = cells_of(&*Box::new(|s: &mut Halo2BaseSynthesizer<'_>, c: &[Halo2BaseCell]| {
+        let bound = s.constant_int(1 << 40)?;
+        s.assert_u128_lt(&c[0], &bound)?;
+        s.assert_u128_lt(&c[1], &bound)?;
+        Ok(vec![])
+    }) as &Op, &[int(3), int(5)]);
+    assert!(ranged_cost.1 - bounds_cost.1 < unranged_cost.1, "the 48-bit quotient check is not narrower");
+}
+
 // ── Transcendentals (B2) ────────────────────────────────────────────────
 
 #[test]
@@ -298,16 +430,63 @@ fn field_division_is_total_and_pinned() {
     assert_sound("1/0", &*inverse, &[int(0)], &[int(0)], &[]);
 }
 
+/// Advice and lookup cells of `op` synthesized on free inputs.
+fn cells_of(op: &Op, inputs: &[Fp]) -> (usize, usize) {
+    let mut builder = BaseCircuitBuilder::<Fp>::from_stage(CircuitBuilderStage::Keygen);
+    builder.set_k(K as usize);
+    builder.set_lookup_bits(LOOKUP_BITS as usize);
+    builder.set_instance_columns(1);
+    let provenance = ProvenanceTable::new();
+    let params = ProvingParams { k: K, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
+    {
+        let mut synth = Halo2BaseSynthesizer::new(&mut builder, None, params, &provenance);
+        let cells: Vec<Halo2BaseCell> = inputs.iter().map(|v| synth.cell(*v)).collect();
+        op(&mut synth, &cells).expect("synthesis failed");
+    }
+    let stats = builder.statistics();
+    (stats.gate.total_advice_per_phase[0], stats.total_lookup_advice_per_phase[0])
+}
+
+fn bit(b: bool) -> Fp {
+    if b { Fp::one() } else { Fp::zero() }
+}
+
+type Relation = fn(i64, i64) -> bool;
+
+/// Each comparison's result bit is a hint pinned by one range check of
+/// `(a - b) + s·2^n`; flipping it (or making it a non-bit) is rejected.
 #[test]
-fn comparisons_and_casts_have_no_free_hints() {
+fn comparisons_are_pinned() {
+    let signed: Vec<(&str, Box<Op>, Relation)> = vec![
+        ("lt", binary(|s, a, b| s.lt_i(a, b)), |a, b| a < b),
+        ("lte", binary(|s, a, b| s.lte_i(a, b)), |a, b| a <= b),
+        ("gt", binary(|s, a, b| s.gt_i(a, b)), |a, b| a > b),
+        ("gte", binary(|s, a, b| s.gte_i(a, b)), |a, b| a >= b),
+    ];
+    let pairs = [(3i64, 5i64), (5, 3), (4, 4), (0, 7), (-3, 2), (2, -3), (-1, -1), (i64::MIN, i64::MAX), (i64::MAX, i64::MIN)];
+    for (name, op, relation) in &signed {
+        for (a, b) in pairs {
+            assert_sound(&format!("{name}({a}, {b})"), &**op, &[int(a), int(b)], &[bit(relation(a, b))], &[]);
+        }
+    }
+    let unsigned = binary(|s, a, b| s.lt_i_bounded(a, b));
+    for (a, b) in [(3i64, 5i64), (5, 3), (4, 4), (0, i64::MAX), (i64::MAX, 0)] {
+        assert_sound(&format!("lt_bounded({a}, {b})"), &*unsigned, &[int(a), int(b)], &[bit(a < b)], &[]);
+    }
+    // An unsigned comparison has no witness for a negative operand.
+    assert!(!synthesize(&*unsigned, &[int(-1), int(3)], &[]).accepted);
+    // A constant operand is folded into the checked difference.
+    let below_seven = with_constant_rhs(|s, a, b| s.lt_i(a, b), int(7));
+    for x in [6i64, 7, -100, i64::MAX] {
+        assert_sound(&format!("{x} < 7"), &*below_seven, &[int(x)], &[bit(x < 7)], &[]);
+    }
+}
+
+#[test]
+fn equality_and_logic_have_no_free_hints() {
     let ops: Vec<(&str, Box<Op>)> = vec![
-        ("lt", binary(|s, a, b| s.lt_i(a, b))),
-        ("lte", binary(|s, a, b| s.lte_i(a, b))),
-        ("gt", binary(|s, a, b| s.gt_i(a, b))),
-        ("gte", binary(|s, a, b| s.gte_i(a, b))),
         ("eq", binary(|s, a, b| s.eq_i(a, b))),
         ("ne", binary(|s, a, b| s.ne_i(a, b))),
-        ("lt_bounded", binary(|s, a, b| s.lt_i_bounded(a, b))),
         ("and", binary(|s, a, b| s.logical_and(a, b))),
         ("or", binary(|s, a, b| s.logical_or(a, b))),
     ];
@@ -329,11 +508,251 @@ fn comparisons_and_casts_have_no_free_hints() {
     }
 }
 
+/// `x < 101` asserted, then `7 < x`: the assertion proves `x` in [0, 100],
+/// so the comparison checks one lookup-width limb instead of the 64-bit
+/// window, and a comparison the range decides costs nothing.
+#[test]
+fn proven_ranges_narrow_comparisons() {
+    let narrow: Box<Op> = Box::new(|s, c| {
+        let bound = s.constant_int(101)?;
+        s.assert_u128_lt(&c[0], &bound)?;
+        let seven = s.constant_int(7)?;
+        Ok(vec![s.lt_i(&seven, &c[0])?])
+    });
+    for x in [0i64, 7, 8, 100] {
+        assert_sound(&format!("7 < {x} (x < 101)"), &*narrow, &[int(x)], &[bit(7 < x)], &[]);
+    }
+    assert!(!synthesize(&*narrow, &[int(101)], &[]).accepted);
+    assert!(!synthesize(&*narrow, &[int(-1)], &[]).accepted);
+    let wide = binary(|s, a, b| s.lt_i(a, b));
+    let (narrow_advice, narrow_lookup) = cells_of(&*narrow, &[int(5)]);
+    let (wide_advice, wide_lookup) = cells_of(&*wide, &[int(5), int(7)]);
+    assert!(narrow_advice * 3 < wide_advice && narrow_lookup * 5 < wide_lookup,
+        "narrow ({narrow_advice}, {narrow_lookup}) vs 64-bit ({wide_advice}, {wide_lookup})");
+    let decided: Box<Op> = Box::new(|s, c| {
+        let bound = s.constant_int(101)?;
+        s.assert_u128_lt(&c[0], &bound)?;
+        let far = s.constant_int(1000)?;
+        Ok(vec![s.lt_i(&c[0], &far)?])
+    });
+    let outcome = synthesize(&*decided, &[int(50)], &[]);
+    assert!(outcome.accepted && outcome.outputs == vec![Fp::one()] && outcome.hints == 0);
+}
+
+#[test]
+fn unsigned_bound_assertion_is_exact() {
+    for bound in [8i64, 101, 1 << 20] {
+        let assert_below: Box<Op> = Box::new(move |s, c| {
+            let hi = s.constant_int(bound)?;
+            s.assert_u128_lt(&c[0], &hi)?;
+            Ok(vec![])
+        });
+        for x in [0, bound - 1] {
+            assert!(synthesize(&*assert_below, &[int(x)], &[]).accepted, "{x} < {bound} rejected");
+        }
+        for x in [bound, bound + 1, -1, 1 << 40] {
+            assert!(!synthesize(&*assert_below, &[int(x)], &[]).accepted, "{x} < {bound} accepted");
+        }
+    }
+    let dynamic = binary(|s, a, b| s.assert_u128_lt(a, b).map(|_| s.constant_int(0).unwrap()));
+    assert!(synthesize(&*dynamic, &[int(4), int(5)], &[]).accepted);
+    assert!(!synthesize(&*dynamic, &[int(5), int(5)], &[]).accepted);
+    assert!(!synthesize(&*dynamic, &[int(-1), int(5)], &[]).accepted);
+}
+
 #[test]
 fn signed_comparison_rejects_inputs_outside_the_64_bit_window() {
     let lt = binary(|s, a, b| s.lt_i(a, b));
     let huge = kernel::i128_to_fp(1i128 << 70);
     assert!(!synthesize(&*lt, &[huge, int(1)], &[]).accepted);
+}
+
+/// A compare-exchange `(min, max)`: both selects reuse the comparison's
+/// difference `a - b` (one gate each) and stay pinned by the comparison bit.
+#[test]
+fn compare_exchange_shares_the_difference() {
+    let exchange: Box<Op> = Box::new(|s, c| {
+        let below = s.lt_i(&c[1], &c[0])?;
+        Ok(vec![s.select(&below, &c[1], &c[0])?, s.select(&below, &c[0], &c[1])?])
+    });
+    for (a, b) in [(3i64, 5i64), (5, 3), (4, 4), (-7, 2), (i64::MAX, i64::MIN)] {
+        assert_sound(&format!("exchange({a}, {b})"), &*exchange, &[int(a), int(b)], &[int(a.min(b)), int(a.max(b))], &[]);
+    }
+    let separate: Box<Op> = Box::new(|s, c| {
+        let below = s.lt_i(&c[1], &c[0])?;
+        let x = s.add_i(&c[0], &c[2])?; // operands the comparison did not subtract
+        let y = s.add_i(&c[1], &c[2])?;
+        Ok(vec![s.select(&below, &y, &x)?, s.select(&below, &x, &y)?])
+    });
+    let shared_cost = cells_of(&*exchange, &[int(3), int(5)]).0;
+    let separate_cost = cells_of(&*separate, &[int(3), int(5), int(0)]).0;
+    assert!(shared_cost + 8 <= separate_cost, "shared {shared_cost}, separate {separate_cost}");
+}
+
+/// A select between bits is a bit, and a two-valued cell's truth value is
+/// its bit: neither needs an `is_zero` conversion when used as a condition.
+#[test]
+fn selects_of_bits_are_conditions_without_conversion() {
+    let nested: Box<Op> = Box::new(|s, c| {
+        let below = s.lt_i(&c[0], &c[1])?;
+        let (zero, one, seven) = (s.constant_int(0)?, s.constant_int(1)?, s.constant_int(7)?);
+        let flipped = s.select(&below, &zero, &one)?; // not(below), as a select
+        let either = s.select(&flipped, &below, &one)?; // a select between bits
+        let scaled = s.select(&below, &seven, &zero)?; // two-valued {0, 7}
+        Ok(vec![s.select(&flipped, &c[0], &c[1])?, s.select(&either, &c[1], &c[0])?, s.logical_not(&scaled)?])
+    });
+    for (a, b) in [(1i64, 2i64), (2, 1), (3, 3)] {
+        let below = a < b;
+        let either = if !below { below } else { true };
+        let expected = [int(if !below { a } else { b }), int(if either { b } else { a }), int(!below as i64)];
+        assert_sound(&format!("nested({a}, {b})"), &*nested, &[int(a), int(b)], &expected, &[]);
+        assert_eq!(synthesize(&*nested, &[int(a), int(b)], &[]).hints, 1, "only the comparison bit is a hint");
+    }
+}
+
+/// `x < 0` on a fresh value proves the window and the sign with one check;
+/// asserting `x >= 0` makes `x`'s range non-negative, and `sqrt` then needs
+/// no sign handling.
+#[test]
+fn sign_tests_and_asserted_ranges_are_pinned() {
+    let sign = with_constant_rhs(|s, a, b| s.lt_i(a, b), int(0));
+    for x in [5i64, 0, -5, i64::MIN, i64::MAX] {
+        assert_sound(&format!("{x} < 0"), &*sign, &[int(x)], &[bit(x < 0)], &[]);
+    }
+    assert!(!synthesize(&*sign, &[kernel::i128_to_fp(1i128 << 63)], &[]).accepted, "outside the window");
+    let checked_root: Box<Op> = Box::new(|s, c| {
+        let zero = s.constant_float(0.0)?;
+        let nonnegative = s.gte_f(&c[0], &zero)?;
+        s.assert_true(&nonnegative)?;
+        Ok(vec![s.sqrt_f(&c[0])?])
+    });
+    for x in [2.0, 0.0, 1e6, 3.0e-9] {
+        let expected = kernel::fp_sqrt(q(x), PRECISION_BITS);
+        assert_sound(&format!("assert {x} >= 0; sqrt"), &*checked_root, &[q(x)], &[expected], &[]);
+    }
+    assert!(!synthesize(&*checked_root, &[q(-1.0)], &[]).accepted, "a negative input fails the assertion");
+    let unchecked_root = unary(|s, a| s.sqrt_f(a));
+    let assertion_only: Box<Op> = Box::new(|s, c| {
+        let zero = s.constant_float(0.0)?;
+        let nonnegative = s.gte_f(&c[0], &zero)?;
+        s.assert_true(&nonnegative)?;
+        Ok(vec![])
+    });
+    let with_assertion = cells_of(&*checked_root, &[q(2.0)]).0 - cells_of(&*assertion_only, &[q(2.0)]).0;
+    assert!(with_assertion + 20 < cells_of(&*unchecked_root, &[q(2.0)]).0, "the asserted root still pays for the sign");
+    // The sign bit sqrt's |x| pinned answers a later `x >= 0`: no new hint.
+    let root_then_check: Box<Op> = Box::new(|s, c| {
+        let root = s.sqrt_f(&c[0])?;
+        let zero = s.constant_float(0.0)?;
+        let nonnegative = s.gte_f(&c[0], &zero)?;
+        s.assert_true(&nonnegative)?;
+        Ok(vec![root])
+    });
+    for x in [2.0, 0.0] {
+        let expected = kernel::fp_sqrt(q(x), PRECISION_BITS);
+        assert_sound(&format!("sqrt({x}); assert >= 0"), &*root_then_check, &[q(x)], &[expected], &[]);
+        assert_eq!(synthesize(&*root_then_check, &[q(x)], &[]).hints, 2, "sign and root only");
+    }
+    assert!(!synthesize(&*root_then_check, &[q(-2.0)], &[]).accepted);
+    let abs = unary(|s, a| s.abs_i(a));
+    assert_sound("abs(i64::MIN)", &*abs, &[int(i64::MIN)], &[kernel::i128_to_fp(1i128 << 63)], &[]);
+    assert!(!synthesize(&*abs, &[kernel::i128_to_fp(1i128 << 63)], &[]).accepted, "outside the window");
+    // A comparison after an asserted bound uses the bound.
+    let bounded: Box<Op> = Box::new(|s, c| {
+        let hundred = s.constant_int(100)?;
+        let below = s.lt_i(&c[0], &hundred)?;
+        s.assert_true(&below)?;
+        let zero = s.constant_int(0)?;
+        let nonnegative = s.gte_i(&c[0], &zero)?;
+        s.assert_true(&nonnegative)?;
+        let ten = s.constant_int(10)?;
+        Ok(vec![s.lt_i(&c[0], &ten)?])
+    });
+    for x in [0i64, 9, 10, 99] {
+        assert_sound(&format!("{x} in [0, 100): {x} < 10"), &*bounded, &[int(x)], &[bit(x < 10)], &[]);
+    }
+    assert!(!synthesize(&*bounded, &[int(100)], &[]).accepted);
+}
+
+// ── Bitwise operations (two's complement, as NumPy int64) ──────────────
+
+const BIT_PAIRS: [(i64, i64); 7] =
+    [(12, 10), (-12, 10), (12, -10), (-1, i64::MIN), (i64::MAX, -7), (0, 5), (i64::MIN, i64::MIN)];
+
+#[test]
+fn bitwise_operations_follow_twos_complement_and_are_pinned() {
+    let ops: Vec<(&str, Box<Op>, fn(i64, i64) -> i64)> = vec![
+        ("&", binary(|s, a, b| s.bit_and_i(a, b)), |a, b| a & b),
+        ("|", binary(|s, a, b| s.bit_or_i(a, b)), |a, b| a | b),
+        ("^", binary(|s, a, b| s.bit_xor_i(a, b)), |a, b| a ^ b),
+    ];
+    for (name, op, f) in &ops {
+        for (a, b) in BIT_PAIRS {
+            assert_sound(&format!("{a} {name} {b}"), &**op, &[int(a), int(b)], &[int(f(a, b))], &[]);
+        }
+    }
+    let not = unary(|s, a| s.bit_not_i(a));
+    for x in [0i64, 5, -6, i64::MAX, i64::MIN] {
+        assert_sound(&format!("~{x}"), &*not, &[int(x)], &[int(!x)], &[]);
+    }
+    // An operand outside the int64 window has no witness.
+    let and = binary(|s, a, b| s.bit_and_i(a, b));
+    assert!(!synthesize(&*and, &[kernel::i128_to_fp(1i128 << 64), int(3)], &[]).accepted);
+}
+
+#[test]
+fn bitwise_operations_with_constants_are_pinned() {
+    for c in [1024i64, 5, 0, -1, -16, 255] {
+        let and = with_constant_rhs(|s, a, b| s.bit_and_i(a, b), int(c));
+        let or = with_constant_rhs(|s, a, b| s.bit_or_i(a, b), int(c));
+        let xor = with_constant_rhs(|s, a, b| s.bit_xor_i(a, b), int(c));
+        for x in [1234i64, -1234, 0, i64::MIN, i64::MAX] {
+            assert_sound(&format!("{x} & {c}"), &*and, &[int(x)], &[int(x & c)], &[]);
+            assert_sound(&format!("{x} | {c}"), &*or, &[int(x)], &[int(x | c)], &[]);
+            assert_sound(&format!("{x} ^ {c}"), &*xor, &[int(x)], &[int(x ^ c)], &[]);
+        }
+    }
+    // Narrow operands decompose only their own width.
+    let narrow: Box<Op> = Box::new(|s, c| {
+        let bound = s.constant_int(16)?;
+        s.assert_u128_lt(&c[0], &bound)?;
+        s.assert_u128_lt(&c[1], &bound)?;
+        Ok(vec![s.bit_xor_i(&c[0], &c[1])?])
+    });
+    assert_sound("9 ^ 12 (< 16)", &*narrow, &[int(9), int(12)], &[int(9 ^ 12)], &[]);
+    let wide = binary(|s, a, b| s.bit_xor_i(a, b));
+    assert!(cells_of(&*narrow, &[int(9), int(12)]).0 * 4 < cells_of(&*wide, &[int(9), int(12)]).0);
+}
+
+/// `(x & 2^j) > 0` is the bit itself: a value known to be `bit ? v1 : v0`
+/// compared with a constant reduces to the bit, its negation or a constant.
+#[test]
+fn comparisons_of_two_valued_cells_reduce_to_their_bit() {
+    let masked: Box<Op> = Box::new(|s, c| {
+        let mask = s.constant_int(4)?;
+        let zero = s.constant_int(0)?;
+        let bit = s.bit_and_i(&c[0], &mask)?;
+        Ok(vec![s.gt_i(&bit, &zero)?, s.lt_i(&bit, &zero)?, s.eq_i(&bit, &mask)?, s.eq_i(&bit, &zero)?])
+    });
+    for x in [4i64, 3, -4, -5] {
+        let set = (x & 4) != 0;
+        let expected = [int(set as i64), int(0), int(set as i64), int(!set as i64)];
+        assert_sound(&format!("({x} & 4) cmp"), &*masked, &[int(x)], &expected, &[]);
+    }
+    let selected: Box<Op> = Box::new(|s, c| {
+        let (three, seven, five) = (s.constant_int(3)?, s.constant_int(7)?, s.constant_int(5)?);
+        let cond = s.lt_i(&c[0], &c[1])?;
+        let picked = s.select(&cond, &seven, &three)?;
+        let shifted = s.add_i(&picked, &five)?;
+        Ok(vec![s.lt_i(&picked, &five)?, s.gt_i(&shifted, &five)?, s.eq_i(&shifted, &five)?])
+    });
+    for (a, b) in [(1i64, 2i64), (2, 1)] {
+        let picked = if a < b { 7 } else { 3 };
+        let expected = [int((picked < 5) as i64), int((picked + 5 > 5) as i64), int(0)];
+        let outcome = synthesize(&*selected, &[int(a), int(b)], &[]);
+        assert!(outcome.accepted && outcome.outputs == expected, "select({a} < {b}, 7, 3)");
+        assert_eq!(outcome.hints, 1, "only the condition's comparison loads a hint");
+    }
 }
 
 // ── Memory (M3) ─────────────────────────────────────────────────────────
@@ -385,6 +804,54 @@ fn dynamic_write_out_of_bounds_is_rejected() {
     assert!(synthesize(&*op, &[int(3)], &[]).accepted);
     assert!(!synthesize(&*op, &[int(4)], &[]).accepted);
     assert!(!synthesize(&*op, &[int(-1)], &[]).accepted);
+}
+
+/// A dynamic read is the inner product of the address's indicators with
+/// the slots; the membership assertion makes exactly one indicator 1, so
+/// the read is the addressed slot and an out-of-bounds address has no
+/// witness.
+#[test]
+fn dynamic_read_selects_the_addressed_slot() {
+    let op: Box<Op> = Box::new(|s, c| {
+        s.allocate_memory(1, 4, 0)?;
+        for (i, v) in [10i64, 11, 12].iter().enumerate() {
+            let addr = s.constant_int(i as i64)?;
+            let value = s.constant_int(*v)?;
+            s.write_memory(1, &addr, &value)?;
+        }
+        Ok(vec![s.read_memory(1, &c[0])?])
+    });
+    for (i, expected) in [(0i64, 10i64), (1, 11), (2, 12), (3, 0)] {
+        assert_sound(&format!("x[{i}]"), &*op, &[int(i)], &[int(expected)], &[]);
+    }
+    assert!(!synthesize(&*op, &[int(4)], &[]).accepted);
+    assert!(!synthesize(&*op, &[int(-1)], &[]).accepted);
+}
+
+/// Reads after many runtime-address writes cost one address comparison per
+/// pending write; past the budget synthesis stops with an error naming the
+/// construct (a 20,000 x 20,000 scatter exhausted 16 GB before).
+#[test]
+fn overlay_beyond_its_budget_is_a_synthesis_error() {
+    let mut builder = BaseCircuitBuilder::<Fp>::from_stage(CircuitBuilderStage::Keygen);
+    builder.set_k(K as usize);
+    builder.set_lookup_bits(LOOKUP_BITS as usize);
+    let provenance = ProvenanceTable::new();
+    let params = ProvingParams { k: K, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
+    let mut synth = Halo2BaseSynthesizer::new(&mut builder, None, params, &provenance);
+    synth.memory.overlay_budget = Some(10);
+    synth.allocate_memory(1, 8, 0).unwrap();
+    let addresses: Vec<Halo2BaseCell> = (0..4).map(|i| synth.cell(int(i))).collect();
+    for addr in &addresses {
+        let value = synth.constant_int(1).unwrap();
+        synth.write_memory(1, addr, &value).unwrap();
+    }
+    let zero = synth.constant_int(0).unwrap();
+    let one = synth.constant_int(1).unwrap();
+    assert!(synth.read_memory(1, &zero).is_ok(), "4 tests are within the budget");
+    assert!(synth.read_memory(1, &one).is_ok(), "8 tests are within the budget");
+    let error = synth.read_memory(1, &zero).map(|_| ()).unwrap_err().to_string();
+    assert!(error.contains("runtime-address writes"), "{error}");
 }
 
 // ── Dynamic-array metadata (C15, previously a constraint-shape replica) ─
