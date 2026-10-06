@@ -12,6 +12,7 @@ use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::types::{CompositeData, NumberType, ScalarValue, Value, ValueId, ZinniaType};
+use crate::helpers::dtype::Dtype;
 
 use super::super::IRGenerator;
 use super::DispatchCtx;
@@ -52,52 +53,18 @@ fn np_array_equal(b: &mut crate::builder::IRBuilder, args: &[Value]) -> Value {
     crate::helpers::value_ops::to_scalar_bool(b, &cmp)
 }
 
-/// The Zinnia type a NumPy dtype alias (`np.float32`, `np.int64`, ...)
-/// stands for; widths collapse into Zinnia's int64 / Q32 / complex types.
-fn numpy_dtype_alias(name: &str) -> Option<ZinniaType> {
-    match name {
-        "float16" | "float32" | "float64" | "double" | "single" | "half" | "longdouble" => {
-            Some(ZinniaType::Float)
-        }
-        "int8" | "int16" | "int32" | "int64" | "uint8" | "uint16" | "uint32" | "uint64" | "intp"
-        | "uintp" | "long" | "byte" | "short" | "intc" | "uintc" | "ubyte" | "ushort"
-        | "longlong" | "ulonglong" => Some(ZinniaType::Integer),
-        "bool_" => Some(ZinniaType::Boolean),
-        "complex64" | "complex128" | "complex256" | "csingle" | "cdouble" | "clongdouble" => {
-            Some(ZinniaType::Complex)
-        }
-        _ => None,
-    }
-}
-
-/// A dtype alias called as a constructor, `np.float64(x)`: the value
-/// converted to that type (it used to return the type itself, which then
-/// reached an arithmetic op as an internal error). Floats of every width are
-/// Zinnia's Q32 floats, as they are in `dtype=` arguments; signed 64-bit
-/// integers truncate like `int()`. Narrower or unsigned integers, booleans
-/// and complex types are rejected: Zinnia cannot reproduce their range
-/// (wrap-around) or conversion rules here.
+/// A NumPy scalar type called as a constructor, `np.uint8(x)`: `x` (a
+/// scalar or an array) converted into the type, as `x.astype(np.uint8)`.
 fn numpy_scalar_type_call(
     b: &mut crate::builder::IRBuilder,
-    alias: &str,
-    class: ZinniaType,
+    name: &str,
+    dtype: Dtype,
     args: &[Value],
 ) -> Value {
-    if args.len() != 1 {
-        panic!("np.{alias}(...) takes one argument");
-    }
-    let signed_64_bit = matches!(alias, "int64" | "intp" | "long" | "longlong");
-    match class {
-        ZinniaType::Float => super::array_compat::astype(b, &args[0], &Value::Class(ZinniaType::Float)),
-        ZinniaType::Integer if signed_64_bit => {
-            super::array_compat::astype(b, &args[0], &Value::Class(ZinniaType::Integer))
-        }
-        _ => panic!(
-            "np.{alias}(...) is not supported: Zinnia computes integers as int64 and floats in Q32 \
-             fixed point, and does not reproduce this type's range or conversion; use \
-             np.int64/np.float64 (or a comparison for booleans)"
-        ),
-    }
+    let [x] = args else {
+        panic!("np.{name}(...) takes one argument");
+    };
+    crate::helpers::dtype::convert(b, x, dtype)
 }
 
 /// `np.isclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False)`:
@@ -719,13 +686,14 @@ impl IRGenerator {
 
         let v = match (target, member) {
             // ── np.* (numpy-like operations) ───────────────────────────
-            // numpy dtype aliases — collapse width into ZinniaType (Float / Integer / Boolean)
-            ("np", alias) if numpy_dtype_alias(alias).is_some() => {
-                let class = numpy_dtype_alias(alias).unwrap();
-                if visited_args.is_empty() {
-                    Value::Class(class)
+            // NumPy scalar types: the type itself (a dtype argument), or called
+            // on a value, the value converted (`helpers::dtype`).
+            ("np", name) if Dtype::from_numpy_type(name).is_some() => {
+                let dtype = Dtype::from_numpy_type(name).unwrap();
+                if visited_args_orig.is_empty() {
+                    dtype.type_value(&mut self.builder)
                 } else {
-                    numpy_scalar_type_call(&mut self.builder, alias, class, visited_args)
+                    numpy_scalar_type_call(&mut self.builder, name, dtype, visited_args_orig)
                 }
             }
             // Complex helpers
@@ -835,12 +803,14 @@ impl IRGenerator {
                             }
                         }
                     }
-                    // Handle dtype kwarg for type casting
-                    let cast_val = if let Some(dtype) = _visited_kwargs.get("dtype") {
-                        let to_float = matches!(dtype, Value::Class(ZinniaType::Float));
-                        self.cast_composite(val, to_float)
-                    } else {
-                        val.clone()
+                    // `np.array(x, dtype)`: the elements converted into the dtype.
+                    let dtype = visited_args_orig.get(1).or_else(|| visited_kwargs_orig.get("dtype"));
+                    let cast_val = match dtype.filter(|d| !matches!(d, Value::None)) {
+                        Some(dtype) => {
+                            let dtype = Dtype::required(dtype, &format!("np.{member}"));
+                            crate::helpers::dtype::convert(&mut self.builder, &visited_args_orig[0], dtype)
+                        }
+                        None => val.clone(),
                     };
                     // P1 segarr-foundation: numeric Python list/tuple inputs
                     // become segment-backed `Value::StaticArray`. Falls back
@@ -903,8 +873,35 @@ impl IRGenerator {
                 visited_args,
                 _visited_kwargs,
             ),
-            ("np", "identity" | "eye") => {
-                crate::ops::static_ndarray_ops::np_identity(&mut self.builder, visited_args)
+            ("np", name @ ("identity" | "eye")) => {
+                // np.identity(n, dtype=float), np.eye(N, M=None, k=0, dtype=float):
+                // the square identity, as int64 values unless a dtype is given.
+                let args = visited_args_orig;
+                let kwargs = visited_kwargs_orig;
+                let given = |v: Option<&Value>| v.filter(|v| !matches!(v, Value::None)).cloned();
+                let (m, k, dtype) = if name == "eye" {
+                    (
+                        given(args.get(1).or_else(|| kwargs.get("M"))),
+                        given(args.get(2).or_else(|| kwargs.get("k"))),
+                        given(args.get(3).or_else(|| kwargs.get("dtype"))),
+                    )
+                } else {
+                    (None, None, given(args.get(1).or_else(|| kwargs.get("dtype"))))
+                };
+                let n = args.first().and_then(Value::int_val);
+                let square = m.is_none_or(|m| n.is_some() && m.int_val() == n);
+                let main_diagonal = k.is_none_or(|k| k.int_val() == Some(0));
+                if !(square && main_diagonal) {
+                    panic!("np.eye(N, M, k): only the square identity (M = N, k = 0) is supported");
+                }
+                let out = crate::ops::static_ndarray_ops::np_identity(&mut self.builder, visited_args);
+                match dtype {
+                    Some(dtype) => {
+                        let dtype = Dtype::required(&dtype, &format!("np.{name}"));
+                        crate::helpers::dtype::convert(&mut self.builder, &out, dtype)
+                    }
+                    None => out,
+                }
             }
             ("np", method @ ("argmax" | "argmin")) => {
                 // P4b: native StaticArray dispatch before the legacy boundary.

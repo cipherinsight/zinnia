@@ -75,9 +75,11 @@ def kernel(x: float, n: int, expected: float):
         assert not accepts(program, x, n, truth + 1)
 
 
-@pytest.mark.parametrize("call", ["np.uint8(x)", "np.int32(x)", "np.bool_(x)"])
-def test_narrow_numpy_scalar_types_are_rejected(call):
-    with pytest.raises(ZinniaException, match=r"is not supported: Zinnia computes integers as int64"):
+@pytest.mark.parametrize("call", ["np.uint8(x)", "np.int32(x)"])
+def test_arithmetic_on_narrow_numpy_scalars_is_rejected(call):
+    # The conversion follows NumPy (test_dtype_conversions.py); NumPy then
+    # computes `+ 1` in the narrow type, Zinnia would compute it in int64.
+    with pytest.raises(ZinniaException, match=r"NumPy computes it modulo 2\^(8|32)"):
         compile_kernel(f'''
 def kernel(x: int):
     return {call} + 1

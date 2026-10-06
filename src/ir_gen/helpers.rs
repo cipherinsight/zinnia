@@ -3,36 +3,6 @@ use crate::types::{CompositeData, Value, ValueId, ZinniaType};
 use super::{IRGenerator, SliceIndex};
 
 impl IRGenerator {
-    pub(crate) fn cast_composite(&mut self, val: &Value, to_float: bool) -> Value {
-        match val {
-            Value::List(data) | Value::Tuple(data) => {
-                let is_tuple = matches!(val, Value::Tuple(_));
-                let new_values: Vec<Value> = data
-                    .values
-                    .iter()
-                    .map(|v| self.cast_composite(v, to_float))
-                    .collect();
-                let new_types = new_values.iter().map(|v| v.zinnia_type()).collect();
-                if is_tuple {
-                    Value::Tuple(CompositeData {
-                        elements_type: new_types,
-                        values: new_values,
-                        value_id: ValueId::next(),
-                    })
-                } else {
-                    Value::List(CompositeData {
-                        elements_type: new_types,
-                        values: new_values,
-                        value_id: ValueId::next(),
-                    })
-                }
-            }
-            Value::Integer(_) | Value::Boolean(_) if to_float => self.builder.ir_float_cast(val),
-            Value::Float(_) if !to_float => self.builder.ir_int_cast(val),
-            _ => val.clone(),
-        }
-    }
-
     /// Cast a scalar value to ``target_type`` where Python/NumPy convert
     /// implicitly: an integer or boolean to float, a float to integer, and a
     /// boolean to integer (``bool`` is an ``int`` subtype; the value keeps its
@@ -603,21 +573,19 @@ impl IRGenerator {
         }
     }
 
+    /// The type names a program can use as values, e.g. as a dtype
+    /// (`x.astype(bool)`, `np.zeros(n, dtype=int)`).
     pub(crate) fn register_global_datatypes(&mut self) {
-        // Register Float, Integer, and Complex as class values
-        let float_class = Value::Class(ZinniaType::Float);
-        let int_class = Value::Class(ZinniaType::Integer);
-        let complex_class = Value::Class(ZinniaType::Complex);
-        for name in &["Float", "float"] {
-            self.ctx.set(name, float_class.clone());
-        }
-        for name in &[
-            "Integer", "int", "Int", "integer", "Boolean", "bool", "Bool", "boolean",
-        ] {
-            self.ctx.set(name, int_class.clone());
-        }
-        for name in &["Complex", "complex"] {
-            self.ctx.set(name, complex_class.clone());
+        let types: [(&[&str], ZinniaType); 4] = [
+            (&["Float", "float"], ZinniaType::Float),
+            (&["Integer", "int", "Int", "integer"], ZinniaType::Integer),
+            (&["Boolean", "bool", "Bool", "boolean"], ZinniaType::Boolean),
+            (&["Complex", "complex"], ZinniaType::Complex),
+        ];
+        for (names, zinnia_type) in types {
+            for name in names {
+                self.ctx.set(name, Value::Class(zinnia_type.clone()));
+            }
         }
     }
 

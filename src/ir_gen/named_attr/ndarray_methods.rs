@@ -233,18 +233,8 @@ impl IRGenerator {
                 })
             }
             "dtype" => {
-                // Infer dtype from element types
                 let val = self.ctx.get(var).unwrap_or(Value::None);
-                // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val =
-                    crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
-                let flat = crate::helpers::composite::flatten_composite(&val);
-                let has_float = flat.iter().any(|v| matches!(v, Value::Float(_)));
-                if has_float {
-                    Value::Class(ZinniaType::Float)
-                } else {
-                    Value::Class(ZinniaType::Integer)
-                }
+                crate::helpers::dtype::dtype_of(&mut self.builder, &val)
             }
 
             // ── NDArray ndim, size, flatten, flat, reshape, moveaxis, repeat, filter ─

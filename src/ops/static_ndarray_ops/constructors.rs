@@ -12,6 +12,7 @@ use crate::optim::resolver::{
     require_provable_static_int, resolve_int_or_bounded, BoundedInt, SiteKind,
 };
 use crate::types::{Value, ZinniaType};
+use crate::helpers::dtype::Dtype;
 
 // ── Numpy-like helpers ────────────────────────────────────────────
 
@@ -59,26 +60,24 @@ fn fire_full_static_content_fact(b: &mut IRBuilder, out: &Value, fill: &Value) {
     );
 }
 
-fn scalar_fill_for_dtype(
-    b: &mut IRBuilder,
-    fill: &Value,
-    dtype: crate::types::NumberType,
-) -> Value {
-    match dtype {
-        crate::types::NumberType::Integer => match fill {
-            Value::Integer(_) => fill.clone(),
-            Value::Boolean(_) => b.ir_int_cast(fill),
-            Value::Float(_) => b.ir_int_cast(fill),
-            _ => panic!("np.full/full_like: fill_value must be a scalar numeric or boolean value"),
-        },
-        crate::types::NumberType::Float => match fill {
-            Value::Float(_) => fill.clone(),
-            Value::Integer(_) | Value::Boolean(_) => b.ir_float_cast(fill),
-            _ => panic!("np.full/full_like: fill_value must be a scalar numeric or boolean value"),
-        },
-        crate::types::NumberType::Complex => {
-            panic!("np.full/full_like: Complex fill is not yet implemented")
-        }
+/// The fill value of `np.full` / `np.full_like` converted into the dtype.
+fn fill_of_dtype(b: &mut IRBuilder, fill: &Value, dtype: Dtype) -> Value {
+    if dtype == Dtype::Complex || matches!(fill, Value::Complex { .. }) {
+        panic!("np.full/full_like: Complex fill is not yet implemented");
+    }
+    if !fill.is_number() {
+        panic!("np.full/full_like: fill_value must be a scalar numeric or boolean value");
+    }
+    crate::helpers::dtype::convert_scalar(b, fill, dtype)
+}
+
+/// NumPy's dtype of an array built from the scalar `fill` alone.
+fn dtype_of_fill(fill: &Value) -> Dtype {
+    match fill {
+        Value::Boolean(_) => Dtype::Bool,
+        Value::Float(_) => Dtype::Float,
+        Value::Complex { .. } => Dtype::Complex,
+        _ => Dtype::Int64,
     }
 }
 
@@ -87,13 +86,25 @@ fn scalar_fill_for_dtype(
 /// the DEFAULT is float64 — an unannotated `np.zeros(n)` accumulating
 /// fractional values must NOT silently truncate to integers (binding
 /// audit finding, cases 0398/0399).
-fn fill_dtype(args: &[Value], kwargs: &HashMap<String, Value>) -> ZinniaType {
-    let spec = args.get(1).or_else(|| kwargs.get("dtype"));
-    match spec {
-        Some(Value::Class(t @ (ZinniaType::Integer | ZinniaType::Boolean))) => t.clone(),
-        Some(Value::Class(ZinniaType::Complex)) => ZinniaType::Complex,
-        _ => ZinniaType::Float,
+fn fill_dtype(args: &[Value], kwargs: &HashMap<String, Value>) -> Dtype {
+    requested_dtype(args.get(1).or_else(|| kwargs.get("dtype")), "np.zeros/ones/empty")
+        .unwrap_or(Dtype::Float)
+}
+
+/// The dtype a constructor's `dtype` argument names; `None` when it is
+/// absent or `None`.
+fn requested_dtype(arg: Option<&Value>, context: &str) -> Option<Dtype> {
+    arg.filter(|v| !matches!(v, Value::None)).map(|v| Dtype::required(v, context))
+}
+
+/// A constructor's runtime-shaped result of a fixed-width integer dtype:
+/// its buffer holds the fill value (0 or 1, in every type's range) and is
+/// tracked as that type (`builder/fixed_width.rs`).
+fn track_fixed_width_fill(b: &mut IRBuilder, out: Value, dtype: Dtype) -> Value {
+    if let Dtype::FixedInt(t) = dtype {
+        b.track_fixed_width_array(&out, t);
     }
+    out
 }
 
 pub fn np_fill(
@@ -126,9 +137,9 @@ pub fn np_fill(
                     // `resolve_max`. Float dtype falls back to the
                     // existing static path (dyn-ndarray of float is OK).
                     let dtype =
-                        if req_dtype == ZinniaType::Float {
+                        if req_dtype == Dtype::Float {
                             crate::types::NumberType::Float
-                        } else if req_dtype == ZinniaType::Complex {
+                        } else if req_dtype == Dtype::Complex {
                             // Complex dyn-ndarray isn't supported; defer to
                             // the static path (which will panic if the
                             // shape isn't statically resolvable).
@@ -150,13 +161,14 @@ pub fn np_fill(
                         };
                     // dyn_fill_with_active itself fires the content contract
                     // (zeros_content / ones_content) when fill_value is 0 or 1.
-                    return crate::ops::dyn_ndarray::constructors::dyn_fill_with_active(
+                    let out = crate::ops::dyn_ndarray::constructors::dyn_fill_with_active(
                         b,
                         max as usize,
                         arg.clone(),
                         fill_value,
                         dtype,
                     );
+                    return track_fixed_width_fill(b, out, req_dtype);
                 }
                 BoundedInt::Neither => {
                     // Same diagnostic as the prior `require_static_int`
@@ -174,7 +186,7 @@ pub fn np_fill(
             // (uniform fill — buffer is position-independent, so logical-
             // and runtime-strides agree). Complex dtype keeps the static
             // path (dyn-ndarray of Complex is not supported).
-            let is_complex = req_dtype == ZinniaType::Complex;
+            let is_complex = req_dtype == Dtype::Complex;
             let mut max_shape: Vec<usize> = Vec::with_capacity(data.values.len());
             let mut runtime_shape: Vec<Value> = Vec::with_capacity(data.values.len());
             let mut any_bounded = false;
@@ -208,7 +220,7 @@ pub fn np_fill(
                     },
                     value_to_scalar_i64,
                 };
-                let dtype = if req_dtype == ZinniaType::Float {
+                let dtype = if req_dtype == Dtype::Float {
                     crate::types::NumberType::Float
                 } else {
                     crate::types::NumberType::Integer
@@ -245,7 +257,7 @@ pub fn np_fill(
                                 dtype,
                             );
                             fire_fill_content_contract(b, &out, fill_value);
-                            return out;
+                            return track_fixed_width_fill(b, out, req_dtype);
                         }
                     }
                     BoundedInt::Bounded { max, .. } => {
@@ -260,7 +272,7 @@ pub fn np_fill(
                                 dtype,
                             );
                             fire_fill_content_contract(b, &out, fill_value);
-                            return out;
+                            return track_fixed_width_fill(b, out, req_dtype);
                         }
                     }
                     BoundedInt::Neither => {}
@@ -275,7 +287,7 @@ pub fn np_fill(
                     dtype,
                 );
                 fire_fill_content_contract(b, &out, fill_value);
-                return out;
+                return track_fixed_width_fill(b, out, req_dtype);
             }
             max_shape
         }
@@ -287,7 +299,7 @@ pub fn np_fill(
     let total: usize = shape.iter().product();
 
     // Complex dtype: produce a Complex StaticArray (dual-segment).
-    if req_dtype == ZinniaType::Complex {
+    if req_dtype == Dtype::Complex {
         let real_fill = b.ir_constant_float(fill_value as f64);
         let imag_fill = b.ir_constant_float(0.0);
         let reals = vec![real_fill; total];
@@ -299,23 +311,19 @@ pub fn np_fill(
         return out;
     }
 
-    let (fill, dtype) = match req_dtype {
-        ZinniaType::Float => (
-            b.ir_constant_float(fill_value as f64),
-            crate::types::NumberType::Float,
-        ),
-        // `dtype=bool` cells are booleans (stored in an Integer-dtype
-        // array, like comparison results), so `&`/`|` on them stay logical
-        // and the array is usable as a mask.
-        ZinniaType::Boolean => (
-            b.ir_constant_bool(fill_value != 0),
-            crate::types::NumberType::Integer,
-        ),
-        _ => (
-            b.ir_constant_int(fill_value),
-            crate::types::NumberType::Integer,
-        ),
+    // `dtype=bool` cells are booleans (stored in an Integer-dtype array,
+    // like comparison results), so `&`/`|`/`~` on them stay logical and the
+    // array is usable as a mask. A fixed-width integer fill is one tracked
+    // constant (0 and 1 are in every type's range).
+    let fill = match req_dtype {
+        Dtype::Float => b.ir_constant_float(fill_value as f64),
+        Dtype::Bool => b.ir_constant_bool(fill_value != 0),
+        _ => {
+            let fill = b.ir_constant_int(fill_value);
+            crate::helpers::dtype::convert_scalar(b, &fill, req_dtype)
+        }
     };
+    let dtype = req_dtype.storage();
     let values = vec![fill; total];
     // P1 segarr-foundation: numeric constructors emit Value::StaticArray.
     let out =
@@ -331,27 +339,10 @@ pub fn np_full(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
     let fill_arg = args
         .get(1)
         .unwrap_or_else(|| panic!("np.full: fill_value argument required"));
-    if matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Complex))) {
-        panic!("np.full/full_like: Complex fill is not yet implemented");
-    }
-    let use_float = if let Some(Value::Class(ZinniaType::Float)) = kwargs.get("dtype") {
-        true
-    } else if matches!(kwargs.get("dtype"), Some(Value::Class(_))) {
-        false
-    } else {
-        matches!(fill_arg, Value::Float(_))
-    };
-    let fill_value = if use_float {
-        scalar_fill_for_dtype(b, fill_arg, crate::types::NumberType::Float)
-    } else {
-        scalar_fill_for_dtype(b, fill_arg, crate::types::NumberType::Integer)
-    };
-    let dtype = if use_float {
-        crate::types::NumberType::Float
-    } else {
-        crate::types::NumberType::Integer
-    };
-    let out = np_full_with_value(b, shape_arg, &fill_value, dtype);
+    let dtype = requested_dtype(args.get(2).or_else(|| kwargs.get("dtype")), "np.full")
+        .unwrap_or_else(|| dtype_of_fill(fill_arg));
+    let fill_value = fill_of_dtype(b, fill_arg, dtype);
+    let out = np_full_with_value(b, shape_arg, &fill_value, dtype.storage());
     fire_full_static_content_fact(b, &out, &fill_value);
     out
 }
@@ -510,24 +501,10 @@ pub fn np_fill_like(
     } else {
         crate::helpers::composite::get_composite_shape(x)
     };
-    // Detect Complex dtype: explicit dtype=complex or x is a Complex array.
-    let is_complex = if let Some(Value::Class(ZinniaType::Complex)) = kwargs.get("dtype") {
-        true
-    } else if matches!(kwargs.get("dtype"), Some(Value::Class(_))) {
-        false
-    } else {
-        match x {
-            Value::StaticArray {
-                dtype: crate::types::NumberType::Complex,
-                ..
-            } => true,
-            _ => crate::helpers::composite::flatten_composite(x)
-                .iter()
-                .any(|v| matches!(v.zinnia_type(), ZinniaType::Complex)),
-        }
-    };
+    let dtype = requested_dtype(args.get(1).or_else(|| kwargs.get("dtype")), "np.zeros_like")
+        .unwrap_or_else(|| crate::helpers::dtype::element_dtype(b, x));
     let total: usize = shape.iter().product();
-    if is_complex {
+    if dtype == Dtype::Complex {
         let real_fill = b.ir_constant_float(fill_value as f64);
         let imag_fill = b.ir_constant_float(0.0);
         let reals = vec![real_fill; total];
@@ -538,32 +515,15 @@ pub fn np_fill_like(
         fire_fill_content_contract(b, &out, fill_value);
         return out;
     }
-    let use_float = if let Some(Value::Class(ZinniaType::Float)) = kwargs.get("dtype") {
-        true
-    } else if matches!(kwargs.get("dtype"), Some(Value::Class(_))) {
-        false
-    } else {
-        match x {
-            Value::StaticArray {
-                dtype: crate::types::NumberType::Float,
-                ..
-            } => true,
-            _ => crate::helpers::composite::flatten_composite(x)
-                .iter()
-                .any(|v| matches!(v.zinnia_type(), ZinniaType::Float)),
+    let fill = match dtype {
+        Dtype::Float => b.ir_constant_float(fill_value as f64),
+        Dtype::Bool => b.ir_constant_bool(fill_value != 0),
+        _ => {
+            let fill = b.ir_constant_int(fill_value);
+            crate::helpers::dtype::convert_scalar(b, &fill, dtype)
         }
     };
-    let (fill, dtype) = if use_float {
-        (
-            b.ir_constant_float(fill_value as f64),
-            crate::types::NumberType::Float,
-        )
-    } else {
-        (
-            b.ir_constant_int(fill_value),
-            crate::types::NumberType::Integer,
-        )
-    };
+    let dtype = dtype.storage();
     let values = vec![fill; total];
     // P1 segarr-foundation: numeric constructors emit Value::StaticArray.
     let out =
@@ -579,29 +539,10 @@ pub fn np_full_like(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, 
     let fill_arg = args
         .get(1)
         .unwrap_or_else(|| panic!("np.full_like: fill_value argument required"));
-    if matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Complex))) {
-        panic!("np.full/full_like: Complex fill is not yet implemented");
-    }
-    let dtype = if let Some(Value::Class(ZinniaType::Float)) = kwargs.get("dtype") {
-        crate::types::NumberType::Float
-    } else if let Some(Value::Class(ZinniaType::Integer)) = kwargs.get("dtype") {
-        crate::types::NumberType::Integer
-    } else {
-        match x {
-            Value::StaticArray { dtype, .. } => *dtype,
-            _ => {
-                if crate::helpers::composite::flatten_composite(x)
-                    .iter()
-                    .any(|v| matches!(v.zinnia_type(), ZinniaType::Float))
-                {
-                    crate::types::NumberType::Float
-                } else {
-                    crate::types::NumberType::Integer
-                }
-            }
-        }
-    };
-    let fill_value = scalar_fill_for_dtype(b, fill_arg, dtype);
+    let dtype = requested_dtype(args.get(2).or_else(|| kwargs.get("dtype")), "np.full_like")
+        .unwrap_or_else(|| crate::helpers::dtype::element_dtype(b, x));
+    let fill_value = fill_of_dtype(b, fill_arg, dtype);
+    let dtype = dtype.storage();
     let shape_arg = match x {
         Value::StaticArray { shape, .. } => {
             let values = shape
@@ -733,17 +674,24 @@ pub fn np_arange(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Val
     // can arrive positionally (4th arg) or as a kwarg; float arguments
     // make the sequence float-typed.
     let mut core: Vec<Value> = args.to_vec();
-    let mut dtype_req: Option<ZinniaType> = None;
-    if let Some(Value::Class(t)) = core.last() {
-        dtype_req = Some(t.clone());
+    let positional_dtype = core.last().and_then(Dtype::from_value);
+    if positional_dtype.is_some() {
         core.pop();
     }
-    if let Some(Value::Class(t)) = kwargs.get("dtype") {
-        dtype_req = Some(t.clone());
+    let dtype_req = requested_dtype(kwargs.get("dtype"), "np.arange").or(positional_dtype);
+    let out = np_arange_of(b, &core, dtype_req);
+    match dtype_req {
+        Some(dtype @ (Dtype::Bool | Dtype::FixedInt(_) | Dtype::Complex)) => {
+            crate::helpers::dtype::convert(b, &out, dtype)
+        }
+        _ => out,
     }
+}
 
+/// `np.arange` over the range arguments `core`, as int64 or float values.
+fn np_arange_of(b: &mut IRBuilder, core: &[Value], dtype_req: Option<Dtype>) -> Value {
     let any_float = core.iter().any(|v| matches!(v, Value::Float(_)));
-    if any_float || dtype_req == Some(ZinniaType::Float) {
+    if any_float || dtype_req == Some(Dtype::Float) {
         // Static float sequence. NumPy computes the length as
         // ceil((stop - start) / step) and the i-th value as
         // start + i*step (no accumulation drift).
@@ -766,7 +714,7 @@ pub fn np_arange(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Val
         };
         assert!(step != 0.0, "np.arange: step must not be zero");
         let n = ((stop - start) / step).ceil().max(0.0) as usize;
-        let int_out = dtype_req == Some(ZinniaType::Integer);
+        let int_out = dtype_req.is_some_and(|d| d.storage() == crate::types::NumberType::Integer);
         let mut values = Vec::with_capacity(n);
         for i in 0..n {
             let v = start + (i as f64) * step;
@@ -789,7 +737,7 @@ pub fn np_arange(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Val
         );
     }
 
-    np_arange_int(b, &core)
+    np_arange_int(b, core)
 }
 
 fn np_arange_int(b: &mut IRBuilder, args: &[Value]) -> Value {
@@ -1043,7 +991,7 @@ fn np_linspace_array(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String,
         .get("endpoint")
         .and_then(|v| v.bool_val())
         .unwrap_or(true);
-    let use_int = matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Integer)));
+    let use_int = linspace_dtype(kwargs).is_some_and(|d| d.storage() == crate::types::NumberType::Integer);
     let axis_raw = kwargs.get("axis").and_then(|v| v.int_val()).unwrap_or(0);
 
     let to_list = |b: &mut IRBuilder, v: &Value| -> Value {
@@ -1141,7 +1089,24 @@ fn np_linspace_array(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String,
     crate::helpers::composite::build_nested_value(flat, types, &target)
 }
 
+/// `np.linspace`'s `dtype=` argument.
+fn linspace_dtype(kwargs: &HashMap<String, Value>) -> Option<Dtype> {
+    requested_dtype(kwargs.get("dtype"), "np.linspace")
+}
+
+/// `np.linspace`: the samples computed as int64 (an integer dtype) or float
+/// values, then converted into a bool, fixed-width or complex dtype.
 pub fn np_linspace(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+    let out = np_linspace_of(b, args, kwargs);
+    match linspace_dtype(kwargs) {
+        Some(dtype @ (Dtype::Bool | Dtype::FixedInt(_) | Dtype::Complex)) => {
+            crate::helpers::dtype::convert(b, &out, dtype)
+        }
+        _ => out,
+    }
+}
+
+fn np_linspace_of(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
     if args.len() < 2 {
         return Value::None;
     }
@@ -1169,7 +1134,7 @@ pub fn np_linspace(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, V
         .get("endpoint")
         .and_then(|v| v.bool_val())
         .unwrap_or(true);
-    let use_int = matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Integer)));
+    let use_int = linspace_dtype(kwargs).is_some_and(|d| d.storage() == crate::types::NumberType::Integer);
     let dtype = if use_int {
         crate::types::NumberType::Integer
     } else {

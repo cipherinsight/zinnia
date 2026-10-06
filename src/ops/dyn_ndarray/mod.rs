@@ -254,7 +254,7 @@ impl IRGenerator {
         match method {
             // Pure metadata
             "ndim" => metadata::dyn_ndim(&mut self.builder, &data),
-            "dtype" => metadata::dyn_dtype(&data),
+            "dtype" => metadata::dyn_dtype(&mut self.builder, &data),
             "shape" => metadata::dyn_shape(&mut self.builder, &data),
             "size" => metadata::dyn_size(&mut self.builder, &data),
 

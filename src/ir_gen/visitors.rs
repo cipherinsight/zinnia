@@ -1826,7 +1826,19 @@ impl IRGenerator {
                 indices.push(SliceIndex::Single(Value::None));
             }
         }
+        // An index means its value whatever its NumPy type; the indexing
+        // lowerings compute with it in int64 (see `helpers::dtype::as_index`).
         indices
+            .into_iter()
+            .map(|index| match index {
+                SliceIndex::Single(v) => SliceIndex::Single(crate::helpers::dtype::as_index(&mut self.builder, &v)),
+                SliceIndex::Range(start, stop, step) => {
+                    let mut bound = |v: Option<Value>| v.map(|v| crate::helpers::dtype::as_index(&mut self.builder, &v));
+                    SliceIndex::Range(bound(start), bound(stop), bound(step))
+                }
+                other => other,
+            })
+            .collect()
     }
 
     /// Handle range slicing on lists/tuples.
@@ -2256,6 +2268,7 @@ impl IRGenerator {
         }
         let inner_val = self.visit_subscript(inner);
         let indices = self.eval_slice_indices(outer);
+        self.builder.check_assignment(&inner_val, &value);
         let root_segment = chain_root(inner)
             .and_then(|root| self.ctx.get(root))
             .and_then(|root| super::detached_copies::array_segment(&root));
@@ -2321,6 +2334,7 @@ impl IRGenerator {
         let Some(current) = self.ctx.get(var_name) else {
             panic!("Variable `{}` not found", var_name);
         };
+        self.builder.check_assignment(&current, &value);
         let updated = match &current {
             Value::Tuple(_) => panic!("'tuple' object does not support item assignment"),
             Value::StaticArray { .. } => self.static_array_setitem(&current, &indices, value),

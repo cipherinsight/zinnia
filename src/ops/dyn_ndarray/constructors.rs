@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::builder::IRBuilder;
 use crate::optim::resolver::{require_provable_static_int, SiteKind};
 use crate::types::{
-    DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value, ValueId, ZinniaType,
+    DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value, ValueId,
 };
 
 use super::{dyn_row_major_strides, value_to_scalar_i64};
@@ -495,13 +495,20 @@ pub fn parse_shape_arg(b: &mut IRBuilder, val: &Value) -> Vec<usize> {
     }
 }
 
+/// The storage the `dtype=` argument of the `DynamicNDArray` constructors
+/// asks for (float by default, as NumPy). These constructors build int64,
+/// float and complex arrays only.
 pub fn parse_dtype_kwarg(kwargs: &HashMap<String, Value>) -> NumberType {
-    if let Some(Value::Class(ZinniaType::Integer)) = kwargs.get("dtype") {
-        NumberType::Integer
-    } else if let Some(Value::Class(ZinniaType::Float)) = kwargs.get("dtype") {
-        NumberType::Float
-    } else {
-        NumberType::Float // default to float like Python
+    use crate::helpers::dtype::Dtype;
+    match kwargs.get("dtype").filter(|v| !matches!(v, Value::None)) {
+        None => NumberType::Float,
+        Some(v) => match Dtype::required(v, "DynamicNDArray constructor") {
+            dtype @ (Dtype::Int64 | Dtype::Float | Dtype::Complex) => dtype.storage(),
+            _ => panic!(
+                "DynamicNDArray constructors build int64, float and complex arrays; convert \
+                 with .astype(...) for a bool or fixed-width integer dtype"
+            ),
+        },
     }
 }
 

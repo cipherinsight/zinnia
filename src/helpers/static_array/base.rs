@@ -70,6 +70,7 @@ pub fn build_static_array_from_flat(
     let cells: Vec<ScalarValue<i64>> = flat.iter().map(value_to_scalar_i64).collect();
     let segment_id = build_segment_for_payload(b, &cells, dtype);
     let strides = row_major_strides(&shape);
+    b.note_static_array_cells(segment_id, &flat);
     b.static_array_payload.insert(segment_id, flat);
     Value::StaticArray {
         dtype,

@@ -246,6 +246,11 @@ pub(super) fn reduction(b: &mut IRBuilder, op: &str, args: &[Value], kwargs: &Ha
     let materialized = if matches!(original,Value::List(_)|Value::Tuple(_)) { crate::helpers::static_array::base::deep_to_value_list(b,original) } else { original.clone() };
     let mut input = crate::helpers::static_array::base::to_static_array(b, &materialized).unwrap_or(materialized);
     if let Some(dtype) = kw.get("dtype").filter(|v| !matches!(v, Value::None)) {
+        // NumPy accumulates in the dtype: a boolean sum is a logical or,
+        // a fixed-width one wraps (rejected with its arithmetic).
+        if crate::helpers::dtype::Dtype::from_value(dtype) == Some(crate::helpers::dtype::Dtype::Bool) {
+            panic!("np.{op}(..., dtype=bool) is not supported (NumPy reduces with a logical or/and)");
+        }
         input = astype(b, &input, dtype);
     }
     let initial = kw.get("initial").filter(|v| !matches!(v, Value::None));
@@ -279,42 +284,10 @@ pub(super) fn reduction(b: &mut IRBuilder, op: &str, args: &[Value], kwargs: &Ha
     if let Some(target) = kw.get("out") { write_output(b,&result,target,None) } else { result }
 }
 
-/// Preserve ndarray arithmetic after a numeric dtype conversion.
+/// `x.astype(dtype)`: `x` converted into the dtype (`helpers::dtype`).
 pub(super) fn astype(b: &mut IRBuilder, input: &Value, dtype: &Value) -> Value {
-    use crate::types::{NumberType, ZinniaType};
-    let to_float = match dtype {
-        Value::Class(ZinniaType::Float) => true,
-        Value::Class(ZinniaType::Integer) => false,
-        Value::String(s) if ["float", "float64", "f8"].contains(&s.val.as_str()) => true,
-        Value::String(s) if ["int", "int64", "i8"].contains(&s.val.as_str()) => false,
-        _ => panic!("dtype conversion requires int64 or float64"),
-    };
-    let convert = |b: &mut IRBuilder, value: &Value| {
-        match value {
-            Value::Integer(_) | Value::Boolean(_) if to_float => b.ir_float_cast(value),
-            Value::Float(_) | Value::Boolean(_) if !to_float => b.ir_int_cast(value),
-            _ => value.clone(),
-        }
-    };
-    // A NumPy scalar's `astype` is a scalar (`np.floor(2.5).astype(int)`),
-    // not a 0-d array.
-    if matches!(input, Value::Integer(_) | Value::Float(_) | Value::Boolean(_)) {
-        return convert(b, input);
-    }
-    if let Value::DynamicNDArray(data) = input {
-        let mut result = crate::ops::dyn_ndarray::force_contiguous(b, data);
-        let cells = crate::helpers::segment::read_all_typed(b, result.segment_id, result.max_length(), result.dtype);
-        let cells = cells.iter().map(|cell| convert(b, cell)).collect::<Vec<_>>();
-        result.dtype = if to_float { NumberType::Float } else { NumberType::Integer };
-        result.segment_id = crate::helpers::segment::alloc_and_write_values(b, &cells, result.dtype);
-        result.value_id = crate::types::ValueId::next();
-        return Value::DynamicNDArray(result);
-    }
-    let shape = crate::helpers::composite::get_composite_shape(input);
-    let cells = crate::helpers::composite::flatten_composite_with_builder(b, input);
-    let cells = cells.iter().map(|cell| convert(b, cell)).collect();
-    crate::helpers::static_array::base::build_static_array_from_flat(b, cells, shape,
-        if to_float { NumberType::Float } else { NumberType::Integer })
+    let dtype = crate::helpers::dtype::Dtype::required(dtype, "astype");
+    crate::helpers::dtype::convert(b, input, dtype)
 }
 
 /// Median of a statically shaped array, with ordinary NumPy axis semantics.
