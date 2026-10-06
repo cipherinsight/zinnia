@@ -1113,3 +1113,47 @@ fn key_comparison_matches_the_mock_and_rejects_false_assertions() {
         }
     }
 }
+
+/// A running argmax (a chain of selects on comparison bits) and an `any`
+/// (a chain of ORs) are written in the forms Noir lowers with fewest gates:
+/// a select on a comparison bit `c` as `f - c * f + c * t`, an OR as
+/// `a + (1 - a) * b`. Both are the polynomials of the textbook forms, so the
+/// answers are unchanged; this checks the text and the answers.
+#[test]
+fn select_chains_and_or_chains_use_the_cheaper_forms() {
+    let mut g = Graph::default();
+    let xs: Vec<u32> = (0..4).map(|i| g.read_int(&format!("x{i}"))).collect();
+    let zero = g.int(0);
+    let (mut best, mut best_idx, mut any) = (xs[0], zero, g.push(IR::GtI, &[xs[0], zero]));
+    for (i, x) in xs.iter().enumerate().skip(1) {
+        let idx = g.int(i as i64);
+        let greater = g.push(IR::GtI, &[*x, best]);
+        best = g.push(IR::SelectI, &[greater, *x, best]);
+        best_idx = g.push(IR::SelectI, &[greater, idx, best_idx]);
+        let positive = g.push(IR::GtI, &[*x, zero]);
+        any = g.push(IR::LogicalOr, &[any, positive]);
+    }
+    g.expose(best_idx);
+    g.expose(any);
+    let graph = g.finish();
+    let w = |v: [i64; 4]| witness(&[("x0", v[0]), ("x1", v[1]), ("x2", v[2]), ("x3", v[3])]);
+    let emitted = emit_circuit(&graph, &w([1, 5, 5, -2]), &ProvingParams::default()).unwrap();
+    let terms: Vec<Vec<&str>> = emitted
+        .main_nr
+        .lines()
+        .filter_map(|l| l.split(" = ").nth(1))
+        .map(|rhs| rhs.trim_end_matches(';').split(' ').collect())
+        .collect();
+    // `f - c * f + c * t`: two value selects (the last value is unused)
+    // and two index selects (the first is `c * t`, its `f` is 0)
+    let selects = terms.iter().filter(|t| t.len() == 9 && t[1] == "-" && t[4] == t[0] && t[5] == "+" && t[6] == t[2]);
+    // `a + (1 - a) * b`
+    let ors = terms.iter().filter(|t| t.len() == 7 && t[2] == "(1" && t[4] == format!("{})", t[0]));
+    assert_eq!((selects.count(), ors.count()), (4, 3), "{}", emitted.main_nr);
+    if !toolchain_present(false) {
+        return;
+    }
+    assert_eq!(execute(&graph, &w([1, 5, 5, -2])).unwrap(), vec![1, 1]);
+    assert_eq!(execute(&graph, &w([-3, -1, -7, -1])).unwrap(), vec![1, 0]);
+    assert_eq!(execute(&graph, &w([-3, -4, -7, 2])).unwrap(), vec![3, 1]);
+}
