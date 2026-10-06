@@ -270,60 +270,136 @@ fn np_percentile_ds1000(
     crate::ops::static_ndarray_ops::np_percentile(b, args, kwargs)
 }
 
-fn np_correlate_ds1000(
+/// The `mode` of `np.correlate` / `np.convolve`.
+#[derive(Clone, Copy, PartialEq)]
+enum CorrelationMode {
+    Valid,
+    Same,
+    Full,
+}
+
+/// `np.correlate(a, v, mode='valid')` and `np.convolve(a, v, mode='full')`
+/// of 1-D arrays (lists and scalars are converted, as NumPy's `ndmin=1`),
+/// by direct sums with NumPy's index conventions:
+///
+/// * `correlate`: with `x` the longer and `y` the shorter operand
+///   (`n1 >= n2`), `full[k] = sum_j x[j + k - (n2 - 1)] * y[j]` over the
+///   `j` that index `x`, for `k` in `[0, n1 + n2 - 1)`; `valid` is
+///   `full[n2 - 1 .. n1]`, `same` is the `n1` values from
+///   `n2 - 1 - n2 / 2`. When `v` is the longer operand, NumPy correlates
+///   `(v, a)` and reverses the result.
+/// * `convolve(a, v)` is `correlate(a, v[::-1])` with the longer operand
+///   first (convolution is symmetric).
+///
+/// Integer operands give exact integer sums; otherwise each output is one
+/// fused `ProductSumF` (the real sum rounded once).
+fn np_correlate(
     b: &mut crate::builder::IRBuilder,
+    convolve: bool,
     args: &[Value],
     kwargs: &HashMap<String, Value>,
 ) -> Value {
-    ensure_no_kwargs("np.correlate", kwargs, &["mode"]);
-    assert!(args.len() >= 2, "np.correlate: requires a and v");
-    let mode = kwargs
-        .get("mode")
-        .or_else(|| args.get(2))
-        .and_then(|v| v.string_val())
-        .unwrap_or("valid");
-    if mode != "valid" {
-        panic!("np.correlate: DS1000 slice currently supports mode='valid' only");
+    let name = if convolve { "np.convolve" } else { "np.correlate" };
+    ensure_no_kwargs(name, kwargs, &["mode"]);
+    if args.len() < 2 || args.len() > 3 {
+        panic!("{name} takes 2 or 3 positional arguments (a, v, mode), got {}", args.len());
     }
-    let (lhs_dtype, lhs_shape) = static_array_meta(&args[0], "np.correlate");
-    let (rhs_dtype, rhs_shape) = static_array_meta(&args[1], "np.correlate");
-    if lhs_dtype == NumberType::Complex || rhs_dtype == NumberType::Complex {
-        panic!("np.correlate: Complex inputs are not supported in this slice");
-    }
-    if lhs_shape.len() != 1 || rhs_shape.len() != 1 {
-        panic!("np.correlate: DS1000 slice supports 1-D StaticArray inputs only");
-    }
-    let a = static_cells(b, &args[0], "np.correlate");
-    let v = static_cells(b, &args[1], "np.correlate");
-    // NumPy: `c[k] = sum_n a[n + k] * v[n]` when `len(a) >= len(v)`; when
-    // `v` is longer it computes `correlate(v, a)` and returns it reversed.
-    let swapped = v.len() > a.len();
-    let (long, short) = if swapped { (&v, &a) } else { (&a, &v) };
-    let out_len = long.len() - short.len() + 1;
-    let integer_inputs = lhs_dtype == NumberType::Integer && rhs_dtype == NumberType::Integer;
-    let mut out = Vec::with_capacity(out_len);
-    for start in 0..out_len {
-        let window = &long[start..start + short.len()];
-        out.push(if integer_inputs {
-            integer_product_sum(b, window, short)
-        } else {
-            product_sum(b, window, short)
-        });
-    }
-    if swapped {
-        out.reverse();
-    }
-    let out_dtype = if integer_inputs {
-        NumberType::Integer
-    } else {
-        NumberType::Float
+    let mode = match (args.get(2), kwargs.get("mode")) {
+        (Some(_), Some(_)) => panic!("{name} got multiple values for argument 'mode'"),
+        (Some(v), None) | (None, Some(v)) => correlation_mode(v, name),
+        (None, None) if convolve => CorrelationMode::Full,
+        (None, None) => CorrelationMode::Valid,
     };
-    crate::helpers::static_array::base::build_static_array_from_flat(
-        b,
-        out,
-        vec![out_len],
-        out_dtype,
-    )
+    let (a, a_dtype) = correlation_operand(b, &args[0], name, "a");
+    let (v, v_dtype) = correlation_operand(b, &args[1], name, "v");
+    let integer = a_dtype == NumberType::Integer && v_dtype == NumberType::Integer;
+    let out = if convolve {
+        let (long, short) = if v.len() > a.len() { (v, a) } else { (a, v) };
+        let reversed: Vec<Value> = short.into_iter().rev().collect();
+        correlation(b, &long, &reversed, mode, integer)
+    } else if v.len() > a.len() {
+        let mut out = correlation(b, &v, &a, mode, integer);
+        out.reverse();
+        out
+    } else {
+        correlation(b, &a, &v, mode, integer)
+    };
+    let len = out.len();
+    let dtype = if integer { NumberType::Integer } else { NumberType::Float };
+    crate::helpers::static_array::base::build_static_array_from_flat(b, out, vec![len], dtype)
+}
+
+/// NumPy's `mode` names: any string whose first letter is `v`, `s` or `f`
+/// (case-insensitive), as `numpy._core.numeric._mode_from_name`.
+fn correlation_mode(value: &Value, name: &str) -> CorrelationMode {
+    let text = value
+        .string_val()
+        .unwrap_or_else(|| panic!("{name}: mode must be a compile-time string ('valid', 'same' or 'full')"));
+    match text.chars().next().map(|c| c.to_ascii_lowercase()) {
+        Some('v') => CorrelationMode::Valid,
+        Some('s') => CorrelationMode::Same,
+        Some('f') => CorrelationMode::Full,
+        _ => panic!("{name}: mode must be 'valid', 'same' or 'full', got '{text}'"),
+    }
+}
+
+/// The elements and dtype of a 1-D operand (a scalar is one element).
+fn correlation_operand(
+    b: &mut crate::builder::IRBuilder,
+    value: &Value,
+    name: &str,
+    parameter: &str,
+) -> (Vec<Value>, NumberType) {
+    let array = match value {
+        Value::StaticArray { .. } => value.clone(),
+        Value::List(_) | Value::Tuple(_) => crate::helpers::static_array::base::to_static_array(b, value)
+            .unwrap_or_else(|| panic!("{name}: {parameter} must be a rectangular array of numbers")),
+        Value::Integer(_) | Value::Boolean(_) => return (vec![value.clone()], NumberType::Integer),
+        Value::Float(_) => return (vec![value.clone()], NumberType::Float),
+        Value::DynamicNDArray(_) => panic!("{name} is not yet supported for bounded-dynamic arrays"),
+        other => panic!("{name}: unsupported type {} for {parameter}", other.zinnia_type()),
+    };
+    let (dtype, shape) = static_array_meta(&array, name);
+    if dtype == NumberType::Complex {
+        panic!("{name}: complex arrays are not supported");
+    }
+    if shape.len() != 1 {
+        panic!("{name}: {parameter} must be one-dimensional (NumPy: object too deep for desired array)");
+    }
+    if shape[0] == 0 {
+        panic!("{name}: {parameter} cannot be empty");
+    }
+    (static_cells(b, &array, name), dtype)
+}
+
+/// `correlate(x, y, mode)` for `x.len() >= y.len() >= 1` (see `np_correlate`).
+fn correlation(
+    b: &mut crate::builder::IRBuilder,
+    x: &[Value],
+    y: &[Value],
+    mode: CorrelationMode,
+    integer: bool,
+) -> Vec<Value> {
+    let (n1, n2) = (x.len(), y.len());
+    let (start, len) = match mode {
+        CorrelationMode::Valid => (n2 - 1, n1 - n2 + 1),
+        CorrelationMode::Same => (n2 - 1 - n2 / 2, n1),
+        CorrelationMode::Full => (0, n1 + n2 - 1),
+    };
+    (start..start + len)
+        .map(|k| {
+            // j with 0 <= j + k - (n2 - 1) < n1.
+            let first = (n2 - 1).saturating_sub(k);
+            let last = (n1 + n2 - 1 - k).min(n2);
+            let lhs: Vec<Value> = (first..last).map(|j| x[j + k + 1 - n2].clone()).collect();
+            let rhs = &y[first..last];
+            if integer {
+                integer_product_sum(b, &lhs, rhs)
+            } else {
+                product_sum(b, &lhs, rhs)
+            }
+        })
+        .collect()
 }
 
 /// `np.triu(m, k=0)` / `np.tril(m, k=0)`: `m` with the elements below
@@ -1734,8 +1810,9 @@ impl IRGenerator {
                 visited_args_orig,
                 visited_kwargs_orig,
             ),
-            ("np", "correlate") => np_correlate_ds1000(
+            ("np", name @ ("correlate" | "convolve")) => np_correlate(
                 &mut self.builder,
+                name == "convolve",
                 visited_args_orig,
                 visited_kwargs_orig,
             ),

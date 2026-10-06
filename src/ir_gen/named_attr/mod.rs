@@ -684,7 +684,7 @@ fn is_complex_static_array(value: &Value) -> bool {
 fn returns_one_ndarray(name: &str, positional: usize) -> bool {
     const ONE_NDARRAY: &[&str] = &[
         "add_outer", "subtract_outer", "multiply_outer", "divide_outer", "arange", "argwhere",
-        "bincount", "block", "broadcast_to", "ceil", "clip", "column_stack", "concatenate",
+        "bincount", "block", "broadcast_to", "ceil", "clip", "column_stack", "concatenate", "convolve",
         "copy", "corrcoef", "correlate", "cov", "cumprod", "cumsum", "delete", "diag", "diff",
         "dot", "dstack", "einsum", "empty_like", "expand_dims", "flatnonzero", "flip", "fliplr",
         "flipud", "floor", "full", "full_like", "hstack", "in1d", "inner", "insert", "isclose", "isin",
