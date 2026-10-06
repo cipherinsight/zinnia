@@ -71,3 +71,53 @@ def test_module_level_import_used_by_circuit_is_checked(tmp_path, monkeypatch):
     monkeypatch.syspath_prepend(str(tmp_path))
     with pytest.raises(ZinniaException, match="out of scope: imports itertools"):
         __import__("kernel_with_itertools")
+
+
+MODULE_LEVEL_IMPORTS = [
+    ("import numpy", "numpy.sqrt(x[0]) + numpy.sum(x)"),
+    ("import numpy as xp", "xp.sqrt(x[0]) + xp.sum(x)"),
+    ("import numpy.linalg", "numpy.sqrt(x[0]) + numpy.sum(x)"),
+    ("from numpy import sqrt, sum as total", "sqrt(x[0]) + total(x)"),
+    ("import math\nimport numpy", "math.sqrt(x[0]) + numpy.sum(x)"),
+    ("from math import sqrt as root\nimport numpy", "root(x[0]) + numpy.sum(x)"),
+]
+
+
+@pytest.mark.parametrize("index", range(len(MODULE_LEVEL_IMPORTS)))
+def test_module_level_numpy_and_math_imports_resolve(index, tmp_path, monkeypatch):
+    # The decorator sees only the function's source; a module-level
+    # `import numpy` used to leave `numpy.sqrt` unresolved ("Named attribute
+    # `numpy.sqrt` not yet implemented").
+    statements, expression = MODULE_LEVEL_IMPORTS[index]
+    name = f"kernel_module_imports_{index}"
+    (tmp_path / f"{name}.py").write_text(
+        "from zinnia import *\n" + statements + "\n\n"
+        "@zk_circuit\n"
+        'def kernel(x: Float[Array, "2"], expected: Float):\n'
+        f"    assert {expression} == expected\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    program = ZKCircuit.from_method(__import__(name).kernel).compile()
+    assert accepts(program, np.array([4.0, 1.0]), 7.0)
+    assert not accepts(program, np.array([4.0, 1.0]), 8.0)
+
+
+def test_module_level_imports_resolve_in_chips_and_respect_local_names(tmp_path, monkeypatch):
+    (tmp_path / "kernel_module_imports_chip.py").write_text(textwrap.dedent('''
+        from zinnia import *
+        import numpy
+        from math import sqrt
+
+        @zk_chip
+        def norm1(v: Float[Array, "2"]) -> Float:
+            return numpy.sum(numpy.abs(v))
+
+        @zk_circuit
+        def kernel(x: Float[Array, "2"], expected: Float):
+            sqrt = 3.0
+            assert norm1(x) + sqrt == expected
+    '''))
+    monkeypatch.syspath_prepend(str(tmp_path))
+    program = ZKCircuit.from_method(__import__("kernel_module_imports_chip").kernel).compile()
+    assert accepts(program, np.array([-4.0, 1.0]), 8.0)
+    assert not accepts(program, np.array([-4.0, 1.0]), 7.0)
