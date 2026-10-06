@@ -1366,7 +1366,45 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn sqrt_product_i_f(&mut self, b: &Self::CellRef, c: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         self.sqrt_product_int(b, c)
     }
-    fn exp_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("exp_f") }
+    /// `exp`, by `kernel::fp_exp`'s algorithm (Noir's `qexp` is the same):
+    /// `y = mul_f(x, 1/ln 2)`, `(i, f) = (floor(y / 2^P), y mod 2^P)`,
+    /// `t = 2^(f / 2^P)` by Horner, and with `k = i + EXP_SHIFT` the result
+    /// is 0 for `k < 0` and `floor(t·2^k / 2^EXP_SHIFT)` otherwise.
+    ///
+    /// Soundness: `mul_f`, the two rescales and every Horner step pin their
+    /// quotients, so `y`, `i`, `f` and `t` are functions of `x`. The
+    /// underflow bit `u = [k < 0]` is a pinned comparison. `k' = (1 - u)·k`
+    /// is decomposed into 7 bits (`power_of_two`), which proves
+    /// `0 <= k' < 128`: there is no witness for `k >= 128`, where the result
+    /// leaves the window anyway. `2^k' < 2^128` and `t < 2^(P+2)`, so the gate
+    /// product is the integer `t·2^k'` (below p), and `rescale_by` pins its
+    /// floor and checks it into the signed 64-bit window: no witness when the
+    /// result leaves it (the kernel's `None`). The output `(1 - u)·q` is a
+    /// function of `x`: the kernel's value.
+    fn exp_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        let precision_bits = self.params.precision_bits;
+        if kernel::fp_exp(a.value, precision_bits).is_none() {
+            let x = kernel::dequantize_from_fp(a.value, precision_bits);
+            self.note_unsat(move || format!("exp({x}) is outside the fixed-point domain (result beyond the signed 64-bit window)"));
+        }
+        let inv_ln2 = self.const_cell(kernel::i128_to_fp(kernel::inv_ln2_q(precision_bits)));
+        let y = self.mul_f(a, &inv_ln2)?;
+        let (i, f) = self.rescale_with_remainder(&y, precision_bits)?;
+        let t = self.poly_eval_horner(&f, &kernel::exp2_coefs_q(precision_bits))?;
+        let k = self.add_constant(&i, kernel::EXP_SHIFT);
+        let underflow = self.less_than(Operand::Cell(k), Operand::Constant(0), Some(Interval::SIGNED64))?;
+        let kept = self.gate_cell((Fp::one() - underflow.value) * k.value, |gate, ctx| {
+            gate.mul_not(ctx, underflow.quantum(), k.quantum())
+        });
+        let power = self.power_of_two(&kept, 7);
+        let raw = self.gate_cell(t.value * power.value, |gate, ctx| gate.mul(ctx, t.quantum(), power.quantum()));
+        let q = self.rescale_by(&raw, kernel::EXP_SHIFT as u32)?;
+        let out = self.gate_cell((Fp::one() - underflow.value) * q.value, |gate, ctx| {
+            gate.mul_not(ctx, underflow.quantum(), q.quantum())
+        });
+        self.prove_range(&out, Interval { lo: 0, hi: (1i128 << 63) - 1 });
+        Ok(out)
+    }
     fn log_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("log_f") }
     /// `arcsin(x) = 2 * atan(x / (1 + sqrt(1 - x^2)))`, as `kernel::fp_arcsin`
     /// (0 outside `[-1, 1]`).

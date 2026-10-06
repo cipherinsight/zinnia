@@ -413,6 +413,33 @@ fn sin_and_cos_are_pinned() {
     }
 }
 
+/// `exp` proves `kernel::fp_exp`'s value (the mock's and Noir's) and every
+/// hint is pinned; where the kernel has no value (the result leaves the
+/// signed 64-bit window) there is no witness, and below the underflow
+/// threshold the result is 0.
+#[test]
+fn exp_is_pinned_and_equals_the_kernel() {
+    let exp = unary(|s, a| s.exp_f(a));
+    for x in [0.0, 1.0, -7.25, 21.0, -100.0] {
+        let expected = kernel::fp_exp(q(x), PRECISION_BITS).expect("inside the domain");
+        assert_sound(&format!("exp({x})"), &*exp, &[q(x)], &[expected], &[]);
+    }
+    for x in [0.3, -1.0, 10.0, -20.0, -44.4, -64.0, 1.6e9, -1.6e9] {
+        let honest = synthesize(&*exp, &[q(x)], &[]);
+        match kernel::fp_exp(q(x), PRECISION_BITS) {
+            Some(expected) => {
+                assert!(honest.accepted, "exp({x}): honest witness rejected");
+                assert_eq!(honest.outputs, vec![expected], "exp({x})");
+            }
+            None => assert!(!honest.accepted, "exp({x}) has no value but was accepted"),
+        }
+    }
+    for x in [21.5, 22.0, 50.0, 100.0, 1e6] {
+        assert!(kernel::fp_exp(q(x), PRECISION_BITS).is_none());
+        assert!(!synthesize(&*exp, &[q(x)], &[]).accepted, "exp({x}) leaves the window but was accepted");
+    }
+}
+
 #[test]
 fn arcsin_is_pinned_to_the_principal_branch() {
     let arcsin = unary(|s, a| s.arcsin_f(a));
@@ -1086,6 +1113,7 @@ fn new_lowerings_are_witness_independent() {
         ("sin", unary(|s, a| s.sin_f(a)), vec![q(-4.0)]),
         ("sqrt", unary(|s, a| s.sqrt_f(a)), vec![q(2.0)]),
         ("arcsin", unary(|s, a| s.arcsin_f(a)), vec![q(0.3)]),
+        ("exp", unary(|s, a| s.exp_f(a)), vec![q(-3.5)]),
         ("pow", binary(|s, a, b| s.pow_i(a, b)), vec![int(3), int(5)]),
         ("int_cast", unary(|s, a| s.int_cast(a)), vec![q(-2.5)]),
     ];
@@ -1978,3 +2006,4 @@ fn reverse_orders_use_the_trichotomy() {
     let one_order_and_a_sign = run(&build(false), &[("x", 1), ("y", 2)], None).advice;
     assert!(run(&graph, &[("x", 1), ("y", 2)], None).advice < one_order_and_a_sign, "the reverse order paid a range check");
 }
+

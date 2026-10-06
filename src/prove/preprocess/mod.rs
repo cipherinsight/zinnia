@@ -285,7 +285,7 @@ impl<'a> Preprocessor<'a> {
             IR::PowF => {
                 let log_a = kernel::fp_log(args[0], prec);
                 let (bl, _) = kernel::fp_mul_rescale(args[1], log_a, prec);
-                Ok(Some(kernel::fp_exp(bl, prec)))
+                Ok(Some(kernel::fp_exp(bl, prec).unwrap_or(Fp::zero())))
             }
             IR::PowFI => {
                 // Float base ^ Integer exponent: square-and-multiply over the
@@ -377,16 +377,18 @@ impl<'a> Preprocessor<'a> {
 
             // Transcendentals
             IR::SinF => Ok(Some(kernel::fp_sin(args[0], prec))),
-            IR::SinHF => Ok(Some(kernel::fp_sinh(args[0], prec))),
+            IR::SinHF => Ok(Some(kernel::fp_sinh(args[0], prec).unwrap_or(Fp::zero()))),
             IR::CosF => Ok(Some(kernel::fp_cos(args[0], prec))),
-            IR::CosHF => Ok(Some(kernel::fp_cosh(args[0], prec))),
+            IR::CosHF => Ok(Some(kernel::fp_cosh(args[0], prec).unwrap_or(Fp::zero()))),
             IR::TanF => Ok(Some(kernel::fp_tan(args[0], prec))),
-            IR::TanHF => Ok(Some(kernel::fp_tanh(args[0], prec))),
+            IR::TanHF => Ok(Some(kernel::fp_tanh(args[0], prec).unwrap_or(Fp::zero()))),
             IR::SqrtF => Ok(Some(kernel::fp_sqrt(args[0], prec))),
             // Outside the admitted radicands there is no proof; the witness
             // value is then irrelevant (0, as `fp_sqrt`'s convention).
             IR::SqrtProductIF => Ok(Some(kernel::fp_sqrt_product_int(args[0], args[1], prec).unwrap_or(Fp::zero()))),
-            IR::ExpF => Ok(Some(kernel::fp_exp(args[0], prec))),
+            // Outside exp's domain there is no proof; the witness value is
+            // then irrelevant (0).
+            IR::ExpF => Ok(Some(kernel::fp_exp(args[0], prec).unwrap_or(Fp::zero()))),
             IR::LogF => Ok(Some(kernel::fp_log(args[0], prec))),
             IR::ArcSinF => Ok(Some(kernel::fp_arcsin(args[0], prec))),
             IR::ArcCosF => Ok(Some(kernel::fp_arccos(args[0], prec))),
