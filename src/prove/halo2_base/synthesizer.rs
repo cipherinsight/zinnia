@@ -94,6 +94,9 @@ pub struct Halo2BaseSynthesizer<'a> {
     proven: HashMap<u64, Interval>,
     /// Pinned sign bits `[x < 0]` by cell id (sign tests, `sign_and_abs`).
     sign_bits: HashMap<u64, Halo2BaseCell>,
+    /// Signed-window order bits `[a < b]` of two cells, by `(a, b)` cell ids
+    /// (see `ranges::less_than`: the reverse order then needs one equality).
+    orders: HashMap<(u64, u64), Halo2BaseCell>,
     /// Cells an emitted constraint proves non-zero (an asserted `x != 0`).
     nonzero: HashSet<u64>,
     /// `(sign, magnitude)` hints of dynamic divisors, by cell id: pinned by
@@ -177,6 +180,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             differences: HashMap::new(),
             comparisons: HashMap::new(),
             sign_bits: HashMap::new(),
+            orders: HashMap::new(),
             nonzero: HashSet::new(),
             divisor_signs: HashMap::new(),
             negations: HashMap::new(),

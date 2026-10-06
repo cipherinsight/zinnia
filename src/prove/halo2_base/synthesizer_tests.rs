@@ -1766,3 +1766,36 @@ fn root_preconditions_are_proven_by_the_root() {
     let checked = build(1);
     assert!(run(&guarded, &[("x", 5)], None).advice + 20 < run(&checked, &[("x", 5)], None).advice, "the root's guard paid a check");
 }
+
+/// `x < y` after `y < x` reuses the first comparison (one equality instead
+/// of a second range check): both bits are right below, at and above the
+/// other operand and at the window's ends, a claimed flipped bit is
+/// rejected, and the pair costs fewer cells than two independent orders.
+#[test]
+fn reverse_orders_use_the_trichotomy() {
+    use crate::ir_defs::IR;
+    use graphs::*;
+    let build = |reverse: bool| {
+        let mut g = Graph::default();
+        let (x, y) = (g.read("x"), g.read("y"));
+        g.domain_check(x);
+        g.domain_check(y);
+        let y_below = g.push(IR::LtI, &[y, x]);
+        let zero = g.int(0);
+        let x_below = if reverse { g.push(IR::LtI, &[x, y]) } else { g.push(IR::GtI, &[x, zero]) };
+        g.push(IR::ExposePublicI, &[y_below]);
+        g.push(IR::ExposePublicI, &[x_below]);
+        g.finish()
+    };
+    let graph = build(true);
+    let (max, min) = (i64::MAX, i64::MIN);
+    for (x, y) in [(1, 2), (2, 1), (5, 5), (min, max), (max, min), (min, min), (-3, 4)] {
+        let expected = vec![int((y < x) as i64), int((x < y) as i64)];
+        let honest = run(&graph, &[("x", x), ("y", y)], None);
+        assert!(honest.accepted && honest.outputs == expected, "({x}, {y})");
+        let flipped = vec![expected[0], Fp::one() - expected[1]];
+        assert!(!run(&graph, &[("x", x), ("y", y)], Some(flipped)).accepted, "({x}, {y}): flipped bit accepted");
+    }
+    let one_order_and_a_sign = run(&build(false), &[("x", 1), ("y", 2)], None).advice;
+    assert!(run(&graph, &[("x", 1), ("y", 2)], None).advice < one_order_and_a_sign, "the reverse order paid a range check");
+}

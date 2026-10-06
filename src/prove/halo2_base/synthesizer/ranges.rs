@@ -418,6 +418,11 @@ impl Halo2BaseSynthesizer<'_> {
                 return self.sign_test(&x);
             }
         }
+        if let (Operand::Cell(x), Operand::Cell(y), Some(Interval::SIGNED64)) = (a, b, domain) {
+            if let Some(reverse) = self.orders.get(&(y.id, x.id)).copied() {
+                return Ok(self.trichotomy(&x, &y, &reverse));
+            }
+        }
         if let Some(domain) = domain {
             self.ensure_operand_within(&a, domain)?;
             self.ensure_operand_within(&b, domain)?;
@@ -461,7 +466,28 @@ impl Halo2BaseSynthesizer<'_> {
         });
         self.range_check(&t, n);
         self.record_comparison(&s, a, b);
+        if let (Operand::Cell(x), Operand::Cell(y), Some(Interval::SIGNED64)) = (a, b, domain) {
+            self.orders.insert((x.id, y.id), s);
+        }
         Ok(s)
+    }
+
+    /// `[x < y]` from the already pinned `[y < x]` (`reverse`): `1 - [y < x]
+    /// - [x == y]`, an equality test and two gates instead of a range check
+    /// of the gap.
+    ///
+    /// Soundness: `reverse` was computed with both operands constrained into
+    /// the signed 64-bit window, where exactly one of `x < y`, `x == y`,
+    /// `y < x` holds; `[x == y]` is pinned by its zero test. So the result is
+    /// 0 or 1, and 1 exactly when `x < y`.
+    fn trichotomy(&mut self, x: &Halo2BaseCell, y: &Halo2BaseCell, reverse: &Halo2BaseCell) -> Halo2BaseCell {
+        let difference = self.difference(y, x);
+        let equal = self.is_zero_bit(&difference);
+        let either = self.gate_cell(reverse.value + equal.value, |gate, ctx| gate.add(ctx, reverse.quantum(), equal.quantum()));
+        let below = self.gate_cell(Fp::one() - either.value, |gate, ctx| gate.not(ctx, either.quantum()));
+        self.mark_bit(&below);
+        self.orders.insert((x.id, y.id), below);
+        below
     }
 
     /// `a < b` (`strict`) or `a <= b` as an assertion, for a comparison
