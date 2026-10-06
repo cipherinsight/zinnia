@@ -53,12 +53,10 @@ def test_two_axis_dynamic_slice_fuses_without_fullsize_intermediate_segment():
     # No 4x4 intermediate is built in memory between the two sliced axes
     # (the window gather shifts rows, then columns, as values). Full-size
     # segments are at most the source and the slice result (a
-    # runtime-shaped array whose 16 cells the output contract reads back).
-    fullsize_segments = [
-        seg
-        for seg, counts in per_seg.items()
-        if counts["WriteMemoryIR"] == 16 and counts["ReadMemoryIR"] == 16
-    ]
+    # runtime-shaped array whose 16 cells the output contract reads back;
+    # those reads are at constant addresses, so `ConstantMemoryForwarding`
+    # replaces them by the written cells and only the 16 writes remain).
+    fullsize_segments = [seg for seg, counts in per_seg.items() if counts["WriteMemoryIR"] == 16]
     assert 1 <= len(fullsize_segments) <= 2
 
 
