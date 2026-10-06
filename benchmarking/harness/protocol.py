@@ -131,14 +131,16 @@ class StepRunner:
                                     "detail": f"exit {outcome.returncode} after "
                                               f"{outcome.wall_s:.1f}s"}}
         response["child"] = {"wall_s": outcome.wall_s, "returncode": outcome.returncode,
-                             "timed_out": outcome.timed_out}
+                             "timed_out": outcome.timed_out,
+                             "peak_rss_bytes": outcome.peak_rss_bytes,
+                             "over_memory_cap": outcome.over_memory_cap}
         return response
 
 
 def _dead_child_class(outcome) -> str:
     if outcome.timed_out:
         return "timeout"
-    if outcome.killed_by_sigkill:
+    if outcome.over_memory_cap or outcome.killed_by_sigkill:
         return "out_of_memory"
     return "crashed"
 
