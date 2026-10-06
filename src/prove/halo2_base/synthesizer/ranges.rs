@@ -115,6 +115,14 @@ impl TwoValued {
     }
 }
 
+/// A comparison bit's meaning: `[x < bound]` (`x_below`) or `[bound < x]`.
+#[derive(Clone, Copy)]
+pub(super) struct Comparison {
+    x: Halo2BaseCell,
+    bound: i128,
+    x_below: bool,
+}
+
 /// The number of bits `n` with `2^n > v`, for `v >= 0`.
 fn bits_above(v: i128) -> usize {
     (128 - v.max(0).leading_zeros()) as usize
@@ -389,6 +397,14 @@ impl Halo2BaseSynthesizer<'_> {
     /// value of `t` is the integer `D + s·2^n`). When the ranges decide the
     /// comparison, the result is a constant.
     pub(super) fn less_than(&mut self, a: Operand, b: Operand, domain: Option<Interval>) -> Result<Halo2BaseCell, ProvingError> {
+        if let (Operand::Cell(x), Operand::Constant(0), Some(Interval::SIGNED64)) = (a, b, domain) {
+            if let Some(sign) = self.sign_bits.get(&x.id) {
+                return Ok(*sign);
+            }
+            if self.proven_range(&x).is_none_or(|r| !r.within(&Interval::SIGNED64)) {
+                return self.sign_test(&x);
+            }
+        }
         if let Some(domain) = domain {
             self.ensure_operand_within(&a, domain)?;
             self.ensure_operand_within(&b, domain)?;
@@ -431,7 +447,73 @@ impl Halo2BaseSynthesizer<'_> {
             gate.mul_add(ctx, s.assigned, QuantumCell::Constant(power), diff)
         });
         self.range_check(&t, n);
+        self.record_comparison(&s, a, b);
         Ok(s)
+    }
+
+    /// `[x < 0]` for an `x` not yet known to lie in the signed 64-bit
+    /// window, proving the window at the same time: the hint bit `s` and one
+    /// 63-bit range check of `x + s·2^63`. For `s = 0` that is
+    /// `0 <= x < 2^63`, for `s = 1` it is `-2^63 <= x < 0`, so `s` is the
+    /// only admissible value and `x` lies in the window either way. One check
+    /// instead of the window check plus the comparison's.
+    fn sign_test(&mut self, x: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        let s = self.hint_bit(kernel::fp_is_negative(x.value));
+        let power = kernel::i128_to_fp(1i128 << 63);
+        let shifted = self.gate_cell(x.value + s.value * power, |gate, ctx| {
+            gate.mul_add(ctx, s.assigned, QuantumCell::Constant(power), x.assigned)
+        });
+        self.range_check(&shifted, 63);
+        self.prove_range(x, Interval::SIGNED64);
+        self.record_sign(x, &s);
+        Ok(s)
+    }
+
+    /// Record `s` as the pinned bit `[x < 0]` of an `x` proven to lie in the
+    /// signed 64-bit window: comparisons of `x` with 0 and `sign_and_abs`
+    /// reuse it.
+    pub(super) fn record_sign(&mut self, x: &Halo2BaseCell, s: &Halo2BaseCell) {
+        self.sign_bits.insert(x.id, *s);
+        self.record_comparison(s, Operand::Cell(*x), Operand::Constant(0));
+    }
+
+    /// Remember that the bit `s` is `[x < c]` or `[c < x]` for a cell `x`
+    /// and a constant `c`, so that asserting it (or its negation) refines
+    /// `x`'s proven range (see `refine_by_assertion`).
+    fn record_comparison(&mut self, s: &Halo2BaseCell, a: Operand, b: Operand) {
+        let fact = match (a, b) {
+            (Operand::Cell(x), Operand::Constant(c)) => Comparison { x, bound: c, x_below: true },
+            (Operand::Constant(c), Operand::Cell(x)) => Comparison { x, bound: c, x_below: false },
+            _ => return,
+        };
+        self.comparisons.insert(s.id, fact);
+    }
+
+    /// After `assert_true(bit)`: if the bit is a recorded comparison with a
+    /// constant, or the negation of one, the constraints now force the
+    /// compared cell to one side of the constant; record that range. The
+    /// comparison's own checks pin the bit to the comparison's truth value,
+    /// so the asserted bit being 1 implies the relation.
+    pub(super) fn refine_by_assertion(&mut self, bit: &Halo2BaseCell) {
+        let (fact, holds) = match self.comparisons.get(&bit.id) {
+            Some(fact) => (*fact, true),
+            None => match self.negations.get(&bit.id).and_then(|s| self.comparisons.get(s)) {
+                Some(fact) => (*fact, false),
+                None => return,
+            },
+        };
+        let Some(known) = self.proven_range(&fact.x) else { return };
+        // x < c holds: x <= c - 1; fails: x >= c. c < x holds: x >= c + 1;
+        // fails: x <= c.
+        let refined = match (fact.x_below, holds) {
+            (true, true) => Interval::new(known.lo, known.hi.min(fact.bound - 1)),
+            (true, false) => Interval::new(known.lo.max(fact.bound), known.hi),
+            (false, true) => Interval::new(known.lo.max(fact.bound + 1), known.hi),
+            (false, false) => Interval::new(known.lo, known.hi.min(fact.bound)),
+        };
+        if let Some(range) = refined {
+            self.prove_range(&fact.x, range);
+        }
     }
 
     /// Assert `a < b` for operands constrained into `[0, 2^64)` (the IR's

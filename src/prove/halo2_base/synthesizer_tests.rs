@@ -610,6 +610,70 @@ fn selects_of_bits_are_conditions_without_conversion() {
     }
 }
 
+/// `x < 0` on a fresh value proves the window and the sign with one check;
+/// asserting `x >= 0` makes `x`'s range non-negative, and `sqrt` then needs
+/// no sign handling.
+#[test]
+fn sign_tests_and_asserted_ranges_are_pinned() {
+    let sign = with_constant_rhs(|s, a, b| s.lt_i(a, b), int(0));
+    for x in [5i64, 0, -5, i64::MIN, i64::MAX] {
+        assert_sound(&format!("{x} < 0"), &*sign, &[int(x)], &[bit(x < 0)], &[]);
+    }
+    assert!(!synthesize(&*sign, &[kernel::i128_to_fp(1i128 << 63)], &[]).accepted, "outside the window");
+    let checked_root: Box<Op> = Box::new(|s, c| {
+        let zero = s.constant_float(0.0)?;
+        let nonnegative = s.gte_f(&c[0], &zero)?;
+        s.assert_true(&nonnegative)?;
+        Ok(vec![s.sqrt_f(&c[0])?])
+    });
+    for x in [2.0, 0.0, 1e6, 3.0e-9] {
+        let expected = kernel::fp_sqrt(q(x), PRECISION_BITS);
+        assert_sound(&format!("assert {x} >= 0; sqrt"), &*checked_root, &[q(x)], &[expected], &[]);
+    }
+    assert!(!synthesize(&*checked_root, &[q(-1.0)], &[]).accepted, "a negative input fails the assertion");
+    let unchecked_root = unary(|s, a| s.sqrt_f(a));
+    let assertion_only: Box<Op> = Box::new(|s, c| {
+        let zero = s.constant_float(0.0)?;
+        let nonnegative = s.gte_f(&c[0], &zero)?;
+        s.assert_true(&nonnegative)?;
+        Ok(vec![])
+    });
+    let with_assertion = cells_of(&*checked_root, &[q(2.0)]).0 - cells_of(&*assertion_only, &[q(2.0)]).0;
+    assert!(with_assertion + 20 < cells_of(&*unchecked_root, &[q(2.0)]).0, "the asserted root still pays for the sign");
+    // The sign bit sqrt's |x| pinned answers a later `x >= 0`: no new hint.
+    let root_then_check: Box<Op> = Box::new(|s, c| {
+        let root = s.sqrt_f(&c[0])?;
+        let zero = s.constant_float(0.0)?;
+        let nonnegative = s.gte_f(&c[0], &zero)?;
+        s.assert_true(&nonnegative)?;
+        Ok(vec![root])
+    });
+    for x in [2.0, 0.0] {
+        let expected = kernel::fp_sqrt(q(x), PRECISION_BITS);
+        assert_sound(&format!("sqrt({x}); assert >= 0"), &*root_then_check, &[q(x)], &[expected], &[]);
+        assert_eq!(synthesize(&*root_then_check, &[q(x)], &[]).hints, 2, "sign and root only");
+    }
+    assert!(!synthesize(&*root_then_check, &[q(-2.0)], &[]).accepted);
+    let abs = unary(|s, a| s.abs_i(a));
+    assert_sound("abs(i64::MIN)", &*abs, &[int(i64::MIN)], &[kernel::i128_to_fp(1i128 << 63)], &[]);
+    assert!(!synthesize(&*abs, &[kernel::i128_to_fp(1i128 << 63)], &[]).accepted, "outside the window");
+    // A comparison after an asserted bound uses the bound.
+    let bounded: Box<Op> = Box::new(|s, c| {
+        let hundred = s.constant_int(100)?;
+        let below = s.lt_i(&c[0], &hundred)?;
+        s.assert_true(&below)?;
+        let zero = s.constant_int(0)?;
+        let nonnegative = s.gte_i(&c[0], &zero)?;
+        s.assert_true(&nonnegative)?;
+        let ten = s.constant_int(10)?;
+        Ok(vec![s.lt_i(&c[0], &ten)?])
+    });
+    for x in [0i64, 9, 10, 99] {
+        assert_sound(&format!("{x} in [0, 100): {x} < 10"), &*bounded, &[int(x)], &[bit(x < 10)], &[]);
+    }
+    assert!(!synthesize(&*bounded, &[int(100)], &[]).accepted);
+}
+
 // ── Bitwise operations (two's complement, as NumPy int64) ──────────────
 
 const BIT_PAIRS: [(i64, i64); 7] =

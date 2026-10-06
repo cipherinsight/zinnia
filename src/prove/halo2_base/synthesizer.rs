@@ -17,7 +17,7 @@ mod ranges;
 
 use self::fixed_point::Divisor;
 use self::memory::MemoryState;
-use self::ranges::{Interval, Operand, TwoValued};
+use self::ranges::{Comparison, Interval, Operand, TwoValued};
 use crate::circuit_input::{InputPath, ResolvedWitness};
 use crate::prove::error::ProvingError;
 use crate::prove::kernel::{self, Rounding};
@@ -43,6 +43,10 @@ pub struct Halo2BaseSynthesizer<'a> {
     float_casts: HashMap<u64, Halo2BaseCell>,
     /// Cells known to be one of two constants by a bit (see `ranges.rs`).
     two_valued: HashMap<u64, TwoValued>,
+    /// Comparison bits against a constant, by bit id, and negated bits (the
+    /// `not` cell's id to its operand's), for `refine_by_assertion`.
+    comparisons: HashMap<u64, Comparison>,
+    negations: HashMap<u64, u64>,
     /// `a - b` cells by `(a.id, b.id)`, shared by comparisons and selects.
     differences: HashMap<(u64, u64), Halo2BaseCell>,
     /// Low two's-complement bits per cell id (see `bitwise.rs`).
@@ -58,6 +62,8 @@ pub struct Halo2BaseSynthesizer<'a> {
     /// Comparisons size their checks by them and skip window checks the
     /// constraints already imply.
     proven: HashMap<u64, Interval>,
+    /// Pinned sign bits `[x < 0]` by cell id (sign tests, `sign_and_abs`).
+    sign_bits: HashMap<u64, Halo2BaseCell>,
     // (sign bit, magnitude) per cell id, see `sign_and_abs`.
     sign_abs_cache: HashMap<u64, (Halo2BaseCell, Halo2BaseCell)>,
     // ValueId ↔ cell correspondence, maintained by `on_stmt_result`, for
@@ -118,6 +124,9 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             two_valued: HashMap::new(),
             bit_cache: HashMap::new(),
             differences: HashMap::new(),
+            comparisons: HashMap::new(),
+            sign_bits: HashMap::new(),
+            negations: HashMap::new(),
             dyn_meta_bounds: HashMap::new(),
             next_id: 0,
             bit_cells: HashSet::new(),
@@ -756,12 +765,19 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     /// `sqrt` as `kernel::fp_sqrt`: `floor(sqrt(a * 2^P))`, and 0 for a
     /// negative input. The pinned sign bit of `sign_and_abs` zeroes a
     /// negative input; `sqrt_nonneg` pins the root.
+    /// An `a` proven non-negative (for example by the domain assertion the
+    /// frontend emits before `np.sqrt`) needs no sign handling, and its
+    /// range bounds the root's checks.
     fn sqrt_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if let Some(range) = self.proven_range(a).filter(|r| r.lo >= 0 && r.hi < 1i128 << 64) {
+            let bits = (128 - range.hi.leading_zeros()) as usize;
+            return self.sqrt_nonneg(a, bits);
+        }
         let (negative, _) = self.sign_and_abs(a)?;
         let clamped = self.gate_cell((Fp::one() - negative.value) * a.value, |gate, ctx| {
             gate.mul_not(ctx, negative.assigned, a.assigned)
         });
-        self.sqrt_nonneg(&clamped)
+        self.sqrt_nonneg(&clamped, 64)
     }
     fn exp_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("exp_f") }
     fn log_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("log_f") }
@@ -820,6 +836,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         let ta = self.truthy_bit(a);
         let out = self.gate_cell(Fp::one() - ta.value, |gate, ctx| gate.not(ctx, ta.assigned));
         self.mark_bit(&out);
+        self.negations.insert(out.id, ta.id);
         Ok(out)
     }
 
@@ -934,6 +951,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
             });
         }
         self.assert_const(a, Fp::one());
+        self.refine_by_assertion(a);
         Ok(())
     }
     fn assert_u128_lt(&mut self, idx: &Self::CellRef, hi: &Self::CellRef) -> Result<(), ProvingError> {

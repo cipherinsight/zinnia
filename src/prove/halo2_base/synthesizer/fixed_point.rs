@@ -53,28 +53,38 @@ impl Halo2BaseSynthesizer<'_> {
     }
 
 
-    /// `(s, m)` with `s = [x < 0]` and `m = |x|`, for `x` in `[-2^64, 2^64)`.
+    /// `(s, m)` with `s = [x < 0]` and `m = |x|`; an `x` outside the signed
+    /// 64-bit window has no witness.
     ///
-    /// Soundness: `m = s ? -x : x` with a hinted sign, and the range check
-    /// `m - s ∈ [0, 2^64)`. With the wrong sign `m` is the field negation of
-    /// a small number (about p) and fails the check; for `x = 0` the sign
-    /// `s = 1` gives `m - s = -1`, which fails too. So `s` and `m` are
-    /// functions of `x`, and an `x` outside the window has no witness.
+    /// Soundness: `m = s ? -x : x` with a hinted sign bit, and the range check
+    /// `m - s ∈ [0, 2^63)`. For `s = 0` that is `0 <= x < 2^63`; for `s = 1`
+    /// it is `-x - 1 ∈ [0, 2^63)`, i.e. `-2^63 <= x <= -1`. The wrong sign
+    /// makes `m - s` the field negation of a small number (about p), so `s`
+    /// and `m` are functions of `x`. The sign is then `x`'s recorded sign bit
+    /// (comparisons of `x` with 0 reuse it); a sign bit recorded before (by a
+    /// sign test, which pins it the same way) needs only the select.
     pub(super) fn sign_and_abs(&mut self, x: &Halo2BaseCell) -> Result<(Halo2BaseCell, Halo2BaseCell), ProvingError> {
         if let Some(pair) = self.sign_abs_cache.get(&x.id) {
             return Ok(*pair);
         }
+        let magnitude_range = Interval { lo: 0, hi: 1 << 63 };
         let pair = if self.is_const_cell(x) {
             let negative = kernel::fp_is_negative(x.value);
             let sign = self.constant_bool(negative)?;
             let magnitude = self.const_cell(if negative { -x.value } else { x.value });
             (sign, magnitude)
+        } else if let Some(sign) = self.sign_bits.get(&x.id).copied() {
+            let neg_x = self.negate(x);
+            let magnitude = self.select_bit(&sign, &neg_x, x)?;
+            self.prove_range(&magnitude, magnitude_range);
+            (sign, magnitude)
         } else {
             let (sign, magnitude) = self.hinted_sign_and_magnitude(x)?;
             let shifted = self.sub_i(&magnitude, &sign)?;
-            self.range_check(&shifted, 64);
-            // m = (m - s) + s with m - s in [0, 2^64) and s a bit.
-            self.prove_range(&magnitude, Interval { lo: 0, hi: 1 << 64 });
+            self.range_check(&shifted, 63);
+            self.prove_range(x, Interval::SIGNED64);
+            self.prove_range(&magnitude, magnitude_range);
+            self.record_sign(x, &sign);
             (sign, magnitude)
         };
         self.sign_abs_cache.insert(x.id, pair);
@@ -455,13 +465,13 @@ impl Halo2BaseSynthesizer<'_> {
         }
     }
 
-    pub(super) fn sqrt_nonneg(&mut self, x: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+    pub(super) fn sqrt_nonneg(&mut self, x: &Halo2BaseCell, x_bits: usize) -> Result<Halo2BaseCell, ProvingError> {
         let precision_bits = self.params.precision_bits;
         let scale = kernel::scale_fp(precision_bits);
         let big_x = self.gate_cell(x.value * scale, |gate, ctx| {
             gate.mul(ctx, x.assigned, QuantumCell::Constant(scale))
         });
-        self.isqrt(&big_x, 64 + precision_bits as usize)
+        self.isqrt(&big_x, x_bits + precision_bits as usize)
     }
 
 
