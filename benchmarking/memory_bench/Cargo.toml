@@ -1,0 +1,18 @@
+[package]
+name = "memory_bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Per-access cost of halo2-base memory constructions: one-hot, multiplexer, dynamic-lookup ROM, shuffle-checked RAM"
+
+[workspace]
+
+[dependencies]
+halo2-base = { git = "https://github.com/axiom-crypto/halo2-lib.git", branch = "community-edition", default-features = false, features = ["halo2-pse"] }
+halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", tag = "v0.3.0", features = ["circuit-params", "derive_serde"] }
+rand = "0.8"
+rayon = "1"
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
