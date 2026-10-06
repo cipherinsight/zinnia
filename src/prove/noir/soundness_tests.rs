@@ -352,6 +352,31 @@ fn asserted_comparisons_check_their_outcome_directly() {
     assert_rejected(execute(&graph, &raw_witness(&[("x", p_minus), ("y", "0x0")])));
 }
 
+/// An asserted `==` is the assertion itself (no equality bit): accepted
+/// exactly where the operands are equal.
+#[test]
+fn asserted_equalities_are_asserted_directly() {
+    if !toolchain_present(false) {
+        return;
+    }
+    let mut g = Graph::default();
+    let x = g.read_int("x");
+    let y = g.read_int("y");
+    let three = g.int(3);
+    let x_is_three = g.push(IR::EqI, &[x, three]);
+    g.push(IR::Assert, &[x_is_three]);
+    let same = g.push(IR::EqI, &[x, y]);
+    g.push(IR::Assert, &[same]);
+    g.expose(x);
+    let graph = g.finish();
+    let honest = witness(&[("x", 3), ("y", 3)]);
+    let emitted = emit_circuit(&graph, &honest, &ProvingParams::default()).unwrap();
+    assert!(!emitted.main_nr.contains("else { 0 }"), "no equality bit: {}", emitted.main_nr);
+    assert_eq!(execute(&graph, &honest).unwrap(), vec![3]);
+    assert_rejected(execute(&graph, &witness(&[("x", 3), ("y", 4)])));
+    assert_rejected(execute(&graph, &witness(&[("x", 4), ("y", 4)])));
+}
+
 /// An input's domain checks are implied by a bounds check of the same input
 /// (`AssertU128Lt(x, 8)`): the circuit has the bounds check only, which
 /// accepts 0..7 and rejects 8, -1 and a value outside the 64-bit window.

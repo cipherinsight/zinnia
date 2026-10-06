@@ -1455,6 +1455,43 @@ fn sums_of_products_fuse_into_one_gate_per_term() {
     assert!(outcome.accepted && outcome.outputs == vec![int(41)]);
 }
 
+/// An asserted `==` is a pinned difference (or a pinned cell against a
+/// constant), no equality bit: accepted exactly where the operands are
+/// equal, and cheaper than the bit.
+#[test]
+fn asserted_equalities_are_pinned_differences() {
+    use crate::ir_defs::IR;
+    use graphs::*;
+    let asserted = |constant: Option<i64>, assert: bool| {
+        let mut g = Graph::default();
+        let x = g.read("x");
+        g.domain_check(x);
+        let rhs = match constant {
+            Some(c) => g.int(c),
+            None => g.read("y"),
+        };
+        let equal = g.push(IR::EqI, &[x, rhs]);
+        if assert {
+            g.push(IR::Assert, &[equal]);
+        } else {
+            g.push(IR::ExposePublicI, &[equal]);
+        }
+        g.push(IR::ExposePublicI, &[x]);
+        g.finish()
+    };
+    for constant in [Some(3), Some(0), None] {
+        let ir = asserted(constant, true);
+        for (x, y) in [(3i64, 3i64), (3, 4), (0, 0), (-5, -5), (7, 3)] {
+            let holds = x == constant.unwrap_or(y);
+            let accepted = run(&ir, &[("x", x), ("y", y)], None).accepted;
+            assert_eq!(accepted, holds, "{constant:?} at x = {x}, y = {y}");
+        }
+        let pinned = run(&ir, &[("x", 3), ("y", 3)], None).advice;
+        let bit = run(&asserted(constant, false), &[("x", 3), ("y", 3)], None).advice;
+        assert!(pinned < bit, "{constant:?}: asserted {pinned} cells, bit {bit}");
+    }
+}
+
 /// A comparison whose only use is `Assert` is one range check of its gap
 /// (no result bit, no negation): accepted exactly where the relation holds,
 /// for constants on either side, strict and non-strict, and two cells.

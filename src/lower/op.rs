@@ -60,6 +60,28 @@ pub enum OpKind {
     /// (output 0, position 0). No proof for a zero variance (NumPy: nan).
     Corrcoef { n: u32, integer: bool, guarded: bool },
     // ── gather family (`lower::gather`) ───────────────────────────────
+    /// The first position whose shared 0/1 flag is set (`min` of
+    /// `np.flatnonzero`, of an `np.argwhere` coordinate). One lane, at
+    /// position 0. The frontend asserts that some flag is set.
+    FirstSet,
+    /// The last position whose flag is set (`max`).
+    LastSet,
+    /// NumPy's `argmax` of the shared 0/1 flags: the first set position, 0
+    /// when none is set.
+    ArgmaxOfFlags,
+    /// The window `x[s_0:e_0, ...]` (step 1 on every axis) of a row-major
+    /// array of shape `dims[..rank]`, at the top-left of a zero buffer of
+    /// that shape. Shared operands: the cells, then `(start, stop)` per
+    /// axis, each start in `[0, dims[a]]`. Lane `p` is the buffer's cell `p`.
+    Window { rank: u8, dims: [u32; 3] },
+    /// `x[i]` of the shared cells at the lane's own operand `i`, which is in
+    /// `[0, n)` (the frontend checked it).
+    Element,
+    /// `c[p] = v` for a permutation `p` of `0..n`: lane `j` is `c[j]`, the
+    /// `v[k]` with `p[k] == j`. Shared operands: `p`, then `v` (n each). The
+    /// frontend emits it only where a precondition asserts `p` is a
+    /// permutation.
+    PermutationScatter,
     // ── scatter family (`lower::scatter`) ─────────────────────────────
 }
 
@@ -69,6 +91,12 @@ impl OpKind {
         match self {
             OpKind::Sort => &super::sort::SortSemantics,
             OpKind::Corrcoef { .. } => &super::stats::CorrcoefSemantics,
+            OpKind::FirstSet
+            | OpKind::LastSet
+            | OpKind::ArgmaxOfFlags
+            | OpKind::Window { .. }
+            | OpKind::Element
+            | OpKind::PermutationScatter => &super::gather::GatherSemantics,
         }
     }
 
@@ -77,6 +105,12 @@ impl OpKind {
         match self {
             OpKind::Sort => "sort",
             OpKind::Corrcoef { .. } => "corrcoef",
+            OpKind::FirstSet => "first_set",
+            OpKind::LastSet => "last_set",
+            OpKind::ArgmaxOfFlags => "argmax_of_flags",
+            OpKind::Window { .. } => "window",
+            OpKind::Element => "element",
+            OpKind::PermutationScatter => "permutation_scatter",
         }
     }
 }

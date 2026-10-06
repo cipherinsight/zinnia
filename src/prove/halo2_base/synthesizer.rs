@@ -740,6 +740,25 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         }
     }
 
+    /// An asserted `a == b` (the comparison's only use is `Assert`): the
+    /// operand pinned to the other when that one is a constant, else
+    /// `a - b` pinned to 0. No result bit: the assertion is the constraint,
+    /// and exactly the witnesses with `a == b` satisfy it.
+    fn assert_equal(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        if a.value != b.value {
+            self.note_unsat(|| "Witness does not satisfy circuit constraints: an asserted `==` is false".to_string());
+        }
+        if self.is_const_cell(b) {
+            self.assert_const(a, b.value);
+        } else if self.is_const_cell(a) {
+            self.assert_const(b, a.value);
+        } else {
+            let difference = self.difference(a, b);
+            self.assert_const(&difference, Fp::zero());
+        }
+        self.constant_bool(true)
+    }
+
     /// `a - b`, or the other operand when one is the constant 0 (an
     /// equality test with 0 tests the value itself).
     fn difference_or_operand(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Halo2BaseCell {
@@ -1117,6 +1136,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn sign_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.sign_i(a) }
 
     fn eq_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.is_asserted_comparison() {
+            return self.assert_equal(a, b);
+        }
         if let Some(bit) = self.equals_constant(a, b)? {
             return Ok(bit);
         }

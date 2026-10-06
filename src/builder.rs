@@ -177,6 +177,10 @@ pub struct IRBuilder {
     /// to the source array do not change it). Assigning through such a
     /// tuple, `a[np.where(m)] = v`, is NumPy's `a[m] = v`.
     pub nonzero_index_masks: HashMap<crate::types::ValueId, Value>,
+    /// Integer vectors (their elements' statements, in order) a
+    /// precondition asserts to be a permutation of `0..len`
+    /// (`record_permutation`).
+    known_permutations: Vec<Vec<StmtId>>,
     /// Small expression-provenance side table for StaticArray results whose
     /// concrete payload can be reconstructed exactly, but may be consumed by
     /// a fused lowering before materializing every intermediate cell.
@@ -280,6 +284,7 @@ impl IRBuilder {
             dim_table: crate::types::DimTable::new(),
             static_array_payload: HashMap::new(),
             nonzero_index_masks: HashMap::new(),
+            known_permutations: Vec::new(),
             static_array_product_provenance: HashMap::new(),
             lazy_static_array_segments: HashSet::new(),
             provenance: crate::provenance::ProvenanceTable::new(),
@@ -332,6 +337,37 @@ impl IRBuilder {
     /// (static value recovered when the producer is a `ConstantInt`).
     /// Used by provenance-record consumers (e.g. compaction scans) that
     /// hold `ValueId`s and need IR-layer references to emit ops.
+    /// Record that `elements` are asserted (on every path) to be a
+    /// permutation of `0..len`, with the range facts `0 <= e < len` for the
+    /// index checks that follow.
+    pub fn record_permutation(&mut self, elements: &[Value]) {
+        use crate::optim::predicates::formula::{BoolOp, CmpOp, ContractTerm, ContractVar};
+        let n = elements.len() as i64;
+        for e in elements {
+            let Some(vid) = e.value_id() else { continue };
+            let var = || Box::new(ContractTerm::Var(ContractVar::Value(vid)));
+            self.facts.insert_for(
+                vid,
+                ContractTerm::BoolComb {
+                    op: BoolOp::And,
+                    operands: vec![
+                        ContractTerm::Cmp { op: CmpOp::Ge, lhs: var(), rhs: Box::new(ContractTerm::LitInt(0)) },
+                        ContractTerm::Cmp { op: CmpOp::Lt, lhs: var(), rhs: Box::new(ContractTerm::LitInt(n)) },
+                    ],
+                },
+            );
+        }
+        if let Some(stmts) = elements.iter().map(Value::stmt_id).collect::<Option<Vec<_>>>() {
+            self.known_permutations.push(stmts);
+        }
+    }
+
+    /// Whether `elements` (in order) were recorded as a permutation.
+    pub fn is_known_permutation(&self, elements: &[Value]) -> bool {
+        let Some(stmts) = elements.iter().map(Value::stmt_id).collect::<Option<Vec<_>>>() else { return false };
+        self.known_permutations.contains(&stmts)
+    }
+
     pub fn value_of_vid(&self, vid: crate::types::ValueId) -> Option<Value> {
         let sid = self.value_to_stmt.get(&vid).copied()?;
         let static_val = match self.stmts.get(sid as usize).map(|st| &st.ir) {

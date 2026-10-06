@@ -103,7 +103,7 @@ fn build_witness_emitters() -> HashMap<&'static str, WitnessEmitter> {
         enforcing_emitter!("is_monotone_nondecreasing", emit_is_sorted),
         // Per-adjacent-pair gap `<=` bound.
         enforcing_emitter!("max_run", emit_max_run),
-        // Permutations: range checks plus pairwise distinctness.
+        // Permutations: every position hit exactly once.
         enforcing_emitter!("is_permutation", emit_is_permutation),
         enforcing_emitter!("fixed_point_count", emit_fixed_point_count),
         enforcing_emitter!("cycle_count", emit_cycle_count),
@@ -199,32 +199,33 @@ fn emit_max_run(b: &mut IRBuilder, args: &[Value], op: Option<&str>, bound: Opti
 // Permutations: is_permutation / fixed_point_count / cycle_count
 // ---------------------------------------------------------------------------
 
-/// `is_permutation(p)` for a length-N integer array: assert
-/// `0 <= p[i] < N` for every `i` and `p[i] != p[j]` for every `i < j`.
+/// `is_permutation(p)` for a length-N integer array: every position `j` in
+/// `0..N` is hit exactly once, `sum_i [p[i] == j] == 1`.
 ///
-/// Soundness: N distinct values in `[0, N)` are exactly a permutation of
-/// `0..N`, so a non-permutation violates one of the asserts. Cost
-/// O(N^2).
+/// Soundness: each `p[i]` hits at most one `j` (the `j` are distinct), so N
+/// hits in total, one per `j`, means every `p[i]` lies in `[0, N)` and no
+/// two are equal: `p` is a permutation of `0..N`; any other `p` misses some
+/// `j` or hits one twice and fails an assert. Cost N^2 equality tests with
+/// constants and N sums. The hits are the one-hot `[c[j] == i]` of the
+/// inverse permutation `c` (`c[p] = arange(N)`), which the gather layer
+/// reuses (`lower::gather`); the range `0 <= p[i] < N` and the permutation
+/// are recorded for the index checks and scatters that follow.
 fn emit_is_permutation(b: &mut IRBuilder, args: &[Value], op: Option<&str>, bound: Option<&Value>) -> EmitResult {
     let array = unary_array_argument(args, op, bound)?;
     let elements = collect_elements(b, array)?;
     if !elements.iter().all(|e| matches!(e, Value::Integer(_))) {
         return Err("elements must be Integer".to_string());
     }
-    let n = b.ir_constant_int(elements.len() as i64);
-    let zero = b.ir_constant_int(0);
-    for e in &elements {
-        let non_negative = b.ir_greater_than_or_equal_i(e, &zero);
-        b.ir_assert(&non_negative);
-        let below_n = b.ir_less_than_i(e, &n);
-        b.ir_assert(&below_n);
+    let one = b.ir_constant_int(1);
+    for j in 0..elements.len() {
+        let target = b.ir_constant_int(j as i64);
+        let mut hits = elements.iter().map(|e| b.ir_equal_i(e, &target)).collect::<Vec<_>>().into_iter();
+        let first = hits.next().expect("a non-empty array");
+        let count = hits.fold(first, |acc, h| b.ir_add_i(&acc, &h));
+        let once = b.ir_equal_i(&count, &one);
+        b.ir_assert(&once);
     }
-    for i in 0..elements.len() {
-        for j in (i + 1)..elements.len() {
-            let distinct = b.ir_not_equal_i(&elements[i], &elements[j]);
-            b.ir_assert(&distinct);
-        }
-    }
+    b.record_permutation(&elements);
     Ok(())
 }
 

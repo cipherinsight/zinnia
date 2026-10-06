@@ -1224,18 +1224,6 @@ impl<'a> NoirEmitter<'a> {
         self.sum_of.insert(out.to_string(), (a.to_string(), b.to_string()));
     }
 
-    /// `a == b` for an `==` whose only uses are asserts: the assertion
-    /// itself (`assert(a == b)`, one linear constraint), and the literal true
-    /// for the asserts, instead of a zero-test flag asserted to be 1.
-    fn asserted_equal(&mut self, a: &str, b: &str) -> Option<String> {
-        let asserted = self.current_stmt.is_some_and(|id| self.asserted_comparisons.contains(&id));
-        if !asserted {
-            return None;
-        }
-        let _ = writeln!(self.body, "    assert({a} == {b});");
-        Some(self.literal_int(1))
-    }
-
     /// `a != b` for a `!=` whose only uses are asserts: the assertion
     /// itself (`assert(a != b)`, an inverse constraint), and the literal
     /// true for the asserts. Against the constant 0 the other operand is
@@ -1267,6 +1255,18 @@ impl<'a> NoirEmitter<'a> {
     /// (`proven_range`) or the static interval of its IR value (`ival`).
     fn known_non_negative(&self, cell: &str) -> bool {
         self.proven_range.get(cell).is_some_and(|(lo, _)| *lo >= 0) || self.ival(cell).is_some_and(|(lo, _)| lo >= 0)
+    }
+
+    /// `a == b` for an `==` whose only uses are asserts: the assertion
+    /// itself (`assert(a == b)`, one constraint) and the literal true for
+    /// the asserts, instead of an equality bit.
+    fn asserted_equal(&mut self, a: &str, b: &str) -> Option<String> {
+        let asserted = self.current_stmt.is_some_and(|id| self.asserted_comparisons.contains(&id));
+        if !asserted {
+            return None;
+        }
+        let _ = writeln!(self.body, "    assert({a} == {b});");
+        Some(self.literal_int(1))
     }
 
     fn narrow_proven_range(&mut self, cell: &str, lo: i128, hi: i128) {
