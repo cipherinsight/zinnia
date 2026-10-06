@@ -42,7 +42,7 @@ global Q_U128: u128 = 4294967296;
 // 2^63: x + 2^63 is a 64-bit value exactly when x lies in [-2^63, 2^63).
 global WINDOW_OFFSET: Field = 9223372036854775808;
 
-// pi, pi/2 in Q32 (kernel::pi_q, half_pi_q).
+// pi, 2 pi, pi/2 in Q32 (kernel::pi_q, half_pi_q).
 global PI_Q: Field = 13493037705;
 global TWO_PI_Q: Field = 26986075410;
 global HALF_PI_Q: Field = 6746518852;
@@ -629,55 +629,26 @@ fn horner_q<let N: u32>(x: Field, coefs: [Field; N]) -> Field {
 // sin / cos / tan
 // ---------------------------------------------------------------------------
 
-// kernel::sin_taylor_q(32): sin(s)/s as a polynomial in u = s^2, leading first.
-global SIN_TAYLOR_Q: [Field; 7] = [
-    1,
-    -(108 as Field),
-    11836,
-    -(852176 as Field),
-    35791394,
-    -(715827883 as Field),
-    4294967296,
-];
-
-// kernel::cos_taylor_q(32): cos(s) as a polynomial in u = s^2, leading first.
-global COS_TAYLOR_Q: [Field; 8] = [
-    0,
-    9,
-    -(1184 as Field),
-    106522,
-    -(5965232 as Field),
-    178956971,
-    -(2147483648 as Field),
-    4294967296,
-];
+// kernel::sin_odd_coefs_q(32): sin(s)/s as a degree-4 polynomial in u = s^2
+// on [0, pi/2] (kernel::SIN_ODD_U_COEFS), leading coefficient first.
+global SIN_ODD_Q: [Field; 5] = [11136, -(850500 as Field), 35789648, -(715827153 as Field), 4294967215];
 
 /// Q32 sine by kernel::fp_sin's algorithm (bit for bit the mock's value):
 /// r = |x| mod 2*pi_q (an exact checked division); fold r >= pi_q onto
-/// r - pi_q (sign flip); mirror r > pi_q/2 onto pi_q - r; above pi_q/4 use
-/// cos(pi_q/2 - r); evaluate the Taylor polynomial in u = s^2 with flooring
-/// products. Error against libm: about 1e-9 on [-20, 20]. Fails for raw
-/// |x| >= 2^64, outside the kernel's fixed-point window.
+/// r - pi_q (sign flip); mirror r > pi_q/2 onto pi_q - r, so s lies in
+/// [0, pi/2]; then s * P(s^2) with flooring products. Error against libm:
+/// about 9e-9 on [-20, 20]. Fails for raw |x| >= 2^64, outside the kernel's
+/// fixed-point window. The two foldings compare r < 2 pi_q < 2^35 with
+/// constants below 2^34 through `qlt_bits::<42>` (whole 14-bit limbs).
 pub fn qsin(x: Field) -> Field {
     let (negative, m) = sign_abs(x);
     m.assert_max_bit_size::<64>();
-    // 42 bits (three whole 14-bit limbs) bound r just as 35 would.
     let (_k, r) = divmod_by_positive::<42>(m, TWO_PI_Q);
-    // r < 2 pi_q < 2^35, so the conversion never fails; the reduction then
-    // runs on u64 values (13493037705 = pi_q, 6746518852 = pi_q / 2,
-    // 3373259426 = pi_q / 4).
-    let r0 = checked_u64(r);
-    let folded = r0 >= 13493037705;
-    let r1 = if folded { r0 - 13493037705 } else { r0 };
-    let r2 = if r1 > 6746518852 { 13493037705 - r1 } else { r1 };
-    let cofunction = r2 > 3373259426;
-    let s = (if cofunction { 6746518852 - r2 } else { r2 }) as Field;
-    let u = qmul(s, s);
-    let p = if cofunction {
-        horner_q(u, COS_TAYLOR_Q)
-    } else {
-        qmul(s, horner_q(u, SIN_TAYLOR_Q))
-    };
+    let folded = !qlt_bits::<42>(r, PI_Q);
+    let r1 = if folded { r - PI_Q } else { r };
+    let mirrored = qlt_bits::<42>(HALF_PI_Q, r1);
+    let s = if mirrored { PI_Q - r1 } else { r1 };
+    let p = qmul(s, horner_q(qmul(s, s), SIN_ODD_Q));
     if negative != folded {
         -p
     } else {
@@ -1167,15 +1138,15 @@ fn test_qsqrt_rejects_values_outside_the_window() {
 fn test_qsin_qcos_match_the_kernel() {
     // (x, fp_sin(x), fp_cos(x)) from kernel::fp_sin / fp_cos, bit for bit.
     let cases: [(Field, Field, Field); 9] = [
-        (4294967296, 3614090360, 2320580733), // 1
-        (1189705940992, 2207631680, 3684169708), // 277
-        (1391569403904, -1735446857, -3928736219), // 324
-        (-1189705940992, -2207631680, 3684169707), // -277
-        (2147483648, 2059117009, 3769188403), // 0.5
-        (12884901888, 606105819, -4251985396), // 3
-        (4294967296000, 3551420499, 2415399866), // 1000
-        (0, 0, 4294967296), // 0
-        (-7516192768, -4226187461, -765560979), // -1.75
+        (4294967296, 3614090346, 2320580746), // 1
+        (1189705940992, 2207631691, 3684169691), // 277
+        (1391569403904, -1735446858, -3928736213), // 324
+        (-1189705940992, -2207631691, 3684169690), // -277
+        (2147483648, 2059117017, 3769188388), // 0.5
+        (12884901888, 606105810, -4251985386), // 3
+        (4294967296000, 3551420484, 2415399879), // 1000
+        (0, 0, 4294967285), // 0
+        (-7516192768, -4226187466, -765560969), // -1.75
     ];
     for i in 0..9 {
         let (x, want_sin, want_cos) = cases[i];
