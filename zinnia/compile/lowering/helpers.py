@@ -33,6 +33,7 @@ from __future__ import annotations
 import ast
 import builtins
 import copy
+import textwrap
 from dataclasses import dataclass
 
 from zinnia.compile.lowering import callbacks
@@ -40,7 +41,7 @@ from zinnia.compile.lowering.callbacks import VectorizedCallback
 from zinnia.compile.lowering.imports import resolve_import_aliases
 from zinnia.compile.lowering.scopes import bound_names, free_names
 from zinnia.compile.lowering.syntax import (
-    FunctionLoweringError, call, dedent_source, is_immutable_literal, is_numpy_call, load,
+    FunctionLoweringError, call, is_immutable_literal, is_numpy_call, load,
     names_bound_by_target, result_assignments_to_returns, store,
 )
 
@@ -389,7 +390,10 @@ def lower_circuit_source(source: str, name: str) -> tuple[str, list[tuple[str, s
     ``ZinniaCompiler.chip_ast_parse``. Generated chips are already lowered;
     explicit chips are not passed through this pass.
     """
-    module = resolve_import_aliases(ast.parse(dedent_source(source)))
+    # `textwrap.dedent`, unlike `dedent_source`, also empties whitespace-only
+    # lines, including those inside string literals such as docstrings; the
+    # lowered source has always been produced that way.
+    module = resolve_import_aliases(ast.parse(textwrap.dedent(source)))
     functions = {node.name: node for node in module.body if isinstance(node, ast.FunctionDef)}
     if name not in functions:
         raise FunctionLoweringError(f'No function named {name!r} in source')
