@@ -105,3 +105,24 @@ fn insert_hints_are_pinned() {
         }
     }
 }
+
+/// A chain of masked writes (0490's three writes) lowered as a decision
+/// list equals the replayed writes for cells below, at and above both
+/// thresholds, in either threshold order; it uses fewer selects than the
+/// select per cell, which gives the same values.
+#[test]
+fn mask_write_chain_matches_replayed_writes() {
+    use super::{MaskWriteByDecisionLists, MaskWriteBySelects};
+    for (t1, t2) in [(3, 7), (7, 3), (5, 5)] {
+        for x in -1..=9 {
+            let list = mask_write_chain_graph(x, t1, t2, &MaskWriteByDecisionLists);
+            let plain = mask_write_chain_graph(x, t1, t2, &MaskWriteBySelects);
+            for case in [&list, &plain] {
+                let (ok, outputs) = mock_run(&case.graph, &case.inputs);
+                assert!(ok, "x={x} t1={t1} t2={t2}");
+                assert_eq!(Some(outputs), case.expected, "x={x} t1={t1} t2={t2}");
+            }
+            assert!(selects(&list.graph) < selects(&plain.graph), "the decision list was not used");
+        }
+    }
+}

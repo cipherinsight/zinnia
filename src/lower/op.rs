@@ -69,6 +69,11 @@ pub enum OpKind {
     /// position is the cell's coordinate on the indexed axis. An index
     /// outside `[-axis_len, axis_len)` has no proof (NumPy raises).
     IndexWrite { axis_len: u32 },
+    /// The cells of an array after a masked write `a[mask] = v`: no shared
+    /// operand; each lane is one cell, own operands `[old, written, mask]`
+    /// (the mask bit of that cell). Every masked write of the program is one
+    /// group (a chain of writes over one cell is lowered together).
+    MaskWrite,
 }
 
 impl OpKind {
@@ -78,6 +83,7 @@ impl OpKind {
             OpKind::Sort => &super::sort::SortSemantics,
             OpKind::Insert { .. } => &super::scatter::InsertSemantics,
             OpKind::IndexWrite { .. } => &super::scatter::IndexWriteSemantics,
+            OpKind::MaskWrite => &super::scatter::MaskWriteSemantics,
         }
     }
 
@@ -87,6 +93,7 @@ impl OpKind {
             OpKind::Sort => "sort",
             OpKind::Insert { .. } => "insert",
             OpKind::IndexWrite { .. } => "index_write",
+            OpKind::MaskWrite => "mask_write",
         }
     }
 }

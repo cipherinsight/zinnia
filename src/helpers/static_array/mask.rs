@@ -61,6 +61,19 @@ fn mask_is_fully_static(cells: &[Value]) -> bool {
     })
 }
 
+/// The compile-time truth of a mask cell, if it has one.
+fn cell_static_truth_opt(c: &Value) -> Option<bool> {
+    c.bool_val().or_else(|| c.int_val().map(|v| v != 0))
+}
+
+/// One cell of a masked write as an `OpKind::MaskWrite` placeholder (own
+/// operands `[old, written, mask]`, see `lower::scatter::mask_write`).
+fn mask_write_lane(b: &mut IRBuilder, old: &Value, written: &Value, mask: &Value) -> Value {
+    let op = crate::lower::ArrayOp { kind: crate::lower::OpKind::MaskWrite, shared: 0, output: 0, position: Some(0) };
+    let shared: std::sync::Arc<[Value]> = std::sync::Arc::from(Vec::new());
+    b.ir_array_op(op, &shared, &[old.clone(), written.clone(), mask.clone()])
+}
+
 /// Pull the truthy/falsy compile-time value of a cell. Caller must have
 /// established that `mask_is_fully_static` returned true.
 fn cell_static_truth(c: &Value) -> bool {
@@ -263,7 +276,7 @@ pub fn try_apply_boolean_mask_write(
     mask: &Value,
     value: &Value,
 ) -> Option<Value> {
-    let (arr_dtype, arr_shape, arr_seg, _arr_strides, arr_offset, imag_seg) = match arr {
+    let (arr_dtype, arr_shape, arr_seg, arr_strides, arr_offset, imag_seg) = match arr {
         Value::StaticArray {
             dtype,
             shape,
@@ -455,7 +468,12 @@ pub fn try_apply_boolean_mask_write(
         return Some(arr.clone());
     }
 
-    // Non-Complex (Integer / Float) per-cell select + write.
+    // Non-Complex (Integer / Float) per-cell select + write. Every cell of
+    // the (contiguous) view is written at its constant address, so a cached
+    // payload stays exact with the new cells in place: later reads see the
+    // written values directly (a chain of masked writes over one cell is
+    // then visible to the scatter family's lowering).
+    let mut payload = b.static_array_payload.remove(&arr_seg);
     let mut rhs_idx_static: usize = 0;
     // Running count of true mask cells before position i — the packed-RHS
     // read pointer. Constant-folds away entirely for static masks.
@@ -506,18 +524,34 @@ pub fn try_apply_boolean_mask_write(
         };
         let new_cast = cast_to_dtype(b, &new_raw, arr_dtype);
         let cur_cast = cast_to_dtype(b, &arr_cells[i], arr_dtype);
-        let selected = if matches!(arr_dtype, NumberType::Float) {
-            b.ir_select_f(&mask_bool, &new_cast, &cur_cast)
+        let selected = if b.is_bool_segment(arr_seg) || cell_static_truth_opt(&mask_bool).is_some() {
+            if matches!(arr_dtype, NumberType::Float) {
+                b.ir_select_f(&mask_bool, &new_cast, &cur_cast)
+            } else {
+                b.ir_select_i(&mask_bool, &new_cast, &cur_cast)
+            }
         } else {
-            b.ir_select_i(&mask_bool, &new_cast, &cur_cast)
+            // A runtime mask: one `OpKind::MaskWrite` lane, which the scatter
+            // family lowers (a select, or with the other writes of a chain
+            // over this cell a sum over the masks' atoms).
+            mask_write_lane(b, &cur_cast, &new_cast, &mask_bool)
         };
         b.ir_write_memory(arr_seg, &addr, &selected);
+        if let Some(cells) = payload.as_mut() {
+            match cells.get_mut(abs) {
+                Some(cell) => *cell = selected.clone(),
+                None => payload = None,
+            }
+        }
         if matches!(rhs, Rhs::Compacted(_)) && !static_mask {
             let m_i = b.ir_int_cast(&mask_bool);
             prefix = b.ir_add_i(&prefix, &m_i);
         }
     }
-    b.static_array_payload.remove(&arr_seg);
+    let contiguous = arr_strides == crate::helpers::shape_arith::row_major_strides(&arr_shape);
+    if let (Some(cells), true) = (payload, contiguous) {
+        b.static_array_payload.insert(arr_seg, cells);
+    }
     Some(arr.clone())
 }
 

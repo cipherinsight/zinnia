@@ -146,3 +146,56 @@ pub(crate) fn with_hints(case: &ScatterGraph, sites: &[HintSite], hints: &[i64])
     inputs.extend(sites.iter().zip(hints).map(|(site, v)| (site.input.clone(), *v)));
     inputs
 }
+
+/// The three masked writes of 0490 over one integer cell `x` with
+/// thresholds `t1`, `t2` (`a[x < t1] = 0; a[x >= t2] = 30; a[t1 <= x < t2]
+/// += 5`), as `OpKind::MaskWrite` lanes lowered by `construction` alone;
+/// the final cell exposed. `expected` replays the writes.
+pub(crate) fn mask_write_chain_graph(x: i64, t1: i64, t2: i64, construction: &dyn Construction) -> ScatterGraph {
+    use crate::lower::scatter::mask_write::{MASK, OLD, WRITTEN};
+    let mut b = IRBuilder::new();
+    let mut inputs = Vec::new();
+    let cell = read(&mut b, &mut inputs, "x".into(), x);
+    let low = read(&mut b, &mut inputs, "t1".into(), t1);
+    let high = read(&mut b, &mut inputs, "t2".into(), t2);
+    let below_t1 = b.ir_less_than_i(&cell, &low);
+    let below_t2 = b.ir_less_than_i(&cell, &high);
+    let at_least_t2 = b.ir_logical_not(&below_t2);
+    let at_least_t1 = b.ir_logical_not(&below_t1);
+    let between = b.ir_logical_and(&at_least_t1, &below_t2);
+    let empty: Arc<[Value]> = Arc::from(Vec::new());
+    let mut lane = |b: &mut IRBuilder, old: &Value, written: &Value, mask: &Value| {
+        let op = ArrayOp { kind: OpKind::MaskWrite, shared: 0, output: 0, position: Some(0) };
+        let mut own = vec![Value::None; 3];
+        own[OLD] = old.clone();
+        own[WRITTEN] = written.clone();
+        own[MASK] = mask.clone();
+        b.ir_array_op(op, &empty, &own)
+    };
+    let zero = b.ir_constant_int(0);
+    let thirty = b.ir_constant_int(30);
+    let five = b.ir_constant_int(5);
+    let first = lane(&mut b, &cell, &zero, &below_t1);
+    let second = lane(&mut b, &first, &thirty, &at_least_t2);
+    let plus_five = b.ir_add_i(&second, &five);
+    let third = lane(&mut b, &second, &plus_five, &between);
+    b.ir_expose_public_i(&third);
+    let mut expected = x;
+    if x < t1 {
+        expected = 0;
+    }
+    if x >= t2 {
+        expected = 30;
+    }
+    if t1 <= x && x < t2 {
+        expected += 5;
+    }
+    let graph = b.export_ir_graph();
+    let lowered = crate::lower::emit::lower(&graph, Target::Halo2Base, &[construction]).expect("masked writes to lower");
+    ScatterGraph { graph: optimized(lowered), inputs, expected: Some(vec![expected]) }
+}
+
+/// How many statements of `graph` are selects.
+pub(crate) fn selects(graph: &IRGraph) -> usize {
+    graph.stmts.iter().filter(|s| matches!(s.ir, IR::SelectI | IR::SelectF)).count()
+}

@@ -6,12 +6,15 @@
 //!   one-hot of [`position`]; the selection takes the cheaper per target.
 //! * `OpKind::IndexWrite` (`a[i, ...] = v` at a runtime index on one axis):
 //!   [`write`], a select per cell on the pinned one-hot of the index.
+//! * `OpKind::MaskWrite` (`a[mask] = v`): [`mask_write`], a select per cell,
+//!   or chains of masked writes as sums over the masks' atoms.
 //!
 //! Each construction documents its preconditions, postconditions, cost per
 //! backend and its soundness argument next to the code.
 
 pub mod arith;
 pub mod insert;
+pub mod mask_write;
 pub mod position;
 pub mod write;
 #[cfg(test)]
@@ -32,7 +35,7 @@ use super::{Bound, Candidate, Claim, Construction, Context, EmitCx, Emitter, Fac
 /// The scatter family's constructions, in the order the selection breaks
 /// ties.
 pub fn constructions() -> Vec<&'static dyn Construction> {
-    vec![&InsertBySharedProducts, &InsertByComplement, &OneHotWrite, &ZeroWriteChain]
+    vec![&InsertBySharedProducts, &InsertByComplement, &OneHotWrite, &ZeroWriteChain, &MaskWriteBySelects, &MaskWriteByDecisionLists]
 }
 
 /// The fact a pinned position one-hot proves about its index: `lo <= x <
@@ -382,5 +385,149 @@ impl Emitter for ZeroChainEmitter {
             None => own[write::OLD].clone(),
         };
         self.writes.as_ref().expect("started").cell(b, step, coord, &own, &base)
+    }
+}
+
+// ── Masked writes ───────────────────────────────────────────────────────
+
+/// What passes may know about a cell after a masked write: it is its old
+/// value or the written one.
+pub struct MaskWriteSemantics;
+
+impl OperatorSemantics for MaskWriteSemantics {
+    fn fold(&self, _op: &ArrayOp, args: &[Value]) -> Option<Constant> {
+        let as_constant = |v: &Value| match v {
+            Value::Float(_) => v.float_val().map(Constant::Float),
+            _ => v.int_val().map(Constant::Int),
+        };
+        let mask = &args[mask_write::MASK];
+        match mask.bool_val().or_else(|| mask.int_val().map(|v| v != 0)) {
+            Some(true) => as_constant(&args[mask_write::WRITTEN]),
+            Some(false) => as_constant(&args[mask_write::OLD]),
+            None => {
+                let (old, written) = (as_constant(&args[mask_write::OLD])?, as_constant(&args[mask_write::WRITTEN])?);
+                (old == written).then_some(old)
+            }
+        }
+    }
+
+    fn number_type(&self, op: &ArrayOp, args: &[Value]) -> NumberType {
+        if args[self.picks_from(op).unwrap_or(0..0)].iter().any(|v| matches!(v, Value::Float(_))) {
+            NumberType::Float
+        } else {
+            NumberType::Integer
+        }
+    }
+
+    fn bounds(&self, op: &ArrayOp, operands: &[Option<Interval>]) -> Option<Interval> {
+        operands[self.picks_from(op)?].iter().copied().reduce(|x, y| Some(Interval::union(x?, y?))).flatten()
+    }
+
+    fn picks_from(&self, _op: &ArrayOp) -> Option<Range<usize>> {
+        Some(mask_write::OLD..mask_write::WRITTEN + 1)
+    }
+}
+
+/// Every masked-write lane as a select (`mask_write::select_cell`).
+pub struct MaskWriteBySelects;
+
+/// The chains of masked writes that have a decision list as sums over
+/// their atoms, the other lanes as selects (`mask_write::DecisionList`).
+pub struct MaskWriteByDecisionLists;
+
+fn writes_constant_zero(lane: &Lane, cx: &Context) -> bool {
+    use crate::ir_defs::IR;
+    matches!(cx.stmt(lane.own[mask_write::WRITTEN]).ir, IR::ConstantInt { value: 0 })
+        || matches!(cx.stmt(lane.own[mask_write::WRITTEN]).ir, IR::ConstantFloat { value } if value == 0.0)
+}
+
+impl Construction for MaskWriteBySelects {
+    fn name(&self) -> &'static str {
+        "mask write: selects"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        if group.kind != OpKind::MaskWrite {
+            return Vec::new();
+        }
+        let cost = group.lanes.iter().map(|l| mask_write::select_cost(cx.target, writes_constant_zero(l, cx))).sum();
+        vec![Candidate {
+            pre: Vec::new(),
+            post: group.lanes.iter().map(|lane| Requirement::Lane(lane.stmt)).collect(),
+            cost,
+            emitter: Box::new(MaskWriteEmitter { lists: std::collections::HashMap::new() }),
+        }]
+    }
+}
+
+impl Construction for MaskWriteByDecisionLists {
+    fn name(&self) -> &'static str {
+        "mask write: decision lists"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        if group.kind != OpKind::MaskWrite {
+            return Vec::new();
+        }
+        // Only the last lane of a chain gets a list (the others are dead
+        // once it is a sum).
+        let continued: std::collections::HashSet<StmtId> =
+            group.lanes.iter().map(|lane| lane.own[mask_write::OLD]).collect();
+        let lists: std::collections::HashMap<StmtId, mask_write::DecisionList> = group
+            .lanes
+            .iter()
+            .filter(|lane| !continued.contains(&lane.stmt))
+            .filter_map(|lane| Some((lane.stmt, mask_write::DecisionList::of(lane, cx)?)))
+            .collect();
+        if lists.is_empty() {
+            return Vec::new();
+        }
+        // A lane a decision list covers costs nothing as a select (it is
+        // dead once the chain's last lane is a sum).
+        let covered: std::collections::HashSet<StmtId> = lists
+            .keys()
+            .flat_map(|&last| chain_lanes(last, cx))
+            .collect();
+        let cost = group
+            .lanes
+            .iter()
+            .map(|lane| match lists.get(&lane.stmt) {
+                Some(list) => list.cost(cx.target),
+                None if covered.contains(&lane.stmt) => 0,
+                None => mask_write::select_cost(cx.target, writes_constant_zero(lane, cx)),
+            })
+            .sum();
+        vec![Candidate {
+            pre: Vec::new(),
+            post: group.lanes.iter().map(|lane| Requirement::Lane(lane.stmt)).collect(),
+            cost,
+            emitter: Box::new(MaskWriteEmitter { lists }),
+        }]
+    }
+}
+
+/// The earlier lanes of the chain that ends in lane `last`.
+fn chain_lanes(last: StmtId, cx: &Context) -> Vec<StmtId> {
+    let mut lanes = Vec::new();
+    let mut cell = cx.stmt(last).arguments[mask_write::OLD];
+    while cx.group_of_lane(cell).is_some_and(|g| g.kind == OpKind::MaskWrite) {
+        lanes.push(cell);
+        cell = cx.stmt(cell).arguments[mask_write::OLD];
+    }
+    lanes
+}
+
+struct MaskWriteEmitter {
+    /// Decision lists by the lane they compute.
+    lists: std::collections::HashMap<StmtId, mask_write::DecisionList>,
+}
+
+impl Emitter for MaskWriteEmitter {
+    fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, lane: &Lane) -> Value {
+        if let Some(list) = self.lists.get(&lane.stmt) {
+            return list.emit(b, &|stmt| cx.value(stmt));
+        }
+        let own = cx.values(&lane.own);
+        mask_write::select_cell(b, &own[mask_write::OLD], &own[mask_write::WRITTEN], &own[mask_write::MASK])
     }
 }
