@@ -77,6 +77,12 @@ RULES: tuple[Rule, ...] = (
     _rule(OUT_OF_SCOPE, r"Only supported NumPy imports are allowed",
           "import of a module other than numpy and math"),
 
+    # A size with a bound, at a site that needs a constant.
+    _rule(LIMITATION, r"(shape element|range \w+|slice \w+|reshape target dimension|repeat count|split "
+                      r"sections|linspace `num`)[\w ]*? must be a compile-time constant int \(it is a "
+                      r"runtime value in",
+          "{1} from a bounded runtime value where a constant is needed"),
+
     # Sizes without a provable maximum.
     _rule(NO_BOUND, r"no provable maximum: the `while` condition was not proven false",
           "while-loop trip count"),

@@ -97,6 +97,9 @@ def test_scope_rule(tmp_path):
      "value", "no_provable_bound", "range() trip count"),
     ("IR generation failed: linspace `num` must be a compile-time constant int",
      "no_provable_bound", "np.linspace num from a runtime value"),
+    ("IR generation failed: shape element at axis 0 must be a compile-time constant int (it is "
+     "a runtime value in [0, 2]; a runtime size is not supported here)", "compiler_limitation",
+     "shape element from a bounded runtime value where a constant is needed"),
     ("IR generation failed: op `pow_f` requires precondition `BoolComb {..}` could not be "
      "lowered to a witness constraint", "compiler_limitation",
      "precondition of `pow_f` neither proved nor checkable in the circuit"),
