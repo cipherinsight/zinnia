@@ -102,7 +102,8 @@ gadgets. Concretely:
   where ties matter).
 - Gathers by a private index use the library's indexing: halo2-base
   `select_from_idx` behind `q.index`, Noir native array indexing after
-  `noir_hw::index_pos`. For short axes a one-hot over the valid index values
+  `noir_hw::index_pos` (a NumPy index) or `noir_hw::array_index` (a position,
+  e.g. one read from a hint). For short axes a one-hot over the valid index values
   `-len..len` is cheaper and needs no range check (`q.index` switches to it up to
   8 elements, measured by the `index_cost` test; in Noir use `noir_hw::pick` for
   rows of up to 8). Never scan the whole input per output when one index selects
@@ -131,6 +132,15 @@ gadgets. Concretely:
   cast `x as u64` truncates and proves nothing, so a cast only follows such a
   check. Every `unsafe { hint(..) }` is followed by the checks that pin it, with a
   `// Safety:` comment naming them.
+- A Noir array index that is not built from loop constants is proven in range
+  by the circuit itself, never left to Barretenberg's memory check: the
+  compiler can drop a range check of a value used as a memory index, and the
+  pinned bb (5.0.0-nightly.20260324) admits a read at index p - 1. Use
+  `noir_hw::array_index` (checks of `2 k` and `last - k`, which the compiler
+  keeps; the construction Zinnia's Noir library uses) or `index_pos`, which
+  calls it. An index that is a select of loop constants, or arithmetic on
+  positions already proven in range, is in range by construction and needs
+  none (say so in a comment).
 - The shared gadgets carry malicious-hint tests: `cargo test --lib` in
   `baselines/halo2_hw` (MockProver rejects neighbouring and non-integer quotients,
   flipped signs and parities) and `nargo test` in `baselines/noir_hw`
@@ -181,7 +191,8 @@ Noir (`noir_hw`, on top of the Noir standard library):
 | `x[mask]`, `nonzero`, `argwhere` | `select_kept`, `compact`, `compact_rows` |
 | comparisons | `let w = window(x)` once per value, then `u64` comparisons; `lt`, `gt`, ... for one-off tests |
 | `max`, `min`, `abs` | `max`, `min`, `abs` (or `window` and select); `max_of` for the maximum of a few values |
-| `a[i]` (private `i`) | `a[index_pos(i, len)]` (native indexing); `pick(row, i)` for rows of up to 8 |
+| `a[i]` (private `i`) | `a[index_pos::<8>(i, len)]` (native indexing; `::<28>` above 128 elements); `pick(row, i)` for rows of up to 8 |
+| `a[k]` (private position `k`, e.g. from a hint) | `a[array_index::<8>(k, len - 1)]` (`::<28>` above 128 elements) |
 | `u32` index arithmetic (`k // 6` on an index built from loop constants) | native `u32` operators |
 
 Noir specifics (toolchain, ZK target, driver) are in `NOIR_BASELINES.md`.

@@ -9,7 +9,7 @@
 // unspecified); reversed, equal values come out in decreasing index order.
 // @outputs: int[100]
 
-use noir_hw::window;
+use noir_hw::{array_index, window};
 
 global N: u32 = 100;
 
@@ -53,17 +53,18 @@ fn main(a: [Field; N]) -> pub [Field; N] {
     reversed
 }
 
-// `order` is the stable ascending argsort of a: each index is below 100
-// (7-bit check, then the array read) and the keys window(a_i) * 128 + i read
-// through the order strictly increase (71-bit check of each step). A key is a
-// function of its index, so the indices are distinct, a permutation of
-// 0..100, and the one that sorts the keys.
+// `order` is the stable ascending argsort of a: each index is in [0, 99]
+// (noir_hw::array_index, whose checks the compiler keeps, then the array
+// read) and the keys window(a_i) * 128 + i read through the order strictly
+// increase (71-bit check of each step). A key is a function of its index, so
+// the indices are distinct, a permutation of 0..100, and the one that sorts
+// the keys.
 fn check_order(a: [Field; N], order: [Field; N]) {
     let mut prev: Field = 0;
     for k in 0..N {
         let i = order[k];
-        i.assert_max_bit_size::<7>();
-        let key = (window(a[i as u32]) as Field) * 128 + i;
+        let v = a[array_index::<8>(i, (N - 1) as Field)];
+        let key = (window(v) as Field) * 128 + i;
         if k > 0 {
             (key - prev - 1).assert_max_bit_size::<71>();
         }

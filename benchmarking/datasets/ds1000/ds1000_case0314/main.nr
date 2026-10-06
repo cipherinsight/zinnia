@@ -25,7 +25,8 @@ fn main(a: [Field; 48]) -> pub [Field; 2] {
         }
     }
     // Comparisons only need the order-preserving windows, so the write
-    // a[idx] = a.min() is done on them.
+    // a[idx] = a.min() is done on them. best_idx is a select of loop
+    // constants 0..47, so the native write needs no index check.
     w[best_idx] = low;
     let mut best2 = w[0];
     let mut best2_idx: u32 = 0;

@@ -5,7 +5,7 @@
 // noir_hw::pick down a column (NumPy wrap and bounds for row - 1; any other
 // row has no proof), scaled (6 rescaled products) and summed (exact prefix
 // sums). The pick's zero tests are the same for every column, so the compiler
-// builds them once (index_pos with native reads costs 101 gates more).
+// builds them once (index_pos with native reads costs 96 gates more).
 // @outputs: float[6]
 
 use noir_hw::{mul, pick};

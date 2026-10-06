@@ -6,7 +6,7 @@
 // proof), scaled (8 rescaled products) and summed (exact prefix sums). The
 // pick's zero tests are the same for every row, so the compiler builds them
 // once (the same gate count as a hand-shared one-hot; index_pos with native
-// reads costs 114 gates more).
+// reads costs 105 gates more).
 // @outputs: float[8]
 
 use noir_hw::{mul, pick};
