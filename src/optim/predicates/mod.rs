@@ -68,7 +68,7 @@ pub use discharge::{
 };
 pub use facts::{
     collect_shape_params, collect_value_ids, instantiate_contract, substitute_inputs, Fact,
-    FactScope, FactSet, FactStack, ScopeKind,
+    FactGuard, FactScope, FactSet, FactStack, ScopeKind,
 };
 pub use formula::{
     lower_bool, ArithOp, BoolOp, CmpOp, ContractTerm, ContractVar, LowerError, LowerOutput,

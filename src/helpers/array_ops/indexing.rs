@@ -1662,7 +1662,9 @@ pub(crate) fn scalar_i64_value(b: &mut IRBuilder, sv: &ScalarValue<i64>) -> Valu
 /// `i + runtime_shape[ax]` (it used to be wrapped with the envelope size,
 /// pointing into the padding), and `0 <= wrapped < runtime_shape[ax]` is
 /// discharged (no IR when the facts prove it, an in-circuit check
-/// otherwise). Returns the wrapped indices for address computation.
+/// otherwise). Returns the wrapped indices for address computation (each
+/// as returned by the discharge: in range even where the access does not
+/// run).
 pub(crate) fn wrap_and_check_dynamic_indices(
     b: &mut IRBuilder,
     data: &DynamicNDArrayData,
@@ -1678,8 +1680,9 @@ pub(crate) fn wrap_and_check_dynamic_indices(
             };
             let hi = scalar_i64_value(b, &data.meta.runtime_shape[axis]);
             let wrapped = wrap_negative_index(b, raw, &hi);
-            crate::optim::resolver::discharge_index_below_value(b, &wrapped, 0, &hi, op_name);
-            SliceIndex::Single(wrapped)
+            SliceIndex::Single(crate::optim::resolver::discharge_index_below_value(
+                b, &wrapped, 0, &hi, op_name,
+            ))
         })
         .collect()
 }

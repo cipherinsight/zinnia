@@ -400,7 +400,9 @@ fn percentile_at_constant(b: &mut IRBuilder, sorted: &[Value], q: f64) -> Value 
 
 fn percentile_at_runtime(b: &mut IRBuilder, sorted: &[Value], q: &Value) -> Value {
     let n = sorted.len();
-    crate::optim::resolver::discharge_index_in_range(b, q, 0, 101, "np.percentile");
+    // The index the computation uses (in range also where the code does not
+    // run, see `discharge_index_in_range`).
+    let q = &crate::optim::resolver::discharge_index_in_range(b, q, 0, 101, "np.percentile");
     let n_minus_1 = b.ir_constant_int(n as i64 - 1);
     let hundred = b.ir_constant_int(100);
     let scaled = b.ir_mul_i(q, &n_minus_1);

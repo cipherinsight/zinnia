@@ -517,7 +517,7 @@ pub(crate) fn normalize_dynamic_index(b: &mut IRBuilder, idx: &Value, axis_len: 
 }
 
 /// Bounds-check an index on axis `axis` (of length `axis_len`) and return
-/// its NumPy-wrapped value.
+/// its NumPy-wrapped value, the index the access uses.
 ///
 /// NumPy accepts `-axis_len <= idx < axis_len` (a negative index counts
 /// from the end) and raises `IndexError` otherwise. This returns
@@ -526,7 +526,11 @@ pub(crate) fn normalize_dynamic_index(b: &mut IRBuilder, idx: &Value, axis_len: 
 /// says `idx < axis_len`, for `idx < 0` it says `-axis_len <= idx`. A
 /// runtime index gets the requirement as a resolver discharge (an
 /// in-circuit range check unless the facts prove it); a literal index is
-/// checked now and rejected with a compile error.
+/// checked now and rejected with a compile error. Both hold only where the
+/// access runs (see `discharge_index_in_range`): under a runtime execution
+/// predicate an out-of-range literal makes the circuit assert that the
+/// code does not run, and the returned index stays in range where it does
+/// not run.
 ///
 /// Every index axis must be checked on its own. A check on the flat
 /// address alone accepts `a[0, 5]` on a 4x4 array (flat address 5 is in
@@ -542,13 +546,15 @@ pub(crate) fn checked_axis_index(
     let len = axis_len as i64;
     if let Some(i) = idx.int_val() {
         if !(-len <= i && i < len) {
+            if len > 0 && b.assert_never_runs() {
+                return b.ir_constant_int(0);
+            }
             panic!("index {i} is out of bounds for axis {axis} with size {axis_len}");
         }
         return if i < 0 { b.ir_constant_int(i + len) } else { idx.clone() };
     }
     let wrapped = normalize_dynamic_index(b, idx, axis_len);
-    crate::optim::resolver::discharge_index_in_range(b, &wrapped, 0, len, op_name);
-    wrapped
+    crate::optim::resolver::discharge_index_in_range(b, &wrapped, 0, len, op_name)
 }
 
 /// Build the boolean "this runtime index selects coordinate `coord`" condition.

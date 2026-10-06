@@ -1143,7 +1143,7 @@ pub fn np_take_along_axis(
     for out_idx in 0..out_total {
         let coords = crate::helpers::shape_arith::decode_coords(out_idx, &out_shape, &out_strides);
         let take_index = idx_cells[out_idx].clone();
-        if let Some(i) = take_index.int_val() {
+        let take_index = if let Some(i) = take_index.int_val() {
             let dim = arr_shape[axis] as i64;
             if i < 0 || i >= dim {
                 panic!(
@@ -1151,15 +1151,17 @@ pub fn np_take_along_axis(
                     i, axis, dim
                 );
             }
+            take_index
         } else {
+            // The returned index stays in range where the code does not run.
             crate::optim::resolver::discharge_index_in_range(
                 b,
                 &take_index,
                 0,
                 arr_shape[axis] as i64,
                 "np.take_along_axis",
-            );
-        }
+            )
+        };
         let mut src_indices = Vec::with_capacity(arr_shape.len());
         for ax in 0..arr_shape.len() {
             if ax == axis {

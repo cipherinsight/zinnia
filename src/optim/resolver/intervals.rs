@@ -26,7 +26,7 @@ pub(crate) fn derive_bounds_from_facts(
     vid: crate::types::ValueId,
 ) -> Option<(i64, i64)> {
     use crate::optim::predicates::formula::{BoolOp, CmpOp, ContractTerm, ContractVar};
-    let entries = facts.per_value.get(&vid)?;
+    let entries = facts.facts_for(vid);
     let path_conds: Vec<&ContractTerm> = facts.visible_path_conditions();
     let mut lo: Option<i64> = None;
     let mut hi: Option<i64> = None;
@@ -176,7 +176,7 @@ pub(crate) fn derive_float_bounds_from_facts(
     use crate::optim::predicates::formula::{
         BoolOp, CmpOp, ContractFloat, ContractTerm, ContractVar,
     };
-    let entries = facts.per_value.get(&vid)?;
+    let entries = facts.facts_for(vid);
     let path_conds: Vec<&ContractTerm> = facts.visible_path_conditions();
     let mut lo: Option<f64> = None;
     let mut hi: Option<f64> = None;
