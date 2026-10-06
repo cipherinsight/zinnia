@@ -1217,6 +1217,44 @@ pub fn np_take_along_axis(
     crate::helpers::static_array::base::build_static_array_from_flat(b, out, out_shape, dtype)
 }
 
+/// The output rows of inserting `inserted` before row `pos` of `rows`, as
+/// `OpKind::Insert` placeholders (one per output cell) that the scatter
+/// family lowers (`lower::scatter`); the constructions prove
+/// `-n <= pos <= n`. `pos` is guarded by the execution predicate (0 where
+/// the code does not run), so those constraints hold on every path.
+fn insert_placeholders(
+    b: &mut IRBuilder,
+    rows: Vec<Vec<Value>>,
+    inserted: Vec<Value>,
+    pos: &Value,
+    lanes: usize,
+) -> Vec<Vec<Value>> {
+    use crate::lower::{ArrayOp, OpKind};
+    let n = rows.len();
+    let pos = b.guard_operand(pos, 0);
+    if lanes == 0 {
+        // No output cell to carry the check: pin the position alone.
+        let positions = crate::lower::scatter::position::Positions::InsertionPoint;
+        crate::lower::scatter::position::position_one_hot(b, &pos, n, positions);
+        return vec![Vec::new(); n + 1];
+    }
+    let mut shared: Vec<Value> = rows.into_iter().flatten().chain(inserted).collect();
+    shared.push(pos);
+    let shared: std::sync::Arc<[Value]> = shared.iter().map(|v| b.ensure_ptr(v)).collect();
+    let kind = OpKind::Insert { rows: n as u32, lanes: lanes as u32 };
+    (0..=n)
+        .map(|k| {
+            (0..lanes)
+                .map(|j| {
+                    let position = Some((k * lanes + j) as u32);
+                    let op = ArrayOp { kind, shared: shared.len() as u32, output: 0, position };
+                    b.ir_array_op(op, &shared, &[])
+                })
+                .collect()
+        })
+        .collect()
+}
+
 pub fn np_insert(
     b: &mut IRBuilder,
     args: &[Value],
@@ -1332,14 +1370,7 @@ pub fn np_insert(
                 cast_cell_to_dtype(b, &value_cells[value_idx], dtype)
             })
             .collect();
-        let out_rows = crate::lower::scatter::insert::insert_row(
-            b,
-            &rows,
-            &inserted,
-            obj,
-            dtype,
-            crate::lower::scatter::insert::Form::SharedProduct,
-        );
+        let out_rows = insert_placeholders(b, rows, inserted, obj, lane_total);
         let mut out = vec![None; out_total];
         for (k, row) in out_rows.into_iter().enumerate() {
             for (lane, value) in row.into_iter().enumerate() {

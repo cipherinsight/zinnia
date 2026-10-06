@@ -135,12 +135,21 @@ fn asserted_comparisons(ir: &IRGraph) -> HashSet<u32> {
         .collect()
 }
 
-/// How many `MulI` operands each statement's value is.
+/// How many `MulI` operands each statement's value is, not counting
+/// products with a constant (those scale an expression's terms; they add
+/// no product term).
 fn multiplied(ir: &IRGraph) -> HashMap<u32, usize> {
+    use crate::ir_defs::IR;
+    let constant = |id: u32| matches!(ir.stmts.get(id as usize).map(|s| &s.ir), Some(IR::ConstantInt { .. }));
     let mut uses: HashMap<u32, usize> = HashMap::new();
-    for stmt in ir.stmts.iter().filter(|s| matches!(s.ir, crate::ir_defs::IR::MulI)) {
-        for arg in &stmt.arguments {
-            *uses.entry(*arg).or_insert(0) += 1;
+    for stmt in ir.stmts.iter().filter(|s| matches!(s.ir, IR::MulI)) {
+        if let [a, b] = stmt.arguments.as_slice() {
+            if constant(*a) || constant(*b) {
+                continue;
+            }
+            for arg in [a, b] {
+                *uses.entry(*arg).or_insert(0) += 1;
+            }
         }
     }
     uses
@@ -849,7 +858,7 @@ impl<'a> NoirEmitter<'a> {
     /// the interval of the result when both operands have one (exact
     /// integer arithmetic: the values involved stay far below p).
     fn integer_arith(&mut self, a: &str, b: &str, op: char) -> String {
-        if op == '*' {
+        if op == '*' && self.linear_terms(a) > 0 && self.linear_terms(b) > 0 {
             for factor in [a, b] {
                 if self.linear_terms(factor) > 2 {
                     self.materialize_sum(factor);

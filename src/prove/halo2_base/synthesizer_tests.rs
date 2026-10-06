@@ -1599,3 +1599,38 @@ fn packed_key_comparison_is_lexicographic_and_pinned() {
     // An index outside [0, 2^7) has no witness (the range check fails).
     assert!(!synthesize(&*op, &[int(1), int(128), int(1), int(0)], &[]).accepted);
 }
+
+// ── Scatter family (lower::scatter) ────────────────────────────────────
+
+/// `np.insert` at a runtime position, in both forms and at negative,
+/// interior and end positions: the honest witness gives NumPy's result, and
+/// every hint (the position one-hot's lanes, each loaded inside its bit
+/// gate) moved by any of the deltas is rejected.
+#[test]
+fn insert_hints_are_pinned() {
+    use crate::lower::scatter::insert::Form;
+    use crate::lower::scatter::test_support::{insert_graph, witness};
+    let rows = vec![vec![5, 6], vec![7, 8], vec![9, 10]];
+    let mut shifts: Vec<Fp> = vec![int(1), int(-1), int(2), int(-2)];
+    shifts.extend(deltas(&[]));
+    for form in [Form::SharedProduct, Form::Complement] {
+        for pos in [-3, -1, 0, 2, 3] {
+            let case = insert_graph(&rows, &[1, 2], pos, form);
+            let w = witness(&case.inputs);
+            let honest = synthesize_graph(&case.graph, &w, &[]);
+            assert!(honest.accepted, "{form:?} pos={pos}: honest witness rejected");
+            let expected: Vec<Fp> = case.expected.as_ref().unwrap().iter().map(|&v| int(v)).collect();
+            assert_eq!(honest.outputs, expected, "{form:?} pos={pos}");
+            assert_eq!(honest.hints, rows.len() + 1);
+            for index in 0..honest.hints {
+                for shift in &shifts {
+                    let tampered = synthesize_graph(&case.graph, &w, &[(index, *shift)]);
+                    assert!(!tampered.accepted, "{form:?} pos={pos}: hint #{index} moved by {shift:?} was accepted");
+                }
+            }
+        }
+        // A position NumPy rejects has no witness.
+        let case = insert_graph(&rows, &[1, 2], 4, form);
+        assert!(!synthesize_graph(&case.graph, &witness(&case.inputs), &[]).accepted);
+    }
+}

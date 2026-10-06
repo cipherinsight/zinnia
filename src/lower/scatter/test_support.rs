@@ -10,12 +10,15 @@ use crate::circuit_input::InputPath;
 use crate::ir::IRGraph;
 use crate::ir_defs::IR;
 use crate::prove::kernel;
-use crate::types::{NumberType, Value};
+use std::sync::Arc;
 
-use super::insert::{insert_row, Form};
+use crate::lower::{ArrayOp, Construction, OpKind, Target};
+use crate::types::Value;
+
+use super::insert::Form;
 use super::position::{position_one_hot, Positions};
 
-pub(crate) use crate::lower::sort::test_support::mock_run;
+pub(crate) use crate::lower::sort::test_support::{mock_run, witness};
 
 /// A graph, its inputs, and the public outputs NumPy gives (`None`: NumPy
 /// raises, so the circuit must have no witness).
@@ -63,26 +66,38 @@ pub(crate) fn numpy_insert(rows: &[Vec<i64>], inserted: &[i64], pos: i64) -> Opt
     Some(out.concat())
 }
 
-/// `np.insert(a, pos, e, axis=0)` over the inputs `a{k}_{j}`, `e{j}`, `pos`,
-/// computed by `form`, every output cell exposed in row-major order.
+/// `np.insert(a, pos, e, axis=0)` over the inputs `a{k}_{j}`, `e{j}`, `pos`:
+/// one `OpKind::Insert` placeholder per output cell, lowered by the
+/// construction of `form` alone, every output cell exposed in row-major
+/// order.
 pub(crate) fn insert_graph(rows: &[Vec<i64>], inserted: &[i64], pos: i64, form: Form) -> ScatterGraph {
     let mut b = IRBuilder::new();
     let mut inputs = Vec::new();
-    let row_cells: Vec<Vec<Value>> = rows
-        .iter()
-        .enumerate()
-        .map(|(k, row)| {
-            row.iter().enumerate().map(|(j, v)| read(&mut b, &mut inputs, format!("a{k}_{j}"), *v)).collect()
-        })
-        .collect();
-    let e_cells: Vec<Value> =
-        inserted.iter().enumerate().map(|(j, v)| read(&mut b, &mut inputs, format!("e{j}"), *v)).collect();
-    let pos_cell = read(&mut b, &mut inputs, "pos".into(), pos);
-    let out = insert_row(&mut b, &row_cells, &e_cells, &pos_cell, NumberType::Integer, form);
-    for cell in out.iter().flatten() {
-        b.ir_expose_public_i(cell);
+    let mut shared: Vec<Value> = Vec::new();
+    for (k, row) in rows.iter().enumerate() {
+        for (j, v) in row.iter().enumerate() {
+            shared.push(read(&mut b, &mut inputs, format!("a{k}_{j}"), *v));
+        }
     }
-    ScatterGraph { graph: optimized(b.export_ir_graph()), inputs, expected: numpy_insert(rows, inserted, pos) }
+    for (j, v) in inserted.iter().enumerate() {
+        shared.push(read(&mut b, &mut inputs, format!("e{j}"), *v));
+    }
+    shared.push(read(&mut b, &mut inputs, "pos".into(), pos));
+    let shared: Arc<[Value]> = shared.into();
+    let (n, lanes) = (rows.len(), inserted.len());
+    let kind = OpKind::Insert { rows: n as u32, lanes: lanes as u32 };
+    for p in 0..(n + 1) * lanes {
+        let op = ArrayOp { kind, shared: shared.len() as u32, output: 0, position: Some(p as u32) };
+        let cell = b.ir_array_op(op, &shared, &[]);
+        b.ir_expose_public_i(&cell);
+    }
+    let construction: &dyn Construction = match form {
+        Form::SharedProduct => &super::InsertBySharedProducts,
+        Form::Complement => &super::InsertByComplement,
+    };
+    let graph = b.export_ir_graph();
+    let lowered = crate::lower::emit::lower(&graph, Target::Halo2Base, &[construction]).expect("an insertion to lower");
+    ScatterGraph { graph: optimized(lowered), inputs, expected: numpy_insert(rows, inserted, pos) }
 }
 
 /// The IR after dead-code elimination (what the backends receive).

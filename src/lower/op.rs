@@ -54,6 +54,13 @@ pub enum OpKind {
     Sort,
     // ── gather family (`lower::gather`) ───────────────────────────────
     // ── scatter family (`lower::scatter`) ─────────────────────────────
+    /// `np.insert` of one slice before a runtime position along an axis of
+    /// `rows` slices, each of `lanes` cells. Shared operands: the source
+    /// cells (`rows * lanes`, row-major by slice), the inserted slice
+    /// (`lanes` cells) and the position. Output 0 has `(rows + 1) * lanes`
+    /// cells, row-major by slice. A position outside `[-rows, rows]` has no
+    /// proof (NumPy raises).
+    Insert { rows: u32, lanes: u32 },
 }
 
 impl OpKind {
@@ -61,6 +68,7 @@ impl OpKind {
     pub fn semantics(self) -> &'static dyn OperatorSemantics {
         match self {
             OpKind::Sort => &super::sort::SortSemantics,
+            OpKind::Insert { .. } => &super::scatter::InsertSemantics,
         }
     }
 
@@ -68,6 +76,7 @@ impl OpKind {
     pub fn name(self) -> &'static str {
         match self {
             OpKind::Sort => "sort",
+            OpKind::Insert { .. } => "insert",
         }
     }
 }

@@ -1113,3 +1113,44 @@ fn key_comparison_matches_the_mock_and_rejects_false_assertions() {
         }
     }
 }
+
+// ── Scatter family (lower::scatter) ────────────────────────────────────────
+
+/// `np.insert` at a runtime position emitted to Noir with its position
+/// one-hot turned into free private inputs: the honest lanes give NumPy's
+/// result; every other 0/1 lane and every non-bit lane fails a constraint;
+/// a position NumPy rejects has no witness.
+#[test]
+fn insert_hints_are_pinned_in_noir() {
+    use crate::lower::scatter::insert::Form;
+    use crate::lower::scatter::test_support::{hints_as_inputs, insert_graph, with_hints};
+    if !toolchain_present(false) {
+        return;
+    }
+    let rows = vec![vec![5, 6], vec![7, 8], vec![9, 10]];
+    let as_witness = |inputs: &[(String, i64)]| {
+        let named: Vec<(&str, i64)> = inputs.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+        witness(&named)
+    };
+    for form in [Form::SharedProduct, Form::Complement] {
+        for pos in [-2, 1, 3] {
+            let case = insert_graph(&rows, &[1, 2], pos, form);
+            let (graph, sites) = hints_as_inputs(&case);
+            let honest: Vec<i64> = sites.iter().map(|s| s.honest).collect();
+            let got = execute(&graph, &as_witness(&with_hints(&case, &sites, &honest))).expect("honest hints");
+            let expected: Vec<i128> = case.expected.as_ref().unwrap().iter().map(|&v| v as i128).collect();
+            assert_eq!(got, expected, "{form:?} pos={pos}");
+            for k in 0..sites.len() {
+                for v in [1 - honest[k], 2] {
+                    let mut hints = honest.clone();
+                    hints[k] = v;
+                    assert_rejected(execute(&graph, &as_witness(&with_hints(&case, &sites, &hints))));
+                }
+            }
+        }
+        let case = insert_graph(&rows, &[1, 2], -4, form);
+        let (graph, sites) = hints_as_inputs(&case);
+        let honest: Vec<i64> = sites.iter().map(|s| s.honest).collect();
+        assert_rejected(execute(&graph, &as_witness(&with_hints(&case, &sites, &honest))));
+    }
+}
