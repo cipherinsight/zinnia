@@ -912,14 +912,19 @@ fn less_than_by_type(b: &mut IRBuilder, x: &Value, y: &Value) -> Value {
 /// The elements of the sort whose outputs of ranks `0, 1, ..` are exactly
 /// `stmts`, in that order.
 fn ascending_sort_outputs(b: &IRBuilder, stmts: &[crate::types::StmtId]) -> Option<std::sync::Arc<[Value]>> {
-    let first = b.sorted_placeholder_at(stmts[0])?;
-    if first.index || first.elements.len() != stmts.len() {
+    // A sorted-value lane at a constant rank: its elements and rank.
+    let value_lane = |stmt| {
+        let p = b.array_op_placeholder_at(stmt)?;
+        let is_value = p.op.kind == crate::lower::OpKind::Sort && p.op.output == crate::lower::sort::VALUES;
+        is_value.then(|| (p.shared.clone(), p.op.position))
+    };
+    let (elements, _) = value_lane(stmts[0])?;
+    if elements.len() != stmts.len() {
         return None;
     }
-    let elements = first.elements.clone();
     for (rank, &stmt) in stmts.iter().enumerate() {
-        let output = b.sorted_placeholder_at(stmt)?;
-        if output.index || output.rank as usize != rank || !std::sync::Arc::ptr_eq(&output.elements, &elements) {
+        let (other, position) = value_lane(stmt)?;
+        if position != Some(rank as u32) || !std::sync::Arc::ptr_eq(&other, &elements) {
             return None;
         }
     }

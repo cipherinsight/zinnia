@@ -106,9 +106,15 @@ def _build_input_node(value: Any, dt, name: str) -> dict:
             }
         }
 
-    elif variant in ("Complex", "String"):
+    elif variant == "Complex":
+        # The circuit reads a complex input as the pair (real, imag) at the
+        # input's path (`read_input_value`, ZinniaType::Complex).
+        number = _coerce_complex(value, name)
+        return {"Sequence": [{"Float": number.real}, {"Float": number.imag}]}
+
+    elif variant == "String":
         raise ZinniaException(
-            f"Cannot build witness for `{name}`: `{variant}` values are not "
+            f"Cannot build witness for `{name}`: `String` values are not "
             f"supported as circuit inputs."
         )
 
@@ -211,6 +217,19 @@ def _coerce_float(value: Any, name: str) -> float:
     if isinstance(value, (int, float)):
         return float(value)
     raise ZinniaException(f"Input datatype mismatch for `{name}`. Expected Float, got {type(value).__name__}.")
+
+
+def _coerce_complex(value: Any, name: str) -> complex:
+    """Convert a value to a complex number (a real number has imaginary part 0)."""
+    try:
+        import numpy as np
+        if isinstance(value, (np.complexfloating, np.floating, np.integer, np.bool_)):
+            return complex(value)
+    except ImportError:
+        pass
+    if isinstance(value, (int, float, complex)):
+        return complex(value)
+    raise ZinniaException(f"Input datatype mismatch for `{name}`. Expected Complex, got {type(value).__name__}.")
 
 
 def _flatten_ndarray(value: Any, expected_shape: list, name: str) -> list:

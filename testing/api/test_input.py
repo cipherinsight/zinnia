@@ -152,16 +152,27 @@ def test_input_wellformed_nested_list_still_accepted():
     assert foo([[1, 0], [0, -1]])
 
 
-def test_complex_input_rejected_at_witness_build():
-    """`Complex` circuit inputs compile (the annotation is valid) but cannot
-    be supplied a value: witness-build rejects them with a clear message
-    rather than dying with an opaque `Unsupported type`."""
+def test_complex_input_is_read_as_real_and_imaginary_parts():
+    """A `Complex` input is supplied as a Python or NumPy complex number (the
+    circuit reads its real and imaginary parts); a wrong claim fails."""
+    @zk_circuit
+    def foo(c: Complex, z: Complex[Array, "2"]):
+        assert c.real == 1.0
+        assert c.imag == 2.0
+        assert z[1].imag == -0.5
+        assert np.sum(z.real) == 3.0
+
+    assert foo(1 + 2j, np.array([1.0 + 0j, 2.0 - 0.5j]))
+    assert not foo(1 + 3j, np.array([1.0 + 0j, 2.0 - 0.5j]))
+    assert not foo(1 + 2j, np.array([1.0 + 0j, 2.0 + 0.5j]))
+
+
+def test_complex_input_rejects_non_numbers():
     @zk_circuit
     def foo(c: Complex):
-        pass
+        assert c.real == 1.0
 
     program = ZKCircuit.from_method(foo).compile()
     with pytest.raises(ZinniaException) as e:
-        program.prove(1 + 2j, backend="mock")
-    assert "Complex" in str(e.value)
-    assert "not supported as circuit inputs" in str(e.value)
+        program.prove("1+2j", backend="mock")
+    assert "Expected Complex" in str(e.value)
