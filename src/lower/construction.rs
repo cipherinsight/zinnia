@@ -91,6 +91,12 @@ pub trait Emitter {
     fn shared(&mut self, _b: &mut IRBuilder, _cx: &mut EmitCx, group: GroupId, name: &'static str) -> Rc<dyn Any> {
         unreachable!("this node produces no shared value {name} of group {group}")
     }
+
+    /// The shared value `name` of statement `at` (`Requirement::SharedAt`),
+    /// emitted where its first consumer asks for it (`at` is lowered then).
+    fn shared_at(&mut self, _b: &mut IRBuilder, _cx: &mut EmitCx, at: StmtId, name: &'static str) -> Rc<dyn Any> {
+        unreachable!("this node produces no shared value {name} of statement {at}")
+    }
 }
 
 /// What a construction may look at while offering candidates.
