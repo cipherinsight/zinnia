@@ -63,6 +63,20 @@ pub(crate) fn units(target: Target) -> Units {
     }
 }
 
+/// The unit costs of element reads: `units` with halo2-base's equality test
+/// and two-branch select as measured on reads (`eval-redo/layer/
+/// layer-memory.md`, "Calibration": `np.take_along_axis` and gathers compiled
+/// with each element construction forced; a select chain's link costs about
+/// 18 cells unfused, an indicator term about 13, a multiplexer select 8).
+/// The other families' operations keep `units`.
+pub(crate) fn element_units(target: Target) -> Units {
+    let u = units(target);
+    match target {
+        Target::Halo2Base => Units { eq_const: 10, select_var: 8, ..u },
+        Target::Noir => u,
+    }
+}
+
 /// The running-product scan over `n` flags (`scan.rs`): one
 /// multiply-subtract gate per flag (`lead[i] = lead[i-1] - lead[i-1]
 /// has[i]`) and the result's sum. The one-hot bits `lead[i-1] has[i]` are
@@ -140,7 +154,7 @@ pub(super) fn element_by_onehot(n: u64, onehot_is_free: bool, target: Target) ->
 /// multiply-add per link (`prove/halo2_base/synthesizer/plan.rs`,
 /// `OneHotChain`); otherwise each link is a select gate.
 pub(super) fn element_by_select_chain(n: u64, index_reads: u64, checked_below_n: bool, target: Target) -> u64 {
-    let u = units(target);
+    let u = element_units(target);
     let links = n.saturating_sub(1);
     let fused = target == Target::Halo2Base && checked_below_n && links >= 3;
     let link = if fused { u.mul_add } else { u.select_var };
@@ -151,7 +165,7 @@ pub(super) fn element_by_select_chain(n: u64, index_reads: u64, checked_below_n:
 /// `element_by_select_chain`): the inner product with the bits `[i == 0..n)`
 /// (`element::gather_by_indicators`).
 pub(super) fn element_by_indicators(n: u64, index_reads: u64, target: Target) -> u64 {
-    let u = units(target);
+    let u = element_units(target);
     (n * u.eq_const).div_ceil(index_reads.max(1)) + n * u.mul_add
 }
 
@@ -180,10 +194,26 @@ pub(super) fn permutation_scatter(n: u64, target: Target) -> u64 {
 /// array, checking each index once (measured on 0319: 3 gates per read at a
 /// checked index, 3 per array element, about 8 per index check).
 pub(super) fn element_by_memory(n: u64, reads: u64, index_reads: &[u64], target: Target) -> u64 {
-    let u = units(target);
-    let indices = index_reads.len() as u64;
+    let u = element_units(target);
     match target {
-        Target::Halo2Base => indices * n * u.eq_const + reads * n * u.mul_add,
+        // Per index read at most twice the backend's multiplexer (its selects
+        // and the index bits), else the shared equality tests and an inner
+        // product per read (`synthesizer/memory.rs`).
+        Target::Halo2Base => {
+            let _ = reads;
+            let width = u64::from(u64::BITS - n.saturating_sub(1).leading_zeros());
+            index_reads
+                .iter()
+                .map(|&r| {
+                    let r = r.max(1);
+                    if r <= 2 {
+                        r * n.saturating_sub(1) * u.select_var + 4 + 7 * width
+                    } else {
+                        n * u.eq_const + r * n * u.mul_add
+                    }
+                })
+                .sum()
+        }
         Target::Noir => {
             let checks: u64 = index_reads.iter().map(|&r| u.native_index.div_ceil(r.max(1))).sum();
             n * u.native_element + reads * u.native_read + checks

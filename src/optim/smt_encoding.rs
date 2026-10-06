@@ -481,6 +481,7 @@ impl IROp for IR {
             | IR::AllocateMemory { .. }
             | IR::WriteMemory { .. }
             | IR::ReadMemory { .. }
+            | IR::ReadTable { .. }
             | IR::MemoryTraceEmit { .. }
             | IR::MemoryTraceSeal
             | IR::AllocateDynamicNDArrayMeta { .. }

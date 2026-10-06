@@ -37,7 +37,7 @@ use super::window::{window_shift, AxisWindow};
 pub const ENCODING: &str = "encoding";
 
 /// The encodings of a group's lanes, by position.
-type Encodings = Vec<IndexEncoding>;
+pub(crate) type Encodings = Vec<IndexEncoding>;
 
 /// The family's constructions, in the order the selection breaks ties.
 pub fn constructions() -> Vec<&'static dyn Construction> {
@@ -135,7 +135,8 @@ impl Emitter for ScanEmitter {
 fn encoding_source(cx: &Context, stmt: StmtId) -> Option<(GroupId, usize, i64)> {
     let (root, offset) = super::strip_constant_offset(&cx.graph.stmts, stmt);
     let group = cx.group_of_lane(root)?;
-    let encoded = ScanKind::of(group.kind).is_some() || scatter_offset(cx, group).is_some();
+    let wrap = matches!(group.kind, OpKind::Wrap { .. }) && group.lanes.iter().any(|l| l.stmt == root && l.output == 0);
+    let encoded = ScanKind::of(group.kind).is_some() || scatter_offset(cx, group).is_some() || wrap;
     let position = group.lanes.iter().find(|l| l.stmt == root)?.position? as usize;
     encoded.then_some((group.id, position, offset))
 }
@@ -437,13 +438,23 @@ fn written_at(cx: &Context, cells: &[StmtId], index: StmtId) -> Option<StmtId> {
         IR::ConstantInt { value } => Some(value),
         _ => None,
     };
+    // `[index == k]`: an equality test, or the bit `k` of the NumPy wrap
+    // whose position `index` is (`lower::memory::wrap`).
+    let wrap_bit_at = |c: StmtId, k: i64| {
+        let (IR::ArrayOp(op), Some(group)) = (&cx.stmt(c).ir, cx.group_of_lane(c)) else { return false };
+        matches!(op.kind, OpKind::Wrap { .. })
+            && op.output == crate::lower::memory::wrap::HIT
+            && op.position == u32::try_from(k).ok()
+            && group.lanes.iter().any(|l| l.stmt == index && l.output == crate::lower::memory::wrap::POSITION)
+    };
     let tests_index_at = |c: StmtId, k: i64| {
         let test = cx.stmt(c);
-        matches!(test.ir, IR::EqI)
+        let equality = matches!(test.ir, IR::EqI)
             && match test.arguments.as_slice() {
                 &[x, y] => (x == index && constant(y) == Some(k)) || (y == index && constant(x) == Some(k)),
                 _ => false,
-            }
+            };
+        equality || wrap_bit_at(c, k)
     };
     let mut value = None;
     for (k, &cell) in cells.iter().enumerate() {
@@ -506,7 +517,9 @@ impl Construction for ElementByOneHot {
             let cost = reads
                 .iter()
                 .map(|(_, (g, _, _))| {
-                    let onehot_is_free = cx.groups[*g].kind == OpKind::PermutationScatter;
+                    // A permutation scatter's hits and a wrap's position bits
+                    // are cells already; a scan's one-hot is products to build.
+                    let onehot_is_free = matches!(cx.groups[*g].kind, OpKind::PermutationScatter | OpKind::Wrap { .. });
                     cost::element_by_onehot(group.shared.len() as u64, onehot_is_free, cx.target)
                 })
                 .sum();

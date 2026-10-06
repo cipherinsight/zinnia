@@ -99,11 +99,14 @@ fn circuit(
     let publics = vec![*sum.value()];
     let mut second_phase = SecondPhase::default();
     second_phase.push(Arc::new(Permutation { xs: x, ys: y }));
-    let mut circuit = Halo2BaseCircuit::new(builder, second_phase);
+    let mut circuit = Halo2BaseCircuit::new(builder, second_phase, Default::default(), Default::default());
     match pinning {
-        Some((params, _)) if stage != CircuitBuilderStage::Prover => circuit.builder.set_params(params.base),
-        Some(_) => {}
-        None => layout(&mut circuit),
+        Some((params, _)) if stage != CircuitBuilderStage::Prover => {
+            circuit.table_layout = params.table_layout.clone();
+            circuit.builder.set_params(params.base)
+        }
+        Some((params, _)) => circuit.table_layout = params.table_layout,
+        None => layout(&mut circuit).expect("layout"),
     }
     (circuit, publics)
 }
@@ -143,8 +146,8 @@ fn a_circuit_without_checks_is_one_phase() {
     let ctx = builder.main(0);
     let x = ctx.load_witness(Fp::from(7u64));
     range.range_check(ctx, x, 16);
-    let mut circuit = Halo2BaseCircuit::new(builder, SecondPhase::default());
-    layout(&mut circuit);
+    let mut circuit = Halo2BaseCircuit::new(builder, SecondPhase::default(), Default::default(), Default::default());
+    layout(&mut circuit).expect("layout");
     assert_eq!(circuit.params().challenges, 0);
     assert_eq!(circuit.builder.config_params.num_advice_per_phase.len(), 1);
     assert!(mock_accepts(&circuit, &[]));

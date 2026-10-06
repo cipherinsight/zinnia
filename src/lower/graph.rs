@@ -12,8 +12,9 @@
 //! Statement ids in this module refer to the graph being lowered (the input
 //! of the pass).
 
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::Arc;
 
 use crate::types::StmtId;
 
@@ -127,8 +128,14 @@ pub enum Claim {
 }
 
 /// A list of values a claim is about, interned (claims are small `Copy`
-/// values): equal lists have equal ids within a process, so comparing ids
-/// compares lists.
+/// values): equal lists have equal ids, so comparing ids compares lists.
+///
+/// The interner belongs to one lowering: [`ListId::reset`] empties it when
+/// `emit::lower` starts, and it is per thread (a lowering runs on one).
+/// Ids are therefore numbered in the order one compilation creates its
+/// lists, whatever the process compiled before, so the order of claims
+/// (`ListId` is `Ord`) is reproducible, and the table does not grow across
+/// compilations. An id is meaningful only within the lowering that made it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ListId(u32);
 
@@ -141,11 +148,21 @@ pub enum ListEntry {
 
 type Interned = (Vec<Arc<[ListEntry]>>, HashMap<Arc<[ListEntry]>, u32>);
 
-static LISTS: LazyLock<Mutex<Interned>> = LazyLock::new(Default::default);
+thread_local! {
+    static LISTS: RefCell<Interned> = RefCell::new(Default::default());
+}
 
 impl ListId {
+    /// Forget every list (the start of a lowering, `emit::lower`).
+    pub(super) fn reset() {
+        LISTS.with(|lists| *lists.borrow_mut() = Default::default());
+    }
+
     pub fn intern(entries: &[ListEntry]) -> ListId {
-        let mut lists = LISTS.lock().expect("the list interner");
+        LISTS.with(|lists| Self::intern_in(&mut lists.borrow_mut(), entries))
+    }
+
+    fn intern_in(lists: &mut Interned, entries: &[ListEntry]) -> ListId {
         if let Some(&id) = lists.1.get(entries) {
             return ListId(id);
         }
@@ -167,7 +184,7 @@ impl ListId {
     }
 
     pub fn entries(self) -> Arc<[ListEntry]> {
-        LISTS.lock().expect("the list interner").0[self.0 as usize].clone()
+        LISTS.with(|lists| lists.borrow().0[self.0 as usize].clone())
     }
 }
 

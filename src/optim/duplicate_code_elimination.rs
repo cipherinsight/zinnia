@@ -66,7 +66,7 @@ impl IRPass for DuplicateCodeElimination {
         let mut seen: HashMap<(Discriminant<IR>, Vec<StmtId>), Vec<(IR, StmtId)>> = HashMap::new();
 
         for stmt in &ir_graph.stmts {
-            if matches!(stmt.ir, IR::ReadMemory { .. } | IR::WriteMemory { .. }) {
+            if matches!(stmt.ir, IR::ReadMemory { .. } | IR::ReadTable { .. } | IR::WriteMemory { .. }) {
                 // Memory ops never dedupe — order matters.
                 continue;
             }
