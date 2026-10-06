@@ -502,6 +502,9 @@ pub trait Synthesizer {
         segment_id: u32,
         addr: &Self::CellRef,
     ) -> Result<Self::CellRef, ProvingError>;
+    /// `IR::ReadTable`: the slot at `addr`, with no witness for an address
+    /// outside the segment; the segment is not written afterwards.
+    fn read_table(&mut self, segment_id: u32, addr: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
     fn memory_trace_emit(
         &mut self,
         segment_id: u32,

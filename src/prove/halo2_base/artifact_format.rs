@@ -21,6 +21,9 @@ pub struct Halo2BasePinnedRekeygenV1Payload {
     /// a one-phase circuit (and in artifacts written before there were any).
     #[serde(default)]
     pub challenges: usize,
+    /// Key column sets per memory-table group (`circuit::CircuitParams`).
+    #[serde(default)]
+    pub table_layout: Vec<usize>,
     /// Graph-phase provenance records (Step 2: synthesis consumes the
     /// table — interval/affine narrowing changes the emitted gate
     /// count). Verify re-synthesizes from `ir_stmts`; without the

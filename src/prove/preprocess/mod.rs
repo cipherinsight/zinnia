@@ -523,6 +523,15 @@ impl<'a> Preprocessor<'a> {
                 mem[addr] = args[1];
                 Ok(None)
             }
+            IR::ReadTable { segment_id } => {
+                let mem = self
+                    .memories
+                    .get(segment_id)
+                    .ok_or_else(|| ProvingError::synthesis("Segment not allocated"))?;
+                let addr = usize::try_from(kernel::fp_to_i64(args[0])).ok().filter(|&a| a < mem.len());
+                let addr = addr.ok_or_else(|| ProvingError::synthesis("table read out of bounds"))?;
+                Ok(Some(mem[addr]))
+            }
             IR::ReadMemory { segment_id } => {
                 let addr = kernel::fp_to_i64(args[0]) as usize;
                 let init = self

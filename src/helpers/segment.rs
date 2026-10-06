@@ -83,6 +83,14 @@ pub fn read_typed(b: &mut IRBuilder, segment_id: u32, address: &Value, dtype: Nu
     scalar_i64_to_value(&crate::ops::dyn_ndarray::value_to_scalar_i64(&raw), dtype)
 }
 
+/// [`read_typed`] as a table read (`IR::ReadTable`) of a non-complex
+/// segment.
+pub fn read_table_typed(b: &mut IRBuilder, segment_id: u32, address: &Value, dtype: NumberType) -> Value {
+    assert!(dtype != NumberType::Complex, "table reads of complex segments are not built");
+    let raw = b.ir_read_table(segment_id, address);
+    scalar_i64_to_value(&crate::ops::dyn_ndarray::value_to_scalar_i64(&raw), dtype)
+}
+
 pub fn write_typed(
     b: &mut IRBuilder,
     segment_id: u32,

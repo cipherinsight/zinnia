@@ -79,6 +79,9 @@ pub struct KeyPinning {
     /// one-phase circuit and in key directories written before there were any.
     #[serde(default)]
     pub challenges: usize,
+    /// Key column sets per memory-table group (`circuit::CircuitParams`).
+    #[serde(default)]
+    pub table_layout: Vec<usize>,
     /// Thread break points of the keygen synthesis (every phase), for the
     /// prover.
     pub break_points: MultiPhaseThreadBreakPoints,
@@ -90,7 +93,7 @@ pub struct KeyPinning {
 impl KeyPinning {
     /// The circuit parameters the keys were made for.
     pub fn circuit_params(&self) -> CircuitParams {
-        CircuitParams { base: self.base_params.clone(), challenges: self.challenges }
+        CircuitParams { base: self.base_params.clone(), challenges: self.challenges, table_layout: self.table_layout.clone() }
     }
 }
 
@@ -258,6 +261,7 @@ pub fn keygen(ir: &IRGraph, params: &ProvingParams) -> Result<Halo2BaseKeys, Pro
         params: params.clone(),
         base_params: circuit_params.base,
         challenges: circuit_params.challenges,
+        table_layout: circuit_params.table_layout,
         break_points: circuit.break_points(),
         ir_hash,
     };

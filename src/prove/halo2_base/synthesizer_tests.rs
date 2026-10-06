@@ -1782,19 +1782,84 @@ fn synthesize_graph(graph: &crate::ir::IRGraph, witness: &ResolvedWitness, tampe
     builder.set_lookup_bits(LOOKUP_BITS as usize);
     builder.set_instance_columns(1);
     let params = ProvingParams { k: K, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
-    let (outputs, hints) = {
+    let (outputs, hints, second_phase, tables) = {
         let mut synth = Halo2BaseSynthesizer::new(&mut builder, Some(witness.clone()), params, &graph.provenance);
         synth.plan_ahead(graph);
         synth.tamper = tamper::HintTamper::targeting(tamper);
         crate::prove::interpreter::interpret_ir(graph, &mut synth).expect("synthesis failed");
-        (synth.public_values().to_vec(), synth.tamper.hints_seen())
+        let parts = (std::mem::take(&mut synth.second_phase), std::mem::take(&mut synth.tables));
+        (synth.public_values().to_vec(), synth.tamper.hints_seen(), parts.0, parts.1)
     };
-    builder.calculate_params(Some(20));
-    let accepted = MockProver::run(K, &builder, vec![outputs.clone()])
+    // The backend's circuit (memory tables and second-phase checks included).
+    let mut circuit = super::super::circuit::Halo2BaseCircuit::new(builder, second_phase, tables);
+    super::super::circuit::layout(&mut circuit).expect("layout");
+    let accepted = MockProver::run(K, &circuit, vec![outputs.clone()])
         .expect("MockProver::run")
         .verify()
         .is_ok();
     Outcome { outputs, hints, accepted }
+}
+
+/// `IR::ReadTable` (a dynamic lookup into the segment's table): the honest
+/// read of every slot of a segment of `n` input cells is accepted with the
+/// slot's value; an index outside `[-2, n + 1]`'s valid part has no
+/// witness; the read's value (a hint pinned by the lookup) moved by any
+/// delta is rejected; and a second table of the same segment after a
+/// constant write is read at its own version.
+#[test]
+fn table_reads_are_pinned_and_in_bounds() {
+    use crate::ir_defs::IR;
+    use graphs::*;
+    let mut shifts: Vec<Fp> = vec![int(1), int(-1), int(7)];
+    shifts.extend(deltas(&[]));
+    for n in [1usize, 2, 5] {
+        let values: Vec<i64> = (0..n as i64).map(|k| 10 * k - 3).collect();
+        let build = || {
+            let mut g = Graph::default();
+            let cells: Vec<u32> = (0..n).map(|k| g.read(&format!("x{k}"))).collect();
+            let index = g.read("i");
+            g.push(IR::AllocateMemory { segment_id: 0, size: n as u32, init_value: 0 }, &[]);
+            for (k, cell) in cells.iter().enumerate() {
+                let address = g.int(k as i64);
+                g.push(IR::WriteMemory { segment_id: 0 }, &[address, *cell]);
+            }
+            let read = g.push(IR::ReadTable { segment_id: 0 }, &[index]);
+            g.push(IR::ExposePublicI, &[read]);
+            g.finish()
+        };
+        let ir = build();
+        for i in -2..=n as i64 + 1 {
+            let mut ints: Vec<(String, i64)> = values.iter().enumerate().map(|(k, v)| (format!("x{k}"), *v)).collect();
+            ints.push(("i".to_string(), i));
+            let w = witness_of(&ints);
+            let honest = synthesize_graph(&ir, &w, &[]);
+            if !(0..n as i64).contains(&i) {
+                assert!(!honest.accepted, "n={n} i={i}: accepted, NumPy raises");
+                continue;
+            }
+            assert!(honest.accepted, "n={n} i={i}: honest read rejected");
+            assert_eq!(honest.outputs, vec![int(values[i as usize])], "n={n} i={i}");
+            assert_eq!(honest.hints, 1, "the read value is the only hint");
+            for shift in &shifts {
+                assert!(!synthesize_graph(&ir, &w, &[(0, *shift)]).accepted, "n={n} i={i}: read moved by {shift:?}");
+            }
+        }
+    }
+}
+
+/// Integer inputs by name, as a witness.
+fn witness_of(ints: &[(String, i64)]) -> ResolvedWitness {
+    use crate::circuit_input::{InputNode, InputParam};
+    let mut inputs = CircuitInputs::new();
+    for (name, value) in ints {
+        inputs.params.push(InputParam {
+            name: name.clone(),
+            is_public: false,
+            dtype: serde_json::Value::Null,
+            value: InputNode::Int(*value),
+        });
+    }
+    ResolvedWitness::new(inputs, PRECISION_BITS)
 }
 
 /// Each sort lowering with hints, on values with ties: the honest witness
@@ -2084,4 +2149,44 @@ fn reverse_orders_use_the_trichotomy() {
     }
     let one_order_and_a_sign = run(&build(false), &[("x", 1), ("y", 2)], None).advice;
     assert!(run(&graph, &[("x", 1), ("y", 2)], None).advice < one_order_and_a_sign, "the reverse order paid a range check");
+}
+
+/// Table reads through the backend's own key generation (no witness),
+/// pinned prover and verifier: the honest proof verifies, a proof whose
+/// public read value is changed does not, and an index outside the table
+/// cannot be proved.
+#[test]
+fn table_reads_prove_and_verify_with_real_keys() {
+    use crate::ir_defs::IR;
+    use crate::prove::halo2_base::keys::{keygen, prove_with_keys, verify_with_keys};
+    use graphs::*;
+    let n = 6;
+    let mut g = Graph::default();
+    let cells: Vec<u32> = (0..n).map(|k| g.read(&format!("x{k}"))).collect();
+    let (i, j) = (g.read("i"), g.read("j"));
+    g.push(IR::AllocateMemory { segment_id: 3, size: n as u32, init_value: 0 }, &[]);
+    for (k, cell) in cells.iter().enumerate() {
+        let address = g.int(k as i64);
+        g.push(IR::WriteMemory { segment_id: 3 }, &[address, *cell]);
+    }
+    for index in [i, j] {
+        let read = g.push(IR::ReadTable { segment_id: 3 }, &[index]);
+        g.push(IR::ExposePublicI, &[read]);
+    }
+    let ir = g.finish();
+    let inputs = |i: i64, j: i64| {
+        let mut ints: Vec<(String, i64)> = (0..n).map(|k| (format!("x{k}"), 100 + k as i64)).collect();
+        ints.push(("i".to_string(), i));
+        ints.push(("j".to_string(), j));
+        witness_of(&ints)
+    };
+    let params = ProvingParams { k: 9, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
+    let keys = keygen(&ir, &params).expect("keygen");
+    assert_eq!(keys.pinning.table_layout, vec![1], "one table group with one key set");
+    let proof = prove_with_keys(&ir, &inputs(4, 0), &keys).expect("prove");
+    assert_eq!(proof.public_values, vec![int(104), int(100)]);
+    assert!(verify_with_keys(&keys, &proof.proof, &proof.public_values).valid, "honest proof rejected");
+    let tampered = vec![int(105), int(100)];
+    assert!(!verify_with_keys(&keys, &proof.proof, &tampered).valid, "changed read value verified");
+    assert!(prove_with_keys(&ir, &inputs(6, 0), &keys).is_err(), "an index past the table was proved");
 }

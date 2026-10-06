@@ -94,6 +94,8 @@ pub(super) struct MemoryState {
     segments: HashMap<u32, Segment>,
     /// `[root == v]` indicator bits, shared by every read on the same root.
     indicators: HashMap<(u64, i64), Halo2BaseCell>,
+    /// The tag of each (segment, slots version) read as a table.
+    table_tags: HashMap<(u32, u64), u64>,
     /// `(root id, value set)` memberships already asserted.
     memberships: std::collections::HashSet<(u64, Vec<i64>)>,
     /// Stage-1 planes of two-root reads, keyed by (segment, slots version,
@@ -166,6 +168,65 @@ impl Halo2BaseSynthesizer<'_> {
         // The overlay compares the read address with write addresses by cell.
         let addr = &if self.segment(segment_id)?.overlay.is_empty() { *addr } else { self.materialize_address(addr)? };
         self.apply_overlay(segment_id, addr, base)
+    }
+
+    /// `IR::ReadTable`: the slot at `addr` by a dynamic lookup into the
+    /// segment's table (`circuit/tables.rs`), which proves `0 <= addr < n`
+    /// and the value. A constant address must be in bounds at synthesis
+    /// time and reads the slot directly. The segment may not have a pending
+    /// runtime-address write (its slots would not be its contents); the
+    /// layer only emits table reads of segments written at constant
+    /// addresses.
+    pub(super) fn memory_read_table(&mut self, segment_id: u32, addr: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        let segment = self.segment(segment_id)?;
+        let len = segment.slots.len();
+        if !segment.overlay.is_empty() {
+            return Err(ProvingError::synthesis("table read of a segment written at a runtime address"));
+        }
+        if self.is_const_cell(addr) {
+            let idx = usize::try_from(kernel::fp_to_i64(addr.value)).ok().filter(|&i| i < len);
+            let idx = idx.ok_or_else(|| ProvingError::synthesis("table read out of bounds"))?;
+            return self.slot_cell(segment_id, idx);
+        }
+        let tag = self.table_tag(segment_id)?;
+        let index = usize::try_from(kernel::fp_to_i64(addr.value)).ok().filter(|&i| i < len);
+        if index.is_none() {
+            self.note_unsat(|| format!("table read at an address outside [0, {len})"));
+        }
+        let value = match index {
+            Some(i) => match self.slot_value(segment_id, i)? {
+                SlotValue::Cell(cell) => cell.value,
+                SlotValue::Init(v) => v,
+            },
+            None => Fp::zero(),
+        };
+        // A prover-supplied value, pinned by the lookup to the slot at `addr`.
+        let read = self.hint(value);
+        let (index_cell, value_cell) = (self.assigned(addr), self.assigned(&read));
+        self.tables.reads.push((tag, index_cell, value_cell));
+        if let Some(range) = Interval::new(0, len as i128 - 1) {
+            self.prove_range(addr, range);
+        }
+        Ok(read)
+    }
+
+    /// The table of the segment's current slots: registered (one row per
+    /// slot, the slot's cell or a constant cell for an unwritten slot) the
+    /// first time this version of the segment is read as a table.
+    fn table_tag(&mut self, segment_id: u32) -> Result<u64, ProvingError> {
+        let version = self.segment(segment_id)?.slots_version;
+        if let Some(tag) = self.memory.table_tags.get(&(segment_id, version)) {
+            return Ok(*tag);
+        }
+        let tag = self.memory.table_tags.len() as u64;
+        self.memory.table_tags.insert((segment_id, version), tag);
+        let len = self.segment(segment_id)?.slots.len();
+        for address in 0..len {
+            let slot = self.slot_cell(segment_id, address)?;
+            let value = self.assigned(&slot);
+            self.tables.rows.push((tag, address as u64, value));
+        }
+        Ok(tag)
     }
 
     fn segment(&self, segment_id: u32) -> Result<&Segment, ProvingError> {

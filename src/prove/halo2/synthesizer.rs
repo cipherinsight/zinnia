@@ -3203,6 +3203,19 @@ impl Synthesizer for Halo2Synthesizer {
         }
         Ok(acc)
     }
+    /// A runtime address goes through `read_memory`, whose address
+    /// indicators admit only in-bounds addresses; a constant one must be in
+    /// bounds at synthesis time.
+    fn read_table(&mut self, segment_id: u32, addr: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
+        if let Some(a) = self.constant_value(addr) {
+            let len = self.segment_len(segment_id)?;
+            let in_bounds = usize::try_from(kernel::fp_to_i64(a)).is_ok_and(|a| a < len);
+            if !in_bounds {
+                return Err(ProvingError::synthesis("table read out of bounds"));
+            }
+        }
+        self.read_memory(segment_id, addr)
+    }
     fn memory_trace_emit(
         &mut self,
         _: u32,

@@ -271,6 +271,15 @@ pub enum IR {
     ReadMemory {
         segment_id: u32,
     },
+    /// The segment's slot at the runtime address operand, read as a
+    /// memory-argument read: there is no witness for an address outside
+    /// `[0, len)` on any backend (the mock rejects it too), and the segment
+    /// is not written after its first `ReadTable` (the slots form a fixed
+    /// table). halo2-base: a dynamic lookup into the segment's table; Noir:
+    /// a native array read at a checked index (`lower::memory`).
+    ReadTable {
+        segment_id: u32,
+    },
     MemoryTraceEmit {
         segment_id: u32,
         is_write: bool,
@@ -621,6 +630,7 @@ impl IR {
             } => format!("allocate_memory[{}][{}][{}]", segment_id, size, init_value),
             IR::WriteMemory { segment_id } => format!("write_memory[{}]", segment_id),
             IR::ReadMemory { segment_id } => format!("read_memory[{}]", segment_id),
+            IR::ReadTable { segment_id } => format!("read_table[{}]", segment_id),
             IR::MemoryTraceEmit {
                 segment_id,
                 is_write,
@@ -738,6 +748,7 @@ impl IR {
             | IR::AllocateMemory { .. }
             | IR::WriteMemory { .. }
             | IR::ReadMemory { .. }
+            | IR::ReadTable { .. }
             | IR::MemoryTraceEmit { .. }
             | IR::MemoryTraceSeal
             | IR::AllocateDynamicNDArrayMeta { .. }
@@ -852,6 +863,7 @@ impl IR {
             IR::AllocateMemory { .. } => "AllocateMemoryIR",
             IR::WriteMemory { .. } => "WriteMemoryIR",
             IR::ReadMemory { .. } => "ReadMemoryIR",
+            IR::ReadTable { .. } => "ReadTableIR",
             IR::MemoryTraceEmit { .. } => "MemoryTraceEmitIR",
             IR::MemoryTraceSeal => "MemoryTraceSealIR",
             IR::AllocateDynamicNDArrayMeta { .. } => "AllocateDynamicNDArrayMetaIR",
@@ -947,6 +959,7 @@ impl IR {
             }),
             IR::WriteMemory { segment_id } => serde_json::json!({ "segment_id": segment_id }),
             IR::ReadMemory { segment_id } => serde_json::json!({ "segment_id": segment_id }),
+            IR::ReadTable { segment_id } => serde_json::json!({ "segment_id": segment_id }),
             IR::IndexInBox { rank } => serde_json::json!({ "rank": rank }),
             IR::MemoryTraceEmit {
                 segment_id,
@@ -1258,6 +1271,9 @@ impl IR {
                 segment_id: data["segment_id"].as_u64().unwrap_or(0) as u32,
             }),
             "ReadMemoryIR" => Ok(IR::ReadMemory {
+                segment_id: data["segment_id"].as_u64().unwrap_or(0) as u32,
+            }),
+            "ReadTableIR" => Ok(IR::ReadTable {
                 segment_id: data["segment_id"].as_u64().unwrap_or(0) as u32,
             }),
             "MemoryTraceEmitIR" => Ok(IR::MemoryTraceEmit {

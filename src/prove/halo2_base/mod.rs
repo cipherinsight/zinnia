@@ -102,17 +102,18 @@ impl ProverBackend for Halo2BaseProverBackend {
         let mut dry_cache: HashMap<u32, CellStats> = HashMap::new();
         let mut dry_run = |lb: u32| -> Result<CellStats, ProvingError> {
             if let Some(v) = dry_cache.get(&lb) {
-                return Ok(*v);
+                return Ok(v.clone());
             }
             let entry = cell_stats(ir, lb, defaults.precision_bits)?;
-            dry_cache.insert(lb, entry);
+            dry_cache.insert(lb, entry.clone());
             Ok(entry)
         };
 
         let mut best: Option<(u128, u32, u32)> = None; // (cost, k, lookup_bits)
         for k in ESTIMATE_K_MIN..=ESTIMATE_K_MAX {
             let lookup_bits = defaults.lookup_bits.min(k.saturating_sub(1)).max(1);
-            let CellStats { advice, second_advice, challenges, lookup, fixed, instances } = dry_run(lookup_bits)?;
+            let CellStats { advice, second_advice, challenges, table_advice, table_rows, tables, lookup, fixed, instances } =
+                dry_run(lookup_bits)?;
             let lookup_used = lookup > 0;
 
             let usable = (1usize << k).saturating_sub(UNUSABLE_ROWS);
@@ -122,8 +123,16 @@ impl ProverBackend for Halo2BaseProverBackend {
             if lookup_used && (1usize << lookup_bits) > usable {
                 continue;
             }
+            if table_rows > usable {
+                continue;
+            }
 
-            let num_advice = (advice - second_advice).div_ceil(usable).max(1);
+            let num_advice = (advice - second_advice - table_advice).div_ceil(usable).max(1);
+            // The memory tables (`circuit/tables.rs`): the value column, two
+            // advice columns per key set, one lookup argument per key set.
+            let (groups, _) = circuit::tables::pack(&tables, usable);
+            let table_polys: usize =
+                circuit::tables::key_sets(&groups, usable).iter().map(|sets| 1 + 2 * sets + 2 * sets).sum();
             // The second phase (challenge-based checks, `circuit.rs`): its
             // gate columns and the challenges' column.
             let second_columns = if challenges > 0 { second_advice.div_ceil(usable).max(1) + 1 } else { 0 };
@@ -149,6 +158,7 @@ impl ProverBackend for Halo2BaseProverBackend {
             let committed_polys = num_advice
                 + num_lookup_advice
                 + second_columns
+                + table_polys
                 + meta.lookups().len() * 2 // mv_lookup: multiplicity + running-sum poly
                 + perm_columns.div_ceil(perm_chunk) // permutation grand products
                 + (degree - 1) // quotient pieces
@@ -246,6 +256,7 @@ impl ProverBackend for Halo2BaseProverBackend {
             base_params: circuit_params.base,
             break_points,
             challenges: circuit_params.challenges,
+            table_layout: circuit_params.table_layout.clone(),
             provenance: ir
                 .provenance
                 .to_wire(&|vid| ir.value_to_stmt.get(&vid).copied()),
@@ -343,7 +354,10 @@ impl ProverBackend for Halo2BaseProverBackend {
             None,
             &recovered_params,
             CircuitBuilderStage::Keygen,
-            Some((CircuitParams { base: payload.base_params, challenges: payload.challenges }, payload.break_points)),
+            Some((
+                CircuitParams { base: payload.base_params, challenges: payload.challenges, table_layout: payload.table_layout },
+                payload.break_points,
+            )),
         )?
         .0;
         let ipa_params = ParamsIPA::<EqAffine>::new(artifact.k);
@@ -379,7 +393,7 @@ impl ProverBackend for Halo2BaseProverBackend {
 }
 
 /// Cell counts of one synthesized circuit (witness-independent).
-#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+#[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct CellStats {
     /// Advice cells of both phases (the second phase's included).
     pub advice: usize,
@@ -388,6 +402,12 @@ pub struct CellStats {
     pub second_advice: usize,
     /// Verifier challenges the circuit declares (0: one phase).
     pub challenges: usize,
+    /// Of `advice`, the memory tables' cells (`circuit/tables.rs`), the rows
+    /// their table column needs and the reads looked up in them.
+    pub table_advice: usize,
+    pub table_rows: usize,
+    /// `(rows, reads)` of each table, in tag order.
+    pub tables: Vec<(usize, usize)>,
     pub lookup: usize,
     pub fixed: usize,
     pub instances: usize,
@@ -402,17 +422,20 @@ pub fn cell_stats(ir: &IRGraph, lookup_bits: u32, precision_bits: u32) -> Result
     builder.set_lookup_bits(lookup_bits as usize);
     builder.set_instance_columns(1);
     let params = ProvingParams { k: ESTIMATE_K_MAX, lookup_bits, precision_bits };
-    let (instances, second) = {
+    let (instances, second, tables) = {
         let mut synth = Halo2BaseSynthesizer::new(&mut builder, None, params, &ir.provenance);
         synth.plan_ahead(ir);
         interpret_ir(ir, &mut synth)?;
-        (synth.public_values().len(), std::mem::take(&mut synth.second_phase))
+        (synth.public_values().len(), std::mem::take(&mut synth.second_phase), std::mem::take(&mut synth.tables))
     };
     let stats = builder.statistics();
     let shape = second.shape();
     let second_advice = shape.advice + second.challenges();
     let cells = CellStats {
-        advice: stats.gate.total_advice_per_phase.iter().sum::<usize>() + second_advice,
+        advice: stats.gate.total_advice_per_phase.iter().sum::<usize>() + second_advice + tables.advice_cells(),
+        table_advice: tables.advice_cells(),
+        table_rows: tables.rows_needed(),
+        tables: tables.shape(),
         second_advice,
         challenges: second.challenges(),
         lookup: stats.total_lookup_advice_per_phase.iter().sum(),
@@ -514,7 +537,7 @@ fn build_circuit(
     stage: CircuitBuilderStage,
     pinning: Option<(CircuitParams, MultiPhaseThreadBreakPoints)>,
 ) -> Result<(Halo2BaseCircuit, Vec<Fp>), ProvingError> {
-    let pinned = pinning.is_some();
+    let pinned_table_layout = pinning.as_ref().map(|(p, _)| p.table_layout.clone());
     let mut builder = match (stage, pinning) {
         (CircuitBuilderStage::Prover, Some((circuit_params, break_points))) => {
             BaseCircuitBuilder::prover(circuit_params.base, break_points)
@@ -538,6 +561,7 @@ fn build_circuit(
     }
 
     let mut second_phase = circuit::SecondPhase::default();
+    let mut tables = circuit::Tables::default();
     let public_values = if let Some(public_values) =
         try_build_public_layout_only(&mut builder, ir, witness)?
     {
@@ -563,12 +587,15 @@ fn build_circuit(
             });
         }
         second_phase = std::mem::take(&mut synth.second_phase);
+        tables = std::mem::take(&mut synth.tables);
         synth.public_values().to_vec()
     };
 
-    let mut circuit = Halo2BaseCircuit::new(builder, second_phase);
-    if stage != CircuitBuilderStage::Prover && !pinned {
-        circuit::layout(&mut circuit);
+    let mut circuit = Halo2BaseCircuit::new(builder, second_phase, tables);
+    match pinned_table_layout {
+        Some(layout) => circuit.table_layout = layout,
+        None if stage != CircuitBuilderStage::Prover => circuit::layout(&mut circuit)?,
+        None => {}
     }
     if stage != CircuitBuilderStage::Prover && std::env::var("ZINNIA_HALO2_BASE_DEBUG_CELLS").is_ok() {
         let stats = circuit.builder.statistics();

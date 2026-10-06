@@ -665,6 +665,46 @@ fn native_array_read_rejects_out_of_range_addresses() {
     assert_rejected(execute(&graph, &witness(&[("x", 0), ("y", 64)])));
 }
 
+/// `IR::ReadTable` (the memory family's table read) is a native array read
+/// at a checked index on any segment length, a short one included (where
+/// the generic read would gather by a one-hot): every slot reads its value,
+/// an index outside the segment has no witness, and the mock agrees.
+#[test]
+fn table_reads_are_native_and_reject_out_of_range() {
+    if !toolchain_present(false) {
+        return;
+    }
+    for n in [2i64, 5, 40] {
+        let mut g = Graph::default();
+        g.push(IR::AllocateMemory { segment_id: 0, size: n as u32, init_value: 0 }, &[]);
+        let cells: Vec<u32> = (0..n).map(|k| g.read_int(&format!("x{k}"))).collect();
+        for (k, cell) in cells.iter().enumerate() {
+            let a = g.int(k as i64);
+            g.push(IR::WriteMemory { segment_id: 0 }, &[a, *cell]);
+        }
+        let index = g.read_int("i");
+        let read = g.push(IR::ReadTable { segment_id: 0 }, &[index]);
+        g.expose(read);
+        let graph = g.finish();
+        let names: Vec<String> = (0..n).map(|k| format!("x{k}")).collect();
+        let inputs = |i: i64| {
+            let mut ints: Vec<(&str, i64)> = names.iter().enumerate().map(|(k, x)| (x.as_str(), 7 * k as i64 - 2)).collect();
+            ints.push(("i", i));
+            witness(&ints)
+        };
+        let emitted = emit_circuit(&graph, &inputs(0), &ProvingParams::default()).unwrap();
+        assert!(emitted.main_nr.contains("array_index::<"), "{}", emitted.main_nr);
+        for i in [0, n / 2, n - 1] {
+            assert_eq!(execute(&graph, &inputs(i)).unwrap(), vec![7 * i as i128 - 2], "n={n} i={i}");
+            assert_eq!(mock_outputs(&graph, &inputs(i)), (true, vec![7 * i as i128 - 2]), "mock n={n} i={i}");
+        }
+        for i in [-1, n, n + 3] {
+            assert_rejected(execute(&graph, &inputs(i)));
+            assert!(!mock_outputs(&graph, &inputs(i)).0, "mock accepted n={n} i={i}");
+        }
+    }
+}
+
 /// M6: logic ops and selects use Python truthiness, as the mock: `not 5` is/// M6: logic ops and selects use Python truthiness, as the mock: `not 5` is
 /// 0 (it was 1 - 5 = -4) and a select on 5 takes the true branch.
 #[test]

@@ -294,6 +294,7 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
                 None
             }
             IR::ReadMemory { segment_id } => Some(synth.read_memory(*segment_id, &args[0])?),
+            IR::ReadTable { segment_id } => Some(synth.read_table(*segment_id, &args[0])?),
             IR::MemoryTraceEmit {
                 segment_id,
                 is_write,

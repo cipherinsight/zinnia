@@ -66,6 +66,11 @@ use halo2_base::halo2_proofs::{
 use halo2_base::virtual_region::copy_constraints::SharedCopyConstraintManager;
 use halo2_base::virtual_region::manager::VirtualRegionManager;
 use halo2_base::{AssignedValue, Context};
+
+use crate::prove::error::ProvingError;
+
+pub mod tables;
+pub use tables::{TableConfig, Tables};
 use serde::{Deserialize, Serialize};
 
 /// Rows reserved for blinding factors when packing cells into columns (the
@@ -160,6 +165,10 @@ pub struct CircuitParams {
     pub base: BaseCircuitParams,
     #[serde(default)]
     pub challenges: usize,
+    /// Key column sets of each memory-table group (`tables.rs`); empty: no
+    /// tables.
+    #[serde(default)]
+    pub table_layout: Vec<usize>,
 }
 
 /// The challenges and the second-phase cells pinned to them.
@@ -192,6 +201,7 @@ impl ChallengeConfig {
 pub struct Halo2BaseConfig {
     pub base: BaseConfig<Fp>,
     pub challenges: Option<ChallengeConfig>,
+    pub tables: Option<TableConfig>,
 }
 
 /// halo2-base's first-phase virtual regions plus the second-phase checks
@@ -199,6 +209,10 @@ pub struct Halo2BaseConfig {
 pub struct Halo2BaseCircuit {
     pub builder: BaseCircuitBuilder<Fp>,
     pub second_phase: SecondPhase,
+    /// Read-only memory tables and their reads (`tables.rs`).
+    pub tables: Tables,
+    /// Key column sets per table group (set by [`layout`] or the pinning).
+    pub table_layout: Vec<usize>,
     /// The second phase's break points, recorded when a non-prover stage
     /// lays it out (see [`Self::break_points`]).
     second_break_points: Mutex<Option<ThreadBreakPoints>>,
@@ -209,10 +223,12 @@ pub struct Halo2BaseCircuit {
 }
 
 impl Halo2BaseCircuit {
-    pub fn new(builder: BaseCircuitBuilder<Fp>, second_phase: SecondPhase) -> Self {
+    pub fn new(builder: BaseCircuitBuilder<Fp>, second_phase: SecondPhase, tables: Tables) -> Self {
         Halo2BaseCircuit {
             builder,
             second_phase,
+            tables,
+            table_layout: Vec::new(),
             second_break_points: Mutex::new(None),
             #[cfg(test)]
             challenge_offset: Fp::zero(),
@@ -267,7 +283,11 @@ impl Circuit<Fp> for Halo2BaseCircuit {
     type Params = CircuitParams;
 
     fn params(&self) -> CircuitParams {
-        CircuitParams { base: self.builder.config_params.clone(), challenges: self.second_phase.challenges() }
+        CircuitParams {
+            base: self.builder.config_params.clone(),
+            challenges: self.second_phase.challenges(),
+            table_layout: self.table_layout.clone(),
+        }
     }
 
     fn without_witnesses(&self) -> Self {
@@ -282,9 +302,10 @@ impl Circuit<Fp> for Halo2BaseCircuit {
         let k = params.base.k;
         let mut base = BaseConfig::configure(meta, params.base);
         let challenges = (params.challenges > 0).then(|| ChallengeConfig::configure(meta, params.challenges));
-        // The challenge column may add blinding rows.
+        let tables = (!params.table_layout.is_empty()).then(|| TableConfig::configure(meta, &params.table_layout));
+        // The challenge column and the tables' lookups may add blinding rows.
         base.set_usable_rows((1 << k) - meta.minimum_rows());
-        Halo2BaseConfig { base, challenges }
+        Halo2BaseConfig { base, challenges, tables }
     }
 
     fn synthesize(&self, config: Halo2BaseConfig, mut layouter: impl Layouter<Fp>) -> Result<(), Error> {
@@ -301,6 +322,12 @@ impl Circuit<Fp> for Halo2BaseCircuit {
                 Ok(())
             },
         )?;
+
+        if let Some(table_config) = &config.tables {
+            let copy = (!builder.witness_gen_only()).then(|| &builder.core().copy_manager);
+            let packing = self.tables.packing(table_rows(builder.config_params.k));
+            table_config.assign(&self.tables, &packing, &mut layouter, copy)?;
+        }
 
         // The second phase keeps its own copy manager: it is rebuilt on every
         // call of `synthesize` and must not accumulate in the first phase's.
@@ -357,11 +384,29 @@ impl Circuit<Fp> for Halo2BaseCircuit {
     }
 }
 
-/// Sets the circuit's column layout at its `k`: halo2-base's for the first
-/// phase (`calculate_params`, reserving `UNUSABLE_ROWS` rows per column, the
+/// Rows a table column (and a key set) may use at `k`: the backend's sizing
+/// rule (`UNUSABLE_ROWS` reserved), the same at layout and assignment.
+pub fn table_rows(k: usize) -> usize {
+    (1usize << k).saturating_sub(UNUSABLE_ROWS)
+}
+
+/// Sets the circuit's column layout at its `k` (an error when the memory
+/// tables do not fit its rows): halo2-base's for the first phase (`calculate_params`, reserving `UNUSABLE_ROWS` rows per column, the
 /// constants' fixed columns sized like the others), plus the second phase's
 /// gate columns and constants from [`SecondPhase::shape`].
-pub fn layout(circuit: &mut Halo2BaseCircuit) {
+pub fn layout(circuit: &mut Halo2BaseCircuit) -> Result<(), ProvingError> {
+    let usable_rows = table_rows(circuit.builder.config_params.k);
+    if circuit.tables.rows_needed() > usable_rows {
+        return Err(ProvingError::ProvingFailed {
+            detail: format!(
+                "halo2-base layout failed at k={}: the memory tables need {} rows, {} are usable",
+                circuit.builder.config_params.k,
+                circuit.tables.rows_needed(),
+                usable_rows
+            ),
+        });
+    }
+    circuit.table_layout = circuit.tables.packing(usable_rows).key_sets();
     let builder = &mut circuit.builder;
     let mut params = builder.calculate_params(Some(UNUSABLE_ROWS));
     let usable = (1usize << params.k).saturating_sub(UNUSABLE_ROWS).max(1);
@@ -384,6 +429,7 @@ pub fn layout(circuit: &mut Halo2BaseCircuit) {
         num_fixed
     };
     builder.set_params(params);
+    Ok(())
 }
 
 #[cfg(test)]

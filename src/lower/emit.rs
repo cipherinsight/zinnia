@@ -577,6 +577,7 @@ fn next_free_segment_id(graph: &IRGraph) -> u32 {
             IR::AllocateMemory { segment_id, .. }
             | IR::WriteMemory { segment_id }
             | IR::ReadMemory { segment_id }
+            | IR::ReadTable { segment_id }
             | IR::MemoryTraceEmit { segment_id, .. }
             | IR::DynamicNDArrayGetItem { segment_id, .. }
             | IR::DynamicNDArraySetItem { segment_id, .. } => Some(segment_id + 1),

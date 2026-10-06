@@ -58,6 +58,9 @@ pub struct Halo2BaseSynthesizer<'a> {
     /// Checks laid out after the verifier's challenges (`circuit.rs`),
     /// registered by the lowerings that need them.
     pub(crate) second_phase: super::circuit::SecondPhase,
+    /// Read-only memory tables and the reads looked up in them
+    /// (`IR::ReadTable`, `circuit/tables.rs`).
+    pub(crate) tables: super::circuit::Tables,
     witness: Option<ResolvedWitness>,
     params: ProvingParams,
     public_values: Vec<Fp>,
@@ -176,6 +179,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         Self {
             builder,
             second_phase: super::circuit::SecondPhase::default(),
+            tables: super::circuit::Tables::default(),
             witness,
             params,
             public_values: Vec::new(),
@@ -1652,6 +1656,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
     fn read_memory(&mut self, segment_id: u32, addr: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         self.memory_read(segment_id, addr)
+    }
+    fn read_table(&mut self, segment_id: u32, addr: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        self.memory_read_table(segment_id, addr)
     }
     fn memory_trace_emit(&mut self, _: u32, _: bool, _: &[Self::CellRef]) -> Result<(), ProvingError> { Ok(()) }
     fn memory_trace_seal(&mut self) -> Result<(), ProvingError> { Ok(()) }
