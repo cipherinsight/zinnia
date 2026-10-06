@@ -162,3 +162,36 @@ def test_abs_of_the_most_negative_q32_float_has_no_proof():
     assert accepted_everywhere(program, -2.0**31 + 1, 2.0**31 - 1)
     for claim in (2.0**31 - 2.0**-32, -2.0**31, 0.0):
         assert rejected_everywhere(program, -2.0**31, claim)
+
+
+# ── 0318: the inverse permutation's input is stated as a permutation ─────
+
+def inverse_permutation_kernel():
+    from pathlib import Path
+
+    kernel = Path(__file__).resolve().parents[2] / "benchmarking/datasets/ds1000/ds1000_case0318/kernel.py"
+    source = kernel.read_text().replace("from zinnia import *", "")
+    check = source.replace("    return a\n", "    assert np.all(a == expected)\n").replace(
+        'permutation: Integer[Array, "6"]):', 'permutation: Integer[Array, "6"], expected: Float[Array, "8 6"]):')
+    check = check.replace("lambda a, permutation:", "lambda a, permutation, expected:")
+    return compile_kernel(check)
+
+
+def test_inverse_permutation_requires_a_permutation():
+    """`@requires(is_permutation(permutation))`: NumPy's result on a
+    permutation is accepted and a wrong one rejected; a duplicate or a
+    negative entry (NumPy: uninitialized entries, or a wrapped index) has
+    no proof whatever the claim."""
+    program = inverse_permutation_kernel()
+    a = np.linspace(-1, 1, 48).reshape(8, 6)
+    perm = np.array([5, 3, 0, 2, 1, 4])
+    c = np.empty_like(perm)
+    c[perm] = np.arange(6)
+    assert mock_accepts(program, a, perm, a[:, c]) and halo2_accepts(program, a, perm, a[:, c])
+    assert not (mock_accepts(program, a, perm, a) or halo2_accepts(program, a, perm, a))
+    for bad in ([5, 3, 0, 2, 1, 1], [-1, 3, 0, 2, 1, 4], [6, 3, 0, 2, 1, 4]):
+        bad = np.array(bad)
+        last_write_wins = np.zeros(6, dtype=int)
+        last_write_wins[bad % 6] = np.arange(6)
+        for claim in (a[:, last_write_wins], a):
+            assert not (mock_accepts(program, a, bad, claim) or halo2_accepts(program, a, bad, claim))
