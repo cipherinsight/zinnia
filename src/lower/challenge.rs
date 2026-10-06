@@ -43,14 +43,19 @@ pub const CHALLENGE: Requirement = Requirement::Program { name: CHALLENGE_NAME }
 
 /// The one-time cost of enabling the second phase on halo2-base, in cells.
 ///
-/// Its cells are few (one challenge cell each, the powers a check
-/// precomputes are priced by the check), but a second phase adds committed
-/// polynomials (the challenge column and at least one second-phase gate
-/// column) and a prover round: about the cost of two columns. Calibrated
-/// against measured proving times (`eval-redo/layer/layer-challenge.md`):
-/// the cells a challenge construction must save before its proof is no
-/// slower.
-pub const HALO2_BASE_CHALLENGE_COST: u64 = 1_000;
+/// Its own cells are few (one challenge cell each; the powers and shifts a
+/// check precomputes are priced by the check), but the second phase adds
+/// committed polynomials: the challenge column, at least one second-phase
+/// gate column, their share of the permutation argument, and a selector per
+/// challenge, about four columns. At `k = 9` (every perf case that can use
+/// a challenge construction) that is about 2,000 cells. Measured
+/// (`eval-redo/layer/layer-challenge.md`, argsorts of 64 to 160 elements,
+/// interleaved proofs at `k = 9`): the grand-product sort of 64 saves 4,300
+/// cells against the routed network and proves in about the same time, of
+/// 100 saves 7,900 cells and proves about 1.5 times faster. Above `k = 9`
+/// a column holds more cells, but the constructions' savings grow faster
+/// (the scaling tables there).
+pub const HALO2_BASE_CHALLENGE_COST: u64 = 2_000;
 
 /// The one-time cost of producing the program-wide requirement `name` on
 /// `target`; `None` when the target cannot produce it.
