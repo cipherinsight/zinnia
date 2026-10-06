@@ -33,8 +33,10 @@ impl IRGenerator {
         }
     }
 
-    /// Set a nested value in a composite structure using slice indices.
-    /// Cast a value to match the target element dtype if they differ.
+    /// Cast a scalar value to ``target_type`` where Python/NumPy convert
+    /// implicitly: an integer or boolean to float, a float to integer, and a
+    /// boolean to integer (``bool`` is an ``int`` subtype; the value keeps its
+    /// cell, 0 or 1). Any other value is returned unchanged.
     pub(crate) fn try_cast_value_to_match(
         &mut self,
         value: Value,
@@ -48,7 +50,7 @@ impl IRGenerator {
             (ZinniaType::Integer, Value::Float(_)) => self.builder.ir_int_cast(&value),
             (ZinniaType::Float, Value::Integer(_)) => self.builder.ir_float_cast(&value),
             (ZinniaType::Float, Value::Boolean(_)) => self.builder.ir_float_cast(&value),
-            (ZinniaType::Integer, Value::Boolean(_)) => self.builder.ir_bool_cast(&value),
+            (ZinniaType::Integer, Value::Boolean(_)) => self.builder.ir_int_cast(&value),
             _ => value,
         }
     }
@@ -62,6 +64,8 @@ impl IRGenerator {
         value
     }
 
+    /// Set a nested value in a composite structure using slice indices,
+    /// casting it to the type of the element it replaces.
     pub(crate) fn set_nested_value(
         &mut self,
         current: Value,

@@ -158,7 +158,7 @@ def main():
     parser.add_argument("--variant")
     parser.add_argument("--profile", type=int)
     parser.add_argument("--fixture", type=int)
-    parser.add_argument("--backend", choices=("mock", "halo2"), default="mock")
+    parser.add_argument("--backend", choices=("mock", "halo2-base"), default="mock")
     parser.add_argument("--timeout", type=int, default=60)
     parser.add_argument("--worker", action="store_true")
     args = parser.parse_args()

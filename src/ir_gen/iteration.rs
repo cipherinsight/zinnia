@@ -19,6 +19,7 @@ use crate::ast::*;
 use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
 use crate::types::{DynamicNDArrayData, Value};
 
+use super::preconditions::literal_int;
 use super::IRGenerator;
 
 /// One item of an unrolled iteration.
@@ -673,25 +674,6 @@ fn one_sided_fact_bound(term: &ContractTerm, vid: crate::types::ValueId, side: S
         (Side::Lower, CmpOp::Ge | CmpOp::Eq) | (Side::Upper, CmpOp::Le | CmpOp::Eq) => Some(n),
         (Side::Lower, CmpOp::Gt) => n.checked_add(1),
         (Side::Upper, CmpOp::Lt) => n.checked_sub(1),
-        _ => None,
-    }
-}
-
-/// The value of an integer literal term, including literal arithmetic such
-/// as `0 - 3` (how a precondition spells `-3`).
-fn literal_int(term: &ContractTerm) -> Option<i64> {
-    use crate::optim::predicates::formula::ArithOp;
-    match term {
-        ContractTerm::LitInt(n) => Some(*n),
-        ContractTerm::Arith { op, lhs, rhs } => {
-            let (a, b) = (literal_int(lhs)?, literal_int(rhs)?);
-            match op {
-                ArithOp::Add => a.checked_add(b),
-                ArithOp::Sub => a.checked_sub(b),
-                ArithOp::Mul => a.checked_mul(b),
-                _ => None,
-            }
-        }
         _ => None,
     }
 }

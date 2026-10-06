@@ -64,7 +64,7 @@ def test_reversed_range_descending_sum():
 
 
 def test_itertools_is_out_of_scope():
-    # Kernels may import only NumPy and math (zinnia/compile/import_scope.py);
+    # Kernels may import only NumPy and math (zinnia/compile/lowering/imports.py);
     # `itertools.repeat` was desugared before that rule existed.
     import pytest
     from zinnia.debug.exception import ZinniaException

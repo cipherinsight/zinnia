@@ -158,17 +158,9 @@ def test_walkthrough_1_emits_structural_predicate_atom():
     emit the precondition's IR atom before the chokepoint trips.
     Verified by parsing the AST directly (avoids the chokepoint panic).
     """
-    import inspect
     from zinnia.compile.zinnia_compiler import ZinniaCompiler
 
-    src = inspect.getsource(_walkthrough_1_nonzero_indices)
-    # Pull the inner function source out of the closure.
-    for cell in _walkthrough_1_nonzero_indices.__closure__ or ():
-        c = cell.cell_contents
-        if isinstance(c, str) and "def _walkthrough_1_nonzero_indices" in c:
-            src = c
-            break
-
+    src = ZKCircuit.from_method(_walkthrough_1_nonzero_indices).source
     ast_dict = ZinniaCompiler.circuit_ast_parse(src, "_walkthrough_1_nonzero_indices")
     requires = ast_dict.get("requires", [])
     assert len(requires) == 1

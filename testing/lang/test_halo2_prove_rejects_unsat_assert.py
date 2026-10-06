@@ -1,13 +1,12 @@
-"""C18: the halo2 prove path must reject an unsatisfiable witness.
+"""C18: the halo2-base prove path must reject an unsatisfiable witness.
 
 halo2's `create_proof` does NOT check that the witness satisfies the gate
 polynomials — left unguarded it emits a valid-looking artifact for an
-`assert(False)` circuit that only `verify` would later reject. The legacy
-halo2-IPA backend used to run MockProver for this check; it was dropped for
-perf (commit bb67c32) and never replaced, so prove() silently accepted
-unsat witnesses. Both halo2 backends now run an always-on, O(asserts)
-witness-satisfaction check during synthesis (assert/bit gate cells vs. the
-concrete witness) and raise at prove time instead.
+`assert(False)` circuit that only `verify` would later reject. The backend
+runs an always-on, O(asserts) witness-satisfaction check during synthesis
+(assert/bit gate cells vs. the concrete witness) and raises at prove time
+instead. (The legacy halo2-IPA backend, which had the same check, is
+retired.)
 
 A kernel asserting an always-false predicate (`v == v + 1`) compiles fine —
 the contradiction is only visible once a concrete witness flows through — so
@@ -29,8 +28,8 @@ def asserts_false(v: Integer) -> Integer:
     return v
 
 
-@pytest.mark.parametrize("backend", ["halo2", "halo2-base"])
-def test_halo2_prove_rejects_unsat_assert(backend):
+def test_halo2_prove_rejects_unsat_assert():
+    backend = "halo2-base"
     circuit = ZKCircuit.from_method(asserts_false)
     # Compilation succeeds — the assertion is witness-dependent.
     circuit.compile()
@@ -42,9 +41,9 @@ def test_halo2_prove_rejects_unsat_assert(backend):
     )
 
 
-@pytest.mark.parametrize("backend", ["halo2", "halo2-base"])
-def test_halo2_prove_accepts_satisfiable_assert(backend):
+def test_halo2_prove_accepts_satisfiable_assert():
     """No-regression guard: a satisfiable assert still proves and verifies."""
+    backend = "halo2-base"
 
     @zk_circuit
     def asserts_true(v: Integer) -> Integer:

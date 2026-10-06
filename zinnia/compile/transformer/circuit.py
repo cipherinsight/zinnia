@@ -23,7 +23,6 @@ class ZinniaCircuitASTTransformer(ZinniaBaseASTTransformer):
                          getattr(node, 'end_col_offset', 0))
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
-        dbg_info = self.get_dbg(node)
         args = self.visit_arguments(node.args)
         return_dt = None
         if node.returns is not None:

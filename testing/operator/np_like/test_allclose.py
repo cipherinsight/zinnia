@@ -72,7 +72,7 @@ def test_allclose_invalid_lhs():
 
     with pytest.raises(ZinniaException) as e:
         assert foo()
-    assert "Unsupported argument type for `lhs`" in str(e)
+    assert "np.allclose: unsupported argument type for `a`" in str(e)
 
 def test_allclose_invalid_rhs():
     @zk_circuit
@@ -81,7 +81,7 @@ def test_allclose_invalid_rhs():
 
     with pytest.raises(ZinniaException) as e:
         assert foo()
-    assert "Unsupported argument type for `rhs`" in str(e)
+    assert "np.allclose: unsupported argument type for `b`" in str(e)
 
 def test_allclose_invalid_atol():
     @zk_circuit
@@ -90,7 +90,7 @@ def test_allclose_invalid_atol():
 
     with pytest.raises(ZinniaException) as e:
         assert foo()
-    assert "Unsupported argument type for `atol`" in str(e)
+    assert "np.allclose: unsupported argument type for `atol`" in str(e)
 
 def test_allclose_invalid_rtol():
     @zk_circuit
@@ -99,18 +99,4 @@ def test_allclose_invalid_rtol():
 
     with pytest.raises(ZinniaException) as e:
         assert foo()
-    assert "Unsupported argument type for `rtol`" in str(e)
-
-# def test_allclose_nan():
-#     @zk_circuit
-#     def foo():
-#         close = np.allclose([1.0, np.nan], [1.0, np.nan], equal_nan=True)
-#         assert close
-#     assert foo()
-
-# def test_allclose_false_nan():
-#     @zk_circuit
-#     def foo():
-#         close = np.allclose([1.0, np.nan], [1.0, np.nan], equal_nan=False)
-#         assert (not close)
-#     assert foo()
+    assert "np.allclose: unsupported argument type for `rtol`" in str(e)

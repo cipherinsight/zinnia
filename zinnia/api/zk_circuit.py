@@ -1,9 +1,11 @@
+import functools
 import inspect
-import json
-from typing import List, Any, Dict
+from dataclasses import dataclass
+from typing import List, Any, Dict, Tuple
 
 from zinnia import ZKChip, ZKExternalFunc
 from zinnia.api.zk_compiled_program import ZKCompiledProgram
+from zinnia.compile.lowering import read_decorated_circuit
 from zinnia.compile.zinnia_compiler import ZinniaCompiler
 from zinnia.config.zinnia_config import ZinniaConfig
 from zinnia.debug.exception import InternalZinniaException
@@ -78,60 +80,21 @@ class ZKCircuit:
             externals: List[Any] = None,
             config: ZinniaConfig = ZinniaConfig()
     ) -> 'ZKCircuit':
-        if chips is None:
-            chips = []
-        func_name = method.__name__
-        if func_name == '__zk_circuit_annotator_inner':
-            # The @zk_circuit decorator captures source_code, method_name,
-            # and any lifted nested-def chip sources in its closure.
-            _source_code = None
-            _method_name = None
-            _lifted_chip_sources = None
-            _decorated_method = None
-            if method.__closure__:
-                for cell in method.__closure__:
-                    contents = cell.cell_contents
-                    if isinstance(contents, str) and '\n' in contents and 'def ' in contents:
-                        _source_code = contents
-                    elif isinstance(contents, str) and '\n' not in contents:
-                        _method_name = contents
-                    elif isinstance(contents, list) and contents and \
-                            all(isinstance(t, tuple) and len(t) == 2
-                                and isinstance(t[0], str) and isinstance(t[1], str)
-                                for t in contents):
-                        _lifted_chip_sources = contents
-                    elif callable(contents) and not isinstance(contents, type):
-                        _decorated_method = contents
-            if _source_code is not None and _method_name is not None:
-                merged_chips = list(chips)
-                merged_externals = list(externals) if externals else []
-                seen_chip_ids = {id(c) for c in merged_chips if isinstance(c, ZKChip)}
-                seen_external_ids = {id(e) for e in merged_externals if isinstance(e, ZKExternalFunc)}
-                # Scan the decorated method's module globals — same as
-                # `__zk_circuit_annotator_inner` does on direct invocation. This
-                # is the path used by the sweep harness via from_method().
-                module_globals = (getattr(_decorated_method, "__globals__", {}) or {}) if _decorated_method else {}
-                for _, val in module_globals.items():
-                    if isinstance(val, ZKChip) and id(val) not in seen_chip_ids:
-                        merged_chips.append(val)
-                        seen_chip_ids.add(id(val))
-                    elif isinstance(val, ZKExternalFunc) and id(val) not in seen_external_ids:
-                        merged_externals.append(val)
-                        seen_external_ids.add(id(val))
-                if _lifted_chip_sources:
-                    for chip_name, chip_src in _lifted_chip_sources:
-                        merged_chips.append(ZKChip.from_source(chip_name, chip_src))
-                return ZKCircuit(_method_name, _source_code, merged_chips, merged_externals or None, config)
-            # Fallback: try to find the original callable
-            for cell in method.__closure__:
-                contents = cell.cell_contents
-                if callable(contents) and not isinstance(contents, type):
-                    source_code = inspect.getsource(contents)
-                    return ZKCircuit(contents.__name__, source_code, chips, externals, config)
-            raise ValueError("Could not extract circuit source from decorated function")
-        else:
-            source_code = inspect.getsource(method)
-        return ZKCircuit(func_name, source_code, chips, externals, config)
+        """A circuit from a ``@zk_circuit`` function or a plain function.
+
+        For a decorated function the circuit uses the source the decorator
+        prepared, the chips it lifted, and every chip and external function
+        defined in the function's module, after the ``chips`` and
+        ``externals`` given here. A plain function is compiled from its
+        source as written, with only the given chips and externals.
+        """
+        decorated = getattr(method, _DECORATED_CIRCUIT, None)
+        if decorated is None:
+            return ZKCircuit(method.__name__, inspect.getsource(method), chips, externals, config)
+        chips, externals = _with_registered_functions(
+            list(chips or []), list(externals or []), [decorated.module_globals])
+        chips += [ZKChip.from_source(name, source) for name, source in decorated.lifted_chips]
+        return ZKCircuit(decorated.name, decorated.source, chips, externals or None, config)
 
     def compile(self) -> ZKCompiledProgram:
         from zinnia.debug.exception.base import ZinniaException
@@ -210,7 +173,8 @@ class ZKCircuit:
 
         Args:
             *args: Positional arguments matching the circuit inputs.
-            backend: "mock" (default, fast) or "halo2" (real ZK proof).
+            backend: "mock" (default, fast), "halo2-base" or "noir" (real ZK
+                proof). The legacy "halo2" backend is retired (an error).
             params: Optional dict with proving parameters.
 
         Returns:
@@ -239,70 +203,69 @@ class ZKCircuit:
         return self.name
 
 
+@dataclass(frozen=True)
+class _DecoratedCircuit:
+    """What ``@zk_circuit`` prepared for a function (see `zinnia.compile.lowering`)."""
+
+    name: str
+    source: str
+    lifted_chips: List[Tuple[str, str]]
+    module_globals: Dict[str, Any]
+
+
+#: Attribute of a ``@zk_circuit`` wrapper that holds its `_DecoratedCircuit`.
+_DECORATED_CIRCUIT = "__zinnia_circuit__"
+
+
+def _with_registered_functions(
+        chips: List[Any], externals: List[Any], namespaces: List[Dict[str, Any]]
+) -> Tuple[List[Any], List[Any]]:
+    """``chips`` and ``externals`` followed by every ``ZKChip`` and
+    ``ZKExternalFunc`` value in ``namespaces`` (in order), each object once."""
+    seen = {id(f) for f in chips + externals if isinstance(f, (ZKChip, ZKExternalFunc))}
+    for namespace in namespaces:
+        for value in namespace.values():
+            if id(value) in seen:
+                continue
+            if isinstance(value, ZKChip):
+                chips.append(value)
+            elif isinstance(value, ZKExternalFunc):
+                externals.append(value)
+            else:
+                continue
+            seen.add(id(value))
+    return chips, externals
+
+
 def zk_circuit(method=None, *, config: ZinniaConfig = ZinniaConfig(), requires=None):
-    # Support both ``@zk_circuit`` (bare) and ``@zk_circuit(requires=[...],
-    # config=...)`` (factory) forms. In the factory form ``method`` is None
-    # at the first call; we return a decorator that re-enters ``zk_circuit``
-    # with the captured kwargs once the method shows up.
-    #
-    # ``requires`` is consumed at compile time by the AST transformer which
-    # walks the function's ``decorator_list`` and recognises
-    # ``@zk_circuit(requires=[...])`` syntactically. The kwarg is accepted
-    # here so the runtime decorator does not error when the factory form is
-    # used; the AST transformer is the source of truth for precondition
-    # extraction.
+    """Declare a circuit. Calling the decorated function runs it on the mock backend.
+
+    Usable bare (``@zk_circuit``) or with options (``@zk_circuit(config=...,
+    requires=[...])``). ``requires`` is read from the source by the AST
+    transformer (it is the source of truth for preconditions); the argument
+    is accepted here so the decorator call itself succeeds.
+    """
     if method is None:
         def _factory(m):
             return zk_circuit(m, config=config, requires=requires)
         return _factory
-    _ = requires  # silence unused-kwarg; AST transformer reads it instead.
-    from zinnia.compile.module_constants import (
-        extract_module_constants, substitute_module_constants,
+    source, lifted_chips = read_decorated_circuit(method)
+    decorated = _DecoratedCircuit(
+        name=method.__name__,
+        source=source,
+        lifted_chips=lifted_chips,
+        module_globals=getattr(method, "__globals__", {}) or {},
     )
-    from zinnia.compile.nested_def_lift import autolift_nested_defs
-    from zinnia.compile.import_scope import check_module_level_imports
-    raw_source = inspect.getsource(method)
-    check_module_level_imports(method, raw_source)
-    module_consts = extract_module_constants(method)
-    source_code = substitute_module_constants(raw_source, module_consts)
-    module_globals = getattr(method, "__globals__", {}) or {}
-    source_code, _lifted_chip_sources = autolift_nested_defs(source_code, module_globals)
-    method_name = method.__name__
-    # Capture the original method so the closure exposes both its source and
-    # its __globals__ — `ZKCircuit.from_method` walks the closure to discover
-    # module-level @zk_chip / @zk_external helpers without needing the caller
-    # to pass them explicitly.
-    _decorated_method = method
-    _ = _decorated_method  # ensure the closure cell exists (closures capture by reference only when referenced inside the inner)
 
-    def __zk_circuit_annotator_inner(*args, **kwargs):
-        # Reference _decorated_method so it becomes part of the closure
-        # `from_method` can find via __closure__.
-        _capture_method_ref = _decorated_method
-        defined_chips: List[ZKChip] = []
-        defined_externals: List[ZKExternalFunc] = []
-        seen_chip_ids: set = set()
-        seen_external_ids: set = set()
-        # Scan the decorated method's module globals first — that's where
-        # benchmark sources put their @zk_chip helpers.
-        for _, val in module_globals.items():
-            if isinstance(val, ZKChip) and id(val) not in seen_chip_ids:
-                defined_chips.append(val)
-                seen_chip_ids.add(id(val))
-            elif isinstance(val, ZKExternalFunc) and id(val) not in seen_external_ids:
-                defined_externals.append(val)
-                seen_external_ids.add(id(val))
-        # Also scan the caller's locals, for tests/notebooks that define
-        # helpers inline.
-        for _, val in inspect.currentframe().f_back.f_locals.items():
-            if isinstance(val, ZKChip) and id(val) not in seen_chip_ids:
-                defined_chips.append(val)
-                seen_chip_ids.add(id(val))
-            elif isinstance(val, ZKExternalFunc) and id(val) not in seen_external_ids:
-                defined_externals.append(val)
-                seen_external_ids.add(id(val))
-        for chip_name, chip_src in _lifted_chip_sources:
-            defined_chips.append(ZKChip.from_source(chip_name, chip_src))
-        circuit = ZKCircuit(method_name, source_code, defined_chips, defined_externals, config)
-        return circuit(*args)
-    return __zk_circuit_annotator_inner
+    def run_on_mock(*args, **kwargs):
+        # Chips and externals defined in the module, then those defined
+        # where the circuit is called (tests and notebooks define helpers
+        # inline), then the chips lifted from the body.
+        caller_locals = inspect.currentframe().f_back.f_locals
+        chips, externals = _with_registered_functions([], [], [decorated.module_globals, caller_locals])
+        chips += [ZKChip.from_source(name, chip_source) for name, chip_source in decorated.lifted_chips]
+        return ZKCircuit(decorated.name, decorated.source, chips, externals, config)(*args)
+
+    functools.update_wrapper(run_on_mock, method)
+    setattr(run_on_mock, _DECORATED_CIRCUIT, decorated)
+    return run_on_mock

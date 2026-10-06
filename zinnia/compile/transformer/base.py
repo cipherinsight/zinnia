@@ -1,6 +1,6 @@
 import ast
 
-from zinnia.compile.import_scope import OutOfScopeImportError, check_import_statement
+from zinnia.compile.lowering import OutOfScopeImportError, check_import_statement, desugar_for_iterator
 from zinnia.debug.exception import InvalidCircuitStatementException, \
     InvalidProgramException, InvalidAssignStatementException, InvalidAnnotationException, UnsupportedOperatorException, \
     UnsupportedConstantLiteralException, \
@@ -217,6 +217,33 @@ def make_type_dict(dbg, typename, args=None):
     raise InvalidAnnotationException(dbg, f'`{typename}` is not a valid type name')
 
 
+_OPERATOR_NAMES = {
+    ast.Add: "add", ast.Sub: "sub", ast.Div: "div", ast.Mult: "mul", ast.MatMult: "mat_mul",
+    ast.FloorDiv: "floor_div", ast.Mod: "mod", ast.Pow: "pow",
+    ast.BitAnd: "bit_and", ast.BitOr: "bit_or", ast.BitXor: "bit_xor",
+    ast.LShift: "shl", ast.RShift: "shr",
+    ast.Not: "not", ast.USub: "usub", ast.UAdd: "uadd", ast.Invert: "invert",
+}
+
+_COMPARISON_NAMES = {
+    ast.GtE: "gte", ast.LtE: "lte", ast.Gt: "gt", ast.Lt: "lt", ast.Eq: "eq", ast.NotEq: "ne",
+    ast.In: "in", ast.NotIn: "not_in",
+}
+
+# `np.<ufunc>.reduce` → the reduction it computes.
+_UFUNC_REDUCTIONS = {"add": "sum", "multiply": "prod", "minimum": "min", "maximum": "max",
+                     "logical_or": "any", "logical_and": "all"}
+
+
+def _is_attribute_chain(node, names: tuple) -> bool:
+    """Whether ``node`` spells the dotted name ``names[0].names[1]...``."""
+    for name in reversed(names[1:]):
+        if not (isinstance(node, ast.Attribute) and node.attr == name):
+            return False
+        node = node.value
+    return isinstance(node, ast.Name) and node.id == names[0]
+
+
 class ZinniaBaseASTTransformer(ast.NodeTransformer):
     def __init__(self, source_code: str, method_name: str):
         super().__init__()
@@ -226,62 +253,28 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
         self.shape_symbol_names = set()
         self.shape_symbol_bounds = {}
 
-    def get_op_name_from_node(self, node) -> str:
-        if isinstance(node, ast.Add):
-            return "add"
-        elif isinstance(node, ast.Sub):
-            return "sub"
-        elif isinstance(node, ast.Div):
-            return "div"
-        elif isinstance(node, ast.Mult):
-            return "mul"
-        elif isinstance(node, ast.MatMult):
-            return "mat_mul"
-        elif isinstance(node, ast.FloorDiv):
-            return "floor_div"
-        elif isinstance(node, ast.Mod):
-            return "mod"
-        if isinstance(node, ast.Not):
-            return "not"
-        elif isinstance(node, ast.USub):
-            return "usub"
-        elif isinstance(node, ast.UAdd):
-            return "uadd"
-        elif isinstance(node, ast.Pow):
-            return "pow"
-        elif isinstance(node, ast.BitAnd):
-            return "bit_and"
-        elif isinstance(node, ast.BitOr):
-            return "bit_or"
-        elif isinstance(node, ast.BitXor):
-            return "bit_xor"
-        elif isinstance(node, ast.LShift):
-            return "shl"
-        elif isinstance(node, ast.RShift):
-            return "shr"
-        elif isinstance(node, ast.Invert):
-            return "invert"
-        raise UnsupportedOperatorException(self.get_dbg(node), f"Invalid operator {type(node).__name__} in circuit.")
+    def get_op_name_from_node(self, op, expression) -> str:
+        """The IR name of an arithmetic, bitwise or unary operator; errors
+        point at ``expression``, the node that applies it (operator nodes
+        carry no source location)."""
+        name = _OPERATOR_NAMES.get(type(op))
+        if name is None:
+            raise UnsupportedOperatorException(self.get_dbg(expression),
+                                               f"Invalid operator {type(op).__name__} in circuit.")
+        return name
 
-    def get_comp_op_name_from_node(self, node) -> str:
-        if isinstance(node, ast.GtE):
-            return "gte"
-        elif isinstance(node, ast.LtE):
-            return "lte"
-        elif isinstance(node, ast.Gt):
-            return "gt"
-        elif isinstance(node, ast.Lt):
-            return "lt"
-        elif isinstance(node, ast.Eq):
-            return "eq"
-        elif isinstance(node, ast.NotEq):
-            return "ne"
-        elif isinstance(node, ast.In):
-            return "in"
-        elif isinstance(node, ast.NotIn):
-            return "not_in"
-        raise UnsupportedOperatorException(self.get_dbg(node),
-                                           f"Invalid compare operator {type(node).__name__} in circuit.")
+    def get_comp_op_name_from_node(self, op, comparison) -> str:
+        """The IR name of a comparison operator; errors point at ``comparison``."""
+        name = _COMPARISON_NAMES.get(type(op))
+        if name is not None:
+            return name
+        if isinstance(op, (ast.Is, ast.IsNot)):
+            raise UnsupportedOperatorException(
+                self.get_dbg(comparison),
+                "`is` / `is not` compare object identity, which circuit values do not have; "
+                "compare values with `==` / `!=`.")
+        raise UnsupportedOperatorException(self.get_dbg(comparison),
+                                           f"Invalid compare operator {type(op).__name__} in circuit.")
 
     def get_dbg(self, node) -> DebugInfo:
         raise NotImplementedError(
@@ -294,11 +287,9 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
         raise InvalidProgramException(None, "Invalid code passed to the compiler! The program must be a function.")
 
     def visit_For(self, node: ast.For):
-        # Desugar iterator-shaped builtins that only make sense in for-loop
-        # position: zip, reversed, itertools.repeat. Rewrite to an
-        # index-based for over a range and synthesize per-iteration
-        # bindings, then re-enter visit_For on the rewritten node.
-        rewritten = self._desugar_iterator_builtin(node)
+        # `for` over zip / reversed / repeat becomes an index loop first
+        # (`zinnia.compile.lowering.iterators`).
+        rewritten = desugar_for_iterator(node, self._fresh_name)
         if rewritten is not None:
             return self.visit_For(rewritten)
 
@@ -307,158 +298,6 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
         return {"__class__": "ASTForInStatement",
                 "target": target, "iter_expr": iter_expr,
                 "block": self.visit_block(node.body), "orelse": self.visit_block(node.orelse)}
-
-    def _desugar_iterator_builtin(self, node: ast.For):
-        """If ``node.iter`` is a zip / reversed / itertools.repeat call,
-        return a rewritten ``ast.For`` with an equivalent range-based
-        iteration. Returns ``None`` otherwise.
-        """
-        it = node.iter
-        if not isinstance(it, ast.Call):
-            return None
-
-        # itertools.repeat(value, n) — supported in iter position only.
-        # Match `it.repeat(...)`, `itertools.repeat(...)`, or bare `repeat(...)`.
-        is_repeat = (
-            (isinstance(it.func, ast.Attribute) and it.func.attr == "repeat")
-            or (isinstance(it.func, ast.Name) and it.func.id == "repeat")
-        )
-        if is_repeat and len(it.args) == 2:
-            value_expr, count_expr = it.args
-            new_for = ast.For(
-                target=ast.Name(id="_", ctx=ast.Store()),
-                iter=ast.Call(
-                    func=ast.Name(id="range", ctx=ast.Load()),
-                    args=[count_expr], keywords=[],
-                ),
-                body=[
-                    ast.Assign(
-                        targets=[node.target],
-                        value=value_expr,
-                    ),
-                    *node.body,
-                ] if not (isinstance(node.target, ast.Name) and node.target.id == "_")
-                  else list(node.body),
-                orelse=node.orelse,
-            )
-            ast.copy_location(new_for, node)
-            ast.fix_missing_locations(new_for)
-            return new_for
-
-        # reversed(iterable) in iter position.
-        if isinstance(it.func, ast.Name) and it.func.id == "reversed" and len(it.args) == 1:
-            inner = it.args[0]
-            # Generate a fresh index name. Use a simple counter on the
-            # transformer instance to avoid collisions across nested loops.
-            idx_name = self._fresh_name("__rev_idx")
-            # Desugar `for <target> in reversed(inner)` to
-            # `for __rev_idx in range(len(inner)-1, -1, -1):
-            #      <target> = inner[__rev_idx]; <body>`.
-            # `inner` is substituted directly twice (cheap when it's a Name,
-            # Subscript, or simple call such as the benchmark `range(r)`).
-            range_call_inner = ast.Call(
-                func=ast.Name(id="range", ctx=ast.Load()),
-                args=[
-                    ast.BinOp(
-                        left=ast.Call(
-                            func=ast.Name(id="len", ctx=ast.Load()),
-                            args=[inner], keywords=[],
-                        ),
-                        op=ast.Sub(),
-                        right=ast.Constant(value=1),
-                    ),
-                    ast.UnaryOp(op=ast.USub(), operand=ast.Constant(value=1)),
-                    ast.UnaryOp(op=ast.USub(), operand=ast.Constant(value=1)),
-                ],
-                keywords=[],
-            )
-            sub_inner = ast.Subscript(
-                value=inner,
-                slice=ast.Name(id=idx_name, ctx=ast.Load()),
-                ctx=ast.Load(),
-            )
-            new_body = [
-                ast.Assign(targets=[node.target], value=sub_inner),
-                *node.body,
-            ]
-            new_for = ast.For(
-                target=ast.Name(id=idx_name, ctx=ast.Store()),
-                iter=range_call_inner,
-                body=new_body,
-                orelse=node.orelse,
-            )
-            ast.copy_location(new_for, node)
-            ast.fix_missing_locations(new_for)
-            return new_for
-
-        # zip(xs, ys, ...) in iter position.
-        if isinstance(it.func, ast.Name) and it.func.id == "zip" and len(it.args) >= 2:
-            iters = it.args
-            idx_name = self._fresh_name("__zip_idx")
-            # Per-iteration bindings: target_i = iters[i][__zip_idx]
-            # node.target is Tuple of names matching len(iters), or a
-            # single name referencing the tuple of values.
-            inner_assigns: list = []
-            if isinstance(node.target, ast.Tuple) and len(node.target.elts) == len(iters):
-                for tgt, src in zip(node.target.elts, iters):
-                    inner_assigns.append(
-                        ast.Assign(
-                            targets=[tgt],
-                            value=ast.Subscript(
-                                value=src,
-                                slice=ast.Name(id=idx_name, ctx=ast.Load()),
-                                ctx=ast.Load(),
-                            ),
-                        )
-                    )
-            else:
-                # Build a Tuple of subscripts and assign once.
-                tuple_value = ast.Tuple(
-                    elts=[
-                        ast.Subscript(
-                            value=src,
-                            slice=ast.Name(id=idx_name, ctx=ast.Load()),
-                            ctx=ast.Load(),
-                        )
-                        for src in iters
-                    ],
-                    ctx=ast.Load(),
-                )
-                inner_assigns.append(
-                    ast.Assign(targets=[node.target], value=tuple_value)
-                )
-            # Iterate i over range(min(len(xs), len(ys), ...)).
-            # For just two iters, we can use len(xs) when they're known
-            # equal-length — but to stay safe, build min(...).
-            len_calls = [
-                ast.Call(
-                    func=ast.Name(id="len", ctx=ast.Load()),
-                    args=[arg], keywords=[],
-                )
-                for arg in iters
-            ]
-            if len(len_calls) == 1:
-                bound = len_calls[0]
-            else:
-                bound = ast.Call(
-                    func=ast.Name(id="min", ctx=ast.Load()),
-                    args=len_calls, keywords=[],
-                )
-            range_call = ast.Call(
-                func=ast.Name(id="range", ctx=ast.Load()),
-                args=[bound], keywords=[],
-            )
-            new_for = ast.For(
-                target=ast.Name(id=idx_name, ctx=ast.Store()),
-                iter=range_call,
-                body=[*inner_assigns, *node.body],
-                orelse=node.orelse,
-            )
-            ast.copy_location(new_for, node)
-            ast.fix_missing_locations(new_for)
-            return new_for
-
-        return None
 
     def _fresh_name(self, prefix: str) -> str:
         if not hasattr(self, "_fresh_counter"):
@@ -501,7 +340,7 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
 
     def visit_AugAssign(self, node: ast.AugAssign):
         dbg_info = self.get_dbg(node)
-        op_type = self.get_op_name_from_node(node.op)
+        op_type = self.get_op_name_from_node(node.op, node)
         if isinstance(node.target, ast.Name):
             identifier_name = node.target.id
             expr = self.visit_expr(node.value)
@@ -576,7 +415,7 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
     def visit_BinOp(self, node: ast.BinOp):
         left = self.visit_expr(node.left)
         right = self.visit_expr(node.right)
-        return {"__class__": "ASTBinaryOperator", "operator": self.get_op_name_from_node(node.op),
+        return {"__class__": "ASTBinaryOperator", "operator": self.get_op_name_from_node(node.op, node),
                 "lhs": left, "rhs": right}
 
     def visit_Compare(self, node: ast.Compare):
@@ -587,7 +426,7 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
         compare_expr_list = []
         for i, op in enumerate(node.ops):
             compare_expr_list.append(
-                {"__class__": "ASTBinaryOperator", "operator": self.get_comp_op_name_from_node(op),
+                {"__class__": "ASTBinaryOperator", "operator": self.get_comp_op_name_from_node(op, node),
                  "lhs": all_operands[i], "rhs": all_operands[i + 1]})
         finalized = compare_expr_list[0]
         for expr in compare_expr_list[1:]:
@@ -614,47 +453,19 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
 
     def visit_UnaryOp(self, node: ast.UnaryOp):
         value = self.visit_expr(node.operand)
-        return {"__class__": "ASTUnaryOperator", "operator": self.get_op_name_from_node(node.op), "operand": value}
+        return {"__class__": "ASTUnaryOperator", "operator": self.get_op_name_from_node(node.op, node), "operand": value}
 
     def visit_Call(self, node: ast.Call):
         dbg_info = self.get_dbg(node)
         args = [self.visit_expr(arg) for arg in node.args]
         kwargs = {kwarg.arg: self.visit_expr(kwarg.value) for kwarg in node.keywords}
-        # numpy ufunc methods: rewrite to a bare call so the dispatcher in
-        # the IR generator sees a flat (target, member) pair.
-        if (
-            isinstance(node.func, ast.Attribute)
-            and isinstance(node.func.value, ast.Attribute)
-            and isinstance(node.func.value.value, ast.Name)
-            and node.func.value.value.id == "np"
-        ):
-            binop = node.func.value.attr
-            if node.func.attr in ("outer", "accumulate", "reduceat"):
-                return {"__class__": "ASTNamedAttribute",
-                        "target": "np", "member": f"{binop}_{node.func.attr}",
-                        "args": args, "kwargs": kwargs}
-            if node.func.attr == "reduce" and binop in ("add", "multiply", "minimum", "maximum", "logical_or", "logical_and"):
-                member = {"add":"sum", "multiply":"prod", "minimum":"min", "maximum":"max", "logical_or":"any", "logical_and":"all"}[binop]
-                # ufunc reductions all use the same positional signature,
-                # unlike np.min/np.max, whose third argument is out.
-                if len(args) > 7:
-                    raise ValueError("ufunc.reduce: too many positional arguments")
-                for key, value in zip(("axis", "dtype", "out", "keepdims", "initial", "where"), args[1:]):
-                    if key in kwargs:
-                        raise ValueError(f"ufunc.reduce: multiple values for {key}")
-                    kwargs[key] = value
-                args = args[:1]
-                # NumPy ufunc.reduce defaults axis to 0, while np.sum/prod
-                # default to axis=None. Preserve ufunc semantics when the
-                # call did not spell axis positionally or by keyword.
-                if len(args) == 1 and "axis" not in kwargs:
-                    kwargs = {**kwargs, "axis": {"__class__": "ASTConstantInteger", "value": 0}}
-                return {"__class__": "ASTNamedAttribute",
-                        "target": "np", "member": member,
-                        "args": args, "kwargs": kwargs}
-        if (isinstance(node.func, ast.Attribute) and node.func.attr=="sliding_window_view"
-                and ast.unparse(node.func.value)=="np.lib.stride_tricks"):
-            return {"__class__":"ASTNamedAttribute", "target":"np", "member":"sliding_window_view", "args":args, "kwargs":kwargs}
+        ufunc_method = self._numpy_ufunc_method_call(node, args, kwargs)
+        if ufunc_method is not None:
+            return ufunc_method
+        if (isinstance(node.func, ast.Attribute) and node.func.attr == "sliding_window_view"
+                and _is_attribute_chain(node.func.value, ("np", "lib", "stride_tricks"))):
+            return {"__class__": "ASTNamedAttribute", "target": "np", "member": "sliding_window_view",
+                    "args": args, "kwargs": kwargs}
         if isinstance(node.func, ast.Attribute):
             if isinstance(node.func.value, ast.Name):
                 return {"__class__": "ASTNamedAttribute",
@@ -669,6 +480,41 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
                     "args": args, "kwargs": kwargs}
         raise UnsupportedOperatorException(dbg_info,
                                            f"Invalid call function {type(node.func)}. Only a static specified function name is supported here.")
+
+    @staticmethod
+    def _numpy_ufunc_method_call(node: ast.Call, args: list, kwargs: dict):
+        """Translate a call of a NumPy ufunc method (``np.<ufunc>.<method>(...)``).
+
+        ``outer``, ``accumulate`` and ``reduceat`` become the flat members
+        ``np.<ufunc>_<method>`` the IR generator dispatches on. ``reduce`` of
+        add/multiply/minimum/maximum/logical_or/logical_and becomes the
+        matching reduction (``np.sum``, ``np.prod``, ...), with the ufunc's
+        positional signature ``(array, axis, dtype, out, keepdims, initial,
+        where)`` bound to keywords and the ufunc default ``axis=0`` (``np.sum``
+        defaults to ``axis=None``). Returns ``None`` for any other call.
+        """
+        function = node.func
+        if not (isinstance(function, ast.Attribute)
+                and isinstance(function.value, ast.Attribute)
+                and isinstance(function.value.value, ast.Name)
+                and function.value.value.id == "np"):
+            return None
+        ufunc, method = function.value.attr, function.attr
+        if method in ("outer", "accumulate", "reduceat"):
+            return {"__class__": "ASTNamedAttribute", "target": "np", "member": f"{ufunc}_{method}",
+                    "args": args, "kwargs": kwargs}
+        if method != "reduce" or ufunc not in _UFUNC_REDUCTIONS:
+            return None
+        if len(args) > 7:
+            raise ValueError("ufunc.reduce: too many positional arguments")
+        for key, value in zip(("axis", "dtype", "out", "keepdims", "initial", "where"), args[1:]):
+            if key in kwargs:
+                raise ValueError(f"ufunc.reduce: multiple values for {key}")
+            kwargs[key] = value
+        if args and "axis" not in kwargs:
+            kwargs = {**kwargs, "axis": {"__class__": "ASTConstantInteger", "value": 0}}
+        return {"__class__": "ASTNamedAttribute", "target": "np", "member": _UFUNC_REDUCTIONS[ufunc],
+                "args": args[:1], "kwargs": kwargs}
 
     def visit_Attribute(self, node: ast.Attribute):
         if isinstance(node.value, ast.Name):
@@ -726,18 +572,12 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
         return {"__class__": "ASTReturnStatement", "expr": result}
 
     def visit_GeneratorExp(self, node: ast.GeneratorExp):
-        dbg = self.get_dbg(node)
-        elt = self.visit_expr(node.elt)
-        generators = []
-        for gen in node.generators:
-            target = self.visit_assign_target(gen.target)
-            iter_expr = self.visit_expr(gen.iter)
-            ifs = [self.visit_expr(if_expr) for if_expr in gen.ifs]
-            generators.append({"__class__": "ASTGenerator", "target": target, "iter": iter_expr, "ifs": ifs})
-        return {"__class__": "ASTGeneratorExp", "elt": elt, "generators": generators, "kind": "tuple"}
+        return self._comprehension(node, "tuple")
 
     def visit_ListComp(self, node: ast.ListComp):
-        dbg = self.get_dbg(node)
+        return self._comprehension(node, "list")
+
+    def _comprehension(self, node, kind: str):
         elt = self.visit_expr(node.elt)
         generators = []
         for gen in node.generators:
@@ -745,7 +585,7 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
             iter_expr = self.visit_expr(gen.iter)
             ifs = [self.visit_expr(if_expr) for if_expr in gen.ifs]
             generators.append({"__class__": "ASTGenerator", "target": target, "iter": iter_expr, "ifs": ifs})
-        return {"__class__": "ASTGeneratorExp", "elt": elt, "generators": generators, "kind": "list"}
+        return {"__class__": "ASTGeneratorExp", "elt": elt, "generators": generators, "kind": kind}
 
     def visit_IfExp(self, node: ast.IfExp):
         test = self.visit_expr(node.test)
@@ -793,8 +633,9 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
                 parsed_stmt = {"__class__": "ASTExprStatement", "expr": self.visit_expr(stmt.value)}
             elif isinstance(stmt, ast.Import) or isinstance(stmt, ast.ImportFrom):
                 # An allowed import is a no-op once the module has loaded
-                # (function_lowering already resolved circuit-level aliases);
-                # any other module is out of scope (import_scope).
+                # (circuit sources had their import aliases resolved by
+                # `zinnia.compile.lowering.imports`); any other module is out
+                # of scope.
                 try:
                     check_import_statement(stmt)
                 except OutOfScopeImportError as error:
@@ -821,10 +662,11 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
                     "or move the validation outside the circuit."
                 )
             elif isinstance(stmt, ast.FunctionDef):
-                # Pure inner defs are auto-lifted to chips by autolift_nested_defs
-                # before the transformer sees them. If we still see one here,
-                # it's either a closure (captures outer-function locals) or
-                # otherwise not safe to auto-lift.
+                # A circuit's local functions are lifted into chips (or
+                # rejected) by `zinnia.compile.lowering` before translation.
+                # Chip bodies are not lowered, so a nested def reaches this
+                # point only from a chip, or from a circuit source that was
+                # not lowered.
                 hint = (
                     "It captures variables from the outer function. Move it to module level and pass any captured values as arguments, decorating it with @zk_chip."
                 )
@@ -1133,7 +975,7 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
                         elif isinstance(elt, ast.Tuple):
                             if not all(isinstance(e, ast.Constant) for e in elt.elts):
                                 raise InvalidAnnotationException(
-                                    self.get_dbg(elt), error_msg + f" All tuple elements should be constant.")
+                                    self.get_dbg(elt), error_msg + " All tuple elements should be constant.")
                             args.append(tuple(e.value for e in elt.elts))
                         else:
                             raise InvalidAnnotationException(self.get_dbg(_n), error_msg)

@@ -62,11 +62,11 @@ Run from the `zinnia-src` directory with its development environment:
 ```sh
 PYTHON=.venv/bin/python scripts/develop.sh --offline
 .venv/bin/python -m studies.user_study.validate --output studies/user_study/results/validation.json
-.venv/bin/python -m studies.user_study.validate --backend halo2 --profile 0 --fixture 6 --output studies/user_study/results/proofs.json
+.venv/bin/python -m studies.user_study.validate --backend halo2-base --profile 0 --fixture 6 --output studies/user_study/results/proofs.json
 .venv/bin/python -m pytest -q testing/lang/test_user_study_array_compat.py
 ```
 
-The default run has 172 implementation/shape combinations and seven input fixtures each: 1,204 correct-output checks plus 172 incorrect-output controls. Shape profiles include singleton dimensions, rectangular tensors, multiple batches/channels, a grid without interior cells, and the larger shapes above. The real-proof run uses one nonzero randomized fixture at profile 0 for every alternative; it does not replace the broader mock-backend correctness checks. A mock result is not a cryptographic proof.
+The default run has 202 implementation/shape combinations and seven input fixtures each: 1,414 correct-output checks plus 202 incorrect-output controls. Shape profiles include singleton dimensions, rectangular tensors, multiple batches/channels, a grid without interior cells, and the larger shapes above. The real-proof run (halo2-base; the legacy `halo2` backend is retired because its comparisons cannot express the 64-bit input checks) uses one nonzero randomized fixture at profile 0 for every alternative; it does not replace the broader mock-backend correctness checks. A mock result is not a cryptographic proof.
 
 Fixtures cover the allowed numeric extremes, equality with thresholds, empty and full selections, and thresholds that differ between channels. Current JSON reports record the working source, native extension, inventory, and validator hashes, as well as the Python/NumPy versions and exact selections. A dirty checkout is recorded explicitly; the Git revision alone does not identify this development build.
 

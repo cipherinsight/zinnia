@@ -47,6 +47,7 @@ impl IRGenerator {
                 if visited_args.is_empty() {
                     self.builder.ir_constant_int(0)
                 } else {
+                    reject_complex_conversion("int", &visited_args[0]);
                     self.builder.ir_int_cast(&visited_args[0])
                 }
             }
@@ -54,6 +55,7 @@ impl IRGenerator {
                 if visited_args.is_empty() {
                     self.builder.ir_constant_float(0.0)
                 } else {
+                    reject_complex_conversion("float", &visited_args[0]);
                     self.builder.ir_float_cast(&visited_args[0])
                 }
             }
@@ -315,5 +317,12 @@ impl IRGenerator {
             _ => return None,
         };
         Some(v)
+    }
+}
+
+/// Python's `int(z)` / `float(z)` raise `TypeError` for a complex `z`.
+fn reject_complex_conversion(function: &str, value: &Value) {
+    if matches!(value, Value::Complex { .. }) {
+        panic!("TypeError: {function}() argument must be a real number, not 'complex' (use .real)");
     }
 }

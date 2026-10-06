@@ -231,14 +231,34 @@ def row9_dynamic_family_boundary_complex_stats():
         _compile(source, "row9_dynamic_family_boundary_complex_stats")
 
 
-def test_row10_broad_dynamic_indexing_boundary_rejects():
-    source = """
-def row10_broad_dynamic_indexing_boundary():
+def test_row10_dynamic_boolean_mask_indexing_matches_numpy():
+    """Row 10 used to be a rejection boundary: boolean-mask indexing of a
+    bounded-dynamic array panicked with an index out of bounds, and the row
+    asserted that panic. The compiler now supports it, so the row checks
+    that NumPy's result is accepted and a wrong one rejected, for a constant
+    mask (the original program) and for a private one."""
+    import numpy as np
+
+    constant_mask = """
+def row10_constant_mask(expected: int):
     a = np.promote_to_dynamic(np.asarray([10, 20, 30, 40, 50]))
     mask = np.asarray([True, False, True, False, True])
     out = a[mask]
-    assert out.sum() == 90
+    assert out.sum() == expected
 """
+    values = np.array([10, 20, 30, 40, 50])
+    truth = int(values[np.array([True, False, True, False, True])].sum())
+    assert _prove(constant_mask, "row10_constant_mask", truth).proof_bytes_hex == "mock_satisfied"
+    assert _prove(constant_mask, "row10_constant_mask", truth + 1).proof_bytes_hex != "mock_satisfied"
 
-    with pytest.raises((ZinniaException, Exception), match="index out of bounds|panic|out of bounds"):
-        _compile(source, "row10_broad_dynamic_indexing_boundary")
+    private_mask = """
+def row10_private_mask(x: Integer[Array, "5"], m: Integer[Array, "5"], expected: int):
+    a = np.promote_to_dynamic(x)
+    out = a[m > 0]
+    assert out.sum() == expected
+"""
+    mask = np.array([1, 0, 1, 1, 0])
+    truth = int(values[mask > 0].sum())
+    circuit = ZKCircuit.from_source("row10_private_mask", private_mask)
+    assert circuit.prove(values, mask, truth, backend="mock").proof_bytes_hex == "mock_satisfied"
+    assert circuit.prove(values, mask, truth + 1, backend="mock").proof_bytes_hex != "mock_satisfied"

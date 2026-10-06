@@ -1,6 +1,6 @@
 """Imports outside NumPy and `math` are out of scope (audit finding X7).
 
-The allowed set lives in `zinnia.compile.import_scope.ALLOWED_IMPORT_ROOTS`.
+The allowed set lives in `zinnia.compile.lowering.imports.ALLOWED_IMPORT_ROOTS`.
 """
 import pathlib
 import textwrap
@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from zinnia import ZKChip, ZKCircuit
-from zinnia.compile.import_scope import ALLOWED_IMPORT_ROOTS
+from zinnia.compile.lowering import ALLOWED_IMPORT_ROOTS
 from zinnia.debug.exception import ZinniaException
 
 

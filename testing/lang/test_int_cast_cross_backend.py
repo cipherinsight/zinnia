@@ -7,22 +7,13 @@ Euclidean (flooring) division, disagreeing with every other backend (which
 truncate toward zero, matching Python `int()`) on negative inputs.
 
 This module pins both facets:
-  * `int(x)` agrees across mock / halo2-base / halo2 (legacy) for negative x
-    (the value criterion — int(-2.5) == -2, NOT floor == -3), and
-  * the constrained lowering keeps proving — legacy halo2 proves AND
-    verifies the cast; halo2-base produces the correct constrained public
-    output.
+  * `int(x)` agrees across mock / halo2-base for negative x (the value
+    criterion — int(-2.5) == -2, NOT floor == -3), and
+  * the constrained halo2-base lowering proves and verifies the cast.
 
-Notes on backend reachability from the Python API:
-  * halo2-base `verify()` is pre-existing-broken through this entry point
-    (it fails with ConstraintSystemFailure even for a trivial `v + 1`
-    circuit that never touches int_cast — same keygen-without-witness shape
-    family as the T01 in-crate test breakage). We therefore assert on the
-    constrained public *value* halo2-base emits rather than on verify().
-  * The malicious-witness tamper regression lives as a Rust test in
-    `src/prove/halo2_base/synthesizer.rs` behind the T01 cfg gate; see the
-    C02 report. From Python the strongest reachable statements are the
-    cross-backend value agreement here plus legacy-halo2 prove+verify.
+The malicious-witness tamper regression lives as a Rust test in
+`src/prove/halo2_base/synthesizer.rs`. (These tests also ran on the legacy
+halo2 backend, which is retired.)
 """
 import pytest
 
@@ -78,29 +69,19 @@ def test_int_cast_truncates_toward_zero_mock(x, expected):
 
 
 @pytest.mark.parametrize("x, expected", CASES)
-def test_int_cast_value_halo2_base(x, expected):
-    """halo2-base emits the truncated value through its constrained lowering."""
-    proof = _cast_circuit().prove(x, backend="halo2-base", params=HALO2_PARAMS)
-    got = _decode_field_int(proof.public_values[-1])
-    assert got == expected, f"halo2-base int({x}) = {got}, expected {expected}"
-
-
-@pytest.mark.parametrize("x, expected", CASES)
-def test_int_cast_proves_and_verifies_legacy_halo2(x, expected):
-    """Legacy halo2 proves, verifies, and agrees on the truncated value."""
+def test_int_cast_proves_and_verifies_halo2_base(x, expected):
+    """halo2-base proves, verifies, and agrees on the truncated value."""
     circuit = _cast_circuit()
-    proof = circuit.prove(x, backend="halo2", params=HALO2_PARAMS)
-    assert circuit.verify(proof), f"legacy halo2 proof did not verify for int({x})"
+    proof = circuit.prove(x, backend="halo2-base", params=HALO2_PARAMS)
+    assert circuit.verify(proof), f"halo2-base proof did not verify for int({x})"
     assert _decode_field_int(proof.public_values[-1]) == expected
 
 
 def test_int_cast_negative_agrees_across_backends():
-    """Canonical case int(-2.5) == -2 agrees mock / halo2-base / legacy halo2."""
+    """Canonical case int(-2.5) == -2 agrees mock / halo2-base."""
     circuit = _cast_circuit()
     mock = circuit.prove(-2.5, backend="mock")
     base = circuit.prove(-2.5, backend="halo2-base", params=HALO2_PARAMS)
-    legacy = circuit.prove(-2.5, backend="halo2", params=HALO2_PARAMS)
-    assert circuit.verify(legacy)
+    assert circuit.verify(base)
     assert _mock_value(mock.public_values) == -2
     assert _decode_field_int(base.public_values[-1]) == -2
-    assert _decode_field_int(legacy.public_values[-1]) == -2

@@ -104,7 +104,7 @@ def kernel(x: Integer[Array, "2 3"]):
     assert checked.prove(values,expected,backend='mock').proof_bytes_hex != 'mock_satisfied'
 
 
-@pytest.mark.parametrize('backend', ['mock', 'halo2', 'halo2-base'])
+@pytest.mark.parametrize('backend', ['mock', 'halo2-base'])
 @pytest.mark.parametrize('expression', [
     '(x.astype(float) // 2).astype(int)',
     '((x.astype(float) + 0.5) // -2).astype(int)',
@@ -116,7 +116,7 @@ def test_float_floor_and_remainder(expression, backend):
     verify(f'    return {expression}\n', shape=(2,3), backend=backend)
 
 
-@pytest.mark.parametrize('backend', ['mock', 'halo2', 'halo2-base'])
+@pytest.mark.parametrize('backend', ['mock', 'halo2-base'])
 def test_smoothing_with_numpy_default_float_buffer(backend):
     verify('''    current = np.abs(x)
     for r in range(3):
