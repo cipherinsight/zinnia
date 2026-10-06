@@ -171,7 +171,8 @@ def test_circuit_dynamic_ndarray_return_exposes_runtime_metadata_and_bounded_pay
         np.asarray([2.0, 3.0]), backend="mock"
     )
     assert proof.proof_bytes_hex == "mock_satisfied"
-    assert len(proof.public_values) == 6
+    # The runtime length (also the only dim) and the 4-slot payload.
+    assert len(proof.public_values) == 5
     assert any(v.endswith("=2") for v in proof.public_values)
 
 
