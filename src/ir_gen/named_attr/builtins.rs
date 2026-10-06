@@ -100,51 +100,10 @@ impl IRGenerator {
                 };
                 Value::Complex { real: r, imag: i }
             }
-            "abs" => {
-                if !visited_args.is_empty() {
-                    let arg_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
-                    // P5a: Complex StaticArray → fresh Float StaticArray.
-                    if let Value::StaticArray {
-                        dtype: crate::types::NumberType::Complex,
-                        ..
-                    } = &arg_orig
-                    {
-                        return Some(
-                            crate::helpers::static_array::complex::np_abs_complex_static_array(
-                                &mut self.builder,
-                                &arg_orig,
-                            ),
-                        );
-                    }
-                    match &visited_args[0] {
-                        Value::List(data) | Value::Tuple(data) => {
-                            let results: Vec<Value> = data
-                                .values
-                                .iter()
-                                .map(|v| self.builder.ir_abs_i(v))
-                                .collect();
-                            let types = results.iter().map(|v| v.zinnia_type()).collect();
-                            Value::List(CompositeData {
-                                elements_type: types,
-                                values: results,
-                                value_id: ValueId::next(),
-                            })
-                        }
-                        // |a + bi| = sqrt(a^2 + b^2)
-                        Value::Complex { real, imag } => {
-                            let r = Value::Float(real.clone());
-                            let i = Value::Float(imag.clone());
-                            let rr = self.builder.ir_mul_f(&r, &r);
-                            let ii = self.builder.ir_mul_f(&i, &i);
-                            let sum = self.builder.ir_add_f(&rr, &ii);
-                            self.builder.ir_sqrt_f(&sum)
-                        }
-                        v => self.builder.ir_abs_i(v),
-                    }
-                } else {
-                    Value::None
-                }
-            }
+            "abs" => match visited_args_orig.first() {
+                Some(x) => builtin_abs(&mut self.builder, x),
+                None => Value::None,
+            },
             "print" => {
                 if !visited_args.is_empty() {
                     // For composites, print each element
@@ -245,16 +204,11 @@ impl IRGenerator {
                 // that lets out-of-range witnesses through the slice's
                 // bound discharge.
                 if visited_args.len() >= 2 {
-                    let mut acc = visited_args[0].clone();
-                    for next in &visited_args[1..] {
-                        let lt = self.builder.ir_less_than_i(&acc, next);
-                        acc = if member == "min" {
-                            self.builder.ir_select_i(&lt, &acc, next)
-                        } else {
-                            self.builder.ir_select_i(&lt, next, &acc)
-                        };
-                    }
-                    return Some(acc);
+                    return Some(builtin_min_max_of_arguments(
+                        &mut self.builder,
+                        member,
+                        &ctx.args_orig,
+                    ));
                 }
                 if let Some(iter_val) = visited_args.first() {
                     // For 2D+ arrays, reduce over the first axis
@@ -321,6 +275,95 @@ impl IRGenerator {
         };
         Some(v)
     }
+}
+
+/// Python's `abs(x)`: the absolute value of a number (the magnitude of a
+/// complex number), and elementwise for an ndarray (`ndarray.__abs__`,
+/// which keeps the dtype; the magnitude array of a complex one is float).
+/// A float is a fixed-point cell: taking it with the integer `abs` made the
+/// result an integer holding 2^32 times the value. A Python list or tuple
+/// has no `abs` (`TypeError`).
+fn builtin_abs(builder: &mut crate::builder::IRBuilder, x: &Value) -> Value {
+    use crate::types::NumberType;
+    match x {
+        Value::Integer(_) | Value::Boolean(_) => builder.ir_abs_i(x),
+        Value::Float(_) => builder.ir_abs_f(x),
+        // |a + bi| = sqrt(a^2 + b^2)
+        Value::Complex { real, imag } => {
+            let r = Value::Float(real.clone());
+            let i = Value::Float(imag.clone());
+            let rr = builder.ir_mul_f(&r, &r);
+            let ii = builder.ir_mul_f(&i, &i);
+            let sum = builder.ir_add_f(&rr, &ii);
+            builder.ir_sqrt_f(&sum)
+        }
+        Value::StaticArray { dtype: NumberType::Complex, .. } => {
+            crate::helpers::static_array::complex::np_abs_complex_static_array(builder, x)
+        }
+        Value::StaticArray { dtype, shape, .. } => {
+            let cells = crate::helpers::static_array::elementwise::payload_cells(builder, x);
+            let magnitudes = cells.iter().map(|cell| builtin_abs(builder, cell)).collect();
+            crate::helpers::static_array::base::build_static_array_from_flat(
+                builder,
+                magnitudes,
+                shape.clone(),
+                *dtype,
+            )
+        }
+        Value::DynamicNDArray(data) if data.dtype != NumberType::Complex => {
+            crate::ops::dyn_ndarray::binary::dyn_unary_op(builder, data, data.dtype, builtin_abs)
+        }
+        Value::DynamicNDArray(_) => {
+            panic!("abs() of a complex array with a runtime shape is not supported")
+        }
+        other => panic!("TypeError: bad operand type for abs(): '{}'", other.zinnia_type()),
+    }
+}
+
+/// Python's `min(a, b, ...)` / `max(a, b, ...)` over real scalars: the first
+/// argument, replaced by each later one that is strictly smaller (`min`) or
+/// strictly greater (`max`). Integers and booleans compare and select as
+/// integers. When either side of a step is a float, both sides are compared
+/// and selected as floats: a float is a fixed-point cell, and selecting it
+/// with the integer select made the result an integer holding 2^32 times the
+/// value (`max(1.0, x) + 1e-9` came out as about `x * 2^32`).
+fn builtin_min_max_of_arguments(
+    builder: &mut crate::builder::IRBuilder,
+    function: &str,
+    arguments: &[Value],
+) -> Value {
+    for argument in arguments {
+        match argument {
+            Value::Integer(_) | Value::Boolean(_) | Value::Float(_) => {}
+            Value::Complex { .. } => panic!(
+                "TypeError: {function}(a, b, ...) cannot order complex numbers"
+            ),
+            Value::StaticArray { .. } | Value::DynamicNDArray(_) => panic!(
+                "{function}(a, b, ...) of arrays is not supported: comparing two arrays has no \
+                 single truth value in NumPy; use np.{function}imum(a, b) for the elementwise \
+                 {function}"
+            ),
+            other => panic!(
+                "{function}(a, b, ...) is supported for numbers only, got {} (comparing \
+                 sequences lexicographically is not supported)",
+                other.zinnia_type()
+            ),
+        }
+    }
+    let mut acc = arguments[0].clone();
+    for next in &arguments[1..] {
+        let (smaller, larger) = if function == "min" { (next, &acc) } else { (&acc, next) };
+        let replace =
+            crate::helpers::value_ops::apply_scalar_binary_op(builder, "lt", smaller, larger);
+        acc = if matches!(acc, Value::Float(_)) || matches!(next, Value::Float(_)) {
+            let next_f = crate::helpers::value_ops::ensure_float(builder, next);
+            let acc_f = crate::helpers::value_ops::ensure_float(builder, &acc);
+            builder.ir_select_f(&replace, &next_f, &acc_f)
+        } else {
+            builder.ir_select_i(&replace, next, &acc)
+        };
+    }
+    acc
 }
 
 /// Python's `int(z)` / `float(z)` raise `TypeError` for a complex `z`.

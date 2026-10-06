@@ -38,6 +38,12 @@ impl LoopItem {
     }
 }
 
+/// The most items a `range` with a runtime start or stop is unrolled to.
+/// The circuit has one copy of the loop body per item, so a proven bound
+/// above this is no usable bound (an `int64` value's full range is one);
+/// collecting that many items used to abort with a capacity overflow.
+const MAX_UNROLLED_RANGE_ITEMS: i64 = 1 << 24;
+
 /// Error text for a loop whose trip count is a runtime value without a
 /// provable maximum. Shared by `range` and `while` so the message is uniform.
 pub(crate) const UNBOUNDED_LOOP_ERROR: &str =
@@ -173,6 +179,14 @@ impl IRGenerator {
                 UNBOUNDED_LOOP_ERROR
             )
         });
+        if count > MAX_UNROLLED_RANGE_ITEMS {
+            panic!(
+                "{}: the proven bound on the number of iterations of range() is {count}, more \
+                 than the {MAX_UNROLLED_RANGE_ITEMS} iterations the compiler unrolls. Give the \
+                 start or stop a tighter maximum (a bounded array annotation or a precondition)",
+                UNBOUNDED_LOOP_ERROR
+            );
+        }
         // Items are start, start+step, ...; item k is active iff it lies
         // before `stop` in the direction of `step`.
         let active_op = if step > 0 { IRBuilderCmp::Lt } else { IRBuilderCmp::Gt };

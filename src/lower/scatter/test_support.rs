@@ -15,7 +15,7 @@ use crate::types::{NumberType, Value};
 use super::insert::{insert_row, Form};
 use super::position::{position_one_hot, Positions};
 
-pub(crate) use crate::optim::sort_lowering::test_support::mock_run;
+pub(crate) use crate::lower::sort::test_support::mock_run;
 
 /// A graph, its inputs, and the public outputs NumPy gives (`None`: NumPy
 /// raises, so the circuit must have no witness).

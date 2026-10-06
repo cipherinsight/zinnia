@@ -183,10 +183,10 @@ fn role(ir: &IR, operands: usize) -> Role {
             kind: HintKind::SortedValues | HintKind::MaskedSortedValues,
             len,
         } => Role::Selects(0..*len as usize),
-        IR::Sorted { index: true, .. } => Role::ValueOnly,
-        IR::Sorted {
-            index: false, len, ..
-        } => Role::Selects(0..*len as usize),
+        IR::ArrayOp(op) => match op.kind.semantics().picks_from(op) {
+            Some(operands) => Role::Selects(operands),
+            None => Role::ValueOnly,
+        },
         IR::AllocateMemory {
             segment_id,
             init_value,

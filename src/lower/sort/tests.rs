@@ -8,8 +8,9 @@ use std::collections::BTreeSet;
 
 use super::cost::{
     adjacent_swap_pairs, choose_plan, cone_size, merge_exchange_pairs, reverse_adjacent_swap_pairs,
-    Demand, Network, Pin, Plan, Run, SortTarget,
+    unit_costs, Demand, Network, Pin, Plan, Run,
 };
+use crate::lower::Target;
 use super::test_support::{
     hints_as_inputs, masked_order_statistic_graph, mock_run, sort_graph, stable_sort,
     tampered_inputs, Forced, Output, SortGraph,
@@ -95,7 +96,7 @@ fn every_output(n: u32) -> Vec<Output> {
 fn assert_computes_numpy(values: &[i64], outputs: &[Output], forced: Forced) {
     let sort = sort_graph(values, outputs, forced);
     assert!(
-        !sort.graph.stmts.iter().any(|s| matches!(s.ir, IR::Sorted { .. })),
+        !sort.graph.stmts.iter().any(|s| matches!(s.ir, IR::ArrayOp(_))),
         "a placeholder survived"
     );
     let (ok, got) = mock_run(&sort.graph, &sort.inputs);
@@ -127,7 +128,7 @@ fn every_plan_is_the_stable_sort_with_ties() {
         let outputs: Vec<Output> = ranks.iter().map(|&r| Output::Value(r)).collect();
         assert_computes_numpy(&TIED, &outputs, Forced::Extremes);
     }
-    for target in [SortTarget::Halo2Base, SortTarget::Noir] {
+    for target in [Target::Halo2Base, Target::Noir] {
         assert_computes_numpy(&TIED, &every_output(n), Forced::CostRule(target));
     }
 }
@@ -177,8 +178,8 @@ fn demand(n: usize, values: &[usize], indices: &[usize], runtime_values: usize) 
 
 #[test]
 fn cost_rule_picks_by_target_and_live_outputs() {
-    let halo2 = SortTarget::Halo2Base.costs();
-    let noir = SortTarget::Noir.costs();
+    let halo2 = unit_costs(Target::Halo2Base);
+    let noir = unit_costs(Target::Noir);
     let every: Vec<usize> = (0..100).collect();
     // A full argsort of 100: Batcher on halo2-base (a read is a one-hot
     // selection over 100 slots), the permutation check on Noir.

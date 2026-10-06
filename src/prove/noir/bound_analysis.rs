@@ -221,7 +221,7 @@ pub fn run(graph: &IRGraph) -> BoundMap {
             IR::PoseidonHash | IR::EqHash => None,
 
             // ── Prover hints — any value the prover chooses ───────────
-            IR::Hint { .. } | IR::Sorted { .. } => None,
+            IR::Hint { .. } | IR::ArrayOp(_) => None,
             IR::KeyLess { .. } => Some(1),
         };
 

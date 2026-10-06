@@ -1024,7 +1024,7 @@ fn hint_lanes_match_the_mock() {
     }
 }
 
-// ── Sort lowerings (optim::sort_lowering) ─────────────────────────────────
+// ── Sort lowerings (lower::sort) ─────────────────────────────────
 
 /// Each sort lowering with hints, emitted to Noir with its hints turned
 /// into free private inputs (a malicious prover's choice): the honest
@@ -1033,7 +1033,7 @@ fn hint_lanes_match_the_mock() {
 /// or every other candidate for an order statistic fails a constraint.
 #[test]
 fn sort_hints_are_pinned_in_noir() {
-    use crate::optim::sort_lowering::test_support::{
+    use crate::lower::sort::test_support::{
         hints_as_inputs, sort_graph, tampered_inputs, Forced, Output,
     };
     if !toolchain_present(false) {

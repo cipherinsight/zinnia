@@ -1,4 +1,4 @@
-"""Sorts lowered by the cost rule of `optim::sort_lowering` (hint-op, 2026-10-06).
+"""Sorts lowered by the cost rule of `lower::sort` (hint-op, 2026-10-06).
 
 `np.sort`, `np.argsort`, `np.median` and `np.percentile` lower each sort's live
 outputs with a sorting network or with prover hints pinned in the IR, picked per
@@ -7,7 +7,7 @@ stable sort, ties included, on both targets; these tests compare with NumPy on t
 mock backend, check that the circuit backends agree with the mock, and pin which
 lowering each target picks (so a cost-rule regression fails here). The pins' tamper
 tests (a wrong hint is rejected on mock, halo2-base and Noir) are Rust tests:
-`optim::sort_lowering::tests`, `prove::halo2_base::synthesizer::tests::
+`lower::sort::tests`, `prove::halo2_base::synthesizer::tests::
 sort_hints_are_pinned`, `prove::noir::soundness_tests::sort_hints_are_pinned_in_noir`.
 """
 import numpy as np

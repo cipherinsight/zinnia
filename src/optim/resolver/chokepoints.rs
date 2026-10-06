@@ -444,7 +444,15 @@ pub fn require_provable_static_int(
     match resolve_int_or_bounded(b, val, site, None) {
         BoundedInt::Static(n) => n,
         BoundedInt::Bounded { min, max } if min == max => min,
-        _ => panic!("{}", site.diagnostic()),
+        // Say that the value has a bound, so a program that needs a runtime
+        // size here is told apart from one whose size is unbounded.
+        BoundedInt::Bounded { min, max } => panic!(
+            "{} (it is a runtime value in [{}, {}]; a runtime size is not supported here)",
+            site.diagnostic(),
+            min,
+            max
+        ),
+        BoundedInt::Neither => panic!("{}", site.diagnostic()),
     }
 }
 

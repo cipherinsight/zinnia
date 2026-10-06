@@ -127,10 +127,11 @@ fn fill_array(
     kwargs: &HashMap<String, Value>,
     fill_value: i64,
 ) -> Value {
-    // np.zeros(shape, dtype=...) / np.ones(shape, dtype=...) / np.empty(shape, dtype=...)
-    let arg = match args.first() {
-        Some(a) => a,
-        None => return Value::None,
+    // np.zeros(shape, dtype=...) / np.ones(shape, dtype=...) / np.empty(shape, dtype=...);
+    // `shape` may be a keyword (`np.zeros(shape=(m, n))` used to return None,
+    // so the program proved an empty output).
+    let Some(arg) = args.first().or_else(|| kwargs.get("shape")) else {
+        panic!("np.zeros/ones/empty: missing the shape argument");
     };
     let req_dtype = fill_dtype(args, kwargs);
     let shape = match arg {
@@ -348,9 +349,11 @@ fn fill_array(
 pub fn np_full(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
     let shape_arg = args
         .first()
+        .or_else(|| kwargs.get("shape"))
         .unwrap_or_else(|| panic!("np.full: shape argument required"));
     let fill_arg = args
         .get(1)
+        .or_else(|| kwargs.get("fill_value"))
         .unwrap_or_else(|| panic!("np.full: fill_value argument required"));
     let dtype = requested_dtype(args.get(2).or_else(|| kwargs.get("dtype")), "np.full")
         .unwrap_or_else(|| dtype_of_fill(fill_arg));

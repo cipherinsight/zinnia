@@ -21,11 +21,12 @@ pub mod types;
 
 use ir::IRGraph;
 use ir_gen::{IRGenConfig, IRGenerator};
+use lower::{ArrayLowering, Target};
 use optim::{
     AlwaysSatisfiedElimination, AssertSubsumption, AssertedEqualityConstantPropagation,
     ConstantFold, DeadCodeElimination, DoubleNotElimination, DuplicateCodeElimination,
     DynamicNDArrayMemoryLowering, DynamicNDArrayMetaAssertInjection, ExternalCallRemover, IRPass,
-    MemoryTraceInjection, PatternMatchOptim, SelectChainForwarding, SortLowering, SortTarget,
+    MemoryTraceInjection, PatternMatchOptim, SelectChainForwarding,
     UnreadMemoryEliminator,
 };
 
@@ -102,7 +103,7 @@ fn resolve_public_layout(
     })
 }
 
-fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32, target: SortTarget) -> Option<IRGraph> {
+fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32, target: Target) -> Option<IRGraph> {
     // Passes rebuild the graph via `IRGraph::new`, which starts with an
     // empty elided-publics list; carry the IRGen-recorded claim across.
     let elided = graph.elided_publics.clone();
@@ -137,7 +138,7 @@ fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32, target: SortT
         "MemoryTraceInjection" => MemoryTraceInjection.exec(graph),
         "PatternMatchOptim" => PatternMatchOptim.exec(graph),
         "SelectChainForwarding" => SelectChainForwarding.exec(graph),
-        "SortLowering" => SortLowering { target }.exec(graph),
+        "ArrayLowering" => ArrayLowering { target }.exec(graph),
         _ => return None,
     };
     out.elided_publics = elided;
@@ -195,7 +196,7 @@ fn run_pass_pipeline(
     graph: IRGraph,
     passes: &[&str],
     mux_threshold: u32,
-    target: SortTarget,
+    target: Target,
     trace_phases: bool,
 ) -> IRGraph {
     // P5: optim passes rebuild the IRGraph from a fresh `IRBuilder`, which
@@ -433,9 +434,10 @@ fn compile_circuit_impl(
         passes.push("UnreadMemoryEliminator");
         passes.push("DeadCodeElimination");
     }
-    // Lower the sorts' live outputs (`optim::sort_lowering`): mandatory, and
-    // after dead-code elimination, which decides which outputs are live.
-    passes.push("SortLowering");
+    // Lower the array operators' live lanes (`lower`): mandatory, and after
+    // dead-code elimination, which decides which lanes are live. The
+    // constructions are chosen by their cost on the compile target.
+    passes.push("ArrayLowering");
     // Collapse `AssertU128Lt(stride_k + base, hi)` chains to the tightest
     // (max-stride) member: see `optim/assert_subsumption.rs`. Runs after
     // DCE so the redundant asserts are visible side-by-side.
@@ -448,9 +450,9 @@ fn compile_circuit_impl(
         passes.push("DynamicNDArrayMetaAssertInjection");
     }
 
-    let sort_target = SortTarget::from_backend(backend);
+    let target = Target::from_backend(backend);
     let optimized_graph =
-        run_pass_pipeline(base_graph, &passes, mux_threshold, sort_target, trace_phases);
+        run_pass_pipeline(base_graph, &passes, mux_threshold, target, trace_phases);
     // Inputs nothing reads need no domain check (`ir_gen::input_domain`);
     // dropping it lets dead-code elimination remove the read again.
     let optimized_graph = ir_gen::input_domain::drop_checks_of_unread_inputs(optimized_graph);
@@ -458,7 +460,7 @@ fn compile_circuit_impl(
         optimized_graph,
         &["DeadCodeElimination"],
         mux_threshold,
-        sort_target,
+        target,
         trace_phases,
     );
 
