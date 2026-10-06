@@ -61,7 +61,7 @@ impl IRPass for SortLowering {
     /// comparators outside the cone of the live outputs). A graph without
     /// sorts is returned unchanged.
     fn exec(&self, graph: IRGraph) -> IRGraph {
-        if !graph.stmts.iter().any(|s| matches!(s.ir, IR::Sorted { .. })) {
+        if !graph.stmts.iter().any(|s| sort_lane(&s.ir).is_some()) {
             return graph;
         }
         let costs = self.target.costs();
@@ -75,7 +75,7 @@ impl IRPass for SortLowering {
 /// Replace every `IR::Sorted` of `graph` by the IR of the plan `choose`
 /// picks for its sort's live outputs.
 fn lower_sorts(graph: IRGraph, choose: impl Fn(&Demand) -> Plan) -> IRGraph {
-    if !graph.stmts.iter().any(|s| matches!(s.ir, IR::Sorted { .. })) {
+    if !graph.stmts.iter().any(|s| sort_lane(&s.ir).is_some()) {
         return graph;
     }
     let groups: HashMap<Vec<StmtId>, Group> = demands(&graph)
@@ -93,7 +93,8 @@ fn lower_sorts(graph: IRGraph, choose: impl Fn(&Demand) -> Plan) -> IRGraph {
     for stmt in graph.get_topological_order(false) {
         let args: Vec<Value> = stmt.arguments.iter().map(|a| lookup[a].clone()).collect();
         let out = match stmt.ir {
-            IR::Sorted { len, rank, index } => {
+            _ if sort_lane(&stmt.ir).is_some() => {
+                let (len, rank, index) = sort_lane(&stmt.ir).expect("a sort lane");
                 let len = len as usize;
                 let key = stmt.arguments[..len].to_vec();
                 let sort = lowered
@@ -116,7 +117,7 @@ fn lower_sorts(graph: IRGraph, choose: impl Fn(&Demand) -> Plan) -> IRGraph {
 fn demands(graph: &IRGraph) -> HashMap<Vec<StmtId>, Demand> {
     let mut demands: HashMap<Vec<StmtId>, Demand> = HashMap::new();
     for stmt in &graph.stmts {
-        let IR::Sorted { len, rank, index } = stmt.ir else {
+        let Some((len, rank, index)) = sort_lane(&stmt.ir) else {
             continue;
         };
         let len = len as usize;
@@ -135,6 +136,16 @@ fn demands(graph: &IRGraph) -> HashMap<Vec<StmtId>, Demand> {
         }
     }
     demands
+}
+
+/// A sort placeholder's element count, constant rank and index flag.
+fn sort_lane(ir: &IR) -> Option<(u32, Option<u32>, bool)> {
+    match ir {
+        IR::ArrayOp(op) if op.kind == crate::lower::OpKind::Sort => {
+            Some((op.shared, op.position, op.output == crate::lower::sort::INDICES))
+        }
+        _ => None,
+    }
 }
 
 /// One above the largest memory segment id `graph` uses.

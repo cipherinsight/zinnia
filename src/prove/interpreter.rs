@@ -334,9 +334,9 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
                 Some(synth.packed_key_less(&args[0], &args[1], *index_bits)?)
             }
             IR::PackedKeyIndex { index_bits } => Some(synth.packed_key_index(&args[0], *index_bits)?),
-            IR::Sorted { .. } => {
+            IR::ArrayOp(_) => {
                 return Err(ProvingError::synthesis(
-                    "a Sorted placeholder reached the prover; optim::sort_lowering must lower it",
+                    "an ArrayOp placeholder reached the prover; lower::ArrayLowering must lower it",
                 ));
             }
         };

@@ -334,27 +334,22 @@ pub enum IR {
     /// A hint constrains nothing: the circuit accepts ANY value in its
     /// place. Every producer must therefore follow it with IR constraints
     /// under which the honest lane is the only admissible value, and state
-    /// that argument next to the code (see `optim::sort_lowering`). Not
+    /// that argument next to the code (see `lower::sort`). Not
     /// fixed: a hint nothing reads is dead, and its pins read it.
     Hint {
         kind: HintKind,
         len: u32,
     },
-    /// One output of NumPy's stable ascending sort of the `len` leading
-    /// operands: the value of rank `r`, or with `index` the original
-    /// position of that element (the stable argsort, ties in original
-    /// order). `rank` is `r`, or `None` when `r` is a runtime value, then
-    /// the last operand; a runtime `r` outside `[0, len)` has no proof.
+    /// One live output lane of an array operator (`lower::op`): the
+    /// operator, how many leading operands are its shared inputs, and the
+    /// lane's output and position (a runtime position is given by the
+    /// lane's own operands).
     ///
-    /// A compile-time placeholder only: `optim::sort_lowering` replaces
-    /// every one with a sorting network, pinned hints or counts, chosen by
-    /// a cost rule over the outputs of the same sort that are still live
-    /// after dead-code elimination. No backend accepts it.
-    Sorted {
-        len: u32,
-        rank: Option<u32>,
-        index: bool,
-    },
+    /// A compile-time placeholder only: the array lowering layer
+    /// (`lower::ArrayLowering`) replaces every one with the constructions it
+    /// selects for the operator's live lanes after dead-code elimination.
+    /// No backend accepts it.
+    ArrayOp(crate::lower::ArrayOp),
     /// `[(v1, i1) < (v2, i2)]` for the operands `[v1, i1, v2, i2]`, compared
     /// lexicographically: `v1 < v2`, or `v1 == v2` and `i1 < i2`. The values
     /// are signed (int64 or Q32: a backend rejects values outside the 64-bit
@@ -686,12 +681,7 @@ impl IR {
             IR::PackKey { index_bits } => format!("pack_key[{}]", index_bits),
             IR::PackedKeyLess { index_bits } => format!("packed_key_less[{}]", index_bits),
             IR::PackedKeyIndex { index_bits } => format!("packed_key_index[{}]", index_bits),
-            IR::Sorted { len, rank, index } => format!(
-                "sorted[{}][{}][{}]",
-                len,
-                rank.map_or("runtime".to_string(), |r| r.to_string()),
-                if *index { "index" } else { "value" }
-            ),
+            IR::ArrayOp(op) => op.describe(),
         }
     }
 
@@ -850,7 +840,7 @@ impl IR {
             IR::PoseidonHash => "PoseidonHashIR",
             IR::EqHash => "EqualHashIR",
             IR::Hint { .. } => "HintIR",
-            IR::Sorted { .. } => "SortedIR",
+            IR::ArrayOp(_) => "ArrayOpIR",
             IR::KeyLess { .. } => "KeyLessIR",
             IR::PackKey { .. } => "PackKeyIR",
             IR::PackedKeyLess { .. } => "PackedKeyLessIR",
@@ -1023,9 +1013,7 @@ impl IR {
             }),
 
             IR::Hint { kind, len } => serde_json::json!({ "kind": kind.name(), "len": len }),
-            IR::Sorted { len, rank, index } => {
-                serde_json::json!({ "len": len, "rank": rank, "index": index })
-            }
+            IR::ArrayOp(op) => serde_json::to_value(op).expect("an ArrayOp serializes"),
             IR::KeyLess { index_bits }
             | IR::PackKey { index_bits }
             | IR::PackedKeyLess { index_bits }
@@ -1347,11 +1335,9 @@ impl IR {
                     _ => IR::PackedKeyIndex { index_bits },
                 })
             }
-            "SortedIR" => Ok(IR::Sorted {
-                len: data["len"].as_u64().ok_or("Sorted: missing len")? as u32,
-                rank: data["rank"].as_u64().map(|r| r as u32),
-                index: data["index"].as_bool().ok_or("Sorted: missing index")?,
-            }),
+            "ArrayOpIR" => serde_json::from_value(data.clone())
+                .map(IR::ArrayOp)
+                .map_err(|e| format!("ArrayOp: {e}")),
 
             other => Err(format!("Unknown IR class: {}", other)),
         }
@@ -1536,8 +1522,18 @@ mod tests {
             IR::Hint { kind: HintKind::StableArgsort, len: 7 },
             IR::Hint { kind: HintKind::SortedValues, len: 1 },
             IR::Hint { kind: HintKind::MaskedSortedValues, len: 6 },
-            IR::Sorted { len: 5, rank: Some(3), index: true },
-            IR::Sorted { len: 5, rank: None, index: false },
+            IR::ArrayOp(crate::lower::ArrayOp {
+                kind: crate::lower::OpKind::Sort,
+                shared: 5,
+                output: 1,
+                position: Some(3),
+            }),
+            IR::ArrayOp(crate::lower::ArrayOp {
+                kind: crate::lower::OpKind::Sort,
+                shared: 5,
+                output: 0,
+                position: None,
+            }),
             IR::KeyLess { index_bits: 7 },
             IR::PackKey { index_bits: 7 },
             IR::PackedKeyLess { index_bits: 7 },
