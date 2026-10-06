@@ -468,7 +468,10 @@ fn reads_sharing_an_index_are_inner_products_on_noir_and_select_chains_on_halo2_
     let count = |g: &IRGraph, f: fn(&IR) -> bool| g.stmts.iter().filter(|s| f(&s.ir)).count();
     let noir = pass(&graph, Target::Noir);
     assert_eq!(count(&noir, |ir| matches!(ir, IR::SelectI)), 1, "only the index wrap selects");
-    assert_eq!(count(&noir, |ir| matches!(ir, IR::EqI)), 6, "one shared equality test per column");
+    // One shared equality test per column, and the asserted `sum == 1` that
+    // stands for the index's range check (6 is not a power of two).
+    assert_eq!(count(&noir, |ir| matches!(ir, IR::EqI)), 7, "shared equality tests and the one-hot check");
+    assert_eq!(count(&noir, |ir| matches!(ir, IR::AssertU128Lt)), 0, "the range check is replaced");
     let halo2 = pass(&graph, Target::Halo2Base);
     assert_eq!(count(&halo2, |ir| matches!(ir, IR::SelectI)), 1 + 8 * 5);
     assert_eq!(count(&halo2, |ir| matches!(ir, IR::EqI)), 5);
@@ -615,4 +618,61 @@ fn a_permutation_scatter_needs_a_recorded_permutation() {
     let p: Vec<Value> = (0..3).map(|k| input(&mut b, format!("p{k}"))).collect();
     let values: Vec<Value> = (0..3).map(|k| b.ir_constant_int(k)).collect();
     assert!(super::permutation_scatter_lanes(&mut b, &p, &values).is_none());
+}
+
+/// `rows` reads of 6 cells at NumPy's wrap `w = select(s, i + 6, i)` of the
+/// input `i`, checked by `AssertU128Lt(w, 6)`, with the sign `s` a free
+/// input (a tampered hint) asserted to be a bit.
+fn reads_at_a_wrap_with_a_free_sign(rows: usize) -> IRGraph {
+    let mut b = IRBuilder::new();
+    let i = input(&mut b, "i".to_string());
+    let s = input(&mut b, "s".to_string());
+    b.ir_assert_bit(&s);
+    let n = b.ir_constant_int(6);
+    let shifted = b.ir_add_i(&i, &n);
+    let w = b.ir_select_i(&s, &shifted, &i);
+    b.ir_assert_u128_lt(&w, &n);
+    for r in 0..rows {
+        let cells: Vec<Value> = (0..6).map(|k| input(&mut b, format!("x{}", r * 6 + k))).collect();
+        let read = super::checked_element_lane(&mut b, &cells, &w);
+        b.ir_expose_public_i(&read);
+    }
+    b.export_ir_graph()
+}
+
+/// On Noir the indicators' asserted sum stands for the range check of a
+/// non-power-of-two axis (0345's column index): the check is gone, and the
+/// circuit still accepts exactly NumPy's indices with the honest sign.
+#[test]
+fn an_asserted_one_hot_replaces_the_index_check_and_keeps_the_sign_pinned() {
+    let graph = reads_at_a_wrap_with_a_free_sign(8);
+    let lowered = pass(&graph, Target::Noir);
+    assert_eq!(lowered.stmts.iter().filter(|s| matches!(s.ir, IR::AssertU128Lt)).count(), 0);
+    let xs: Vec<i64> = (0..48).map(|k| 3 * k - 40).collect();
+    for i in -8..8i64 {
+        for s in [-1, 0, 1, 2] {
+            let mut inputs = named("x", &xs);
+            inputs.push(("i".to_string(), i));
+            inputs.push(("s".to_string(), s));
+            let (ok, outputs) = mock_run(&lowered, &inputs);
+            let honest = (-6..6).contains(&i) && s == i64::from(i < 0);
+            assert_eq!(ok, honest, "i={i} s={s}");
+            if ok {
+                let w = i.rem_euclid(6) as usize;
+                assert_eq!(outputs, (0..8).map(|r| xs[r * 6 + w]).collect::<Vec<_>>(), "i={i}");
+            }
+        }
+    }
+    // A power-of-two axis keeps its one range check (cheaper than the sum).
+    let mut b = IRBuilder::new();
+    let w = input(&mut b, "w".to_string());
+    let eight = b.ir_constant_int(8);
+    b.ir_assert_u128_lt(&w, &eight);
+    for r in 0..6 {
+        let cells: Vec<Value> = (0..8).map(|k| input(&mut b, format!("x{}", r * 8 + k))).collect();
+        let read = super::checked_element_lane(&mut b, &cells, &w);
+        b.ir_expose_public_i(&read);
+    }
+    let lowered = pass(&b.export_ir_graph(), Target::Noir);
+    assert_eq!(lowered.stmts.iter().filter(|s| matches!(s.ir, IR::AssertU128Lt)).count(), 1);
 }

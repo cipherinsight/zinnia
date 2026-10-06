@@ -27,6 +27,7 @@ use optim::{
     ConstantFold, DeadCodeElimination, DoubleNotElimination, DuplicateCodeElimination,
     DynamicNDArrayMemoryLowering, DynamicNDArrayMetaAssertInjection, ExternalCallRemover, IRPass,
     MemoryTraceInjection, PatternMatchOptim, PredicatedSimplification, SelectChainForwarding,
+    ConstantMemoryForwarding, SelectMerge,
     UnreadMemoryEliminator,
 };
 
@@ -139,6 +140,8 @@ fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32, target: Targe
         "PatternMatchOptim" => PatternMatchOptim.exec(graph),
         "SelectChainForwarding" => SelectChainForwarding.exec(graph),
         "PredicatedSimplification" => PredicatedSimplification.exec(graph),
+        "ConstantMemoryForwarding" => ConstantMemoryForwarding.exec(graph),
+        "SelectMerge" => SelectMerge.exec(graph),
         "ArrayLowering" => ArrayLowering { target }.exec(graph),
         "SortCountQueries" => lower::sort::SortCountQueries.exec(graph),
         "ArgmaxQueries" => lower::sort::ArgmaxQueries.exec(graph),
@@ -455,6 +458,14 @@ fn compile_circuit_impl(
     // index wrap the guard decides; `optim/predicated_simplification.rs`),
     // then what that leaves unread removed.
     passes.push("PredicatedSimplification");
+    passes.push("DeadCodeElimination");
+    // Reads at constant memory addresses forwarded to the values stored
+    // there, stores no read observes dropped (`optim/constant_memory_forwarding.rs`),
+    // so selects see the values their branches merge; then selects whose
+    // branches agree wherever the other is taken collapsed (`optim/select_merge.rs`).
+    passes.push("ConstantMemoryForwarding");
+    passes.push("DeadCodeElimination");
+    passes.push("SelectMerge");
     passes.push("DeadCodeElimination");
     // Collapse `AssertU128Lt(stride_k + base, hi)` chains to the tightest
     // (max-stride) member: see `optim/assert_subsumption.rs`. Runs after

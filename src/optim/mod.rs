@@ -11,6 +11,8 @@ mod external_call_remover;
 mod memory_trace_injection;
 mod pattern_match_optim;
 mod predicated_simplification;
+mod constant_memory_forwarding;
+mod select_merge;
 mod select_chain_forwarding;
 pub mod predicates;
 pub mod prove;
@@ -37,6 +39,8 @@ pub use external_call_remover::ExternalCallRemover;
 pub use memory_trace_injection::MemoryTraceInjection;
 pub use pattern_match_optim::PatternMatchOptim;
 pub use predicated_simplification::PredicatedSimplification;
+pub use constant_memory_forwarding::ConstantMemoryForwarding;
+pub use select_merge::SelectMerge;
 pub use select_chain_forwarding::SelectChainForwarding;
 pub use range::{IntInterval, RangeResolver};
 pub use resolver::{
