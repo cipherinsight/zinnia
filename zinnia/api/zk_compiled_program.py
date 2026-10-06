@@ -108,7 +108,9 @@ class ZKCompiledProgram:
         imaginary). A runtime-shaped part's shape is the first ``rank`` of
         ``dims``, whose product is ``length``; element ``c`` (coordinates) is
         cell ``offset + sum(c[k] * strides[k])`` when strides are given, else
-        cell ``j`` for row-major position ``j``. Kind ``f`` values are Q32
+        cell ``j`` for row-major position ``j``. Shape entries computed by the
+        same statement share one public index (a rank-1 part's only dim is its
+        length); every other public index appears once. Kind ``f`` values are Q32
         fixed point. Public indices count every public value of the proof
         (public inputs included, see :meth:`get_public_inputs`); the mock
         backend reports the exposed outputs only. ``None`` for a program
@@ -136,7 +138,9 @@ class ZKCompiledProgram:
         runtime-shaped part) or
         ``{"output": output, "metadata": "length" | "rank" | "dim", "axis": a}``.
         Constant outputs are not in the public vector; see
-        :meth:`get_output_layout`.
+        :meth:`get_output_layout`. A rank-1 runtime-shaped part shares one
+        public value between its length and its only dimension; it is
+        described as the length.
         """
         layout = self.get_output_layout()
         inputs = self.get_public_inputs()
@@ -146,7 +150,7 @@ class ZKCompiledProgram:
 
         def note(slot: dict, entry: dict) -> None:
             if "public" in slot:
-                described[slot["public"]] = entry
+                described.setdefault(slot["public"], entry)
 
         for part in layout:
             output = part["output"]

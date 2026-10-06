@@ -36,10 +36,11 @@ def prove(fn, *args):
 
 def dynamic_output(fn, *args):
     """Satisfied flag and the runtime prefix of a 1-D dynamic output
-    (layout: runtime length, runtime dim, padded payload)."""
+    (layout: runtime length, which is also its only dim, then the padded
+    payload)."""
     satisfied, publics = prove(fn, *args)
     length = publics[0]
-    return satisfied, length, publics[2:2 + max(length, 0)]
+    return satisfied, length, publics[1:1 + max(length, 0)]
 
 
 @zk_circuit

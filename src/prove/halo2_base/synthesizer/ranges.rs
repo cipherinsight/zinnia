@@ -123,6 +123,17 @@ pub(super) struct Comparison {
     x_below: bool,
 }
 
+/// An int64 window check of `x`: `shifted = x + 2^63` range-checked to 64
+/// bits, with the top limb of that check (`top_bits` wide, in
+/// `[0, 2^top_bits)` by the check's own lookups). See
+/// `Halo2BaseSynthesizer::sign_from_window`.
+#[derive(Clone, Copy)]
+pub(super) struct WindowCheck {
+    pub(super) shifted: Halo2BaseCell,
+    pub(super) top_limb: Halo2BaseCell,
+    pub(super) top_bits: usize,
+}
+
 /// The number of bits `n` with `2^n > v`, for `v >= 0`.
 fn bits_above(v: i128) -> usize {
     (128 - v.max(0).leading_zeros()) as usize
@@ -305,7 +316,9 @@ impl Halo2BaseSynthesizer<'_> {
             let shifted = self.gate_cell(x.value + shift, |gate, ctx| {
                 gate.add(ctx, x.quantum(), QuantumCell::Constant(shift))
             });
-            self.range_check(&shifted, 64);
+            if let Some(window) = self.window_range_check(&shifted) {
+                self.windows.insert(x.id, window);
+            }
         } else {
             return Err(ProvingError::synthesis("unsupported comparison domain"));
         }
@@ -413,6 +426,9 @@ impl Halo2BaseSynthesizer<'_> {
         if let (Operand::Cell(x), Operand::Constant(0), Some(Interval::SIGNED64)) = (a, b, domain) {
             if let Some(sign) = self.sign_bits.get(&x.id) {
                 return Ok(*sign);
+            }
+            if let Some(sign) = self.sign_from_window(&x) {
+                return Ok(sign);
             }
             if self.proven_range(&x).is_none_or(|r| !r.within(&Interval::SIGNED64)) && self.planned_bound(&x).is_none() {
                 return self.sign_test(&x);
@@ -562,6 +578,67 @@ impl Halo2BaseSynthesizer<'_> {
         self.prove_range(x, Interval::SIGNED64);
         self.record_sign(x, &s);
         Ok(s)
+    }
+
+    /// The 64-bit range check of `shifted = x + 2^63` (halo2-base's own
+    /// `range_check`, the same cells), keeping its top limb. halo2-base
+    /// decomposes a value of `n = ceil(64 / L)` limbs (`L` the lookup width)
+    /// by one inner product whose limb cells it looks up; the top limb `l`
+    /// sits at a fixed offset of that inner product (halo2-base 004e12c,
+    /// `RangeChip::_range_check`, which returns it but is private) and is
+    /// checked to `w = 64 - L(n - 1)` bits. `None` for a single-limb
+    /// check (`L >= 64`), where no limb is kept.
+    fn window_range_check(&mut self, shifted: &Halo2BaseCell) -> Option<WindowCheck> {
+        let lookup = self.range_chip().lookup_bits();
+        let limbs = 64usize.div_ceil(lookup);
+        let assigned = self.assigned(shifted);
+        let offset = self.ctx().advice.len() as isize;
+        let range = self.range_chip();
+        range.range_check(self.ctx(), assigned, 64);
+        self.prove_range(shifted, Interval::UNSIGNED64);
+        if limbs < 2 {
+            return None;
+        }
+        let top_assigned = self.ctx().get(offset + 1 + 3 * (limbs as isize - 2));
+        let top_bits = 64 - lookup * (limbs - 1);
+        let expected = kernel::fp_to_i128(shifted.value).map(|v| (v as u128 >> (lookup * (limbs - 1))) as u64);
+        let value = *top_assigned.value();
+        debug_assert!(expected.is_none_or(|e| value == Fp::from(e)), "window check: top limb not where expected");
+        let top_limb = self.wrap(top_assigned, value);
+        Some(WindowCheck { shifted: *shifted, top_limb, top_bits })
+    }
+
+    /// `[x < 0]` for an `x` whose int64 window check kept its top limb
+    /// (`WindowCheck`), without a comparison of its own.
+    ///
+    /// With `x + 2^63 = sum_i l_i 2^(L i)` and the top limb `l` in
+    /// `[0, 2^w)` (the window check's lookups), `x >= 0` exactly when
+    /// `x + 2^63 >= 2^63`, i.e. when `l >= 2^(w-1)`. The hint `b = [x >= 0]`
+    /// is a bit and `t = l - 2^(w-1) b` is range-checked to `w - 1` bits:
+    /// `b = 1` needs `l` in `[2^(w-1), 2^w)`, `b = 0` needs `l` in
+    /// `[0, 2^(w-1))`, so exactly one `b` passes and it is the sign. For
+    /// `w = 1` the limb is that bit itself. The result `1 - b` is recorded
+    /// as `x`'s sign bit. About 20 cells against about 50 for a 64-bit
+    /// comparison with 0 (lookup width 8).
+    pub(super) fn sign_from_window(&mut self, x: &Halo2BaseCell) -> Option<Halo2BaseCell> {
+        let window = self.windows.get(&x.id).copied()?;
+        let nonneg = if window.top_bits == 1 {
+            self.mark_bit(&window.top_limb);
+            window.top_limb
+        } else {
+            let half = Fp::from(1u64 << (window.top_bits - 1));
+            let b = self.hint_bit(!kernel::fp_is_negative(x.value));
+            let top = window.top_limb;
+            let t = self.gate_cell(top.value - half * b.value, |gate, ctx| {
+                gate.sub_mul(ctx, top.quantum(), b.quantum(), QuantumCell::Constant(half))
+            });
+            self.range_check(&t, window.top_bits - 1);
+            b
+        };
+        let sign = self.gate_cell(Fp::one() - nonneg.value, |gate, ctx| gate.not(ctx, nonneg.quantum()));
+        self.mark_bit(&sign);
+        self.record_sign(x, &sign);
+        Some(sign)
     }
 
     /// Record `s` as the pinned bit `[x < 0]` of an `x` proven to lie in the

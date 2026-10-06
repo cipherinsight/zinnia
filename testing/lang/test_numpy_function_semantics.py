@@ -74,9 +74,9 @@ def _unique_outputs(values):
     program = compile_kernel('def kernel(a: Integer[Array, "5"]):\n    return np.unique(a)\n')
     satisfied, outputs = run_mock(program, np.array(values))
     assert satisfied
-    # Layout: runtime length, runtime dim, then the 5-slot padded payload.
-    length, dim, payload = outputs[0], outputs[1], outputs[2:]
-    assert length == dim
+    # Layout: runtime length (also the only dim), then the 5-slot padded payload.
+    length, payload = outputs[0], outputs[1:]
+    assert len(payload) == 5
     return payload[:length], payload[length:]
 
 
@@ -159,9 +159,9 @@ def test_bitwise_operators_match_numpy(source, args):
     expected = np.asarray(numpy_kernel(source)(*[np.copy(a) for a in args])).ravel()
     satisfied, outputs = run_mock(compile_kernel(source), *args)
     assert satisfied
-    if len(outputs) != expected.size:  # 1-D dynamic: length, dim, padded payload
+    if len(outputs) != expected.size:  # 1-D dynamic: length (= its dim), padded payload
         assert outputs[0] == expected.size
-        outputs = outputs[2:2 + expected.size]
+        outputs = outputs[1:1 + expected.size]
     assert outputs == list(expected)
 
 
@@ -230,7 +230,7 @@ def test_bool_array_and_keeps_logical_form():
     expected = numpy_kernel(source)(a.copy())
     satisfied, outputs = run_mock(program, a)
     assert satisfied and outputs[0] == len(expected)
-    assert outputs[2:2 + len(expected)] == list(expected)
+    assert outputs[1:1 + len(expected)] == list(expected)
 
 
 # ── the mock computes powers the way the circuit does ────────────────────
