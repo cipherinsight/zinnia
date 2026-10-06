@@ -706,6 +706,31 @@ fn every_lowered_op_matches_the_mock() {
         let r = g.push(ir, &[f, s]);
         expose_i(&mut g, &mut approx, r);
     }
+    // Comparisons with zero share the sign of `sign_abs` with abs, sqrt and
+    // int casts of the same value (f < 0, h > 0, zf == 0).
+    let zero_float = g.push(IR::ConstantFloat { value: 0.0 }, &[]);
+    for v in [f, h, zero_f] {
+        for (ir, args) in [
+            (IR::LtF, vec![v, zero_float]),
+            (IR::GteF, vec![v, zero_float]),
+            (IR::GtF, vec![v, zero_float]),
+            (IR::LteF, vec![v, zero_float]),
+            (IR::LtF, vec![zero_float, v]),
+            (IR::GteF, vec![zero_float, v]),
+        ] {
+            let r = g.push(ir, &args);
+            expose_i(&mut g, &mut approx, r);
+        }
+    }
+    for (ir, args) in [
+        (IR::LtI, vec![x, zero]),
+        (IR::GtI, vec![x, zero]),
+        (IR::LteI, vec![zero, x]),
+        (IR::GteI, vec![y, zero]),
+    ] {
+        let r = g.push(ir, &args);
+        expose_i(&mut g, &mut approx, r);
+    }
     let i = g.push(IR::IntCast, &[f]);
     expose_i(&mut g, &mut approx, i);
 

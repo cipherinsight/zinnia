@@ -162,6 +162,13 @@ pub fn qabs_i(v: Field) -> Field {
 /// Integer sign: -1, 0 or 1.
 pub fn qsign_i(v: Field) -> Field {
     let (negative, mag) = sign_abs(v);
+    sign_of(negative, mag)
+}
+
+/// -1, 0 or 1 from a pair returned by `sign_abs` (which never returns a
+/// negative zero). The `*_of` helpers take such a pair, so that one
+/// `sign_abs` serves every helper that needs the sign of the same value.
+pub fn sign_of(negative: bool, mag: Field) -> Field {
     if mag == 0 {
         0
     } else if negative {
@@ -456,6 +463,11 @@ fn constrain_trunc_div_q(mag: Field, q: Field, r: Field) {
 /// i.e. sign(v) * floor(|v| / Q).
 pub fn q_div_q(v: Field) -> Field {
     let (negative, mag) = sign_abs(v);
+    q_div_q_of(negative, mag)
+}
+
+/// `q_div_q` from the `sign_abs` pair of v.
+pub fn q_div_q_of(negative: bool, mag: Field) -> Field {
     // Safety: constrain_trunc_div_q pins (q, r) uniquely.
     let (q, r) = unsafe { hint_divmod_q(mag) };
     constrain_trunc_div_q(mag, q, r);
@@ -571,6 +583,11 @@ fn isqrt_floor(n: Field) -> Field {
 /// x >= 2^64), outside the kernel's fixed-point window.
 pub fn qsqrt(x: Field) -> Field {
     let (negative, mag) = sign_abs(x);
+    qsqrt_of(negative, mag)
+}
+
+/// `qsqrt` from the `sign_abs` pair of x.
+pub fn qsqrt_of(negative: bool, mag: Field) -> Field {
     let m = if negative { 0 } else { mag };
     isqrt_floor(m * Q)
 }

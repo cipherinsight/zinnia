@@ -648,6 +648,8 @@ pub struct NoirEmitter<'a> {
     scaled_bit: HashMap<String, String>,
     /// `low_bits::<NB>(x)` decompositions already emitted: x -> (NB, name).
     low_bits_of: HashMap<String, (u32, String)>,
+    /// `sign_abs(x)` pairs already emitted: x -> (negative: bool, |x|).
+    sign_abs_of: HashMap<String, (String, String)>,
     /// Bit decompositions of bounded indices: (idx, width) -> name.
     index_bits_of: HashMap<(String, u32), String>,
     /// IR-level forward-dataflow bounds, keyed by stmt_id, from
@@ -856,12 +858,17 @@ impl<'a> NoirEmitter<'a> {
     /// `a cmp b` as a 0/1 cell, the mock's signed comparison (the sign of
     /// `a - b`), for every IR comparison (`LtI`..`GteI`, `LtF`..`GteF`,
     /// `LtIBounded`, `GtIBounded`, the axes of `IndexInBox`). In order:
-    /// a value non-negative by construction against 0 is a zero test;
+    /// a value non-negative by construction against 0 is a zero test; a
+    /// value against 0 reads the sign of its `sign_abs` pair when that pair
+    /// exists or costs no more than the comparison (`compare_with_zero_by_sign`);
     /// operands with non-negative intervals below 2^8 compare as u8
     /// (`unsigned_compare`); anything else goes through the library's
     /// gap-pinned `qlt_bits` (`gap_compare`).
     fn compare(&mut self, a: &str, b: &str, cmp: Cmp) -> String {
         if let Some(v) = self.compare_nonneg_with_zero(a, b, cmp) {
+            return v;
+        }
+        if let Some(v) = self.compare_with_zero_by_sign(a, b, cmp) {
             return v;
         }
         if let Some(v) = self.unsigned_compare(a, b, cmp) {
@@ -989,9 +996,9 @@ impl<'a> NoirEmitter<'a> {
     /// 0, `x >= 0` is 1, `x > 0` is `x != 0` and `x <= 0` is `x == 0`. Only
     /// facts a lowering guarantees qualify, never an interval.
     fn compare_nonneg_with_zero(&mut self, a: &str, b: &str, cmp: Cmp) -> Option<String> {
-        let (x, cmp) = if self.s_int_of(b) == Some(0) {
+        let (x, cmp) = if self.is_zero_literal(b) {
             (a, cmp)
-        } else if self.s_int_of(a) == Some(0) {
+        } else if self.is_zero_literal(a) {
             (b, cmp.mirrored())
         } else {
             return None;
@@ -1023,6 +1030,57 @@ impl<'a> NoirEmitter<'a> {
         }
         let x = x.to_string();
         Some(self.nonzero_flag(&x, nonzero))
+    }
+
+    /// `x cmp 0` (or `0 cmp x`) from the sign of x's `sign_abs` pair: `x < 0`
+    /// is the sign, `x >= 0` its negation, and with a pair already emitted
+    /// also `x > 0` (not negative and not zero) and `x <= 0`. A new pair is
+    /// emitted only for `<` and `>=` at the full 64-bit width, where its one
+    /// 64-bit check costs what `qlt_bits::<64>` costs, and later sign users
+    /// (abs, sign, sqrt, int casts) of x then share it. `sign_abs` accepts
+    /// x in [-2^64, 2^64), the domain of `qlt_bits::<64>(x, 0)`.
+    fn compare_with_zero_by_sign(&mut self, a: &str, b: &str, cmp: Cmp) -> Option<String> {
+        let (x, zero, cmp) = if self.is_zero_literal(b) {
+            (a, b, cmp)
+        } else if self.is_zero_literal(a) {
+            (b, a, cmp.mirrored())
+        } else {
+            return None;
+        };
+        let x = x.to_string();
+        let cached = self.sign_abs_of.contains_key(&x);
+        let cheap = matches!(cmp, Cmp::Lt | Cmp::Ge) && self.comparison_width(&x, zero) == 64;
+        if !cached && !cheap {
+            return None;
+        }
+        let (negative, mag) = self.sign_abs(&x);
+        let flag = match cmp {
+            Cmp::Lt => format!("{negative} as Field"),
+            Cmp::Ge => format!("(!{negative}) as Field"),
+            Cmp::Gt => format!("((!{negative}) & ({mag} != 0)) as Field"),
+            Cmp::Le => format!("({negative} | ({mag} == 0)) as Field"),
+        };
+        Some(self.bind_flag(&flag))
+    }
+
+    /// The literal integer 0 or float 0.0 (both the field element 0).
+    fn is_zero_literal(&self, cell: &str) -> bool {
+        self.s_int_of(cell) == Some(0) || self.s_float_of(cell) == Some(0.0)
+    }
+
+    /// `(x < 0, |x|)` through the library's `sign_abs` (one 64-bit check;
+    /// x must lie in [-2^64, 2^64)), emitted once per cell and shared by
+    /// comparisons with 0, abs, sign, sqrt and int casts of x.
+    fn sign_abs(&mut self, x: &str) -> (String, String) {
+        if let Some(pair) = self.sign_abs_of.get(x) {
+            return pair.clone();
+        }
+        self.use_lib("sign_abs");
+        let (negative, mag) = (self.fresh(), self.fresh());
+        let _ = writeln!(self.body, "    let ({negative}, {mag}) = sign_abs({x});");
+        self.sign_abs_of
+            .insert(x.to_string(), (negative.clone(), mag.clone()));
+        (negative, mag)
     }
 
     /// `x != 0` (`nonzero`) or `x == 0` as a 0/1 cell; for a scaled bit
@@ -1507,6 +1565,7 @@ impl<'a> NoirEmitter<'a> {
             scaled_bit: HashMap::new(),
             low_bits_of: HashMap::new(),
             index_bits_of: HashMap::new(),
+            sign_abs_of: HashMap::new(),
             stmt_bounds,
             current_stmt_bound: None,
         }
@@ -1809,14 +1868,13 @@ impl Synthesizer for NoirEmitter<'_> {
         noop_unsupported!(self, "pow_i")
     }
     fn abs_i(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
-        self.use_lib("qabs_i");
-        let v = self.bind(&format!("qabs_i({})", a));
-        Ok(v)
+        let (_negative, mag) = self.sign_abs(a);
+        Ok(mag)
     }
     fn sign_i(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
-        self.use_lib("qsign_i");
-        let v = self.bind(&format!("qsign_i({})", a));
-        Ok(v)
+        let (negative, mag) = self.sign_abs(a);
+        self.use_lib("sign_of");
+        Ok(self.bind(&format!("sign_of({negative}, {mag})")))
     }
     fn inv_i(&mut self, _a: &CellRef) -> Result<CellRef, ProvingError> {
         noop_unsupported!(self, "inv_i")
@@ -1940,8 +1998,7 @@ impl Synthesizer for NoirEmitter<'_> {
         Ok(self.bind(&format!("qpow_int_q32({}, {} as u64)", af, e)))
     }
     fn abs_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
-        self.use_lib("qabs");
-        let v = self.bind(&format!("qabs({})", a));
+        let (_negative, v) = self.sign_abs(a);
         // Literal propagation: |literal| is itself a compile-time
         // constant. Fold the structural value and carry `literal_vals`
         // membership so downstream fast paths (e.g. the select
@@ -1954,9 +2011,10 @@ impl Synthesizer for NoirEmitter<'_> {
         Ok(v)
     }
     fn sign_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
-        self.use_lib("qsign");
-        let v = self.bind(&format!("qsign({})", a));
-        Ok(v)
+        // NumPy's float sign: -1.0, 0.0 or 1.0 (Q32).
+        let (negative, mag) = self.sign_abs(a);
+        self.use_lib("sign_of");
+        Ok(self.bind(&format!("sign_of({negative}, {mag}) * {Q_U64}")))
     }
 
     fn eq_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
@@ -2127,8 +2185,9 @@ impl Synthesizer for NoirEmitter<'_> {
     fn sqrt_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         // (No literal propagation: the circuit's floor root of a constant
         // need not equal the f64 sqrt the literal store would record.)
-        self.use_lib("qsqrt");
-        Ok(self.bind(&format!("qsqrt({})", a)))
+        let (negative, mag) = self.sign_abs(a);
+        self.use_lib("qsqrt_of");
+        Ok(self.bind(&format!("qsqrt_of({negative}, {mag})")))
     }
     fn exp_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qexp");
@@ -2218,8 +2277,9 @@ impl Synthesizer for NoirEmitter<'_> {
 
     fn int_cast(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         // Float -> int: trunc(a / Q) toward zero, the mock's `fp_int_cast`.
-        self.use_lib("q_div_q");
-        Ok(self.bind(&format!("q_div_q({})", a)))
+        let (negative, mag) = self.sign_abs(a);
+        self.use_lib("q_div_q_of");
+        Ok(self.bind(&format!("q_div_q_of({negative}, {mag})")))
     }
     fn float_cast(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         // Integer-to-float in Q32 means *= 2^32.
@@ -2939,6 +2999,25 @@ mod tests {
         let hi = em.constant_int(5).unwrap();
         em.assert_u128_lt(&idx, &hi).unwrap();
         assert_eq!(em.body, before);
+    }
+
+    // Comparisons with 0, abs, sign, sqrt and int casts of one value share
+    // one `sign_abs`.
+    #[test]
+    fn sign_users_share_one_sign_abs() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        let x = "x".to_string();
+        let zero = em.constant_float(0.0).unwrap();
+        em.lt_f(&x, &zero).unwrap();
+        em.sqrt_f(&x).unwrap();
+        em.abs_f(&x).unwrap();
+        em.int_cast(&x).unwrap();
+        em.gt_f(&x, &zero).unwrap();
+        em.lte_f(&zero, &x).unwrap();
+        em.sign_f(&x).unwrap();
+        assert_eq!(em.body.matches("sign_abs(x)").count(), 1, "{}", em.body);
+        assert!(!em.body.contains("qlt_bits"), "{}", em.body);
     }
 
     // B4(b): the index of `AssertU128Lt` carries the interval the builder
