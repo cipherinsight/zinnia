@@ -425,6 +425,14 @@ impl<'a> Halo2BaseSynthesizer<'a> {
     /// other statement and no affine view of a memory address reads, so the
     /// stand-in never reaches a gate; if it did, key generation would stop
     /// on the missing cell instead of building a circuit.
+    /// A value with no assigned cell, for a statement the plan proves is
+    /// only read through facts (two-valued, range); like a deferred product,
+    /// a gate that reached it would stop key generation.
+    fn cellless(&mut self, value: Fp) -> Halo2BaseCell {
+        let placeholder = AssignedValue { value: halo2_base::halo2_proofs::plonk::Assigned::Trivial(value), cell: None };
+        self.wrap(placeholder, value)
+    }
+
     fn defer_product(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Halo2BaseCell {
         let value = a.value * b.value;
         let placeholder = AssignedValue { value: halo2_base::halo2_proofs::plonk::Assigned::Trivial(value), cell: None };

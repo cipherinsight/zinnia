@@ -35,6 +35,10 @@ pub(super) struct Plan {
     /// Statement ids of the comparisons (`<`, `<=`, `>`, `>=`, `!=`, key
     /// orders) whose only use is `Assert`.
     pub asserted_comparisons: HashSet<u32>,
+    /// Statement ids of the `BitAndI` with a constant single-bit mask `2^j`
+    /// whose every use is a comparison with a constant: such a comparison
+    /// is the bit (two-valued facts), so `x & 2^j = 2^j·bit` needs no cell.
+    pub cellless_bit_masks: HashSet<u32>,
 }
 
 impl Plan {
@@ -44,6 +48,7 @@ impl Plan {
             bounds: planned_bounds(ir),
             deferred_products: deferred_products(ir, &uses),
             asserted_comparisons: asserted_comparisons(ir, &uses),
+            cellless_bit_masks: cellless_bit_masks(ir, &uses),
         }
     }
 }
@@ -133,6 +138,39 @@ fn deferred_products(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<u32
                 (IR::SubI, [a, b]) => *b == stmt.stmt_id && a != b,
                 _ => false,
             }
+        })
+        .map(|stmt| stmt.stmt_id)
+        .collect()
+}
+
+/// A `BitAndI` of a cell and a constant `2^j` (`j < 63`) whose every user is
+/// a comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) of it with a constant,
+/// and which no affine view reads.
+fn cellless_bit_masks(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<u32> {
+    let roots: HashSet<ValueId> = ir
+        .stmts
+        .iter()
+        .filter_map(|stmt| ir.provenance.affine_of(stmt.value_id))
+        .flat_map(|view| view.terms.iter().map(|(root, _)| *root))
+        .collect();
+    let single_bit = |c: Option<i64>| c.is_some_and(|c| c > 0 && c & (c - 1) == 0);
+    ir.stmts
+        .iter()
+        .filter(|stmt| matches!(stmt.ir, IR::BitAndI) && !roots.contains(&stmt.value_id))
+        .filter(|stmt| match stmt.arguments.as_slice() {
+            [a, b] => single_bit(constant_int(ir, *a)) != single_bit(constant_int(ir, *b))
+                && constant_int(ir, *a).is_none() != constant_int(ir, *b).is_none(),
+            _ => false,
+        })
+        .filter(|stmt| {
+            let Some(users) = uses.get(&stmt.stmt_id).filter(|u| !u.is_empty()) else { return false };
+            users.iter().all(|user| {
+                let Some(user) = ir.stmts.get(*user as usize) else { return false };
+                let comparison = matches!(user.ir, IR::EqI | IR::NeI | IR::LtI | IR::LteI | IR::GtI | IR::GteI);
+                comparison
+                    && user.arguments.len() == 2
+                    && user.arguments.iter().any(|a| *a != stmt.stmt_id && constant_int(ir, *a).is_some())
+            })
         })
         .map(|stmt| stmt.stmt_id)
         .collect()
