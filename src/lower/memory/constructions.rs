@@ -1,172 +1,170 @@
-//! The memory family's constructions for `OpKind::Read` groups.
-//!
-//! A group is the reads of one line of `n >= 2` cells `x[0..n)`, each at a
-//! runtime index `i` (the lane's own operand). The frontend emitted the
-//! program's check `0 <= i < n` for each `i`; NumPy raises otherwise, so
-//! there is nothing to prove for such an `i`.
-//!
-//! Every construction below produces every lane of the group (one candidate
-//! per group): the selection weighs whole groups. Per-index parts (equality
-//! tests, index bits) are shared with reads of other lines at the same index;
-//! the cost charges each read its share (`cost::index_share`), and the
-//! cleanup after lowering merges the duplicate statements.
+//! The memory family's constructions for element reads (`OpKind::Element`
+//! groups: reads of one line of `n` cells, each at a runtime index `i` that
+//! the frontend checked into `[0, n)` where the read runs).
+
+use std::any::Any;
+use std::rc::Rc;
 
 use crate::builder::IRBuilder;
-use crate::lower::gather::window::{scale_by_bit, sum_typed};
-use crate::lower::{Bound, Candidate, Claim, Construction, Context, EmitCx, Emitter, Fact, Group, Lane, OpKind, Requirement, Scope};
+use crate::lower::{
+    Bound, Candidate, Claim, Construction, Context, EmitCx, Emitter, Fact, Group, Lane, OpKind, Requirement, Scope,
+};
 use crate::types::{NumberType, StmtId, Value};
 
-use super::cost::{self, ReadPlan};
-use super::semantics::dtype_of;
+use super::cost;
 
-/// The family's constructions, in the order the selection breaks ties
-/// (the frontend's former default first).
+/// The family's constructions, in the order the selection breaks ties.
 pub fn constructions() -> Vec<&'static dyn Construction> {
-    vec![&ReadBySelectChain, &ReadByIndexBits, &ReadByOneHot, &ReadByMemory]
+    vec![&ElementByIndexBits, &IndexBitsNode]
 }
 
-/// `0 <= i < n` on every path (the index operand is the frontend's guarded
-/// index, in range where the read does not run).
+/// `0 <= i < n` on every path. The index operand is the frontend's guarded
+/// index (`discharge_index_in_range` returns `select(p, i, 0)` under an
+/// execution predicate `p`), which lies in range where the read does not run.
 fn in_bounds(index: StmtId, n: usize) -> Requirement {
     Requirement::Fact(Fact { claim: Claim::InRange { x: index, lo: 0, hi: Bound::Const(n as i64) }, scope: Scope::Everywhere })
 }
 
-fn indices(group: &Group) -> Vec<StmtId> {
+/// `x[i]` by a binary multiplexer over `i`'s bits.
+///
+/// For `n >= 3`: `i < n` is asserted with its `w = ceil(log2 n)` low bits
+/// exposed (`IR::AssertU128LtBit`), once per index (a separate node, see
+/// [`IndexBitsNode`]); level `b` of the tree selects between neighbouring
+/// entries of level `b - 1` by bit `b`, and an entry without a right
+/// neighbour passes up unchanged. For `n = 2` the index is its own bit: one
+/// `select_bit` per read (which asserts the bit).
+///
+/// **Preconditions.** `n >= 3`: the bits of every index it reads (the
+/// shared value of [`IndexBitsNode`], which proves `0 <= i < n`). None for
+/// `n = 2`.
+///
+/// **Postconditions.** Every lane; for `n = 2`, `0 <= i < 2` for every
+/// index read.
+///
+/// **Soundness and completeness.** No hint. The bits are `i`'s binary
+/// digits and `0 <= i < n` (the bits node's postcondition). For `i < n` the
+/// entry holding `x[i]` is at position `i >> b` after level `b`; the
+/// pass-through entry of an odd-length level never needs its missing right
+/// neighbour, because that neighbour's positions start at `n` or later. So
+/// the root is `x[i]`. For `n = 2`, `select_bit` asserts `i (i - 1) = 0`, so
+/// `i` is 0 or 1 (an index outside has no witness, as NumPy raises), and
+/// selects `x[i]`.
+///
+/// **Cost** (`cost::index_bits_read`): `n - 1` selects of two variable
+/// branches per read (`n = 2`: one `select_bit`).
+pub struct ElementByIndexBits;
+
+/// The bound `0 <= i < n` and `i`'s `w = ceil(log2 n)` bits
+/// (`ir_assert_u128_lt_bits`) for one index `i`, shared by every multiplexer
+/// that reads at `i` over a line of `n >= 3` cells (a
+/// `Requirement::SharedAt` of `i`). Offered by the first group that reads
+/// at `i` over `n` cells.
+///
+/// **Preconditions.** None.
+///
+/// **Postconditions.** The bits; `0 <= i < n`.
+///
+/// **Soundness and completeness.** `AssertU128LtBit` constrains `w`
+/// booleans that recompose `i` and range-checks `n - 1 - i` on every backend
+/// (the mock rejects `i` outside `[0, n)` too), so the bits are `i`'s binary
+/// digits exactly when `0 <= i < n`, and there is no witness otherwise
+/// (NumPy raises, and the program's check, which this postcondition
+/// replaces, had none either).
+///
+/// **Cost** (`cost::index_bits`): the range check and the bits.
+pub struct IndexBitsNode;
+
+/// The name of [`IndexBitsNode`]'s shared value (one per index statement).
+const INDEX_BITS: &str = "memory: index bits";
+
+/// The length of the lines read at `index` by element groups, when they all
+/// have the same length (the bits node's bound); `None` otherwise (then no
+/// multiplexer reads at `index` over a line of 3 or more cells).
+fn line_length_at(cx: &Context, index: StmtId) -> Option<usize> {
+    let mut lengths = cx
+        .groups
+        .iter()
+        .filter(|g| g.kind == OpKind::Element && g.lanes.iter().any(|l| l.own[0] == index))
+        .map(|g| g.shared.len());
+    let first = lengths.next()?;
+    lengths.all(|n| n == first).then_some(first)
+}
+
+/// Whether `group` is the first element group that reads at `index`.
+fn first_reader(cx: &Context, group: &Group, index: StmtId) -> bool {
+    cx.groups.iter().find(|g| g.kind == OpKind::Element && g.lanes.iter().any(|l| l.own[0] == index)).map(|g| g.id)
+        == Some(group.id)
+}
+
+fn distinct_indices(group: &Group) -> Vec<StmtId> {
     let mut indices: Vec<StmtId> = group.lanes.iter().map(|l| l.own[0]).collect();
     indices.sort_unstable();
     indices.dedup();
     indices
 }
 
-/// The candidate of `plan` for `group`, or none when `ZINNIA_MEMORY_READ`
-/// forces another construction.
-fn candidate(group: &Group, cx: &Context, plan: ReadPlan, emitter: Box<dyn Emitter>) -> Vec<Candidate> {
-    if group.kind != OpKind::Read {
-        return Vec::new();
-    }
-    if super::forced().is_some_and(|f| f != plan.short_name()) {
-        return Vec::new();
-    }
-    let n = group.shared.len();
-    let lanes = group.lanes.iter().map(|l| Requirement::Lane(l.stmt));
-    let bounds = indices(group).into_iter().map(|i| in_bounds(i, n));
-    let (pre, post): (Vec<Requirement>, Vec<Requirement>) = if plan.proves_bounds() {
-        (Vec::new(), lanes.chain(bounds).collect())
-    } else {
-        (bounds.collect(), lanes.collect())
-    };
-    vec![Candidate { pre, post, cost: cost::read_group(plan, group, cx), emitter }]
-}
-
-// ── Select chain ──────────────────────────────────────────────────────
-
-/// `x[i]` as a select chain: `acc_0 = x[0]`, `acc_k = [i == k] ? x[k] :
-/// acc_{k-1}`, the read is `acc_{n-1}`.
-///
-/// **Preconditions.** `0 <= i < n` (the program's check).
-/// **Postconditions.** The lanes.
-/// **Soundness and completeness.** No hint. For `i` in `[0, n)` exactly the
-/// test `[i == i]` holds among `k >= 1` when `i >= 1` (the last select
-/// that fires is at `k = i`) and none when `i = 0` (`acc = x[0]`); so the
-/// chain is `x[i]`. The equality tests are exact gadgets on every backend.
-/// **Cost.** `n - 1` selects per read, `n - 1` equality tests per index.
-pub struct ReadBySelectChain;
-
-impl Construction for ReadBySelectChain {
+impl Construction for ElementByIndexBits {
     fn name(&self) -> &'static str {
-        "memory: read by select chain"
+        "memory: element by index bits"
     }
+
     fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
-        candidate(group, cx, ReadPlan::SelectChain, Box::new(ChainEmitter { cells: group.shared.clone() }))
-    }
-}
-
-struct ChainEmitter {
-    cells: Vec<StmtId>,
-}
-
-impl Emitter for ChainEmitter {
-    fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, lane: &Lane) -> Value {
-        let cells = cx.values(&self.cells);
-        let index = cx.value(lane.own[0]);
-        let dtype = dtype_of(&cells);
-        let mut acc = cells[0].clone();
-        for (k, cell) in cells.iter().enumerate().skip(1) {
-            let hit = equals(b, &index, k);
-            acc = select_typed(b, dtype, &hit, cell, &acc);
+        let n = group.shared.len();
+        if group.kind != OpKind::Element || n < 2 {
+            return Vec::new();
         }
-        acc
+        let indices = distinct_indices(group);
+        let lanes = group.lanes.iter().map(|l| Requirement::Lane(l.stmt));
+        let cost = group.lanes.len() as u64 * cost::index_bits_read(n as u64, cx.target);
+        let emitter = Box::new(BitsEmitter { cells: group.shared.clone() });
+        if n == 2 {
+            let post = lanes.chain(indices.into_iter().map(|i| in_bounds(i, n)));
+            return vec![Candidate { pre: Vec::new(), post: post.collect(), cost, emitter }];
+        }
+        if indices.iter().any(|&i| line_length_at(cx, i) != Some(n)) {
+            return Vec::new();
+        }
+        let pre = indices.into_iter().map(|at| Requirement::SharedAt { at, name: INDEX_BITS }).collect();
+        vec![Candidate { pre, post: lanes.collect(), cost, emitter }]
     }
 }
 
-// ── One-hot ───────────────────────────────────────────────────────────
-
-/// `x[i] = sum_k [i == k] x[k]` with `sum_k [i == k] = 1` asserted.
-///
-/// **Preconditions.** None.
-/// **Postconditions.** The lanes; `0 <= i < n` for every index.
-/// **Soundness and completeness.** No hint. The tests are bits; distinct
-/// `k` cannot both equal `i`, so their sum is 1 exactly when `i` is one of
-/// `0..n`, and then the inner product picks `x[i]`. An `i` outside has no
-/// proof, which is what the dropped program check would have said.
-/// **Cost.** `n` multiply-adds per read; `n` equality tests and the
-/// exactly-one sum per index.
-pub struct ReadByOneHot;
-
-impl Construction for ReadByOneHot {
+impl Construction for IndexBitsNode {
     fn name(&self) -> &'static str {
-        "memory: read by one-hot"
+        "memory: index bits"
     }
+
+    /// One node per index this group is the first to read (over 3 or more
+    /// cells, every reader of the index over the same length).
     fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
-        candidate(group, cx, ReadPlan::OneHot, Box::new(OneHotEmitter { cells: group.shared.clone() }))
+        let n = group.shared.len();
+        if group.kind != OpKind::Element || n < 3 {
+            return Vec::new();
+        }
+        distinct_indices(group)
+            .into_iter()
+            .filter(|&i| first_reader(cx, group, i) && line_length_at(cx, i) == Some(n))
+            .map(|at| Candidate {
+                pre: Vec::new(),
+                post: vec![Requirement::SharedAt { at, name: INDEX_BITS }, in_bounds(at, n)],
+                cost: cost::index_bits(n as u64, cx.target),
+                emitter: Box::new(BitsNodeEmitter { n }),
+            })
+            .collect()
     }
 }
 
-struct OneHotEmitter {
-    cells: Vec<StmtId>,
+struct BitsNodeEmitter {
+    n: usize,
 }
 
-impl Emitter for OneHotEmitter {
-    fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, lane: &Lane) -> Value {
-        let cells = cx.values(&self.cells);
-        let index = cx.value(lane.own[0]);
-        let dtype = dtype_of(&cells);
-        let hits: Vec<Value> = (0..cells.len()).map(|k| equals(b, &index, k)).collect();
-        let count = hits[1..].iter().fold(hits[0].clone(), |acc, h| b.ir_add_i(&acc, h));
-        let one = b.ir_constant_int(1);
-        let exactly_one = b.ir_equal_i(&count, &one);
-        b.ir_assert(&exactly_one);
-        let terms: Vec<Value> = hits.iter().zip(&cells).map(|(h, c)| scale_by_bit(b, h, c, dtype)).collect();
-        sum_typed(b, terms, dtype)
+impl Emitter for BitsNodeEmitter {
+    fn lane(&mut self, _b: &mut IRBuilder, _cx: &mut EmitCx, _lane: &Lane) -> Value {
+        unreachable!("the index bits node produces no lane")
     }
-}
 
-// ── Index bits (binary multiplexer) ───────────────────────────────────
-
-/// `x[i]` by a binary multiplexer over `i`'s bits: `i < n` asserted with
-/// `w = ceil(log2 n)` bits exposed (`AssertU128LtBit`), level `b` of the tree
-/// selects between neighbouring entries of level `b - 1` by bit `b`; an
-/// entry without a right neighbour passes up unchanged. For `n = 2` the
-/// index is its own bit: one `select_bit` (which asserts the bit).
-///
-/// **Preconditions.** None.
-/// **Postconditions.** The lanes; `0 <= i < n` for every index.
-/// **Soundness and completeness.** No hint. The bits are the binary digits
-/// of `i` and `i < n` is asserted (`assert_u128_lt_bits`: the backend
-/// decomposes `i` into `w` booleans that recompose it and range-checks
-/// `n - 1 - i`), so entry `i` of level 0 reaches the root: at each level
-/// the entry holding `x[i]` sits at position `i >> b`, and a pass-through
-/// entry is never the one a valid `i` needs a right neighbour for (its
-/// neighbour's position would be `>= n`).
-/// **Cost.** `n - 1` selects per read; the bits and the bound per index.
-pub struct ReadByIndexBits;
-
-impl Construction for ReadByIndexBits {
-    fn name(&self) -> &'static str {
-        "memory: read by index bits"
-    }
-    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
-        candidate(group, cx, ReadPlan::IndexBits, Box::new(BitsEmitter { cells: group.shared.clone() }))
+    fn shared_at(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, at: StmtId, _name: &'static str) -> Rc<dyn Any> {
+        Rc::new(b.ir_assert_u128_lt_bits(&cx.value(at), self.n))
     }
 }
 
@@ -179,91 +177,45 @@ impl Emitter for BitsEmitter {
         let cells = cx.values(&self.cells);
         let index = cx.value(lane.own[0]);
         let dtype = dtype_of(&cells);
-        if cells.len() == 2 {
-            return match dtype {
-                NumberType::Float => b.ir_select_bit_f(&index, &cells[1], &cells[0]),
-                _ => b.ir_select_bit_i(&index, &cells[1], &cells[0]),
-            };
-        }
-        let bits = b.ir_assert_u128_lt_bits(&index, cells.len());
-        let mut level = cells;
-        for bit in &bits {
-            level = level
-                .chunks(2)
-                .map(|pair| match pair {
-                    [lo, hi] => select_typed(b, dtype, bit, hi, lo),
-                    [one] => one.clone(),
-                    _ => unreachable!("chunks of two"),
-                })
-                .collect();
-        }
-        level.swap_remove(0)
+        let bits: Rc<Vec<Value>> =
+            if cells.len() == 2 { Rc::new(Vec::new()) } else { cx.shared_at(b, lane.own[0], INDEX_BITS) };
+        read_by_index_bits(b, &cells, &index, &bits, dtype)
     }
 }
 
-// ── Backend memory ────────────────────────────────────────────────────
-
-/// The line written to a memory segment once (constant addresses: wiring),
-/// every read a dynamic memory read (`IR::ReadMemory`).
-///
-/// **Preconditions.** `0 <= i < n` (the program's check: the mock's
-/// memory read does not reject an address past the end, so this
-/// construction does not claim the bound although both proving backends
-/// enforce it).
-/// **Postconditions.** The lanes.
-/// **Soundness and completeness.** The backends' dynamic read proves the
-/// address in bounds and returns the cell there: Noir reads a native array
-/// at an index checked by `array_index` (`0 <= i <= n - 1`), or gathers by
-/// a one-hot with a membership assertion; halo2-base gathers by a one-hot
-/// with a membership assertion over the reachable slots, or by a
-/// multiplexer after `i < n` (`synthesizer/memory.rs`). Each of these has no
-/// witness for an out-of-range address and selects exactly the addressed
-/// cell otherwise (their soundness arguments are at those functions).
-/// **Cost.** Noir: the native array (3 gates per cell, once per line) and a
-/// read plus a shared index check per read; halo2-base: the backend's
-/// one-hot gather (equality tests per index, an inner product per read).
-pub struct ReadByMemory;
-
-impl Construction for ReadByMemory {
-    fn name(&self) -> &'static str {
-        "memory: read through a memory segment"
+/// `cells[index]` (`cells.len() >= 2`) by a multiplexer over `bits`, the
+/// index's binary digits (least significant first; empty for two cells,
+/// where the index is its own bit and `select_bit` asserts it). See
+/// [`ElementByIndexBits`].
+pub fn read_by_index_bits(b: &mut IRBuilder, cells: &[Value], index: &Value, bits: &[Value], dtype: NumberType) -> Value {
+    if let [lo, hi] = cells {
+        return match dtype {
+            NumberType::Float => b.ir_select_bit_f(index, hi, lo),
+            _ => b.ir_select_bit_i(index, hi, lo),
+        };
     }
-    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
-        candidate(group, cx, ReadPlan::Memory, Box::new(MemoryEmitter { cells: group.shared.clone(), segment: None }))
+    let mut level = cells.to_vec();
+    for bit in bits {
+        level = level
+            .chunks(2)
+            .map(|pair| match pair {
+                [lo, hi] => match dtype {
+                    NumberType::Float => b.ir_select_f(bit, hi, lo),
+                    _ => b.ir_select_i(bit, hi, lo),
+                },
+                [one] => one.clone(),
+                _ => unreachable!("chunks of two"),
+            })
+            .collect();
     }
+    assert_eq!(level.len(), 1, "the bits cover the cells");
+    level.swap_remove(0)
 }
 
-struct MemoryEmitter {
-    cells: Vec<StmtId>,
-    segment: Option<(u32, NumberType)>,
-}
-
-impl Emitter for MemoryEmitter {
-    fn begin(&mut self, b: &mut IRBuilder, cx: &mut EmitCx) {
-        let cells = cx.values(&self.cells);
-        let dtype = dtype_of(&cells);
-        self.segment = Some((crate::helpers::segment::alloc_and_write_values(b, &cells, dtype), dtype));
-    }
-
-    fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, lane: &Lane) -> Value {
-        let (segment, dtype) = self.segment.expect("begin ran");
-        let index = cx.value(lane.own[0]);
-        crate::helpers::segment::read_typed(b, segment, &index, dtype)
-    }
-}
-
-// ── helpers ───────────────────────────────────────────────────────────
-
-/// `[i == k]` for a constant `k` (duplicates across reads are merged by the
-/// cleanup after lowering).
-fn equals(b: &mut IRBuilder, index: &Value, k: usize) -> Value {
-    let k = b.ir_constant_int(k as i64);
-    b.ir_equal_i(index, &k)
-}
-
-fn select_typed(b: &mut IRBuilder, dtype: NumberType, cond: &Value, if_true: &Value, if_false: &Value) -> Value {
-    match dtype {
-        NumberType::Float => b.ir_select_f(cond, if_true, if_false),
-        _ => b.ir_select_i(cond, if_true, if_false),
+fn dtype_of(cells: &[Value]) -> NumberType {
+    if cells.iter().any(|v| matches!(v, Value::Float(_))) {
+        NumberType::Float
+    } else {
+        NumberType::Integer
     }
 }

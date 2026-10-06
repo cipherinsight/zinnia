@@ -9,7 +9,7 @@ use crate::lower::Target;
 
 /// Cost of the scalar operations the constructions emit.
 #[derive(Clone, Copy)]
-pub(super) struct Units {
+pub(crate) struct Units {
     /// `a * b` as its own gate (its result is a cell other gates read).
     pub mul: u64,
     /// `acc + a * b` (or `acc - a * b`) continuing a chain.
@@ -34,7 +34,7 @@ pub(super) struct Units {
     pub native_element: u64,
 }
 
-pub(super) fn units(target: Target) -> Units {
+pub(crate) fn units(target: Target) -> Units {
     match target {
         Target::Halo2Base => Units {
             mul: 4,

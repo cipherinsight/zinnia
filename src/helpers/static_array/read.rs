@@ -128,6 +128,48 @@ fn read_at_scan_result(
     Some(scalar_i64_to_value(&value_to_scalar_i64(&out), dtype))
 }
 
+/// A read at checked indices of which exactly one is runtime, from an array
+/// whose cells are known values (`IRBuilder::static_array_payload`): an
+/// element placeholder over the line along that axis
+/// (`lower::gather::checked_element_lane`), whose construction the layer
+/// chooses per target (`lower::gather`, `lower::memory`). `None` otherwise
+/// (the caller reads through the segment).
+fn read_line(
+    b: &mut IRBuilder,
+    segment_id: u32,
+    base_offset: usize,
+    strides: &[usize],
+    shape: &[usize],
+    indices: &[Value],
+    dtype: NumberType,
+) -> Option<Value> {
+    let mut dynamic = indices.iter().enumerate().filter(|(_, v)| v.int_val().is_none());
+    let (axis, index) = dynamic.next()?;
+    if dynamic.next().is_some() || index.stmt_id().is_none() {
+        return None;
+    }
+    if b.static_array_product_provenance.contains_key(&segment_id) {
+        super::base::force_static_array_product_provenance(b, segment_id);
+    }
+    let cells = b.static_array_payload.get(&segment_id)?;
+    let fixed: usize = base_offset
+        + indices
+            .iter()
+            .enumerate()
+            .filter(|(ax, _)| *ax != axis)
+            .map(|(ax, v)| v.int_val().expect("static") as usize * strides[ax])
+            .sum::<usize>();
+    let line: Vec<Value> = (0..shape[axis]).map(|k| cells.get(fixed + k * strides[axis]).cloned()).collect::<Option<_>>()?;
+    let out = match line.as_slice() {
+        [only] => only.clone(),
+        _ => crate::lower::gather::checked_element_lane(b, &line, index),
+    };
+    if b.is_bool_segment(segment_id) {
+        b.record_bool_cell(&out);
+    }
+    Some(scalar_i64_to_value(&value_to_scalar_i64(&out), dtype))
+}
+
 /// Build a runtime address from `offset + sum_k(idx[k] * strides[k])`.
 fn compute_addr(
     b: &mut IRBuilder,
@@ -938,6 +980,9 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
         }
         if dtype != NumberType::Complex {
             if let Some(out) = read_at_scan_result(b, segment_id, offset, &strides, &shape, &idx_vals, dtype) {
+                return out;
+            }
+            if let Some(out) = read_line(b, segment_id, offset, &strides, &shape, &idx_vals, dtype) {
                 return out;
             }
         }

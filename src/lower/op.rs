@@ -108,11 +108,6 @@ pub enum OpKind {
     /// (the mask bit of that cell). Every masked write of the program is one
     /// group (a chain of writes over one cell is lowered together).
     MaskWrite,
-    // ── memory family (`lower::memory`) ───────────────────────────────
-    /// `x[i]` of the shared cells (`n >= 2`) at the lane's own operand `i`.
-    /// The frontend has emitted the program's check `0 <= i < n`; an `i`
-    /// outside has no proof (NumPy raises).
-    Read,
 }
 
 impl OpKind {
@@ -131,7 +126,6 @@ impl OpKind {
             OpKind::Insert { .. } => &super::scatter::InsertSemantics,
             OpKind::IndexWrite { .. } => &super::scatter::IndexWriteSemantics,
             OpKind::MaskWrite => &super::scatter::MaskWriteSemantics,
-            OpKind::Read => &super::memory::ReadSemantics,
         }
     }
 
@@ -151,7 +145,6 @@ impl OpKind {
             OpKind::Insert { .. } => "insert",
             OpKind::IndexWrite { .. } => "index_write",
             OpKind::MaskWrite => "mask_write",
-            OpKind::Read => "read",
         }
     }
 }

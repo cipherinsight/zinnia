@@ -1030,9 +1030,9 @@ pub fn np_take_along_axis(
     let out_total: usize = out_shape.iter().product();
 
     // Small-axis path: each output cell reads one of the `N <= SMALL_AXIS`
-    // candidates along the axis through a read placeholder, whose
-    // construction the layer chooses per target (`lower::memory`). Larger
-    // axes read through a memory segment below.
+    // candidates along the axis through an element placeholder, whose
+    // construction the layer chooses per target. Larger axes read through
+    // a memory segment below.
     const SMALL_AXIS: usize = 16;
     let axis_size = arr_shape[axis];
 
@@ -1069,20 +1069,19 @@ pub fn np_take_along_axis(
                 }
                 candidates.push(arr_payload[src_flat].clone());
             }
-            // The read is a placeholder of the memory family
-            // (`lower::memory`), which chooses per target among a select
-            // chain, a one-hot, a multiplexer over the index bits (one
-            // `select_bit` for two candidates) and a memory read; the
-            // bound `0 <= idx < N` is checked here and dropped again by the
-            // constructions that prove it themselves.
+            // The read is an element placeholder; the layer chooses its
+            // construction per target (`lower::gather`, `lower::memory`:
+            // a select chain, an inner product with the index's equality
+            // bits, a multiplexer over the index bits, a memory read). The
+            // bound `0 <= idx < N` is checked here and dropped again where
+            // the chosen construction proves it itself.
             let picked = if axis_size == 1 {
                 crate::optim::resolver::discharge_index_in_range(b, &take_index, 0, 1, "np.take_along_axis");
                 candidates[0].clone()
             } else {
                 let index =
                     crate::optim::resolver::discharge_index_in_range(b, &take_index, 0, axis_size as i64, "np.take_along_axis");
-                crate::lower::memory::read_lane(b, &candidates, &index)
-                    .expect("a scalar read of at least two candidates")
+                crate::lower::gather::checked_element_lane(b, &candidates, &index)
             };
             out.push(picked);
         }
