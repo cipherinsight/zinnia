@@ -2,6 +2,17 @@ use crate::types::{CompositeData, Value, ValueId, ZinniaType};
 
 use super::{IRGenerator, SliceIndex};
 
+/// How a subscript write converts the value it stores.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WriteSemantics {
+    /// A Python list slot takes the written value as it is: after
+    /// `lst = [0]; lst[0] = 1.5` the slot holds the float `1.5`.
+    PythonList,
+    /// An array element keeps the array's dtype: NumPy stores `1.5` into
+    /// an integer array as `1`.
+    ArrayElement,
+}
+
 impl IRGenerator {
     pub(crate) fn cast_composite(&mut self, val: &Value, to_float: bool) -> Value {
         match val {
@@ -64,59 +75,78 @@ impl IRGenerator {
         value
     }
 
-    /// Set a nested value in a composite structure using slice indices,
-    /// casting it to the type of the element it replaces.
+    /// The value stored into a composite slot whose current type is
+    /// `slot_type`, under the write's semantics (see [`WriteSemantics`]).
+    fn stored_element(&mut self, value: Value, slot_type: &ZinniaType, semantics: WriteSemantics) -> Value {
+        match semantics {
+            WriteSemantics::PythonList => value,
+            WriteSemantics::ArrayElement => self.cast_value_to_match(value, slot_type),
+        }
+    }
+
+    /// Set a nested value in a composite structure using slice indices.
+    /// `semantics` decides whether the written value keeps its type (a
+    /// Python list) or takes the type of the element it replaces (an array
+    /// materialised as a list).
     pub(crate) fn set_nested_value(
         &mut self,
         current: Value,
         indices: &[SliceIndex],
         value: Value,
+        semantics: WriteSemantics,
     ) -> Value {
         if indices.is_empty() {
-            // At leaf: cast value to match current's type if they differ
-            return self.cast_value_to_match(value, &current.zinnia_type());
+            let slot_type = current.zinnia_type();
+            return self.stored_element(value, &slot_type, semantics);
         }
         match &current {
             Value::List(data) | Value::Tuple(data) => {
                 let is_tuple = matches!(&current, Value::Tuple(_));
                 if let SliceIndex::Single(idx_val) = &indices[0] {
                     if let Some(idx) = idx_val.int_val() {
-                        // Static index
-                        let idx = if idx < 0 {
-                            (data.values.len() as i64 + idx) as usize
-                        } else {
-                            idx as usize
-                        };
-                        if idx < data.values.len() {
-                            let mut new_values = data.values.clone();
-                            let mut new_types = data.elements_type.clone();
-                            if indices.len() == 1 {
-                                // Cast value to match target element type
-                                let target_et = &data.elements_type[idx];
-                                new_values[idx] = self.cast_value_to_match(value, target_et);
-                                new_types[idx] = new_values[idx].zinnia_type();
-                            } else {
-                                new_values[idx] = self.set_nested_value(
-                                    new_values[idx].clone(),
-                                    &indices[1..],
-                                    value,
-                                );
-                                new_types[idx] = new_values[idx].zinnia_type();
+                        // Static index. Out of range it is Python's
+                        // `IndexError` where the write runs, so under a
+                        // runtime predicate the circuit asserts that it does
+                        // not run (the write used to be dropped silently).
+                        let len = data.values.len() as i64;
+                        if !(-len <= idx && idx < len) {
+                            if self.builder.assert_never_runs() {
+                                return current;
                             }
-                            return if is_tuple {
-                                Value::Tuple(CompositeData {
-                                    elements_type: new_types,
-                                    values: new_values,
-                                    value_id: ValueId::next(),
-                                })
-                            } else {
-                                Value::List(CompositeData {
-                                    elements_type: new_types,
-                                    values: new_values,
-                                    value_id: ValueId::next(),
-                                })
-                            };
+                            panic!(
+                                "IndexError: assignment index {idx} is out of range for a \
+                                 sequence of length {len}"
+                            );
                         }
+                        let idx = if idx < 0 { (idx + len) as usize } else { idx as usize };
+                        let mut new_values = data.values.clone();
+                        let mut new_types = data.elements_type.clone();
+                        if indices.len() == 1 {
+                            let target_et = &data.elements_type[idx];
+                            new_values[idx] = self.stored_element(value, target_et, semantics);
+                            new_types[idx] = new_values[idx].zinnia_type();
+                        } else {
+                            new_values[idx] = self.set_nested_value(
+                                new_values[idx].clone(),
+                                &indices[1..],
+                                value,
+                                semantics,
+                            );
+                            new_types[idx] = new_values[idx].zinnia_type();
+                        }
+                        return if is_tuple {
+                            Value::Tuple(CompositeData {
+                                elements_type: new_types,
+                                values: new_values,
+                                value_id: ValueId::next(),
+                            })
+                        } else {
+                            Value::List(CompositeData {
+                                elements_type: new_types,
+                                values: new_values,
+                                value_id: ValueId::next(),
+                            })
+                        };
                     } else {
                         // Dynamic index — use mux/memory path
                         if indices.len() == 1 {
@@ -151,6 +181,7 @@ impl IRGenerator {
                                 data.values[i].clone(),
                                 &indices[1..],
                                 value.clone(),
+                                semantics,
                             );
                             let const_i = self.builder.ir_constant_int(i as i64);
                             let cmp = self.builder.ir_equal_i(idx_val, &const_i);
@@ -208,6 +239,7 @@ impl IRGenerator {
                                     new_values[i].clone(),
                                     &indices[1..],
                                     rhs_data.values[rhs_idx].clone(),
+                                    semantics,
                                 );
                                 new_types[i] = new_values[i].zinnia_type();
                                 rhs_idx += 1;
@@ -221,9 +253,10 @@ impl IRGenerator {
                             let mut i = start_idx;
                             while i < stop_idx && rhs_idx < rhs_data.values.len() {
                                 let target_et = &data.elements_type[i];
-                                new_values[i] = self.cast_value_to_match(
+                                new_values[i] = self.stored_element(
                                     rhs_data.values[rhs_idx].clone(),
                                     target_et,
+                                    semantics,
                                 );
                                 new_types[i] = new_values[i].zinnia_type();
                                 rhs_idx += 1;
@@ -234,7 +267,7 @@ impl IRGenerator {
                             let mut i = start_idx;
                             while i < stop_idx {
                                 let target_et = &data.elements_type[i];
-                                new_values[i] = self.cast_value_to_match(value.clone(), target_et);
+                                new_values[i] = self.stored_element(value.clone(), target_et, semantics);
                                 new_types[i] = new_values[i].zinnia_type();
                                 i += step_val as usize;
                             }

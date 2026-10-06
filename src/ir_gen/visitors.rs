@@ -4,6 +4,8 @@ use crate::ast::*;
 use crate::optim::predicates::formula::{CmpOp, ContractFloat, ContractTerm, ContractVar};
 use crate::types::{CompositeData, NumberType, Value, ValueId, ZinniaType};
 
+use super::helpers::WriteSemantics;
+
 use super::{
     is_starred_target, ForLoopFrame, IRGenerator, LoopIndexBoundContext, LoopIndexExprKey,
     LoopReadReuseContext, ReusableLoopRead, SliceIndex, StaticArrayIdentity,
@@ -1476,6 +1478,15 @@ impl IRGenerator {
                     n.name, reason
                 );
             }
+            if self.registered_chips.contains_key(&n.name)
+                || self.registered_externals.contains_key(&n.name)
+            {
+                panic!(
+                    "functions as values are not supported: `{}` is used without being \
+                     called (circuits have no function values; call it directly)",
+                    n.name
+                );
+            }
             panic!("Variable `{}` not found", n.name)
         });
         self.check_not_stale(&n.name, &value);
@@ -1705,15 +1716,14 @@ impl IRGenerator {
                         SliceIndex::Single(idx_value) => {
                             // Try to resolve statically
                             if let Some(idx) = idx_value.int_val() {
-                                let idx = if idx < 0 {
-                                    (data.values.len() as i64 + idx) as usize
-                                } else {
-                                    idx as usize
-                                };
-                                if idx < data.values.len() {
-                                    data.values[idx].clone()
-                                } else {
-                                    Value::None
+                                // (An out-of-range index used to read as None.)
+                                match crate::helpers::value_ops::checked_constant_list_position(
+                                    &mut self.builder,
+                                    idx,
+                                    data.values.len(),
+                                ) {
+                                    Some(position) => data.values[position].clone(),
+                                    None => self.builder.ir_constant_int(0),
                                 }
                             } else {
                                 // Dynamic index: generate a chain of SelectI to pick the right element
@@ -2276,7 +2286,7 @@ impl IRGenerator {
             if let Some(root) = chain_root(inner) {
                 self.ensure_list_not_shared(root, &inner_val);
             }
-            let updated = self.set_nested_value(inner_val, &indices, value);
+            let updated = self.set_nested_value(inner_val, &indices, value, WriteSemantics::PythonList);
             let target = ASTNode::ASTSubscriptAssignTarget(ASTSubscriptAssignTarget {
                 target: inner.val.clone(),
                 slicing: inner.slicing.clone(),
@@ -2327,7 +2337,12 @@ impl IRGenerator {
             Value::DynamicNDArray(data) => self.dynamic_array_setitem(data, &indices, &value),
             _ => {
                 self.ensure_list_not_shared(var_name, &current);
-                self.set_nested_value(current.clone(), &indices, value)
+                let semantics = if matches!(current, Value::List(_)) {
+                    WriteSemantics::PythonList
+                } else {
+                    WriteSemantics::ArrayElement
+                };
+                self.set_nested_value(current.clone(), &indices, value, semantics)
             }
         };
         self.note_array_write(&current);
@@ -2382,7 +2397,12 @@ impl IRGenerator {
             // the generic nested-value writer.
             let current_list =
                 crate::helpers::static_array::base::to_value_list(&mut self.builder, current);
-            return self.set_nested_value(current_list, indices, value);
+            let updated =
+                self.set_nested_value(current_list, indices, value, WriteSemantics::ArrayElement);
+            // Still an ndarray: rebound as a List it would pick up Python
+            // list semantics (`2 * a` repeating it).
+            return crate::helpers::static_array::base::to_static_array(&mut self.builder, &updated)
+                .unwrap_or(updated);
         }
         crate::helpers::static_array::write::static_array_setitem(
             &mut self.builder,

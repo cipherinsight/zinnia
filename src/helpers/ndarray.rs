@@ -415,11 +415,13 @@ pub fn multidim_subscript(
     match &indices[0] {
         SliceIndex::Single(idx_value) => {
             if let Some(idx) = idx_value.int_val() {
-                let n = data.values.len() as i64;
-                if !(-n <= idx && idx < n) {
-                    panic!("IndexError: index {idx} is out of range for a sequence of length {n}");
-                }
-                let i = if idx < 0 { (n + idx) as usize } else { idx as usize };
+                let Some(i) = crate::helpers::value_ops::checked_constant_list_position(
+                    b,
+                    idx,
+                    data.values.len(),
+                ) else {
+                    return b.ir_constant_int(0);
+                };
                 if indices.len() == 1 {
                     return data.values[i].clone();
                 }

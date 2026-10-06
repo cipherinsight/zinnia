@@ -777,6 +777,18 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
                     })
                 };
             }
+            // As for `+` above, a List here is a Python list: `lst * n`
+            // repeats it, and with a runtime `n` its length is unknown.
+            // (The broadcasting arm below used to multiply every element,
+            // so `[0] * (1 + n)` became `[0]`.)
+            (Value::List(_) | Value::Tuple(_), Value::Integer(_))
+            | (Value::Integer(_), Value::List(_) | Value::Tuple(_)) => {
+                panic!(
+                    "sequence repetition `seq * n` with a runtime count `n` is not supported: \
+                     a list's length must be known at compile time (use np.zeros/np.full with \
+                     a bounded shape, or a compile-time count)"
+                );
+            }
             _ => {}
         }
     }
@@ -1117,6 +1129,25 @@ pub fn composite_comparison(
         }
         _ => b.ir_constant_bool(false),
     }
+}
+
+/// The position the compile-time index `idx` selects in a Python sequence
+/// of length `n` (a negative index counts from the end). Python raises
+/// `IndexError` for an index outside `-n..n` where the access runs: on a
+/// path that always runs this is a compile error; under a runtime execution
+/// predicate (a loop item past a runtime bound, a runtime branch) the
+/// circuit asserts that the access does not run, and the access uses
+/// position 0, observed nowhere. `None` when the access cannot run and the
+/// sequence is empty (there is no position to use).
+pub fn checked_constant_list_position(b: &mut IRBuilder, idx: i64, n: usize) -> Option<usize> {
+    let len = n as i64;
+    if -len <= idx && idx < len {
+        return Some(if idx < 0 { (idx + len) as usize } else { idx as usize });
+    }
+    if b.assert_never_runs() {
+        return (n > 0).then_some(0);
+    }
+    panic!("IndexError: index {idx} is out of range for a sequence of length {n}");
 }
 
 /// `data[idx]` for a Python list/tuple and a runtime `idx`.
