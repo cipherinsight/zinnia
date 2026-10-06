@@ -26,6 +26,7 @@ from pathlib import Path
 
 from benchmarking.harness.adapters import BASELINE_SYSTEMS, SAME_PROOF_SYSTEM, ZINNIA_SYSTEMS
 from benchmarking.harness.analysis import stats
+from benchmarking.harness.case_sets import INCLUDED
 from benchmarking.harness.protocol import OK, REFERENCE_SYSTEM
 
 CLOCKS = ("prove_core_s", "end_to_end_s", "verify_s")
@@ -154,9 +155,25 @@ def comparison_pairs(data: EpochData) -> list[tuple[str, str]]:
     return sorted(pairs, key=lambda pair: SAME_PROOF_SYSTEM.get(pair[0]) != pair[1])
 
 
+def _case_entries(data: EpochData) -> list[dict]:
+    return [c if isinstance(c, dict) else {"case": c} for c in data.case_set.get("cases", [])]
+
+
+def _excluded(entry: dict) -> bool:
+    """Whether the case set keeps a case out of the run (any status but `perf`)."""
+    if "status" in entry:
+        return entry["status"] != INCLUDED
+    return not entry.get("included", True)
+
+
 def exclusions(data: EpochData) -> list[dict]:
-    return [{"case": c["case"], "reason": c["reason"]}
-            for c in data.case_set.get("cases", []) if not c.get("included", True)]
+    return [{"case": c["case"], "reason": c.get("reason", c.get("status"))}
+            for c in _case_entries(data) if _excluded(c)]
+
+
+def data_movement_cases(data: EpochData) -> set[str]:
+    """Cases that only copy inputs; reported apart from the headline comparison."""
+    return {c["case"] for c in _case_entries(data) if c.get("data_movement_only")}
 
 
 def acceptance_summary(root: Path) -> dict | None:
@@ -173,12 +190,21 @@ def acceptance_summary(root: Path) -> dict | None:
 def summarize(root: Path) -> dict:
     data = load_epoch(root)
     all_supported = common_subset(data, data.systems)
+    movement = data_movement_cases(data)
+    headline = [c for c in all_supported if c not in movement]
+    movement_only = [c for c in all_supported if c in movement]
     pairs = comparison_pairs(data)
     summary = {
         "epoch": data.manifest.get("epoch"),
         "systems": data.systems,
         "coverage": coverage(data),
         "all_supported_subset": all_supported,
+        "headline_subset": headline,
+        "data_movement_subset": movement_only,
+        "comparisons_headline": [compare(data, z, b, headline, clock)
+                                 for z, b in pairs for clock in CLOCKS],
+        "comparisons_data_movement": [compare(data, z, b, movement_only, clock)
+                                      for z, b in pairs for clock in CLOCKS],
         "comparisons_all_supported": [compare(data, z, b, all_supported, clock)
                                       for z, b in pairs for clock in CLOCKS],
         "comparisons_pairwise": [compare(data, z, b, common_subset(data, [z, b]), clock)
@@ -225,6 +251,16 @@ def render_markdown(summary: dict, data: EpochData) -> str:
     for system, cov in summary["coverage"].items():
         others = ", ".join(f"{k}: {v}" for k, v in sorted(cov["by_status"].items()) if k != OK)
         lines.append(f"| {system} | {cov['cases']} | {cov['ok']} | {others or '-'} |")
+    headline = summary["headline_subset"]
+    lines += ["", "## Headline: all-supported subset without copy-only cases", "",
+              f"{len(headline)} cases completed by every system that do more than copy "
+              f"inputs: {', '.join(headline) or '(none)'}", ""]
+    lines += _comparison_lines(summary["comparisons_headline"])
+    movement = summary["data_movement_subset"]
+    lines += ["", "## Copy-only cases (reported apart)", "",
+              f"{len(movement)} all-supported cases that only copy inputs: "
+              f"{', '.join(movement) or '(none)'}", ""]
+    lines += _comparison_lines(summary["comparisons_data_movement"])
     subset = summary["all_supported_subset"]
     lines += ["", "## All-supported subset", "",
               f"{len(subset)} cases completed by every system of the epoch "
