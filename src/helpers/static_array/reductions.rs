@@ -804,6 +804,8 @@ struct Comparison {
     greater: bool,
     /// `==` operands make it False (`>`, `<`).
     strict: bool,
+    /// A float comparison (its operands compared as Q32 codes).
+    float: bool,
 }
 
 /// The statement a float cast reads (`FloatCast(x)` is `x` for identity:
@@ -818,6 +820,7 @@ fn uncast(b: &IRBuilder, stmt: crate::types::StmtId) -> crate::types::StmtId {
 fn comparison_of(b: &IRBuilder, cell: &Value) -> Option<Comparison> {
     use crate::ir_defs::IR;
     let stmt = b.stmts.get(cell.stmt_id()? as usize)?;
+    let float = matches!(stmt.ir, IR::GtF | IR::GteF | IR::LtF | IR::LteF);
     let (greater, strict) = match stmt.ir {
         IR::GtF | IR::GtI => (true, true),
         IR::GteF | IR::GteI => (true, false),
@@ -836,6 +839,7 @@ fn comparison_of(b: &IRBuilder, cell: &Value) -> Option<Comparison> {
         rhs_value: b.value_of_vid(rhs_vid)?,
         greater,
         strict,
+        float,
     })
 }
 
@@ -921,27 +925,41 @@ fn monotone_comparisons(b: &IRBuilder, cells: &[Value]) -> Option<MonotoneCompar
 /// Falses `u` (0 when every cell is False): `u` is `np.searchsorted(Y, e,
 /// 'right')` for `>` and `'left'` for `>=`, a placeholder the layer lowers
 /// (`lower::sort::search`: a count, or a hinted position pinned by the two
-/// entries around it). A falling comparison's argmax is 0. The table and the
-/// scalar must have the same number type (the entries are compared as
-/// codes).
+/// entries around it). A falling comparison's argmax is 0. The entries are
+/// the compile-time values of the compared statements (what `ConstantFold`
+/// makes of them), in the comparison's number type.
 fn first_true_of_table_comparisons(b: &mut IRBuilder, cells: &[Value]) -> Option<Value> {
     use crate::lower::{ArrayOp, OpKind};
     let MonotoneComparisons { elements, scalar, rising, strict } = monotone_comparisons(b, cells)?;
-    let float = matches!(scalar, Value::Float(_));
-    let mut previous: Option<f64> = None;
-    let mut table: Vec<Value> = Vec::with_capacity(elements.len());
-    for &stmt in &elements {
-        let entry = match b.stmts.get(stmt as usize)?.ir {
-            crate::ir_defs::IR::ConstantFloat { value } if float => value,
-            crate::ir_defs::IR::ConstantInt { value } if !float => value as f64,
-            _ => return None,
-        };
-        if previous.is_some_and(|p| p > entry) || entry.is_nan() {
+    // The entries as constants, non-decreasing.
+    let element_values: Vec<Value> =
+        elements.iter().map(|&e| b.constant_value_of(e, 8)).collect::<Option<_>>()?;
+    let float = cells.first().and_then(|c| comparison_of(b, c)).is_some_and(|c| c.float);
+    let table: Vec<Value> = if float {
+        let entries: Vec<f64> = element_values
+            .iter()
+            .map(|v| match v {
+                Value::Float(f) => f.static_val.filter(|e| !e.is_nan()),
+                _ => None,
+            })
+            .collect::<Option<_>>()?;
+        if !entries.windows(2).all(|w| w[0] <= w[1]) {
             return None;
         }
-        previous = Some(entry);
-        table.push(if float { b.ir_constant_float(entry) } else { b.ir_constant_int(entry as i64) });
-    }
+        entries.iter().map(|&e| b.ir_constant_float(e)).collect()
+    } else {
+        let entries: Vec<i64> = element_values
+            .iter()
+            .map(|v| match v {
+                Value::Integer(i) => i.static_val,
+                _ => None,
+            })
+            .collect::<Option<_>>()?;
+        if !entries.windows(2).all(|w| w[0] <= w[1]) {
+            return None;
+        }
+        entries.iter().map(|&e| b.ir_constant_int(e)).collect()
+    };
     if !rising {
         return Some(b.ir_constant_int(0));
     }

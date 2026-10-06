@@ -332,6 +332,24 @@ impl IRBuilder {
     /// (static value recovered when the producer is a `ConstantInt`).
     /// Used by provenance-record consumers (e.g. compaction scans) that
     /// hold `ValueId`s and need IR-layer references to emit ops.
+    /// The compile-time value of statement `stmt` when it and every
+    /// statement it depends on fold to constants (the value `ConstantFold`
+    /// gives it, by the same folding rules), else `None`. Looks at most
+    /// `depth` statements deep.
+    pub fn constant_value_of(&self, stmt: StmtId, depth: usize) -> Option<Value> {
+        let st = self.stmts.get(stmt as usize)?;
+        let args: Vec<Value> = if st.arguments.is_empty() {
+            Vec::new()
+        } else if depth == 0 {
+            return None;
+        } else {
+            st.arguments.iter().map(|&a| self.constant_value_of(a, depth - 1)).collect::<Option<_>>()?
+        };
+        let value = build_value(&st.ir, stmt, &args);
+        let known = value.int_val().is_some() || value.float_val().is_some() || value.bool_val().is_some();
+        known.then_some(value)
+    }
+
     pub fn value_of_vid(&self, vid: crate::types::ValueId) -> Option<Value> {
         let sid = self.value_to_stmt.get(&vid).copied()?;
         let static_val = match self.stmts.get(sid as usize).map(|st| &st.ir) {
