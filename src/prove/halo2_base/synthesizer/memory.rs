@@ -236,7 +236,7 @@ impl Halo2BaseSynthesizer<'_> {
             .collect::<Result<Vec<_>, _>>()?;
         let total: Fp = indicators.iter().map(|ind| ind.value).sum();
         let sum = self.gate_cell(total, |gate, ctx| {
-            gate.sum(ctx, indicators.iter().map(|ind| QuantumCell::Existing(ind.assigned)))
+            gate.sum(ctx, indicators.iter().map(|ind| ind.quantum()))
         });
         self.assert_const(&sum, Fp::one());
         self.memory.memberships.insert(key);
@@ -262,7 +262,7 @@ impl Halo2BaseSynthesizer<'_> {
         let terms: Vec<(Halo2BaseCell, QuantumCell<Fp>, Fp)> = choices
             .iter()
             .filter_map(|(ind, value)| match value {
-                SlotValue::Cell(cell) => Some((*ind, QuantumCell::Existing(cell.assigned), cell.value)),
+                SlotValue::Cell(cell) => Some((*ind, cell.quantum(), cell.value)),
                 SlotValue::Init(v) if *v == Fp::zero() => None,
                 SlotValue::Init(v) => Some((*ind, QuantumCell::Constant(*v), *v)),
             })
@@ -275,7 +275,7 @@ impl Halo2BaseSynthesizer<'_> {
             gate.inner_product(
                 ctx,
                 terms.iter().map(|(_, q, _)| *q),
-                terms.iter().map(|(ind, _, _)| QuantumCell::Existing(ind.assigned)),
+                terms.iter().map(|(ind, _, _)| ind.quantum()),
             )
         })
     }

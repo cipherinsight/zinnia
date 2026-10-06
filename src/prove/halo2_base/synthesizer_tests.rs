@@ -570,10 +570,10 @@ fn input_domain_checks_are_one_window_check() {
     let (one_advice, one_lookup) = cells_of(&*domain_check, &[int(5)]);
     let (two_advice, two_lookup) = cells_of(&*domain_check, &[int(5), int(6)]);
     let (window_advice, window_lookup) = cells_of(&*window, &[int(5)]);
-    // Per element: the window check alone (the 4 cells of the first element
-    // are the two loaded bounds and the two shared truth constants).
+    // Per element: the window check alone. The bounds and the truth
+    // constants the asserted comparisons decide to get no cells.
     assert_eq!((two_advice - one_advice, two_lookup - one_lookup), (window_advice, window_lookup));
-    assert_eq!(one_advice, window_advice + 4);
+    assert_eq!((one_advice, one_lookup), (window_advice, window_lookup));
 }
 
 #[test]
@@ -1039,7 +1039,7 @@ mod pre_fix {
         let (sa, sb) = (kernel::fp_to_i64(a.value), kernel::fp_to_i64(b.value));
         let q = s.hint(int(sa.div_euclid(sb)));
         let r = s.hint(int(sa.rem_euclid(sb)));
-        let recomposed = s.gate_cell(b.value * q.value + r.value, |gate, ctx| gate.mul_add(ctx, b.assigned, q.assigned, r.assigned));
+        let recomposed = s.gate_cell(b.value * q.value + r.value, |gate, ctx| gate.mul_add(ctx, b.quantum(), q.quantum(), r.quantum()));
         s.constrain_equal(&recomposed, a);
         Ok(q)
     }
@@ -1052,7 +1052,7 @@ mod pre_fix {
         let rem = s.hint(rem);
         let scale = kernel::scale_fp(PRECISION_BITS);
         let recomposed = s.gate_cell(result.value * scale + rem.value, |gate, ctx| {
-            gate.mul_add(ctx, result.assigned, QuantumCell::Constant(scale), rem.assigned)
+            gate.mul_add(ctx, result.quantum(), QuantumCell::Constant(scale), rem.quantum())
         });
         s.constrain_equal(&recomposed, &raw);
         s.range_check(&rem, PRECISION_BITS as usize);
@@ -1238,6 +1238,43 @@ mod graphs {
     }
 }
 
+/// A constant gets an advice cell only where a gadget needs an assigned
+/// cell: as an operand of a gate it is the gate's own constant cell (`x + 5`
+/// costs one cell less than `x + y`), as a public output it is loaded and
+/// bound to the public value, and asserting a false constant still leaves
+/// the circuit unsatisfiable.
+#[test]
+fn constants_get_cells_only_where_needed() {
+    use crate::ir_defs::IR;
+    use graphs::*;
+    let sum = |constant: bool| {
+        let mut g = Graph::default();
+        let x = g.read("x");
+        let y = if constant { g.int(5) } else { g.read("y") };
+        let s = g.push(IR::AddI, &[x, y]);
+        g.push(IR::ExposePublicI, &[s]);
+        g.finish()
+    };
+    let with_constant = run(&sum(true), &[("x", 3)], None);
+    assert!(with_constant.accepted && with_constant.outputs == vec![int(8)]);
+    assert!(!run(&sum(true), &[("x", 3)], Some(vec![int(9)])).accepted);
+    assert_eq!(with_constant.advice + 1, run(&sum(false), &[("x", 3), ("y", 5)], None).advice);
+
+    let mut g = Graph::default();
+    let seven = g.int(7);
+    g.push(IR::ExposePublicI, &[seven]);
+    let exposed = g.finish();
+    assert!(run(&exposed, &[], None).accepted);
+    assert!(!run(&exposed, &[], Some(vec![int(8)])).accepted);
+
+    for (value, holds) in [(true, true), (false, false)] {
+        let mut g = Graph::default();
+        let c = g.push(IR::ConstantBool { value }, &[]);
+        g.push(IR::Assert, &[c]);
+        assert_eq!(run(&g.finish(), &[], None).accepted, holds);
+    }
+}
+
 /// An input that the circuit also bounds with `AssertU128Lt(x, 8)` (an
 /// index) gets that bound check in place of its 64-bit window check: the
 /// domain checks then cost nothing, and values outside `[0, 8)` (including
@@ -1265,9 +1302,9 @@ fn domain_checks_of_bounded_inputs_use_the_bound() {
     for x in [8i64, -1, i64::MAX, i64::MIN] {
         assert!(!run(&checked, &[("x", x)], None).accepted, "{x} accepted");
     }
-    // The two loaded bounds and the constant `true` the asserted
-    // comparisons decide to.
-    assert_eq!(run(&checked, &[("x", 3)], None).advice, run(&bare, &[("x", 3)], None).advice + 3);
+    // The bound check implies the domain check, whose bounds and decided
+    // `true` need no cells.
+    assert_eq!(run(&checked, &[("x", 3)], None).advice, run(&bare, &[("x", 3)], None).advice);
 }
 
 /// `acc + a·b` and `acc - a·b` with a product used only there are one gate
