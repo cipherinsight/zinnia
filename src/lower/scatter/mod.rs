@@ -293,7 +293,7 @@ impl Construction for ZeroWriteChain {
         let base: std::collections::HashMap<StmtId, StmtId> = group
             .lanes
             .iter()
-            .map(|lane| (lane.stmt, chain_base(lane.stmt, &chain, cx)))
+            .map(|lane| (lane.stmt, chain_base(lane.stmt, &chain)))
             .collect();
         vec![Candidate {
             pre: Vec::new(),
@@ -350,13 +350,12 @@ fn zero_write_chain<'a>(group: &'a Group, cx: &'a Context) -> Vec<&'a Group> {
 
 /// The cell before the first write of `chain` under the last group's lane
 /// `lane`.
-fn chain_base(lane: StmtId, chain: &[&Group], cx: &Context) -> StmtId {
+fn chain_base(lane: StmtId, chain: &[&Group]) -> StmtId {
     let mut cell = lane;
     for g in chain.iter().rev() {
         let l = g.lanes.iter().find(|l| l.stmt == cell).expect("a chain lane");
         cell = l.own[write::OLD];
     }
-    let _ = cx;
     cell
 }
 

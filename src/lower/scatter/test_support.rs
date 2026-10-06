@@ -164,7 +164,7 @@ pub(crate) fn mask_write_chain_graph(x: i64, t1: i64, t2: i64, construction: &dy
     let at_least_t1 = b.ir_logical_not(&below_t1);
     let between = b.ir_logical_and(&at_least_t1, &below_t2);
     let empty: Arc<[Value]> = Arc::from(Vec::new());
-    let mut lane = |b: &mut IRBuilder, old: &Value, written: &Value, mask: &Value| {
+    let lane = |b: &mut IRBuilder, old: &Value, written: &Value, mask: &Value| {
         let op = ArrayOp { kind: OpKind::MaskWrite, shared: 0, output: 0, position: Some(0) };
         let mut own = vec![Value::None; 3];
         own[OLD] = old.clone();
