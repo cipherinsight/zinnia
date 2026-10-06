@@ -936,21 +936,14 @@ fn whole_array_argmax_argmin(b: &mut IRBuilder, arr: &Value, is_max: bool) -> Va
     // Boolean-aware fast path: argmax of `{0,1}` cells is "first index where
     // elem == 1". The generic body would emit `ir_greater_than_i` per step
     // (sign-aware range checks ~30 gates each); the bool form needs one mul
-    // per step (NOT/AND/OR). Triggered by `(x==a)&(y==b)).argmax()` patterns.
+    // per step. Triggered by `(x==a)&(y==b)).argmax()` patterns.
     let best_idx = if is_max && cells.iter().all(|c| matches!(c, Value::Boolean(_))) {
         if let Some(first_true) = first_true_of_sorted_comparisons(b, &cells) {
             return first_true;
         }
-        let mut idx = b.ir_constant_int(0);
-        let mut found = cells[0].clone();
-        for (i, elem) in cells.iter().enumerate().skip(1) {
-            let not_found = b.ir_logical_not(&found);
-            let take = b.ir_logical_and(&not_found, elem);
-            let idx_val = b.ir_constant_int(i as i64);
-            idx = b.ir_select_i(&take, &idx_val, &idx);
-            found = b.ir_logical_or(&found, elem);
-        }
-        idx
+        // The first set position by running products, with its one-hot
+        // recorded for a later read at it (`lower::gather::scan`).
+        crate::lower::gather::scan::argmax_of_flags(b, &cells).expect("cells is not empty")
     } else {
         let mut idx = b.ir_constant_int(0);
         let mut best_val = cells[0].clone();

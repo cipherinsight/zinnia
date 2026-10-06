@@ -173,11 +173,12 @@ pub fn dyn_aggregate_all(b: &mut IRBuilder, data: &DynamicNDArrayData, agg: DynA
     crate::optim::dispatch_strategy(b, "dyn_aggregate_all", &inputs, &set)
 }
 
-/// First/last-set-bit scan over a sorted compaction's (keep, source)
-/// pairs. Ascending source order makes min = the FIRST kept source
-/// (reverse select chain) and max = the LAST kept (forward chain).
-/// Empty input yields 0, matching the zero-initialised compacted
-/// segment's boundary reads.
+/// `min` / `max` of a sorted compaction (`flatnonzero` / `nonzero`
+/// outputs) as the first / last kept position, by the running-product scan
+/// of `lower::gather::scan` (no reads of the compacted segment, which
+/// `unread_memory_elimination` then deletes). Applies when the sources are
+/// the positions themselves plus a constant (`source[i] = i + c`); the
+/// caller has asserted non-emptiness, as the scan requires.
 pub(crate) fn compaction_scan_min_max(
     b: &mut IRBuilder,
     info: &crate::provenance::CompactionInfo,
@@ -188,26 +189,26 @@ pub(crate) fn compaction_scan_min_max(
         return None;
     }
     let mut keeps = Vec::with_capacity(n);
-    let mut sources = Vec::with_capacity(n);
+    let mut offset = None;
     for i in 0..n {
         keeps.push(b.value_of_vid(info.keep[i])?);
-        sources.push(b.value_of_vid(info.source[i])?);
+        let source = b.value_of_vid(info.source[i])?.int_val()?;
+        if *offset.get_or_insert(source - i as i64) != source - i as i64 {
+            return None;
+        }
     }
-    let mut acc = b.ir_constant_int(0);
-    match agg {
-        DynAggKind::Min => {
-            for i in (0..n).rev() {
-                acc = b.ir_select_i(&keeps[i], &sources[i], &acc);
-            }
-        }
-        DynAggKind::Max => {
-            for i in 0..n {
-                acc = b.ir_select_i(&keeps[i], &sources[i], &acc);
-            }
-        }
+    let position = match agg {
+        DynAggKind::Min => crate::lower::gather::scan::first_set(b, &keeps)?,
+        DynAggKind::Max => crate::lower::gather::scan::last_set(b, &keeps)?,
         _ => return None,
+    };
+    match offset? {
+        0 => Some(position),
+        c => {
+            let c = b.ir_constant_int(c);
+            Some(b.ir_add_i(&position, &c))
+        }
     }
-    Some(acc)
 }
 
 /// Per-call inputs for `dyn_aggregate_all`'s strategy set. Carries the
@@ -1374,12 +1375,10 @@ pub fn dyn_aggregate_axis(
 /// min/max over one compaction lane whose sources are STATIC small-range
 /// values (coordinate streams), via bucket occupancy: `counts[v] = Σ
 /// keep_i` over positions with source value `v`; `has[v] = counts[v] >
-/// 0`; min = first occupied bucket, max = last. O(cells + dim) — works
-/// for UNSORTED lanes where the first/last-set-bit scan doesn\'t.
-/// Sentinels match the historical bbox fast path: Min yields `dim` and
-/// Max yields `0` when nothing is kept (all-empty inputs are guarded by
-/// the kernels using this family). Fires the `dyn_argextremum` contract
-/// so downstream slice-bound discharges resolve from facts.
+/// 0`; min = first occupied bucket, max = last (`lower::gather::scan`,
+/// which records the result's one-hot and thermometer for a later window).
+/// O(cells + dim); works for UNSORTED lanes. The caller asserts
+/// non-emptiness (`require_non_empty`), as the scan requires.
 pub(crate) fn compaction_bucket_min_max(
     b: &mut IRBuilder,
     info: &crate::provenance::CompactionInfo,
@@ -1415,71 +1414,22 @@ pub(crate) fn compaction_bucket_min_max(
         has_along.push(b.ir_less_than_i_bounded(&zero_i, acc));
     }
 
-    let initial = match agg {
-        DynAggKind::Min => b.ir_constant_int(dim as i64),
-        DynAggKind::Max => b.ir_constant_int(0),
-        _ => return None,
-    };
-    let mut acc_idx = initial.clone();
-    for (k, has) in has_along.iter().enumerate() {
-        let k_val = b.ir_constant_int(k as i64);
-        match agg {
-            DynAggKind::Min => {
-                let still_initial = b.ir_equal_i(&acc_idx, &initial);
-                let trigger = b.ir_logical_and(&still_initial, has);
-                acc_idx = b.ir_select_i(&trigger, &k_val, &acc_idx);
-            }
-            DynAggKind::Max => {
-                acc_idx = b.ir_select_i(has, &k_val, &acc_idx);
-            }
-            _ => unreachable!(),
-        }
+    // The first / last occupied bucket, by the running-product scan (the
+    // caller asserted non-emptiness).
+    match agg {
+        DynAggKind::Min => crate::lower::gather::scan::first_set(b, &has_along),
+        DynAggKind::Max => crate::lower::gather::scan::last_set(b, &has_along),
+        _ => None,
     }
-    if let Some(idx_vid) = acc_idx.value_id() {
-        let len_for_contract = match agg {
-            DynAggKind::Min => dim as i64 + 1,
-            DynAggKind::Max => dim as i64,
-            _ => unreachable!(),
-        };
-        let len_val = b.ir_constant_int(len_for_contract);
-        if let Some(len_vid) = len_val.value_id() {
-            let mut formals = std::collections::HashMap::new();
-            formals.insert("len_arr".to_string(), len_vid);
-            b.fire_contract("dyn_argextremum", idx_vid, &formals);
-        }
-    }
-    Some(acc_idx)
 }
 
-/// Assemble per-axis min/max bounds into the `(rank,)` dyn-array shape
-/// the axis-0 reduction contract expects.
+/// The per-axis min/max bounds as the `(rank,)` result of the reduction.
 fn assemble_axis0_bounds(b: &mut IRBuilder, out_elements: Vec<Value>) -> Value {
+    // A static `(rank,)` array whose cells are the bound wires themselves,
+    // so later reads (tuple unpacking, `+ 1`) see the scan results and the
+    // index encodings and range facts recorded on them.
     let rank = out_elements.len();
-    let out_shape = vec![rank];
-    let out_strides_meta = crate::helpers::shape_arith::row_major_strides(&out_shape);
-    let segment_id =
-        crate::helpers::segment::alloc_and_write_values(b, &out_elements, NumberType::Integer);
-    let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &out_shape);
-    let runtime_length = ScalarValue::new(Some(rank as i64), None);
-    Value::DynamicNDArray(DynamicNDArrayData {
-        envelope,
-        dtype: NumberType::Integer,
-        segment_id,
-        meta: DynArrayMeta {
-            logical_shape: out_shape.clone(),
-            logical_offset: 0,
-            logical_strides: out_strides_meta.clone(),
-            runtime_length,
-            runtime_rank: ScalarValue::new(Some(1), None),
-            runtime_shape: vec![ScalarValue::new(Some(rank as i64), None)],
-            runtime_strides: out_strides_meta
-                .iter()
-                .map(|&s| ScalarValue::new(Some(s as i64), None))
-                .collect(),
-            runtime_offset: ScalarValue::new(Some(0), None),
-        },
-        value_id: ValueId::next(),
-    })
+    crate::helpers::static_array::base::build_static_array_from_flat(b, out_elements, vec![rank], NumberType::Integer)
 }
 
 /// One step of the accumulator for a given aggregation kind.

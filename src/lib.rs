@@ -9,6 +9,7 @@ pub mod ir;
 pub mod ir_ctx;
 pub mod ir_defs;
 pub mod ir_gen;
+pub mod lower;
 pub mod ops;
 pub mod optim;
 pub mod phase0;

@@ -918,6 +918,14 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
                 if let Some(out) = sorted_output_of_segment(b, segment_id, offset, strides[0], shape[0], &i) {
                     return out;
                 }
+                if dtype != NumberType::Complex {
+                    let cells: Vec<Value> = (0..shape[0])
+                        .map(|k| read_leaf_at_flat(b, segment_id, offset, k * strides[0], dtype))
+                        .collect();
+                    if let Some(out) = crate::lower::gather::element::gather_by_encoding(b, &cells, &i, dtype) {
+                        return out;
+                    }
+                }
                 let off_val = b.ir_constant_int(offset as i64);
                 let stride_val = b.ir_constant_int(strides[0] as i64);
                 let scaled = b.ir_mul_i(&i, &stride_val);
@@ -1944,9 +1952,6 @@ fn materialise_dynamic_multi_axis_slice(
         axes.push((*ax, *out_ax, start_ir, stop_ir, step_ir, fast, step_sign));
     }
 
-    // Unit-step windows over every axis of a real array: a shift by a shared
-    // one-hot per axis (`window_gather`) instead of a clamp, a box test and a
-    // gather per output cell.
     if let Some(leaves) = window_gather(b, dtype, shape, segment_id, strides, static_base, static_range_axes, &axes, out_shape) {
         return finish_multi_axis_slice(b, leaves, out_shape, dtype, &axes);
     }
@@ -2100,14 +2105,18 @@ fn materialise_dynamic_multi_axis_slice(
     finish_multi_axis_slice(b, leaves, out_shape, dtype, &axes)
 }
 
+/// Axes of a fused multi-axis slice: `(src_axis, out_axis, start, stop,
+/// step, fast, step sign)` (see `materialise_dynamic_multi_axis_slice`).
+type SliceAxes = [(usize, usize, Value, Value, Value, bool, Option<bool>)];
+
 /// The fused multi-axis slice's leaves as a static array, with the runtime
-/// extents of its dynamic axes recorded (see `materialise_dynamic_multi_axis_slice`).
+/// extents of its dynamic axes recorded.
 fn finish_multi_axis_slice(
     b: &mut IRBuilder,
     leaves: Vec<Value>,
     out_shape: &[usize],
     dtype: NumberType,
-    axes: &[(usize, usize, Value, Value, Value, bool, Option<bool>)],
+    axes: &SliceAxes,
 ) -> Value {
     let out = super::base::build_static_array_from_flat(b, leaves, out_shape.to_vec(), dtype);
     // Runtime-extents provenance for the fused multi-axis slice: each
@@ -2163,17 +2172,10 @@ fn finish_multi_axis_slice(
     out
 }
 
-/// Prototype (costgap/index.md, section 4.1): `x[s0:e0, s1:e1, ...]` with unit
-/// steps and runtime bounds on every axis of a real array, as a shift of the
-/// whole array by a one-hot of each start, one axis at a time:
-/// `y[.., u, ..] = sum_d sel[u][d] * x[.., u + d, ..]` with
-/// `sel[u][d] = [start == d] and [start + u < stop]`. Terms with
-/// `u + d >= n` are dropped, so positions past the array end read 0, and the
-/// stop mask zeroes positions past the window, which is the default 0 the
-/// per-cell lowering writes there. Every factor is computed (no hint): the
-/// equality bits have at most one 1 (`start` is in `[0, n]` on this path),
-/// so each sum is `x[.., start + u, ..]` or 0. `None` when the slice is not of
-/// that form.
+/// `x[s0:e0, s1:e1, ...]` with step 1 and a normalized start in `[0, n]` on
+/// every axis of a real array: the window gather of
+/// `lower::gather::window` (one shared one-hot per axis) instead of a clamp,
+/// a box test and a gather per output cell. `None` for any other form.
 #[allow(clippy::too_many_arguments)]
 fn window_gather(
     b: &mut IRBuilder,
@@ -2183,79 +2185,33 @@ fn window_gather(
     strides: &[usize],
     static_base: i64,
     static_range_axes: &[(usize, usize, Vec<usize>)],
-    axes: &[(usize, usize, Value, Value, Value, bool, Option<bool>)],
+    axes: &SliceAxes,
     out_shape: &[usize],
 ) -> Option<Vec<Value>> {
-    if std::env::var_os("ZINNIA_NO_WINDOW_GATHER").is_some() {
-        return None;
-    }
-    let all_axes_windowed = dtype != NumberType::Complex
-        && static_range_axes.is_empty()
+    use crate::lower::gather::window::{window_shift, AxisWindow};
+    let every_axis_windowed = static_range_axes.is_empty()
         && axes.len() == shape.len()
         && out_shape == shape
         && axes.iter().enumerate().all(|(k, (ax, out_ax, _, _, step, fast, _))| {
             *ax == k && *out_ax == k && *fast && step.int_val() == Some(1)
         });
-    if !all_axes_windowed || static_base < 0 {
+    if dtype == NumberType::Complex || !every_axis_windowed || static_base < 0 {
         return None;
     }
-    let skip_mask = std::env::var_os("ZINNIA_WINDOW_NO_MASK").is_some();
-    // cells[flat] over the current (partially shifted) array, row-major in `shape`.
     let row_strides = row_major_strides(shape);
     let total: usize = shape.iter().product();
-    let mut cells: Vec<Value> = (0..total)
+    let cells: Vec<Value> = (0..total)
         .map(|flat| {
             let coords = decode_coords(flat, shape, &row_strides);
             let addr: usize = coords.iter().zip(strides).map(|(c, s)| c * s).sum();
             read_leaf_at_flat(b, segment_id, static_base as usize, addr, dtype)
         })
         .collect();
-    for (ax, _, start, stop, _, _, _) in axes {
-        let n = shape[*ax];
-        let hits: Vec<Value> = (0..n)
-            .map(|d| {
-                let d_v = b.ir_constant_int(d as i64);
-                b.ir_equal_i(start, &d_v)
-            })
-            .collect();
-        let sel: Vec<Vec<Value>> = (0..n)
-            .map(|u| {
-                if skip_mask {
-                    return hits[..n - u].to_vec();
-                }
-                let u_v = b.ir_constant_int(u as i64);
-                let at = b.ir_add_i(start, &u_v);
-                let inside = b.ir_less_than_i_bounded(&at, stop);
-                hits[..n - u].iter().map(|h| b.ir_logical_and(h, &inside)).collect()
-            })
-            .collect();
-        let mut next = Vec::with_capacity(total);
-        for flat in 0..total {
-            let coords = decode_coords(flat, shape, &row_strides);
-            let u = coords[*ax];
-            let mut acc: Option<Value> = None;
-            for (d, s) in sel[u].iter().enumerate() {
-                let src = flat + d * row_strides[*ax];
-                let product = b.create_ir(&crate::ir_defs::IR::MulI, &[s.clone(), cells[src].clone()]);
-                let term = match (product, dtype) {
-                    (Value::Integer(sv), NumberType::Float) => Value::Float(crate::types::ScalarValue {
-                        static_val: None,
-                        stmt_id: sv.stmt_id,
-                        value_id: sv.value_id,
-                    }),
-                    (product, _) => product,
-                };
-                acc = Some(match acc {
-                    None => term,
-                    Some(prev) if dtype == NumberType::Float => b.ir_add_f(&prev, &term),
-                    Some(prev) => b.ir_add_i(&prev, &term),
-                });
-            }
-            next.push(acc.expect("u < n, so at least one term"));
-        }
-        cells = next;
-    }
-    Some(cells.into_iter().map(|v| scalar_i64_to_value(&value_to_scalar_i64(&v), dtype)).collect())
+    let windows: Vec<AxisWindow> = axes
+        .iter()
+        .map(|(ax, _, start, stop, _, _, _)| AxisWindow { axis: *ax, start: start.clone(), stop: stop.clone() })
+        .collect();
+    Some(window_shift(b, cells, shape, &windows, dtype))
 }
 
 fn provable_nonneg(b: &IRBuilder, v: &Value) -> bool {

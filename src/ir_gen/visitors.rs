@@ -2079,7 +2079,10 @@ impl IRGenerator {
                             ) {
                                 if !matches!(
                                     &data.values[i],
-                                    Value::List(_) | Value::Tuple(_) | Value::DynamicNDArray(_)
+                                    Value::List(_)
+                                        | Value::Tuple(_)
+                                        | Value::StaticArray { .. }
+                                        | Value::DynamicNDArray(_)
                                 ) {
                                     let tp = data.values[i].zinnia_type();
                                     panic!("TypeInferenceError: {} is not iterable", tp);
