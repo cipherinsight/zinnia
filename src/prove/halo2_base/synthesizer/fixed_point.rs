@@ -136,6 +136,16 @@ impl Halo2BaseSynthesizer<'_> {
                 Ok((zero, zero))
             }
             Some(c) => self.div_rem_nonzero(a, Divisor::Constant(c), rounding),
+            // A divisor an emitted constraint proves non-zero needs no zero
+            // mapping, and one also proven non-negative is positive.
+            None if self.nonzero.contains(&b.id) => {
+                let divisor = if self.proven_range(b).is_some_and(|r| r.lo >= 0) {
+                    Divisor::Positive(*b)
+                } else {
+                    Divisor::NonZero(*b)
+                };
+                self.div_rem_nonzero(a, divisor, rounding)
+            }
             None => {
                 let b_is_zero = self.is_zero_bit(b);
                 let b_nonzero = self.add_i(b, &b_is_zero)?;
@@ -199,7 +209,14 @@ impl Halo2BaseSynthesizer<'_> {
         // A dynamic divisor's hinted sign and magnitude, pinned by the
         // remainder bound below.
         let dynamic_sign = match divisor {
-            Divisor::NonZero(b) => Some(self.hinted_sign_and_magnitude(&b)?),
+            Divisor::NonZero(b) => Some(match self.divisor_signs.get(&b.id).copied() {
+                Some(pair) => pair,
+                None => {
+                    let pair = self.hinted_sign_and_magnitude(&b)?;
+                    self.divisor_signs.insert(b.id, pair);
+                    pair
+                }
+            }),
             _ => None,
         };
         let r_adj = match rounding {
@@ -342,22 +359,20 @@ impl Halo2BaseSynthesizer<'_> {
                 (_, Factor::Integer(n)) => Some((n, *a)),
                 _ => None,
             };
+            // Each sum is a chain of multiply-add gates sharing their
+            // accumulator cells (three cells per term, an inner product).
             match integer {
                 Some((n, x)) => {
-                    let term = self.mul_i(&n, &x)?;
                     exact = Some(match exact {
-                        Some(sum) => self.add_i(&sum, &term)?,
-                        None => term,
+                        Some(sum) => self.multiply_add(&sum, &n, &x),
+                        None => self.mul_i(&n, &x)?,
                     });
                 }
                 None => {
-                    let acc = match raw {
-                        Some(acc) => acc,
-                        None => self.constant_int(0)?,
-                    };
-                    raw = Some(self.gate_cell(acc.value + a.value * b.value, |gate, ctx| {
-                        gate.mul_add(ctx, a.assigned, b.assigned, acc.assigned)
-                    }));
+                    raw = Some(match raw {
+                        Some(acc) => self.multiply_add(&acc, a, b),
+                        None => self.product(a, b),
+                    });
                 }
             }
         }

@@ -532,11 +532,15 @@ fn lower_dyn_aggregate_all_generic(b: &mut IRBuilder, inputs: &DynAggAllInputs) 
             acc_idx = new_idx;
         }
     } else {
+        // An argextremum of a padded buffer reports the C-order position over
+        // the runtime extents, not the buffer slot.
+        let c_order = (!compact_buffer && matches!(agg, DynAggKind::Argmax | DynAggKind::Argmin))
+            .then(|| c_order_strides(b, &data.meta.runtime_shape));
         for i in 1..buffer_size.min(values.len()) {
+            let coords = dyn_decode_coords(i, &data.meta.logical_shape, &strides);
             let is_active = if compact_buffer {
                 build_flat_active_check(b, i, &data.meta.runtime_length)
             } else {
-                let coords = dyn_decode_coords(i, &data.meta.logical_shape, &strides);
                 build_active_check(
                     b,
                     &coords,
@@ -545,7 +549,10 @@ fn lower_dyn_aggregate_all_generic(b: &mut IRBuilder, inputs: &DynAggAllInputs) 
                 )
             };
             let elem = values[i].clone();
-            let idx_val = b.ir_constant_int(i as i64);
+            let idx_val = match &c_order {
+                Some(c_strides) => c_order_position(b, &coords, c_strides),
+                None => b.ir_constant_int(i as i64),
+            };
             let (new_acc, new_idx) = mask_aware_agg_step(
                 b, &acc, &acc_idx, &elem, &idx_val, &is_active, &identity, agg, use_float,
             );
@@ -555,6 +562,29 @@ fn lower_dyn_aggregate_all_generic(b: &mut IRBuilder, inputs: &DynAggAllInputs) 
     }
 
     finalize_dyn_aggregate_all(b, agg, acc, acc_idx, buffer_size, data)
+}
+
+/// C-order strides over the runtime extents: `stride[k] = Π_{m > k} extent[m]`.
+fn c_order_strides(b: &mut IRBuilder, runtime_shape: &[ScalarValue<i64>]) -> Vec<Value> {
+    let mut strides = vec![b.ir_constant_int(1); runtime_shape.len()];
+    for k in (0..runtime_shape.len().saturating_sub(1)).rev() {
+        let extent = scalar_to_value_i(b, &runtime_shape[k + 1]);
+        strides[k] = b.ir_mul_i(&strides[k + 1], &extent);
+    }
+    strides
+}
+
+/// `Σ coords[k] · strides[k]` for constant coordinates.
+fn c_order_position(b: &mut IRBuilder, coords: &[usize], strides: &[Value]) -> Value {
+    let mut position = b.ir_constant_int(0);
+    for (&c, stride) in coords.iter().zip(strides) {
+        if c != 0 {
+            let coord = b.ir_constant_int(c as i64);
+            let term = b.ir_mul_i(&coord, stride);
+            position = b.ir_add_i(&position, &term);
+        }
+    }
+    position
 }
 
 /// Shared finalization for the full (axis=None) reduction: select the

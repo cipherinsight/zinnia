@@ -292,6 +292,11 @@ impl Halo2BaseSynthesizer<'_> {
         if self.proven_range(x).is_some_and(|r| r.within(&domain)) {
             return Ok(());
         }
+        // A bound `x < hi` the circuit asserts anyway (see `plan.rs`), emitted
+        // here: it proves `x` in `[0, hi)`, inside the domain, more cheaply.
+        if let Some(hi) = self.planned_bound(x).filter(|hi| Interval::new(0, hi - 1).is_some_and(|r| r.within(&domain))) {
+            return self.assert_less(x, Operand::Constant(hi));
+        }
         if domain == Interval::UNSIGNED64 {
             self.range_check(x, 64);
         } else if domain == Interval::SIGNED64 {
@@ -305,6 +310,13 @@ impl Halo2BaseSynthesizer<'_> {
         }
         self.prove_range(x, domain);
         Ok(())
+    }
+
+    /// The constant bound `hi` of an `AssertU128Lt(x, hi)` statement of the
+    /// circuit on `x`'s IR value, if there is one.
+    fn planned_bound(&self, x: &Halo2BaseCell) -> Option<i128> {
+        let vid = self.vid_of_cell.get(&x.id)?;
+        self.plan.bounds.get(vid).copied()
     }
 
     /// Constrain a hinted quotient `q` so that its division identity holds
@@ -401,7 +413,7 @@ impl Halo2BaseSynthesizer<'_> {
             if let Some(sign) = self.sign_bits.get(&x.id) {
                 return Ok(*sign);
             }
-            if self.proven_range(&x).is_none_or(|r| !r.within(&Interval::SIGNED64)) {
+            if self.proven_range(&x).is_none_or(|r| !r.within(&Interval::SIGNED64)) && self.planned_bound(&x).is_none() {
                 return self.sign_test(&x);
             }
         }
@@ -449,6 +461,62 @@ impl Halo2BaseSynthesizer<'_> {
         self.range_check(&t, n);
         self.record_comparison(&s, a, b);
         Ok(s)
+    }
+
+    /// `a < b` (`strict`) or `a <= b` as an assertion, for a comparison
+    /// whose only use is `Assert` (see `plan.rs`): the operands are
+    /// constrained into the signed 64-bit window, then the gap
+    /// `g = b - a - [strict]` is range-checked to `[0, 2^n)`, `2^n` above the
+    /// largest gap the operands' proven ranges allow. Returns the constant
+    /// `true`, which the `Assert` then pins at no cost.
+    ///
+    /// Soundness: both operands lie in the window, so the gap is an integer
+    /// in `(-2^65, 2^65)`; a negative one is the field element `p - |g|`,
+    /// far above `2^n`, and fails the check. The relation therefore holds for
+    /// every accepted witness, which is what `Assert(a < b)` states. A gap the
+    /// ranges already prove non-negative needs no check.
+    pub(super) fn assert_relation(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell, strict: bool) -> Result<Halo2BaseCell, ProvingError> {
+        let (a, b) = (self.operand(a), self.operand(b));
+        self.ensure_operand_within(&a, Interval::SIGNED64)?;
+        self.ensure_operand_within(&b, Interval::SIGNED64)?;
+        let (ra, rb) = match (self.operand_range(&a), self.operand_range(&b)) {
+            (Some(ra), Some(rb)) => (ra, rb),
+            _ => return Err(ProvingError::synthesis("comparison operand without a proven range")),
+        };
+        let slack = i128::from(strict);
+        let gap_range = rb.sub(&ra).and_then(|g| g.offset(-slack)).ok_or_else(|| ProvingError::synthesis("comparison range overflow"))?;
+        let gap_value = b.value() - a.value() - kernel::i128_to_fp(slack);
+        if kernel::fp_to_i128(gap_value).is_none_or(|g| g < 0) {
+            self.note_unsat(|| "Witness does not satisfy circuit constraints: an asserted comparison is false".to_string());
+        }
+        if gap_range.lo < 0 {
+            let gap = match (a, b, slack) {
+                (Operand::Cell(x), Operand::Constant(0), 0) => self.negate(&x),
+                (Operand::Constant(0), Operand::Cell(y), 0) => y,
+                (Operand::Cell(x), Operand::Cell(y), 0) => self.difference(&y, &x),
+                _ => self.gate_cell(gap_value, |gate, ctx| {
+                    let diff = gate.sub(ctx, b.quantum(), a.quantum());
+                    gate.sub(ctx, diff, QuantumCell::Constant(kernel::i128_to_fp(slack)))
+                }),
+            };
+            let width = self.lookup_aligned(bits_above(gap_range.hi).max(1));
+            self.range_check(&gap, width);
+        }
+        // a < b (or <=) now holds: narrow a cell compared with a constant.
+        match (a, b) {
+            (Operand::Cell(x), Operand::Constant(c)) => {
+                if let Some(r) = self.proven_range(&x).and_then(|r| Interval::new(r.lo, r.hi.min(c - slack))) {
+                    self.prove_range(&x, r);
+                }
+            }
+            (Operand::Constant(c), Operand::Cell(y)) => {
+                if let Some(r) = self.proven_range(&y).and_then(|r| Interval::new(r.lo.max(c + slack), r.hi)) {
+                    self.prove_range(&y, r);
+                }
+            }
+            _ => {}
+        }
+        self.constant_bool(true)
     }
 
     /// `[x < 0]` for an `x` not yet known to lie in the signed 64-bit

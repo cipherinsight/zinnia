@@ -539,6 +539,43 @@ fn proven_ranges_narrow_comparisons() {
     assert!(outcome.accepted && outcome.outputs == vec![Fp::one()] && outcome.hints == 0);
 }
 
+/// The input-domain check the frontend emits per input element
+/// (`assert x >= i64::MIN; assert x <= i64::MAX`) is one 64-bit window
+/// check: the comparisons are decided by the window, so their negations and
+/// the asserted constants cost no gates, and each constant is loaded once.
+/// Values outside the window have no witness.
+#[test]
+fn input_domain_checks_are_one_window_check() {
+    let domain_check: Box<Op> = Box::new(|s, c| {
+        let (lo, hi) = (s.constant_int(i64::MIN)?, s.constant_int(i64::MAX)?);
+        for x in c {
+            let above = s.gte_i(x, &lo)?;
+            s.assert_true(&above)?;
+            let below = s.lte_i(x, &hi)?;
+            s.assert_true(&below)?;
+        }
+        Ok(vec![])
+    });
+    for x in [0i64, -1, i64::MIN, i64::MAX] {
+        let outcome = synthesize(&*domain_check, &[int(x)], &[]);
+        assert!(outcome.accepted && outcome.hints == 0, "{x} rejected");
+    }
+    for outside in [kernel::i128_to_fp(1i128 << 63), kernel::i128_to_fp(-(1i128 << 63) - 1), kernel::i128_to_fp(1i128 << 70)] {
+        assert!(!synthesize(&*domain_check, &[outside], &[]).accepted);
+    }
+    let window: Box<Op> = Box::new(|s, c| {
+        s.ensure_signed64(&c[0])?;
+        Ok(vec![])
+    });
+    let (one_advice, one_lookup) = cells_of(&*domain_check, &[int(5)]);
+    let (two_advice, two_lookup) = cells_of(&*domain_check, &[int(5), int(6)]);
+    let (window_advice, window_lookup) = cells_of(&*window, &[int(5)]);
+    // Per element: the window check alone (the 4 cells of the first element
+    // are the two loaded bounds and the two shared truth constants).
+    assert_eq!((two_advice - one_advice, two_lookup - one_lookup), (window_advice, window_lookup));
+    assert_eq!(one_advice, window_advice + 4);
+}
+
 #[test]
 fn unsigned_bound_assertion_is_exact() {
     for bound in [8i64, 101, 1 << 20] {
@@ -587,6 +624,33 @@ fn compare_exchange_shares_the_difference() {
     let shared_cost = cells_of(&*exchange, &[int(3), int(5)]).0;
     let separate_cost = cells_of(&*separate, &[int(3), int(5), int(0)]).0;
     assert!(shared_cost + 8 <= separate_cost, "shared {shared_cost}, separate {separate_cost}");
+}
+
+/// `select(c, x + y, x)` (a masked increment) needs no difference gate:
+/// the sum's difference from its summand is the other summand, so the select
+/// is one gate `x + c·y`; likewise `select(c, x - y, x)` uses `y`. Pinned by
+/// the comparison bit as any select.
+#[test]
+fn selects_of_a_sum_and_its_summand_are_one_gate() {
+    let increment: Box<Op> = Box::new(|s, c| {
+        let below = s.lt_i(&c[0], &c[1])?;
+        let sum = s.add_i(&c[0], &c[2])?;
+        let difference = s.sub_i(&c[0], &c[2])?;
+        Ok(vec![s.select(&below, &sum, &c[0])?, s.select(&below, &difference, &c[0])?])
+    });
+    for (x, t, y) in [(3i64, 5i64, 7i64), (5, 3, 7), (-2, -2, 1)] {
+        let below = x < t;
+        let expected = [int(if below { x + y } else { x }), int(if below { x - y } else { x })];
+        assert_sound(&format!("masked step {x} {t} {y}"), &*increment, &[int(x), int(t), int(y)], &expected, &[]);
+    }
+    let plain: Box<Op> = Box::new(|s, c| {
+        let below = s.lt_i(&c[0], &c[1])?;
+        let sum = s.add_i(&c[0], &c[2])?;
+        let difference = s.sub_i(&c[0], &c[2])?;
+        Ok(vec![sum, difference, below])
+    });
+    let (with_selects, without) = (cells_of(&*increment, &[int(1), int(2), int(3)]).0, cells_of(&*plain, &[int(1), int(2), int(3)]).0);
+    assert_eq!(with_selects, without + 2 * 4, "two selects, one gate each");
 }
 
 /// A select between bits is a bit, and a two-valued cell's truth value is
@@ -828,6 +892,49 @@ fn dynamic_read_selects_the_addressed_slot() {
     assert!(!synthesize(&*op, &[int(-1)], &[]).accepted);
 }
 
+/// A scatter `b[i, idx_i] = 1` into a 3x3 zero matrix, with each `idx_i`
+/// asserted below 3, then every cell read back: a read of row `r` only
+/// compares its address with the write of row `r` (the other writes' proven
+/// address ranges exclude it), and the result is NumPy's one-hot matrix.
+#[test]
+fn overlay_skips_writes_whose_addresses_cannot_reach_the_read() {
+    let scatter: Box<Op> = Box::new(|s, c| {
+        s.allocate_memory(1, 9, 0)?;
+        let (one, three) = (s.constant_int(1)?, s.constant_int(3)?);
+        for (row, idx) in c.iter().enumerate() {
+            s.assert_u128_lt(idx, &three)?;
+            let base = s.constant_int(3 * row as i64)?;
+            let addr = s.add_i(&base, idx)?;
+            s.write_memory(1, &addr, &one)?;
+        }
+        (0..9).map(|k| {
+            let addr = s.constant_int(k)?;
+            s.read_memory(1, &addr)
+        }).collect()
+    });
+    for idx in [[0i64, 2, 1], [1, 1, 1], [2, 0, 0]] {
+        let expected: Vec<Fp> = (0..9).map(|k| int((idx[(k / 3) as usize] == k % 3) as i64)).collect();
+        let inputs: Vec<Fp> = idx.iter().map(|v| int(*v)).collect();
+        assert_sound(&format!("one-hot {idx:?}"), &*scatter, &inputs, &expected, &[]);
+    }
+    assert!(!synthesize(&*scatter, &[int(3), int(0), int(0)], &[]).accepted, "index 3 accepted");
+    // 9 reads, each comparing with one write: 9 equality tests, not 27.
+    let one_row: Box<Op> = Box::new(|s, c| {
+        s.allocate_memory(1, 9, 0)?;
+        let (one, three) = (s.constant_int(1)?, s.constant_int(3)?);
+        s.assert_u128_lt(&c[0], &three)?;
+        s.write_memory(1, &c[0], &one)?;
+        (0..3).map(|k| {
+            let addr = s.constant_int(k)?;
+            s.read_memory(1, &addr)
+        }).collect()
+    });
+    let (rows, _) = cells_of(&*scatter, &[int(0), int(0), int(0)]);
+    let (row, _) = cells_of(&*one_row, &[int(0)]);
+    // (Comparing every read with every write would cost about 9x one row.)
+    assert!(rows < 4 * row, "three rows {rows} cells, one row {row}");
+}
+
 /// Reads after many runtime-address writes cost one address comparison per
 /// pending write; past the budget synthesis stops with an error naming the
 /// construct (a 20,000 x 20,000 scatter exhausted 16 GB before).
@@ -1041,4 +1148,328 @@ fn branch_attack_on_arcsin() {
     // kernel's principal value.
     let new = unary(|s, a| s.arcsin_f(a));
     assert_eq!(synthesize(&*new, &[q(0.5)], &[]).outputs, vec![y]);
+}
+
+// ── Whole-graph plans: planned bounds, fused sums of products ──────────
+
+mod graphs {
+    use super::*;
+    use crate::circuit_input::{InputNode, InputParam};
+    use crate::ir::{IRGraph, IRStatement};
+    use crate::ir_defs::IR;
+    use crate::prove::interpreter::interpret_ir;
+    use crate::types::ValueId;
+
+    /// Small IR graph builder: statement ids are indices.
+    #[derive(Default)]
+    pub(super) struct Graph {
+        stmts: Vec<IRStatement>,
+        vids: Vec<ValueId>,
+    }
+
+    impl Graph {
+        pub fn push(&mut self, ir: IR, args: &[u32]) -> u32 {
+            let id = self.stmts.len() as u32;
+            let vid = ValueId::next();
+            let arg_values = args.iter().map(|a| self.vids[*a as usize]).collect();
+            self.stmts.push(IRStatement::new(id, vid, ir, args.to_vec(), arg_values, None));
+            self.vids.push(vid);
+            id
+        }
+
+        pub fn read(&mut self, name: &str) -> u32 {
+            self.push(IR::ReadInteger { path: InputPath::new(name, vec![]), is_public: false }, &[])
+        }
+
+        pub fn int(&mut self, value: i64) -> u32 {
+            self.push(IR::ConstantInt { value }, &[])
+        }
+
+        /// The frontend's input-domain check of an int64 input.
+        pub fn domain_check(&mut self, x: u32) {
+            let (lo, hi) = (self.int(i64::MIN), self.int(i64::MAX));
+            let above = self.push(IR::GteI, &[x, lo]);
+            self.push(IR::Assert, &[above]);
+            let below = self.push(IR::LteI, &[x, hi]);
+            self.push(IR::Assert, &[below]);
+        }
+
+        pub fn finish(self) -> IRGraph {
+            IRGraph::new(self.stmts)
+        }
+    }
+
+    pub(super) struct Run {
+        pub outputs: Vec<Fp>,
+        pub accepted: bool,
+        pub advice: usize,
+    }
+
+    /// Synthesize `ir` (with its plan) on the integer inputs `ints` and run
+    /// the MockProver against `claimed` public values (the synthesized
+    /// outputs when `None`).
+    pub(super) fn run(ir: &IRGraph, ints: &[(&str, i64)], claimed: Option<Vec<Fp>>) -> Run {
+        let mut inputs = CircuitInputs::new();
+        for (name, value) in ints {
+            inputs.params.push(InputParam {
+                name: name.to_string(),
+                is_public: false,
+                dtype: serde_json::Value::Null,
+                value: InputNode::Int(*value),
+            });
+        }
+        let mut builder = BaseCircuitBuilder::<Fp>::from_stage(CircuitBuilderStage::Mock);
+        builder.set_k(K as usize);
+        builder.set_lookup_bits(LOOKUP_BITS as usize);
+        builder.set_instance_columns(1);
+        let params = ProvingParams { k: K, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
+        let outputs = {
+            let witness = ResolvedWitness::new(inputs, PRECISION_BITS);
+            let mut synth = Halo2BaseSynthesizer::new(&mut builder, Some(witness), params, &ir.provenance);
+            synth.plan_ahead(ir);
+            interpret_ir(ir, &mut synth).expect("synthesis failed");
+            synth.public_values().to_vec()
+        };
+        let advice = builder.statistics().gate.total_advice_per_phase[0];
+        builder.calculate_params(Some(20));
+        let instance = claimed.unwrap_or_else(|| outputs.clone());
+        let accepted = MockProver::run(K, &builder, vec![instance]).expect("MockProver::run").verify().is_ok();
+        Run { outputs, accepted, advice }
+    }
+}
+
+/// An input that the circuit also bounds with `AssertU128Lt(x, 8)` (an
+/// index) gets that bound check in place of its 64-bit window check: the
+/// domain checks then cost nothing, and values outside `[0, 8)` (including
+/// ones outside the int64 window) have no witness.
+#[test]
+fn domain_checks_of_bounded_inputs_use_the_bound() {
+    use crate::ir_defs::IR;
+    use graphs::*;
+    let build = |with_domain_check: bool| {
+        let mut g = Graph::default();
+        let x = g.read("x");
+        if with_domain_check {
+            g.domain_check(x);
+        }
+        let eight = g.int(8);
+        g.push(IR::AssertU128Lt, &[x, eight]);
+        g.push(IR::ExposePublicI, &[x]);
+        g.finish()
+    };
+    let (checked, bare) = (build(true), build(false));
+    for x in [0i64, 7] {
+        let outcome = run(&checked, &[("x", x)], None);
+        assert!(outcome.accepted && outcome.outputs == vec![int(x)], "{x} rejected");
+    }
+    for x in [8i64, -1, i64::MAX, i64::MIN] {
+        assert!(!run(&checked, &[("x", x)], None).accepted, "{x} accepted");
+    }
+    // The two loaded bounds and the constant `true` the asserted
+    // comparisons decide to.
+    assert_eq!(run(&checked, &[("x", 3)], None).advice, run(&bare, &[("x", 3)], None).advice + 3);
+}
+
+/// `acc + a·b` and `acc - a·b` with a product used only there are one gate
+/// (no product cell); a chain of them shares the accumulator cell between
+/// gates (three cells per term). The outputs equal the integer arithmetic,
+/// a wrong claimed output is rejected, and a product used twice is still a
+/// cell of its own.
+#[test]
+fn sums_of_products_fuse_into_one_gate_per_term() {
+    use crate::ir_defs::IR;
+    use graphs::*;
+    let dot = |terms: usize| {
+        let mut g = Graph::default();
+        let reads: Vec<(u32, u32)> = (0..terms).map(|i| (g.read(&format!("a{i}")), g.read(&format!("b{i}")))).collect();
+        let mut acc = g.push(IR::MulI, &[reads[0].0, reads[0].1]);
+        for (a, b) in &reads[1..] {
+            let product = g.push(IR::MulI, &[*a, *b]);
+            acc = g.push(IR::AddI, &[acc, product]);
+        }
+        let (c, d) = (g.read("c"), g.read("d"));
+        let product = g.push(IR::MulI, &[c, d]);
+        let diff = g.push(IR::SubI, &[acc, product]);
+        g.push(IR::ExposePublicI, &[diff]);
+        g.finish()
+    };
+    let values = |terms: usize| -> Vec<(String, i64)> {
+        let mut v: Vec<(String, i64)> = (0..terms).flat_map(|i| [(format!("a{i}"), 3 + i as i64), (format!("b{i}"), -5 + 2 * i as i64)]).collect();
+        v.push(("c".to_string(), 7));
+        v.push(("d".to_string(), -2));
+        v
+    };
+    let expected = |terms: usize| -> i64 { (0..terms as i64).map(|i| (3 + i) * (-5 + 2 * i)).sum::<i64>() + 14 };
+    for terms in [2usize, 3, 4] {
+        let ir = dot(terms);
+        let named = values(terms);
+        let ints: Vec<(&str, i64)> = named.iter().map(|(n, v)| (n.as_str(), *v)).collect();
+        let honest = run(&ir, &ints, None);
+        assert!(honest.accepted && honest.outputs == vec![int(expected(terms))], "{terms} terms");
+        assert!(!run(&ir, &ints, Some(vec![int(expected(terms) + 1)])).accepted, "{terms} terms: wrong sum accepted");
+    }
+    let cells = |terms: usize| {
+        let named = values(terms);
+        let ints: Vec<(&str, i64)> = named.iter().map(|(n, v)| (n.as_str(), *v)).collect();
+        run(&dot(terms), &ints, None).advice
+    };
+    // One more term: two loaded inputs and three cells of the chained gate.
+    assert_eq!(cells(4) - cells(3), 2 + 3);
+
+    // A product read twice keeps its own cell and both uses see it.
+    let mut g = Graph::default();
+    let (a, b, c) = (g.read("a"), g.read("b"), g.read("c"));
+    let product = g.push(IR::MulI, &[a, b]);
+    let sum = g.push(IR::AddI, &[c, product]);
+    let twice = g.push(IR::AddI, &[sum, product]);
+    g.push(IR::ExposePublicI, &[twice]);
+    let ir = g.finish();
+    let outcome = run(&ir, &[("a", 4), ("b", 5), ("c", 1)], None);
+    assert!(outcome.accepted && outcome.outputs == vec![int(41)]);
+}
+
+/// A comparison whose only use is `Assert` is one range check of its gap
+/// (no result bit, no negation): accepted exactly where the relation holds,
+/// for constants on either side, strict and non-strict, and two cells.
+#[test]
+fn asserted_comparisons_check_their_gap() {
+    use crate::ir_defs::IR;
+    use graphs::*;
+    let asserted = |op: IR, constant: Option<(i64, bool)>| {
+        let mut g = Graph::default();
+        let x = g.read("x");
+        g.domain_check(x);
+        let (lhs, rhs) = match constant {
+            Some((c, on_left)) => {
+                let c = g.int(c);
+                if on_left { (c, x) } else { (x, c) }
+            }
+            None => (x, g.read("y")),
+        };
+        let relation = g.push(op, &[lhs, rhs]);
+        g.push(IR::Assert, &[relation]);
+        g.push(IR::ExposePublicI, &[x]);
+        g.finish()
+    };
+    type Case = (IR, Option<(i64, bool)>, fn(i64, i64) -> bool);
+    let cases: Vec<Case> = vec![
+        (IR::GteI, Some((0, false)), |x, _| x >= 0),
+        (IR::GtI, Some((3, false)), |x, _| x > 3),
+        (IR::LtI, Some((3, true)), |x, _| 3 < x),
+        (IR::LteF, Some((-2, false)), |x, _| x <= -2),
+        (IR::LtI, None, |x, y| x < y),
+        (IR::GteF, None, |x, y| x >= y),
+    ];
+    for (op, constant, holds) in cases {
+        let ir = asserted(op.clone(), constant);
+        for (x, y) in [(-3i64, 4i64), (-2, -2), (0, -1), (3, 3), (4, 9), (i64::MAX, i64::MIN), (i64::MIN, i64::MAX)] {
+            let accepted = run(&ir, &[("x", x), ("y", y)], None).accepted;
+            assert_eq!(accepted, holds(x, y), "{op:?} {constant:?} at x = {x}, y = {y}");
+        }
+    }
+    // `x >= 0` on a value in the window is one 64-bit check of x itself.
+    let (with, without) = (asserted(IR::GteI, Some((0, false))), {
+        let mut g = Graph::default();
+        let x = g.read("x");
+        g.domain_check(x);
+        g.push(IR::ExposePublicI, &[x]);
+        g.finish()
+    });
+    let extra = run(&with, &[("x", 5)], None).advice - run(&without, &[("x", 5)], None).advice;
+    assert!(extra <= 1 + 3 * 8 - 2, "asserted x >= 0 costs {extra} cells");
+}
+
+/// Synthesize `op` honestly but check the circuit against `claimed` public
+/// values: a wrong claim must be rejected.
+fn accepts_claim(op: &Op, inputs: &[Fp], claimed: &[Fp]) -> bool {
+    let mut builder = BaseCircuitBuilder::<Fp>::from_stage(CircuitBuilderStage::Mock);
+    builder.set_k(K as usize);
+    builder.set_lookup_bits(LOOKUP_BITS as usize);
+    builder.set_instance_columns(1);
+    let provenance = ProvenanceTable::new();
+    let params = ProvingParams { k: K, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
+    let witness = ResolvedWitness::new(CircuitInputs::new(), PRECISION_BITS);
+    {
+        let mut synth = Halo2BaseSynthesizer::new(&mut builder, Some(witness), params, &provenance);
+        let cells: Vec<Halo2BaseCell> = inputs.iter().map(|v| synth.cell(*v)).collect();
+        for out in op(&mut synth, &cells).expect("synthesis failed") {
+            synth.expose_public(&out, "out").unwrap();
+        }
+    }
+    builder.calculate_params(Some(20));
+    MockProver::run(K, &builder, vec![claimed.to_vec()]).expect("MockProver::run").verify().is_ok()
+}
+
+/// `[a == b]` by the seven-cell zero test of `a - b` (of `a` itself against
+/// the constant 0): the honest bit is accepted, the other one rejected.
+#[test]
+fn equality_tests_are_pinned() {
+    let eq = binary(|s, a, b| s.eq_i(a, b));
+    let eq_zero = with_constant_rhs(|s, a, b| s.eq_i(a, b), int(0));
+    for (a, b) in [(3i64, 3i64), (3, 4), (-1, -1), (0, 0), (i64::MIN, i64::MAX), (0, 1)] {
+        let honest = synthesize(&*eq, &[int(a), int(b)], &[]);
+        assert!(honest.accepted && honest.outputs == vec![bit(a == b)], "{a} == {b}");
+        assert!(!accepts_claim(&*eq, &[int(a), int(b)], &[bit(a != b)]), "{a} == {b}: flipped bit accepted");
+        let honest = synthesize(&*eq_zero, &[int(a)], &[]);
+        assert!(honest.accepted && honest.outputs == vec![bit(a == 0)], "{a} == 0");
+        assert!(!accepts_claim(&*eq_zero, &[int(a)], &[bit(a != 0)]), "{a} == 0: flipped bit accepted");
+    }
+    let (with_zero, general) = (cells_of(&*eq_zero, &[int(5)]).0, cells_of(&*eq, &[int(5), int(6)]).0);
+    assert!(with_zero + 4 <= general, "x == 0 costs {with_zero}, a == b {general}");
+    // `!=` and truthiness by the eight-cell non-zero test.
+    let ne = binary(|s, a, b| s.ne_i(a, b));
+    let truth = unary(|s, a| s.bool_cast(a));
+    for (a, b) in [(3i64, 3i64), (3, 4), (0, 0), (i64::MIN, i64::MAX)] {
+        let honest = synthesize(&*ne, &[int(a), int(b)], &[]);
+        assert!(honest.accepted && honest.outputs == vec![bit(a != b)], "{a} != {b}");
+        assert!(!accepts_claim(&*ne, &[int(a), int(b)], &[bit(a == b)]), "{a} != {b}: flipped bit accepted");
+        let honest = synthesize(&*truth, &[int(a)], &[]);
+        assert!(honest.accepted && honest.outputs == vec![bit(a != 0)], "bool({a})");
+        assert!(!accepts_claim(&*truth, &[int(a)], &[bit(a == 0)]), "bool({a}): flipped bit accepted");
+    }
+    // One cell more than `==` (eight-cell test against seven), not the four
+    // of a negation gate.
+    assert!(cells_of(&*ne, &[int(5), int(6)]).0 <= general + 1, "a != b costs more than a == b plus one");
+}
+
+/// An asserted `x != 0` is the pinned inverse `x·inv = 1`; division by a
+/// divisor so asserted and proven non-negative needs neither the zero
+/// mapping nor a sign: the quotient equals the kernel's, every hint is
+/// pinned, and a zero divisor has no witness.
+#[test]
+fn divisions_by_asserted_nonzero_divisors_are_pinned() {
+    use crate::ir_defs::IR;
+    use graphs::*;
+    let mut g = Graph::default();
+    let (a, b) = (g.read("a"), g.read("b"));
+    g.domain_check(a);
+    g.domain_check(b);
+    let zero = g.int(0);
+    let non_negative = g.push(IR::GteI, &[b, zero]);
+    g.push(IR::Assert, &[non_negative]);
+    let nonzero = g.push(IR::NeI, &[b, zero]);
+    g.push(IR::Assert, &[nonzero]);
+    let quotient = g.push(IR::FloorDivI, &[a, b]);
+    let remainder = g.push(IR::ModI, &[a, b]);
+    g.push(IR::ExposePublicI, &[quotient]);
+    g.push(IR::ExposePublicI, &[remainder]);
+    let ir = g.finish();
+    for (x, y) in [(7i64, 2i64), (-7, 2), (0, 5), (i64::MAX, 3), (i64::MIN, 7)] {
+        let (q, r) = kernel::fp_floor_div(int(x), int(y));
+        let honest = run(&ir, &[("a", x), ("b", y)], None);
+        assert!(honest.accepted && honest.outputs == vec![q, r], "{x} // {y}");
+        assert!(!run(&ir, &[("a", x), ("b", y)], Some(vec![q + Fp::one(), r - int(y)])).accepted, "{x} // {y}: shifted quotient accepted");
+    }
+    assert!(!run(&ir, &[("a", 7), ("b", 0)], None).accepted, "division by zero accepted");
+    assert!(!run(&ir, &[("a", 7), ("b", -2)], None).accepted, "negative divisor accepted");
+    // The asserted inverse is pinned: perturbing it is rejected.
+    let distinct: Box<Op> = Box::new(|s, c| {
+        s.plan.asserted_comparisons.insert(s.current_stmt);
+        let zero = s.constant_int(0)?;
+        Ok(vec![s.ne_i(&c[0], &zero)?])
+    });
+    for x in [1i64, -5, i64::MAX] {
+        assert_sound(&format!("assert {x} != 0"), &*distinct, &[int(x)], &[Fp::one()], &[]);
+    }
+    assert!(!synthesize(&*distinct, &[int(0)], &[]).accepted, "0 != 0 accepted");
 }

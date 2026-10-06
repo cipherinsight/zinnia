@@ -10,6 +10,7 @@ mod dyn_ndarray_meta_assert;
 mod external_call_remover;
 mod memory_trace_injection;
 mod pattern_match_optim;
+mod select_chain_forwarding;
 pub mod predicates;
 pub mod prove;
 pub mod range;
@@ -34,6 +35,7 @@ pub use dyn_ndarray_meta_assert::DynamicNDArrayMetaAssertInjection;
 pub use external_call_remover::ExternalCallRemover;
 pub use memory_trace_injection::MemoryTraceInjection;
 pub use pattern_match_optim::PatternMatchOptim;
+pub use select_chain_forwarding::SelectChainForwarding;
 pub use range::{IntInterval, RangeResolver};
 pub use resolver::{
     require_provable_static_int, require_static_int, require_static_or_bounded_int,

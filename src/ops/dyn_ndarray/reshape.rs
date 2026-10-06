@@ -676,6 +676,9 @@ fn dyn_reshape_runtime(
     // padded-prefix source instead keeps its envelope prefix strides
     // (see padded_prefix_view).
     let padded = padded_prefix_view(b, data, &shape_values);
+    if padded.is_none() && super::padded_with_holes(data) {
+        super::refuse_padded_with_holes("reshape");
+    }
     let (rt_strides, runtime_length) = match &padded {
         Some((strides, length, _)) => (strides.clone(), length.clone()),
         None => {
@@ -775,6 +778,10 @@ pub fn dyn_reshape(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value])
         return dyn_reshape_runtime_infer_unknown(b, data, &dim_args, old_total);
     }
 
+    // The static-shape path reuses the buffer as a C-order sequence.
+    if super::padded_with_holes(data) {
+        super::refuse_padded_with_holes("reshape");
+    }
     let raw_shape: Vec<i64> = dim_args
         .iter()
         .map(|v| require_provable_static_int(b, v, SiteKind::ReshapeDim))
@@ -1078,6 +1085,9 @@ fn dyn_reshape_runtime_infer_unknown(
     // keeps its envelope prefix strides (padded_prefix_view).
     let n_dims_total = shape_values.len();
     let padded = padded_prefix_view(b, data, &shape_values);
+    if padded.is_none() && super::padded_with_holes(data) {
+        super::refuse_padded_with_holes("reshape");
+    }
     let (rt_strides, runtime_length) = match &padded {
         Some((strides, length, _)) => (strides.clone(), length.clone()),
         None => {

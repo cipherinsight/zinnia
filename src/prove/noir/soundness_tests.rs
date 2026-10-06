@@ -383,6 +383,94 @@ fn domain_checks_implied_by_a_bounds_check_are_dropped() {
     assert_rejected(execute(&graph, &raw_witness(&[("x", "0x8000000000000000")])));
 }
 
+/// `np.sqrt(x)` as the builder emits it: the precondition `x >= 0`
+/// (asserted) before the root. The root then takes `x` as its own magnitude
+/// (no `sign_abs`); it equals the mock's floor root, and a negative `x` is
+/// rejected by the precondition's check.
+#[test]
+fn sqrt_of_an_asserted_non_negative_needs_no_sign() {
+    if !toolchain_present(false) {
+        return;
+    }
+    let mut g = Graph::default();
+    let x = g.push(IR::ReadFloat { path: InputPath::new("x", vec![]), is_public: false }, &[]);
+    let zero = g.push(IR::ConstantFloat { value: 0.0 }, &[]);
+    let non_negative = g.push(IR::GteF, &[x, zero]);
+    g.push(IR::Assert, &[non_negative]);
+    let root = g.push(IR::SqrtF, &[x]);
+    g.push(IR::ExposePublicF, &[root]);
+    let graph = g.finish();
+    let honest = float_witness(&[], &[("x", 2.0)]);
+    let emitted = emit_circuit(&graph, &honest, &ProvingParams::default()).unwrap();
+    assert!(emitted.main_nr.contains("qsqrt_of(false,") && !emitted.main_nr.contains("sign_abs("), "{}", emitted.main_nr);
+    for value in [2.0, 0.0, 1e-9, 1.5e9] {
+        let w = float_witness(&[], &[("x", value)]);
+        assert_eq!(execute(&graph, &w).unwrap(), mock_outputs(&graph, &w).1, "sqrt({value})");
+    }
+    assert_rejected(execute(&graph, &float_witness(&[], &[("x", -1.0)])));
+    assert_rejected(execute(&graph, &float_witness(&[], &[("x", -1e-9)])));
+}
+
+/// `x / d` as the builder emits it: the precondition `d != 0` asserted
+/// first. The assertion is `assert(d != 0)`; the division then uses `d`'s
+/// `sign_abs` pair without the zero-divisor mapping, one pair for every
+/// division by `d`. Results equal the mock; `d = 0` is rejected.
+#[test]
+fn divisions_by_an_asserted_nonzero_divisor_share_its_sign() {
+    if !toolchain_present(false) {
+        return;
+    }
+    let mut g = Graph::default();
+    let x = g.push(IR::ReadFloat { path: InputPath::new("x", vec![]), is_public: false }, &[]);
+    let d = g.push(IR::ReadFloat { path: InputPath::new("d", vec![]), is_public: false }, &[]);
+    let zero = g.push(IR::ConstantFloat { value: 0.0 }, &[]);
+    let nonzero = g.push(IR::NeF, &[d, zero]);
+    g.push(IR::Assert, &[nonzero]);
+    let first = g.push(IR::DivF, &[x, d]);
+    let second = g.push(IR::DivF, &[d, d]);
+    let third = g.push(IR::FloorDivF, &[x, d]);
+    for out in [first, second, third] {
+        g.push(IR::ExposePublicF, &[out]);
+    }
+    let graph = g.finish();
+    let honest = float_witness(&[], &[("x", 7.5), ("d", -2.0)]);
+    let emitted = emit_circuit(&graph, &honest, &ProvingParams::default()).unwrap();
+    let main = &emitted.main_nr;
+    assert!(main.contains("assert(") && main.contains("qdiv_nonzero_of") && !main.contains("qdiv("), "{main}");
+    assert_eq!(main.matches("sign_abs(").count(), 1, "{main}");
+    for (xv, dv) in [(7.5, -2.0), (-3.25, 0.5), (1e-6, 3.0)] {
+        let w = float_witness(&[], &[("x", xv), ("d", dv)]);
+        assert_eq!(execute(&graph, &w).unwrap(), mock_outputs(&graph, &w).1, "{xv} / {dv}");
+    }
+    assert_rejected(execute(&graph, &float_witness(&[], &[("x", 1.0), ("d", 0.0)])));
+}
+
+/// `select(c, x + 5.0, x)` (a masked increment) is emitted as
+/// `x + c * 5.0`-style single product (`f + c * (t - f)` with the
+/// difference known), and equals the mock for both outcomes.
+#[test]
+fn selects_of_a_sum_and_its_summand_are_one_product() {
+    if !toolchain_present(false) {
+        return;
+    }
+    let mut g = Graph::default();
+    let x = g.push(IR::ReadFloat { path: InputPath::new("x", vec![]), is_public: false }, &[]);
+    let t = g.push(IR::ReadFloat { path: InputPath::new("t", vec![]), is_public: false }, &[]);
+    let five = g.push(IR::ConstantFloat { value: 5.0 }, &[]);
+    let below = g.push(IR::LtF, &[x, t]);
+    let bumped = g.push(IR::AddF, &[x, five]);
+    let out = g.push(IR::SelectF, &[below, bumped, x]);
+    g.push(IR::ExposePublicF, &[out]);
+    let graph = g.finish();
+    let honest = float_witness(&[], &[("x", 1.5), ("t", 2.0)]);
+    let emitted = emit_circuit(&graph, &honest, &ProvingParams::default()).unwrap();
+    assert!(!emitted.main_nr.contains("(1 -"), "{}", emitted.main_nr);
+    for (xv, tv) in [(1.5, 2.0), (2.5, 2.0), (-3.0, -3.0)] {
+        let w = float_witness(&[], &[("x", xv), ("t", tv)]);
+        assert_eq!(execute(&graph, &w).unwrap(), mock_outputs(&graph, &w).1, "x = {xv}, t = {tv}");
+    }
+}
+
 /// M5: a dynamic-address write outside the segment used to update no slot
 /// and succeed; the mock rejects it.
 #[test]
