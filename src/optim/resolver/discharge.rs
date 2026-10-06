@@ -92,6 +92,11 @@ pub fn probe_in_range(b: &mut crate::builder::IRBuilder, idx: &Value, lo: i64, h
 /// as `[0, len + 1)`. `None` / `Value::None` bounds (open ends like
 /// `arr[:j]`) default to `0` or `len` and don't need a discharge.
 ///
+/// The check holds where the slice runs (see [`discharge_index_in_range`]).
+/// Slice reads clamp or mask their addresses, and the builder keeps a
+/// dynamic address in its segment where the code does not run
+/// (`IRBuilder::guard_address`), so the slice keeps using `bound` itself.
+///
 /// Used by the dynamic-slice helpers in `static_array_read` and
 /// `array_ops::indexing` to close the slice-OOB witness-miss gap
 /// (compiler.fuzz-finding-v2-slice-oob-witness-miss).
@@ -111,54 +116,63 @@ pub fn discharge_slice_bound(
 }
 
 /// Load-bearing Phase-E-style discharge of `lo <= idx < hi` at an
-/// indexing chokepoint (Group 5a).
+/// indexing chokepoint (Group 5a). Returns the index the access must use.
 ///
 /// Unlike [`probe_in_range`] (informational — records telemetry, returns
-/// a bool callers may ignore), this function *enforces* the bound:
+/// a bool callers may ignore), this function *enforces* the bound where
+/// the access runs, i.e. under the builder's execution predicate `p` (see
+/// `builder/guard.rs`; on code that runs on every path `p` is `true`):
 ///
 /// * **Literal idx in range**: no-op (cheap fast path).
-/// * **Literal idx out of range**: panic with a diagnostic naming `op_name`,
-///   the literal, and `[lo, hi)`.
-/// * **Non-literal idx with a `value_id`**: build the term
-///   `idx >= lo ∧ idx < hi` and discharge through
-///   [`crate::builder::IRBuilder::discharge_requires`] — Phase E policy
-///   handles Proved (no-op), Disproved (compile panic), and Unknown
-///   (witness emit by default, panic under `ZINNIA_OP_REQUIRES_STRICT=1`).
-/// * **Non-literal idx with no `value_id`**: nothing can be proved about
-///   it, so the bound is always checked in-circuit.
+/// * **Literal idx out of range**: a compile error naming `op_name`, the
+///   literal, and `[lo, hi)` on code that runs on every path; under a
+///   runtime `p`, Python raises wherever the access runs, so the circuit
+///   asserts `¬p` and the access uses `lo`.
+/// * **Non-literal idx**: no IR when `p` itself implies the bound (a loop
+///   item that exists only while `k < len`), else the term
+///   `idx >= lo ∧ idx < hi` is discharged against the facts — Proved:
+///   nothing; Disproved: as an out-of-range literal; Unknown: an
+///   in-circuit check, conditional on `p` (a compile error under
+///   `ZINNIA_OP_REQUIRES_STRICT=1`). Without a `value_id` nothing can be
+///   proved and the bound is always checked in-circuit.
 ///
-/// The action is purely a side effect; there is no return value.
+/// Under a runtime `p` the returned index is `select(p, idx, lo)` unless
+/// `idx` is in range on every path: every backend constrains a dynamic
+/// address to its segment, so where the code does not run the address
+/// built from the index must still be in range.
 pub fn discharge_index_in_range(
     b: &mut crate::builder::IRBuilder,
     idx: &Value,
     lo: i64,
     hi: i64,
     op_name: &'static str,
-) {
+) -> Value {
     use crate::optim::predicates::formula::{BoolOp, CmpOp, ContractTerm, ContractVar};
     use crate::optim::prove::ProveOutcome;
 
-    // Literal-index fast path: compile-time decidable, panic if out of
-    // range. This catches `arr[15]` on a length-10 array even when no
-    // resolver is engaged.
+    // Literal-index fast path: compile-time decidable. This catches
+    // `arr[15]` on a length-10 array even when no resolver is engaged.
     if let Some(n) = idx.int_val() {
-        if !(lo <= n && n < hi) {
-            panic!(
-                "op `{}`: index {} out of range [{}, {})",
-                op_name, n, lo, hi
-            );
+        if lo <= n && n < hi {
+            return idx.clone();
         }
-        return;
+        return index_never_valid(b, lo, hi, || {
+            format!("op `{}`: index {} out of range [{}, {})", op_name, n, lo, hi)
+        });
+    }
+
+    if b.execution_implies_index_in(idx, lo, hi) {
+        return b.index_in_range_everywhere(idx, lo, hi);
     }
 
     // Non-literal without a `value_id`: no fact can be anchored on it, so
     // nothing is provable; check it in-circuit. (No backend has a memory
     // permutation argument that would catch an out-of-range address.)
     let Some(idx_vid) = idx.value_id() else {
-        let lo_v = b.ir_constant_int(lo);
-        let hi_v = b.ir_constant_int(hi);
-        emit_index_bound_assert(b, idx, &lo_v, &hi_v);
-        return;
+        let guarded = b.index_in_range_everywhere(idx, lo, hi);
+        let (lo_v, hi_v) = (b.ir_constant_int(lo), b.ir_constant_int(hi));
+        emit_index_bound_assert(b, &guarded, &lo_v, &hi_v);
+        return guarded;
     };
 
     let term = ContractTerm::BoolComb {
@@ -179,11 +193,13 @@ pub fn discharge_index_in_range(
     match b.prove(&term) {
         ProveOutcome::Proved => {}
         ProveOutcome::Disproved => {
-            let value_ids = crate::optim::predicates::collect_value_ids(&term);
-            panic!(
-                "op `{op_name}` requires precondition disproved by visible facts: \
-                 term={term:?}, value_ids={value_ids:?}"
-            );
+            return index_never_valid(b, lo, hi, || {
+                let value_ids = crate::optim::predicates::collect_value_ids(&term);
+                format!(
+                    "op `{op_name}` requires precondition disproved by visible facts: \
+                     term={term:?}, value_ids={value_ids:?}"
+                )
+            });
         }
         ProveOutcome::Unknown => {
             // Fact-fallback: `b.prove()` can return Unknown when the fact's
@@ -192,62 +208,84 @@ pub fn discharge_index_in_range(
             // the pattern doesn't unify even though `len_vid` constant-folds
             // to `hi`. `ask_bounds` collapses the chain and gives concrete
             // (min, max). Mirrors the same fallback in `is_index_in_range`.
-            if let Some((min, max)) = b.ask_bounds(idx) {
-                if min >= lo && max < hi {
-                    return;
+            let bounded = b.ask_bounds(idx).is_some_and(|(min, max)| min >= lo && max < hi);
+            if !bounded {
+                if crate::builder::op_requires_strict() {
+                    let value_ids = crate::optim::predicates::collect_value_ids(&term);
+                    panic!(
+                        "op `{op_name}` requires precondition not provable from visible facts \
+                         (strict mode): term={term:?}, value_ids={value_ids:?}"
+                    );
                 }
+                let guarded = b.index_in_range_everywhere(idx, lo, hi);
+                let (lo_v, hi_v) = (b.ir_constant_int(lo), b.ir_constant_int(hi));
+                emit_index_bound_assert(b, &guarded, &lo_v, &hi_v);
+                return guarded;
             }
-            if crate::builder::op_requires_strict() {
-                let value_ids = crate::optim::predicates::collect_value_ids(&term);
-                panic!(
-                    "op `{op_name}` requires precondition not provable from visible facts \
-                     (strict mode): term={term:?}, value_ids={value_ids:?}"
-                );
-            }
-            let lo_v = b.ir_constant_int(lo);
-            let hi_v = b.ir_constant_int(hi);
-            emit_index_bound_assert(b, idx, &lo_v, &hi_v);
         }
     }
+    b.index_in_range_everywhere(idx, lo, hi)
+}
+
+/// An index that is out of `[lo, hi)` wherever the access runs. On code
+/// that runs on every path this is a compile error (`describe` gives the
+/// message). Under a runtime execution predicate the circuit asserts that
+/// the code does not run, and the access uses the in-range constant `lo`.
+fn index_never_valid(
+    b: &mut crate::builder::IRBuilder,
+    lo: i64,
+    hi: i64,
+    describe: impl FnOnce() -> String,
+) -> Value {
+    if lo < hi && b.assert_never_runs() {
+        return b.ir_constant_int(lo);
+    }
+    panic!("{}", describe());
 }
 
 /// Load-bearing discharge of `lo <= idx < hi`, where the upper bound is
 /// itself an SSA value. This is the dynamic-shape analogue of
-/// [`discharge_index_in_range`]: if the fact/prove layer can discharge the
-/// bound, no IR is emitted; otherwise lenient `discharge_requires` lowers the
-/// comparison to an `IR::Assert` so the backend enforces it at prove time.
+/// [`discharge_index_in_range`] (same policy under the execution
+/// predicate, same returned index): if the execution predicate or the
+/// fact/prove layer discharges the bound, no IR is emitted; otherwise the
+/// unproved half is checked in-circuit.
 pub fn discharge_index_below_value(
     b: &mut crate::builder::IRBuilder,
     idx: &Value,
     lo: i64,
     hi: &Value,
     op_name: &'static str,
-) {
+) -> Value {
     use crate::optim::predicates::formula::{BoolOp, CmpOp, ContractTerm, ContractVar};
     use crate::optim::prove::ProveOutcome;
 
     if let Some(hi_static) = hi.int_val() {
-        discharge_index_in_range(b, idx, lo, hi_static, op_name);
-        return;
+        return discharge_index_in_range(b, idx, lo, hi_static, op_name);
     }
 
-    // Without `value_id`s no fact can be anchored, so nothing is provable;
-    // check the bound in-circuit.
-    let lhs = match idx.value_id() {
-        Some(v) => ContractTerm::Var(ContractVar::Value(v)),
-        None => match idx.int_val() {
-            Some(n) => ContractTerm::LitInt(n),
-            None => {
-                let lo_v = b.ir_constant_int(lo);
-                emit_index_bound_assert(b, idx, &lo_v, hi);
-                return;
-            }
-        },
+    if b.execution_implies_index_below(idx, lo, hi) {
+        return b.guard_operand(idx, lo);
+    }
+
+    // A literal index enters the term as a literal, so a fact or path
+    // condition `k < hi` about the literal discharges it. Without
+    // `value_id`s no fact can be anchored, so nothing is provable; check
+    // the bound in-circuit.
+    let lhs = match (idx.int_val(), idx.value_id()) {
+        (Some(n), _) => ContractTerm::LitInt(n),
+        (None, Some(v)) => ContractTerm::Var(ContractVar::Value(v)),
+        (None, None) => {
+            let guarded = b.guard_operand(idx, lo);
+            let lo_v = b.ir_constant_int(lo);
+            emit_index_bound_assert(b, &guarded, &lo_v, hi);
+            return guarded;
+        }
     };
     let Some(hi_vid) = hi.value_id() else {
+        let guarded = b.guard_operand(idx, lo);
         let lo_v = b.ir_constant_int(lo);
-        emit_index_bound_assert(b, idx, &lo_v, hi);
-        return;
+        emit_index_bound_assert(b, &guarded, &lo_v, hi);
+        return guarded;
     };
 
     let lo_term = ContractTerm::Cmp {
@@ -264,6 +302,15 @@ pub fn discharge_index_below_value(
         op: BoolOp::And,
         operands: vec![lo_term.clone(), hi_term.clone()],
     };
+    let disproved = |b: &mut crate::builder::IRBuilder| {
+        index_never_valid(b, lo, lo + 1, || {
+            let value_ids = crate::optim::predicates::collect_value_ids(&term);
+            format!(
+                "op `{op_name}` requires precondition disproved by visible facts: \
+                 term={term:?}, value_ids={value_ids:?}"
+            )
+        })
+    };
     // Per-conjunct discharge: when the upper half is provable (e.g.
     // `idx < max(...) + 1` holds by construction) emit only the cheap
     // `idx >= lo` residual. The upper half is probed first; an Unknown
@@ -271,11 +318,7 @@ pub fn discharge_index_below_value(
     // unprovable case costs no extra Z3 invocations vs the old code.
     let p_hi = b.prove(&hi_term);
     if matches!(p_hi, ProveOutcome::Disproved) {
-        let value_ids = crate::optim::predicates::collect_value_ids(&term);
-        panic!(
-            "op `{op_name}` requires precondition disproved by visible facts: \
-             term={term:?}, value_ids={value_ids:?}"
-        );
+        return disproved(b);
     }
     let p_lo = if matches!(p_hi, ProveOutcome::Proved) {
         b.prove(&lo_term)
@@ -283,12 +326,11 @@ pub fn discharge_index_below_value(
         ProveOutcome::Unknown
     };
     if matches!(p_lo, ProveOutcome::Disproved) {
-        let value_ids = crate::optim::predicates::collect_value_ids(&term);
-        panic!(
-            "op `{op_name}` requires precondition disproved by visible facts: \
-             term={term:?}, value_ids={value_ids:?}"
-        );
+        return disproved(b);
     }
+    // Where the code does not run the access uses `lo` (see
+    // `discharge_index_in_range`); every residual check is on this index.
+    let guarded = b.guard_operand(idx, lo);
     match (p_lo, p_hi) {
         (ProveOutcome::Proved, ProveOutcome::Proved) => {}
         (ProveOutcome::Unknown, ProveOutcome::Proved) => {
@@ -296,10 +338,10 @@ pub fn discharge_index_below_value(
             // non-negativity assert (a single 63-bit range check in
             // halo2-base, ~15 cells vs ~45 for the comparison form).
             if lo == 0 {
-                b.ir_assert_non_neg_i(idx);
+                b.ir_assert_non_neg_i(&guarded);
             } else {
                 let lo_v = b.ir_constant_int(lo);
-                let ge = b.ir_greater_than_or_equal_i(idx, &lo_v);
+                let ge = b.ir_greater_than_or_equal_i(&guarded, &lo_v);
                 b.ir_assert(&ge);
             }
         }
@@ -330,9 +372,10 @@ pub fn discharge_index_below_value(
                 );
             }
             let lo_v = b.ir_constant_int(lo);
-            emit_index_bound_assert(b, idx, &lo_v, hi);
+            emit_index_bound_assert(b, &guarded, &lo_v, hi);
         }
     }
+    guarded
 }
 
 fn emit_index_bound_assert(b: &mut crate::builder::IRBuilder, idx: &Value, lo: &Value, hi: &Value) {

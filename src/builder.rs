@@ -5,6 +5,8 @@ use crate::ir_defs::IR;
 use crate::optim::resolver::{Resolver, StaticOnlyResolver};
 use crate::types::{NumberType, ScalarValue, StmtId, StringValue, Value};
 
+mod guard;
+
 #[derive(Clone)]
 pub struct StaticArrayProductProvenance {
     pub lhs_cells: Vec<Value>,
@@ -126,6 +128,14 @@ pub struct IRBuilder {
     /// last-write-wins / wrongly-constant-folded `if` bug class found
     /// by the 2026-06-11 binding audit (cases 0374/0490).
     write_predicate: Option<Value>,
+    /// Memo tables of the checks-under-the-execution-predicate machinery
+    /// (`builder/guard.rs`).
+    guard_caches: guard::GuardCaches,
+    /// Number of cells of every allocated memory segment, and of every
+    /// dynamic ndarray's buffer (by array id): the range a dynamic address
+    /// must stay in (see `guard_address`).
+    segment_capacity: HashMap<u32, u32>,
+    dyn_array_capacity: HashMap<u32, u32>,
     /// Segments allocated while a given predicate (by stmt id) was
     /// active — branch-local storage whose writes under that same
     /// predicate skip predication (see `ir_allocate_memory`).
@@ -236,6 +246,9 @@ impl IRBuilder {
             elided_publics: Vec::new(),
             elided_before_exposure: Vec::new(),
             write_predicate: None,
+            guard_caches: guard::GuardCaches::default(),
+            segment_capacity: HashMap::new(),
+            dyn_array_capacity: HashMap::new(),
             predicate_exempt_segments: HashMap::new(),
             next_segment_id: 0,
             next_array_id: 0,
@@ -649,9 +662,12 @@ impl IRBuilder {
     ///
     /// - **Proved**: the precondition follows from the visible facts; no
     ///   action besides telemetry.
-    /// - **Disproved**: the visible facts contradict the precondition; the
-    ///   user's program is unsound. Panic with a diagnostic naming the op,
-    ///   the substituted term, and the value-ids it references.
+    /// - **Disproved**: the visible facts contradict the precondition. On
+    ///   code that runs on every path the program always fails: panic with
+    ///   a diagnostic naming the op, the substituted term, and the
+    ///   value-ids it references. Under a runtime execution predicate `p`
+    ///   the circuit asserts `¬p` instead (the op is reached only where
+    ///   Python would raise).
     /// - **Unknown**: the resolver cannot decide from compile-time context.
     ///   * If `ZINNIA_OP_REQUIRES_STRICT=1` is set, panic with the same
     ///     diagnostic (callers must annotate or restructure to make the
@@ -695,6 +711,12 @@ impl IRBuilder {
                 }
             }
             ProveOutcome::Disproved => {
+                // Under a runtime execution predicate the op is only
+                // reached where that predicate holds: the precondition
+                // failing means the code must not run there.
+                if self.assert_never_runs() {
+                    return;
+                }
                 let value_ids = crate::optim::predicates::collect_value_ids(term);
                 tracing::debug!(
                     target: "zinnia::op_contract",
@@ -1351,10 +1373,6 @@ impl IRBuilder {
         }
     }
 
-    pub fn ir_assert_non_neg_i(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::AssertNonNegI, &[a.clone()])
-    }
-
     pub fn export_ir_graph(self) -> IRGraph {
         let elided = self.elided_output_slots();
         let provenance = self.provenance;
@@ -1373,9 +1391,10 @@ impl IRBuilder {
         // constants. Without this, arithmetic like `max(arr) + 1` fails
         // to propagate the bound on `max(arr)` to the sum, because the
         // constant operand has no per-value fact entries.
+        // The fact defines the constant, so it holds on every path.
         if let Some(vid) = out.value_id() {
             use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
-            self.facts.insert_for(
+            self.facts.insert_unconditional(
                 vid,
                 ContractTerm::Cmp {
                     op: CmpOp::Eq,
@@ -1557,11 +1576,45 @@ impl IRBuilder {
         ir_div_i       => IR::DivI,       contract = "div_i",
         ir_floor_div_i => IR::FloorDivI,  contract = "floor_div_i",
         ir_mod_i       => IR::ModI,       contract = "mod_i",
-        ir_pow_i       => IR::PowI,       contract = "pow_i",
     );
     ir_unary!(
         ir_inv_i  => IR::InvI, contract = "inv_i",
     );
+
+    /// Integer `base ** exp`. The `pow_i` contract states the domain where
+    /// the code runs; the halo2-base lowering of a runtime exponent also
+    /// decomposes it into 6 bits, so where the code does not run the
+    /// exponent is 0 (see `builder/guard.rs`).
+    pub fn ir_pow_i(&mut self, base: &Value, exp: &Value) -> Value {
+        self.power(&IR::PowI, "pow_i", base, exp)
+    }
+
+    /// Float `base ** exp` (lowered as an integer power).
+    pub fn ir_pow_f(&mut self, base: &Value, exp: &Value) -> Value {
+        self.power(&IR::PowF, "pow_f", base, exp)
+    }
+
+    /// Float base, integer exponent; halo2-base accepts exponents below 9.
+    pub fn ir_pow_f_int(&mut self, base: &Value, exp: &Value) -> Value {
+        self.power(&IR::PowFI, "pow_f", base, exp)
+    }
+
+    fn power(&mut self, ir: &IR, contract: &str, base: &Value, exp: &Value) -> Value {
+        let exp_operand = match exp {
+            Value::Integer(_) | Value::Boolean(_) => self.guard_operand(exp, 0),
+            _ => self.guard_float_operand(exp, 0.0),
+        };
+        let out = self.create_ir(ir, &[base.clone(), exp_operand]);
+        if let (Some(vid), Some(lhs_vid), Some(rhs_vid)) =
+            (out.value_id(), base.value_id(), exp.value_id())
+        {
+            let mut formals = HashMap::new();
+            formals.insert("lhs".to_string(), lhs_vid);
+            formals.insert("rhs".to_string(), rhs_vid);
+            self.fire_contract(contract, vid, &formals);
+        }
+        out
+    }
 
     /// Euclidean floor division with a producer-certified bit-width on the
     /// quotient/remainder/divisor (see [`crate::ir::IR::FloorDivIPinned`]).
@@ -1799,8 +1852,6 @@ impl IRBuilder {
     ir_binary!(
         ir_floor_div_f => IR::FloorDivF,  contract = "floor_div_f",
         ir_mod_f       => IR::ModF,       contract = "mod_f",
-        ir_pow_f       => IR::PowF,       contract = "pow_f",
-        ir_pow_f_int   => IR::PowFI,      contract = "pow_f",
     );
     /// Float `sign`. Fires the `sign_f` op contract so the output value
     /// carries the `-1.0 <= Output <= 1.0` fact for downstream
@@ -2021,7 +2072,11 @@ impl IRBuilder {
     /// input interval `[lo, hi]` (with `lo > 0`) into
     /// `[log(lo), log(hi)]` on the output.
     pub fn ir_log_f(&mut self, a: &Value) -> Value {
-        let out = self.create_ir(&IR::LogF, &[a.clone()]);
+        // The `log_f` contract checks `a > 0` where the code runs; the
+        // lowering itself needs a positive operand on every path (Noir's
+        // `qlog` asserts it), so where the code does not run it gets 1.0.
+        let operand = self.guard_float_operand(a, 1.0);
+        let out = self.create_ir(&IR::LogF, &[operand]);
         if let (Some(vid), Some(x_vid)) = (out.value_id(), a.value_id()) {
             let mut formals = HashMap::new();
             formals.insert("x".to_string(), x_vid);
@@ -2107,11 +2162,10 @@ impl IRBuilder {
         out
     }
 
-    // Assert & expose
-    ir_unary!(
-        ir_assert          => IR::Assert,
-        ir_assert_bit      => IR::AssertBit,
-    );
+    // Assert & expose. The assert-emitting methods (`ir_assert`,
+    // `ir_assert_bit`, `ir_assert_non_neg_i`, `ir_assert_u128_lt`,
+    // `ir_assert_u128_lt_bits`) live in `builder/guard.rs`: they emit every
+    // check conditional on the execution predicate.
 
     pub fn ir_expose_public_i(&mut self, a: &Value) -> Value {
         self.elided_before_exposure.push(self.elided_publics.len());
@@ -2140,36 +2194,6 @@ impl IRBuilder {
             .map(|(slot, value)| crate::ir::ElidedOutputSlot {
                 slot,
                 value: value.clone(),
-            })
-            .collect()
-    }
-
-    /// Two-operand assert: `0 <= idx < hi`. Backends pick the cheapest
-    /// sound implementation; on Noir this lowers to a single
-    /// `assert((idx as u128) < (hi as u128))` (~30 ACIR vs ~49 for the
-    /// 2-cmp + and + assert decomposition). See `IR::AssertU128Lt`.
-    pub fn ir_assert_u128_lt(&mut self, idx: &Value, hi: &Value) -> Value {
-        self.create_ir(&IR::AssertU128Lt, &[idx.clone(), hi.clone()])
-    }
-
-    /// Constrain `0 <= idx < hi` and return the low decomposition bits.
-    ///
-    /// This is intentionally value-producing: users such as small static
-    /// gathers can route directly on the constrained bits instead of
-    /// rebuilding one-hot equality masks from the original index.
-    pub fn ir_assert_u128_lt_bits(&mut self, idx: &Value, hi: usize) -> Vec<Value> {
-        assert!(hi > 0, "assert_u128_lt_bits: hi must be positive");
-        let bits = usize::BITS - (hi - 1).leading_zeros();
-        (0..bits)
-            .map(|bit| {
-                self.create_ir(
-                    &IR::AssertU128LtBit {
-                        hi: hi as u64,
-                        bit,
-                        bits,
-                    },
-                    &[idx.clone()],
-                )
             })
             .collect()
     }
@@ -2278,6 +2302,7 @@ impl IRBuilder {
                 self.predicate_exempt_segments.insert(segment_id, pid);
             }
         }
+        self.segment_capacity.insert(segment_id, size);
         self.create_ir(
             &IR::AllocateMemory {
                 segment_id,
@@ -2298,8 +2323,14 @@ impl IRBuilder {
     /// The predicate passed in must already incorporate any enclosing
     /// branch conditions (IRGen uses the scope's calculated branching
     /// condition, which self-composes across nested `if`s).
+    ///
+    /// The predicate is also the execution predicate of every check emitted
+    /// meanwhile and the guard of every fact learned meanwhile (see
+    /// `builder/guard.rs`).
     pub fn swap_write_predicate(&mut self, p: Option<Value>) -> Option<Value> {
-        std::mem::replace(&mut self.write_predicate, p)
+        let previous = std::mem::replace(&mut self.write_predicate, p);
+        self.sync_fact_guard();
+        previous
     }
 
     /// Resolve the write predicate to `Some(static bool)` when it's a
@@ -2359,6 +2390,8 @@ impl IRBuilder {
     /// input, or the cached view diverges from the segment on the
     /// not-taken path.
     pub fn ir_write_memory(&mut self, segment_id: u32, address: &Value, value: &Value) -> Value {
+        let capacity = self.segment_capacity.get(&segment_id).copied();
+        let address = &self.guard_address(address, capacity);
         let Some(stored) = self.apply_write_predicate(segment_id, address, value) else {
             // Statically-false predicate: the write can never happen.
             return value.clone();
@@ -2405,9 +2438,13 @@ impl IRBuilder {
         // `read + 1` pattern downstream of fact-aware reads). Avoids the
         // resolver walk on every cell of a 20K-cell array write (e.g.
         // patch-reshape 0390 on Float[100,200]).
-        if let Some(addr_i) = address.int_val() {
+        // Not under a runtime execution predicate: a bound learned there may
+        // hold only where the code runs, while the captured cell bound is
+        // republished to every later reader.
+        let runs_everywhere = matches!(self.execution(), guard::Execution::Always);
+        if let Some(addr_i) = address.int_val().filter(|_| runs_everywhere) {
             let should_capture = value.value_id().is_some_and(|vid| {
-                if self.facts.per_value.contains_key(&vid) {
+                if self.facts.has_facts_for(vid) {
                     return true;
                 }
                 if let Some(stmt_id) = value.stmt_id() {
@@ -2415,7 +2452,7 @@ impl IRBuilder {
                         use crate::ir_defs::IR;
                         if matches!(stmt.ir, IR::AddI | IR::SubI) && stmt.arg_values.len() == 2 {
                             for &arg_vid in &stmt.arg_values {
-                                if self.facts.per_value.contains_key(&arg_vid) {
+                                if self.facts.has_facts_for(arg_vid) {
                                     return true;
                                 }
                             }
@@ -2440,7 +2477,12 @@ impl IRBuilder {
         stored
     }
 
+    /// Read a memory cell. Under a runtime execution predicate a dynamic
+    /// address that is not in the segment on every path is guarded (see
+    /// `guard_address`): where the code does not run it reads cell 0.
     pub fn ir_read_memory(&mut self, segment_id: u32, address: &Value) -> Value {
+        let capacity = self.segment_capacity.get(&segment_id).copied();
+        let address = &self.guard_address(address, capacity);
         let out = self.create_ir(&IR::ReadMemory { segment_id }, &[address.clone()]);
         // Republish cell-bound facts captured at write time. Only fires for
         // statically-pinned addresses (the typical `B.min(0)[0]` pattern,
@@ -2490,6 +2532,7 @@ impl IRBuilder {
         max_rank: u32,
         max_shape: Vec<u32>,
     ) -> Value {
+        self.dyn_array_capacity.insert(array_id, max_length);
         self.create_ir(
             &IR::AllocateDynamicNDArrayMeta {
                 array_id,
@@ -2525,12 +2568,14 @@ impl IRBuilder {
         segment_id: u32,
         address: &Value,
     ) -> Value {
+        let capacity = self.dyn_array_capacity.get(&array_id).copied();
+        let address = self.guard_address(address, capacity);
         self.create_ir(
             &IR::DynamicNDArrayGetItem {
                 array_id,
                 segment_id,
             },
-            &[address.clone()],
+            &[address],
         )
     }
 
@@ -2542,6 +2587,8 @@ impl IRBuilder {
         value: &Value,
     ) -> Value {
         // Same conditional-write semantics as `ir_write_memory`.
+        let capacity = self.dyn_array_capacity.get(&array_id).copied();
+        let address = &self.guard_address(address, capacity);
         let Some(stored) = self.apply_write_predicate(segment_id, address, value) else {
             return value.clone();
         };

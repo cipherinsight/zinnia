@@ -78,6 +78,7 @@ pub fn dyn_binary_op(
     let segment_id = crate::helpers::segment::alloc_and_write_values(b, &out_elements, out_dtype);
 
     // 7. Build runtime metadata.
+    require_shared_axes_equal(b, &out_envelope, lhs, rhs);
     let runtime_shape = build_runtime_shape(&out_envelope, lhs, rhs);
     let runtime_length = compute_runtime_length(b, &runtime_shape);
 
@@ -373,6 +374,56 @@ fn remap_and_encode(out_coords: &[usize], src_max_shape: &[usize], src_strides: 
 
 /// Build runtime_shape for the output by picking from whichever input
 /// provides each axis (shared → either input, a-only → a, b-only → b).
+/// Require equal runtime extents on every axis the two operands share
+/// (neither side's envelope extent is a static 1).
+///
+/// The element-wise loop pairs slot `k` of one operand with slot `k` of the
+/// other and the result takes the left operand's extent, so it computes
+/// NumPy's result only when the extents agree. NumPy raises when they
+/// differ (unless one is 1; broadcasting a runtime extent of 1 is not
+/// lowered, so such inputs are rejected too). Without this check
+/// `a + b` with `len(a) = 8`, `len(b) = 5` proved a value, and the result's
+/// extent could exceed its envelope. Equal values (the same IR value or the
+/// same constant) need no check; otherwise the equality is checked where
+/// the code runs.
+fn require_shared_axes_equal(
+    b: &mut IRBuilder,
+    out_envelope: &crate::types::Envelope,
+    lhs: &DynamicNDArrayData,
+    rhs: &DynamicNDArrayData,
+) {
+    let out_rank = out_envelope.rank();
+    let (lhs_rank, rhs_rank) = (lhs.envelope.rank(), rhs.envelope.rank());
+    for from_back in 0..out_rank.min(lhs_rank).min(rhs_rank) {
+        let (la, ra) = (lhs_rank - 1 - from_back, rhs_rank - 1 - from_back);
+        if lhs.envelope.dims[la].is_static() == Some(1) || rhs.envelope.dims[ra].is_static() == Some(1) {
+            continue;
+        }
+        let (l, r) = (&lhs.meta.runtime_shape[la], &rhs.meta.runtime_shape[ra]);
+        let same_value = (l.stmt_id.is_some() && l.stmt_id == r.stmt_id)
+            || (l.static_val.is_some() && l.static_val == r.static_val);
+        if same_value {
+            continue;
+        }
+        if let (Some(x), Some(y)) = (l.static_val, r.static_val) {
+            panic!(
+                "operands could not be broadcast together: axis extents {x} and {y} differ"
+            );
+        }
+        let (l, r) = (extent_value(b, l), extent_value(b, r));
+        let equal = b.ir_equal_i(&l, &r);
+        b.ir_assert(&equal);
+    }
+}
+
+/// A runtime extent as an IR value.
+fn extent_value(b: &mut IRBuilder, sv: &ScalarValue<i64>) -> Value {
+    match sv.static_val {
+        Some(c) => b.ir_constant_int(c),
+        None => Value::Integer(sv.clone()),
+    }
+}
+
 fn build_runtime_shape(
     out_envelope: &crate::types::Envelope,
     lhs: &DynamicNDArrayData,

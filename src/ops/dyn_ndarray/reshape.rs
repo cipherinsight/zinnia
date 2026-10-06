@@ -652,6 +652,7 @@ fn dyn_reshape_runtime(
         .product::<usize>()
         .max(1);
     let runtime_axis_bound = (old_total / static_product).max(1);
+    require_runtime_dims_within(b, dim_args, &shape_values, &logical_shape, runtime_axis_bound, 0);
     let new_dims: Vec<crate::types::Dim> = dim_args
         .iter()
         .zip(logical_shape.iter())
@@ -874,6 +875,38 @@ fn infer_static_reshape_shape(raw_shape: &[i64], total: usize) -> Vec<usize> {
     }
 }
 
+/// Require every runtime dimension of a reshape to lie in
+/// `[min, bound]`, the extent its envelope axis is built with (`bound` =
+/// `max(runtime_axis_bound, logical extent)`). The product assertion alone
+/// accepts `(-1) * (-4) == 4` and `0 * 1000 == 0`: NumPy rejects negative
+/// dimensions, and an extent past the envelope makes the `0 <= extent <=
+/// max` facts recorded for `.shape` false. Constant dimensions are checked
+/// at compile time by the callers (an inferred `-1` is pinned by the
+/// product); `dims` are the reshape arguments and `shape_values` the
+/// matching IR values.
+fn require_runtime_dims_within(
+    b: &mut IRBuilder,
+    dims: &[&Value],
+    shape_values: &[Value],
+    logical_shape: &[usize],
+    runtime_axis_bound: usize,
+    min: i64,
+) {
+    for (axis, dim) in dims.iter().enumerate() {
+        if dim.int_val().is_some() {
+            continue;
+        }
+        let bound = runtime_axis_bound.max(logical_shape[axis]) as i64;
+        crate::optim::resolver::discharge_index_in_range(
+            b,
+            &shape_values[axis],
+            min,
+            bound + 1,
+            "reshape_runtime_dimension",
+        );
+    }
+}
+
 fn dyn_reshape_runtime_infer_unknown(
     b: &mut IRBuilder,
     data: &DynamicNDArrayData,
@@ -1020,6 +1053,9 @@ fn dyn_reshape_runtime_infer_unknown(
         .product::<usize>()
         .max(1);
     let runtime_axis_bound = (old_total / static_product).max(1);
+    // NumPy rejects a zero dimension next to `-1`; with the given ones at
+    // least 1 the inferred one is at most the bound.
+    require_runtime_dims_within(b, dim_args, &shape_values, &logical_shape, runtime_axis_bound, 1);
     let new_dims: Vec<crate::types::Dim> = dim_args
         .iter()
         .zip(logical_shape.iter())
