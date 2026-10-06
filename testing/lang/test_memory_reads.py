@@ -141,3 +141,45 @@ def test_backends_accept_numpy_and_reject_a_wrong_claim(construction):
     assert noir_accepts(noir, x, idx, good)
     assert not noir_accepts(noir, x, idx, wrong)
     assert not noir_accepts(noir, x, out_of_range, good)
+
+
+# The NumPy index wrap (a negative index counts from the end; anything outside
+# [-n, n) raises) is itself a layer choice: a pinned sign hint, or a pinned
+# position one-hot whose hits double as the read's equality indicators.
+WRAPS = ["memory: wrap by pinned sign", "memory: wrap by position one-hot"]
+
+WRITE_THEN_READ = ('def kernel(x: Integer[Array, "5"], i: Integer, j: Integer, expected: Integer):\n'
+                   '    y = np.copy(x)\n'
+                   '    y[i] = 7\n'
+                   '    assert y[j] == expected\n')
+
+
+@pytest.mark.parametrize("construction", WRAPS)
+def test_wraps_match_numpy(construction):
+    x1 = RNG.normal(size=9).round(3)
+    program = compiled(ELEMENT_1D, construction)
+    for i in range(-11, 11):
+        check(program, ELEMENT_1D, x1, i)
+    a = RNG.normal(size=(3, 4, 5)).round(3)
+    program = compiled(PLANE_GATHER, construction)
+    for second, third in [([0, 3], [4, 0]), ([-1, -4], [-5, 1]), ([0, 0], [5, 1]), ([-5, 0], [0, 0])]:
+        check(program, PLANE_GATHER, a, np.array(second), np.array(third))
+
+
+@pytest.mark.parametrize("construction", WRAPS)
+def test_wraps_pin_writes_and_reads_on_every_backend(construction):
+    x = np.array([3, 1, 4, 1, 5])
+    halo2 = compiled(WRITE_THEN_READ, construction)
+    noir = compiled(WRITE_THEN_READ, construction, backend="noir")
+    for i, j in [(0, 0), (-1, 4), (-5, 2), (2, -3), (4, -1)]:
+        y = x.copy()
+        y[i] = 7
+        good, wrong = int(y[j]), int(y[j]) + 1
+        assert halo2_accepts(halo2, x, i, j, good)
+        assert not halo2_accepts(halo2, x, i, j, wrong)
+        assert noir_accepts(noir, x, i, j, good)
+        assert not noir_accepts(noir, x, i, j, wrong)
+    for i, j in [(5, 0), (-6, 0), (0, 5), (0, -6)]:  # NumPy raises
+        for claimed in (0, 3, 7):
+            assert not halo2_accepts(halo2, x, i, j, claimed)
+            assert not noir_accepts(noir, x, i, j, claimed)

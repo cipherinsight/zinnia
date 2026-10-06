@@ -15,7 +15,7 @@ use super::cost;
 
 /// The family's constructions, in the order the selection breaks ties.
 pub fn constructions() -> Vec<&'static dyn Construction> {
-    vec![&ElementByIndexBits, &IndexBitsNode, &ElementByTable]
+    vec![&ElementByIndexBits, &IndexBitsNode, &ElementByTable, &super::wrap::WrapByPinnedSign, &super::wrap::WrapByPositionHits]
 }
 
 /// `0 <= i < n` on every path. The index operand is the frontend's guarded

@@ -27,6 +27,7 @@
 
 pub mod constructions;
 pub mod cost;
+pub mod wrap;
 
 #[cfg(test)]
 mod tests;

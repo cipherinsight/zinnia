@@ -108,6 +108,13 @@ pub enum OpKind {
     /// (the mask bit of that cell). Every masked write of the program is one
     /// group (a chain of writes over one cell is lowered together).
     MaskWrite,
+    // ── memory family (`lower::memory`) ───────────────────────────────
+    /// NumPy's position of a runtime index on an axis of length `len`: the
+    /// shared operand is the index `i`; output 0 (position 0) is the
+    /// position `w` (`i`, or `i + len` for a negative `i`), output 1 at
+    /// position `k` the bit `[w == k]`. An `i` outside `[-len, len)` has no
+    /// proof (NumPy raises; the program checks `0 <= w < len`).
+    Wrap { len: u32 },
 }
 
 impl OpKind {
@@ -126,6 +133,7 @@ impl OpKind {
             OpKind::Insert { .. } => &super::scatter::InsertSemantics,
             OpKind::IndexWrite { .. } => &super::scatter::IndexWriteSemantics,
             OpKind::MaskWrite => &super::scatter::MaskWriteSemantics,
+            OpKind::Wrap { .. } => &super::memory::wrap::WrapSemantics,
         }
     }
 
@@ -145,6 +153,7 @@ impl OpKind {
             OpKind::Insert { .. } => "insert",
             OpKind::IndexWrite { .. } => "index_write",
             OpKind::MaskWrite => "mask_write",
+            OpKind::Wrap { .. } => "wrap",
         }
     }
 }

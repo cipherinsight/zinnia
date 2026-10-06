@@ -2197,20 +2197,30 @@ fn index_write_hints_are_pinned() {
 #[test]
 fn index_wrap_sign_is_pinned_on_halo2_base() {
     use crate::lower::scatter::test_support::{witness, wrap_graph};
+    use crate::lower::memory::wrap::{WrapByPinnedSign, WrapByPositionHits};
     let mut shifts: Vec<Fp> = vec![int(1), int(-1), int(2)];
     shifts.extend(deltas(&[]));
-    for x in -6..=5 {
-        let case = wrap_graph(x, 5);
-        let w = witness(&case.inputs);
-        let honest = synthesize_graph(&case.graph, &w, &[]);
-        let Some(expected) = &case.expected else {
-            assert!(!honest.accepted, "index {x}: accepted, NumPy raises");
-            continue;
-        };
-        assert!(honest.accepted && honest.outputs == vec![int(expected[0])], "index {x}");
-        assert_eq!(honest.hints, 1);
-        for shift in &shifts {
-            assert!(!synthesize_graph(&case.graph, &w, &[(0, *shift)]).accepted, "index {x}: sign moved by {shift:?}");
+    let constructions: [(&dyn crate::lower::Construction, usize); 2] = [(&WrapByPinnedSign, 1), (&WrapByPositionHits, 5)];
+    for (construction, hints) in constructions {
+        for x in -6..=5 {
+            let case = wrap_graph(x, 5, construction);
+            let w = witness(&case.inputs);
+            let honest = synthesize_graph(&case.graph, &w, &[]);
+            let Some(expected) = &case.expected else {
+                assert!(!honest.accepted, "{} index {x}: accepted, NumPy raises", construction.name());
+                continue;
+            };
+            assert!(honest.accepted && honest.outputs == vec![int(expected[0])], "{} index {x}", construction.name());
+            assert_eq!(honest.hints, hints, "{}", construction.name());
+            for hint in 0..hints {
+                for shift in &shifts {
+                    assert!(
+                        !synthesize_graph(&case.graph, &w, &[(hint, *shift)]).accepted,
+                        "{} index {x}: hint #{hint} moved by {shift:?}",
+                        construction.name()
+                    );
+                }
+            }
         }
     }
 }

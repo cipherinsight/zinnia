@@ -409,11 +409,18 @@ fn checked_reads(n: usize) -> IRGraph {
 
 #[test]
 fn checked_reads_match_numpy_under_every_construction_choice() {
-    let choices: [&[&dyn Construction]; 4] = [
-        &[&ElementBySelectChain],
-        &[&ElementByIndicators],
-        &[&ElementByMemory],
-        &[&ElementOfWrite, &ElementByOneHot, &ElementBySelectChain, &ElementByIndicators, &ElementByMemory],
+    use crate::lower::memory::wrap::{WrapByPinnedSign, WrapByPositionHits};
+    // The index is NumPy-wrapped (`lower::memory::wrap`): each choice with
+    // each way of wrapping it.
+    let choices: [&[&dyn Construction]; 8] = [
+        &[&ElementBySelectChain, &WrapByPinnedSign],
+        &[&ElementByIndicators, &WrapByPinnedSign],
+        &[&ElementByMemory, &WrapByPinnedSign],
+        &[&ElementOfWrite, &ElementByOneHot, &ElementBySelectChain, &ElementByIndicators, &ElementByMemory, &WrapByPinnedSign],
+        &[&ElementBySelectChain, &WrapByPositionHits],
+        &[&ElementByIndicators, &WrapByPositionHits],
+        &[&ElementByOneHot, &ElementByIndicators, &WrapByPositionHits],
+        &[&ElementOfWrite, &ElementByOneHot, &ElementBySelectChain, &ElementByIndicators, &ElementByMemory, &WrapByPositionHits],
     ];
     for n in 1..=5usize {
         let graph = checked_reads(n);
@@ -467,10 +474,12 @@ fn reads_sharing_an_index_are_inner_products_on_noir_and_select_chains_on_halo2_
     let graph = reads_at_one_index(8, 6);
     let count = |g: &IRGraph, f: fn(&IR) -> bool| g.stmts.iter().filter(|s| f(&s.ir)).count();
     let noir = pass(&graph, Target::Noir);
-    assert_eq!(count(&noir, |ir| matches!(ir, IR::SelectI)), 1, "only the index wrap selects");
-    // One shared equality test per column, and the asserted `sum == 1` that
-    // stands for the index's range check (6 is not a power of two).
-    assert_eq!(count(&noir, |ir| matches!(ir, IR::EqI)), 7, "shared equality tests and the one-hot check");
+    // On Noir the wrap is the pinned position one-hot (`lower::memory::wrap`):
+    // no select at all, and its bits are the reads' one-hot (the only
+    // equality tests are its `sum == 1` and its wrap relation); it proves the
+    // index's range, so no range check remains.
+    assert_eq!(count(&noir, |ir| matches!(ir, IR::SelectI)), 0, "no select");
+    assert_eq!(count(&noir, |ir| matches!(ir, IR::EqI)), 2, "the reads use the wrap's one-hot");
     assert_eq!(count(&noir, |ir| matches!(ir, IR::AssertU128Lt)), 0, "the range check is replaced");
     let halo2 = pass(&graph, Target::Halo2Base);
     assert_eq!(count(&halo2, |ir| matches!(ir, IR::SelectI)), 1 + 8 * 5);

@@ -132,22 +132,37 @@ fn mask_write_chain_matches_replayed_writes() {
 /// non-bit.
 #[test]
 fn index_wrap_sign_is_pinned() {
-    for n in 1..=4usize {
-        for x in -(n as i64) - 2..=n as i64 + 1 {
-            let case = wrap_graph(x, n);
-            let (graph, sites) = hints_as_inputs(&case);
-            assert_eq!(sites.len(), 1);
-            let honest = sites[0].honest;
-            let (ok, outputs) = mock_run(&graph, &with_hints(&case, &sites, &[honest]));
-            match &case.expected {
-                Some(expected) => {
-                    assert!(ok, "n={n} x={x}: rejected");
-                    assert_eq!(&outputs, expected, "n={n} x={x}");
+    use crate::lower::memory::wrap::{WrapByPinnedSign, WrapByPositionHits};
+    // Both ways of lowering NumPy's wrap: the pinned sign (one hint) and the
+    // pinned position one-hot (one hint per position).
+    let constructions: [(&dyn crate::lower::Construction, fn(usize) -> usize); 2] =
+        [(&WrapByPinnedSign, |_| 1), (&WrapByPositionHits, |n| n)];
+    for (construction, hint_count) in constructions {
+        for n in 1..=4usize {
+            for x in -(n as i64) - 2..=n as i64 + 1 {
+                let case = wrap_graph(x, n, construction);
+                let (graph, sites) = hints_as_inputs(&case);
+                assert_eq!(sites.len(), hint_count(n), "{}", construction.name());
+                let honest: Vec<i64> = sites.iter().map(|s| s.honest).collect();
+                let (ok, outputs) = mock_run(&graph, &with_hints(&case, &sites, &honest));
+                match &case.expected {
+                    Some(expected) => {
+                        assert!(ok, "{} n={n} x={x}: rejected", construction.name());
+                        assert_eq!(&outputs, expected, "{} n={n} x={x}", construction.name());
+                    }
+                    None => assert!(!ok, "{} n={n} x={x}: accepted, NumPy raises", construction.name()),
                 }
-                None => assert!(!ok, "n={n} x={x}: accepted, NumPy raises"),
-            }
-            for tampered in [1 - honest, 2, -1] {
-                assert!(!mock_run(&graph, &with_hints(&case, &sites, &[tampered])).0, "n={n} x={x} sign={tampered}");
+                for site in 0..sites.len() {
+                    for tampered in [1 - honest[site], 2, -1] {
+                        let mut hints = honest.clone();
+                        hints[site] = tampered;
+                        assert!(
+                            !mock_run(&graph, &with_hints(&case, &sites, &hints)).0,
+                            "{} n={n} x={x} hint #{site} = {tampered}",
+                            construction.name()
+                        );
+                    }
+                }
             }
         }
     }
