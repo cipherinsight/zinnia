@@ -1209,6 +1209,12 @@ impl IR {
             "AbsIIR" => Ok(IR::AbsI),
             "SignIIR" => Ok(IR::SignI),
             "InvIIR" => Ok(IR::InvI),
+            "BitAndIIR" => Ok(IR::BitAndI),
+            "BitOrIIR" => Ok(IR::BitOrI),
+            "BitXorIIR" => Ok(IR::BitXorI),
+            "ShlIIR" => Ok(IR::ShlI),
+            "ShrIIR" => Ok(IR::ShrI),
+            "BitNotIIR" => Ok(IR::BitNotI),
 
             "AddFIR" => Ok(IR::AddF),
             "SumFIR" => Ok(IR::SumF {
@@ -1573,6 +1579,14 @@ mod tests {
             IR::EqHash,
             IR::MemoryTraceSeal,
             IR::ExposePublicI,
+            // The bitwise operators were missing from the import table, so a
+            // halo2-base proof of a program using them could not be verified.
+            IR::BitAndI,
+            IR::BitOrI,
+            IR::BitXorI,
+            IR::ShlI,
+            IR::ShrI,
+            IR::BitNotI,
         ];
         for ir in irs {
             let exported = ir.export();
