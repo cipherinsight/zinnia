@@ -472,9 +472,9 @@ fn runtime_shaped_elements(b: &mut IRBuilder, data: &crate::types::DynamicNDArra
 
 impl RuntimeShapedElements {
     /// The value of `rank` among the elements, as a float (see
-    /// `optim::sort_lowering::masked_order_statistic`).
+    /// `lower::sort::masked_order_statistic`).
     fn value_at_rank(&self, b: &mut IRBuilder, rank: &Value) -> Value {
-        let value = crate::optim::sort_lowering::masked_order_statistic(
+        let value = crate::lower::sort::masked_order_statistic(
             b,
             &self.values,
             &self.active,

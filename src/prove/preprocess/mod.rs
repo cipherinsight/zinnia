@@ -426,8 +426,8 @@ impl<'a> Preprocessor<'a> {
                 let key_less = less(args[0], args[2]) || (args[0] == args[2] && less(args[1], args[3]));
                 Ok(Some(if key_less { Fp::one() } else { Fp::zero() }))
             }
-            IR::Sorted { .. } => Err(ProvingError::synthesis(
-                "a Sorted placeholder reached preprocessing; optim::sort_lowering must lower it",
+            IR::ArrayOp(_) => Err(ProvingError::synthesis(
+                "an ArrayOp placeholder reached preprocessing; lower::ArrayLowering must lower it",
             )),
 
             // Select

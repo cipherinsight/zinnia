@@ -532,14 +532,22 @@ impl RangeResolver {
             // SelectB returns a bool; project to [0, 1].
             IR::SelectB => IntInterval::bool_domain(),
 
-            // A sort output is a position among its `len` elements (an
-            // argsort index) or one of them (a value).
-            IR::Sorted { len, index: true, .. } => IntInterval { min: 0, max: i64::from(*len) - 1 },
-            IR::Sorted { len, index: false, .. } => stmt.arguments[..*len as usize]
-                .iter()
-                .map(|&arg| self.interval_of(arg, stmts))
-                .reduce(|a, b| IntInterval::select(a, b))
-                .unwrap_or_else(IntInterval::unbounded),
+            // An array-operator lane: what its operator's semantics bound
+            // it by (`lower::op`).
+            IR::ArrayOp(op) => {
+                let operands: Vec<Option<crate::provenance::Interval>> = stmt
+                    .arguments
+                    .iter()
+                    .map(|&arg| {
+                        let iv = self.interval_of(arg, stmts);
+                        (!iv.is_unbounded()).then_some(crate::provenance::Interval { lo: iv.min, hi: iv.max })
+                    })
+                    .collect();
+                op.kind
+                    .semantics()
+                    .bounds(op, &operands)
+                    .map_or_else(IntInterval::unbounded, |iv| IntInterval { min: iv.lo, max: iv.hi })
+            }
 
             // Everything else falls through to commit 3 / unbounded.
             _ => IntInterval::unbounded(),
