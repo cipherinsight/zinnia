@@ -170,7 +170,10 @@ pub fn promote_static_to_dynamic(b: &mut IRBuilder, val: &Value) -> Value {
         super::segment::alloc_and_write_values(b, &flat, dtype)
     } else {
         let elements: Vec<ScalarValue<i64>> = flat.iter().map(value_to_scalar_i64).collect();
-        super::segment::alloc_and_write(b, &elements, dtype)
+        let segment_id = super::segment::alloc_and_write(b, &elements, dtype);
+        // The scalar payload drops the `Boolean` tag of a bool array's cells.
+        b.note_segment_cells(segment_id, &flat);
+        segment_id
     };
 
     let dyn_data = DynamicNDArrayData {

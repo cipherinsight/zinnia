@@ -235,6 +235,9 @@ impl IRGenerator {
             "dtype" => {
                 // Infer dtype from element types
                 let val = self.ctx.get(var).unwrap_or(Value::None);
+                if crate::helpers::array_ops::is_bool_array(&self.builder, &val) {
+                    return Some(Value::Class(ZinniaType::Boolean));
+                }
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
                 let val =
                     crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);

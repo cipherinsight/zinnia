@@ -5,6 +5,7 @@ use crate::ir_defs::IR;
 use crate::optim::resolver::{Resolver, StaticOnlyResolver};
 use crate::types::{NumberType, ScalarValue, StmtId, StringValue, Value};
 
+mod bool_dtype;
 mod guard;
 
 #[derive(Clone)]
@@ -244,6 +245,11 @@ pub struct IRBuilder {
     /// but treating it as a Fact pinned the downstream slice shape and
     /// broke 0509's output type).
     pub scalar_value_bounds: HashMap<crate::types::ValueId, (i64, i64)>,
+    /// NumPy's `bool` dtype on arrays (see `builder/bool_dtype.rs`): the
+    /// segments that store a bool array, and the integer-typed statements
+    /// whose value is a NumPy bool.
+    bool_segments: HashSet<u32>,
+    bool_cells: HashSet<StmtId>,
 }
 
 impl Default for IRBuilder {
@@ -285,6 +291,8 @@ impl IRBuilder {
             segment_cell_bounds: HashMap::new(),
             segment_default_bounds: HashMap::new(),
             scalar_value_bounds: HashMap::new(),
+            bool_segments: HashSet::new(),
+            bool_cells: HashSet::new(),
         }
     }
 
@@ -2586,7 +2594,14 @@ impl IRBuilder {
                         ));
                         self.ir_select_f(&p, value, &old_f)
                     }
-                    _ => self.ir_select_i(&p, value, &old_raw),
+                    _ => {
+                        let stored = self.ir_select_i(&p, value, &old_raw);
+                        // A bool written into a bool array stays a bool.
+                        if self.is_bool_cell(value) && self.is_bool_cell(&old_raw) {
+                            self.record_bool_cell(&stored);
+                        }
+                        stored
+                    }
                 })
             }
         }
@@ -2694,6 +2709,9 @@ impl IRBuilder {
         let capacity = self.segment_capacity.get(&segment_id).copied();
         let address = &self.guard_address(address, capacity);
         let out = self.create_ir(&IR::ReadMemory { segment_id }, &[address.clone()]);
+        if self.is_bool_segment(segment_id) {
+            self.record_bool_cell(&out);
+        }
         // Republish cell-bound facts captured at write time. Only fires for
         // statically-pinned addresses (the typical `B.min(0)[0]` pattern,
         // where the tuple-unpack index is a literal); dynamic reads keep

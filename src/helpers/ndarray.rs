@@ -1,9 +1,6 @@
 use super::composite;
 use crate::builder::IRBuilder;
-use crate::types::{
-    CompositeData, DynamicNDArrayData, Envelope, NumberType, ScalarValue, SliceIndex, Value,
-    ValueId,
-};
+use crate::types::{CompositeData, SliceIndex, Value, ValueId};
 
 pub fn ndarray_transpose(_b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value {
     // Determine the shape of the input
@@ -148,35 +145,18 @@ pub fn ndarray_argmax_argmin(
     best_idx
 }
 
-/// True if every leaf of `val` is a compile-time-constant boolean.
-fn all_const_bool(val: &Value) -> bool {
-    match val {
-        Value::List(d) | Value::Tuple(d) => {
-            !d.values.is_empty() && d.values.iter().all(all_const_bool)
-        }
-        Value::Boolean(_) => val.bool_val().is_some(),
-        _ => false,
-    }
+/// Every leaf of a list index as a compile-time integer (a bool is 0 or 1),
+/// or `None` when one is not constant.
+fn constant_leaves(idx: &Value) -> Option<Vec<i64>> {
+    composite::flatten_composite(idx)
+        .iter()
+        .map(|leaf| leaf.int_val().or_else(|| leaf.bool_val().map(i64::from)))
+        .collect()
 }
 
-/// True if every leaf of `val` is a compile-time-constant integer
-/// (booleans excluded — those should be routed to boolean masking).
-fn all_const_int_strict(val: &Value) -> bool {
-    match val {
-        Value::List(d) | Value::Tuple(d) => {
-            !d.values.is_empty() && d.values.iter().all(all_const_int_strict)
-        }
-        Value::Integer(_) => val.int_val().is_some(),
-        _ => false,
-    }
-}
-
-/// Static boolean masking: `data[mask]` where `mask` is a static-shape ndarray
-/// of compile-time-known booleans. Same-shape only — prefix masking is left
-/// for the future bounded-dynamic envelope work.
-///
-/// Returns Err with a descriptive message on shape mismatch; the caller is
-/// expected to forward that to the user as a hard error.
+/// Static boolean masking: `data[mask]` for a compile-time-constant mask of
+/// `data`'s shape (a cell keeps its element when it is non-zero). `Err` on a
+/// shape mismatch.
 pub fn boolean_mask_static(data: &Value, mask: &Value) -> Result<Value, String> {
     let dshape = super::composite::get_composite_shape(data);
     let mshape = super::composite::get_composite_shape(mask);
@@ -186,14 +166,13 @@ pub fn boolean_mask_static(data: &Value, mask: &Value) -> Result<Value, String> 
             mshape, dshape
         ));
     }
-    let data_flat = super::composite::flatten_composite(data);
-    let mask_flat = super::composite::flatten_composite(mask);
-    let mut selected: Vec<Value> = Vec::new();
-    for (d, m) in data_flat.into_iter().zip(mask_flat.iter()) {
-        if m.bool_val() == Some(true) {
-            selected.push(d);
-        }
-    }
+    let keep = constant_leaves(mask).ok_or("boolean mask is not compile-time constant")?;
+    let selected: Vec<Value> = super::composite::flatten_composite(data)
+        .into_iter()
+        .zip(keep)
+        .filter(|(_, k)| *k != 0)
+        .map(|(d, _)| d)
+        .collect();
     let types = selected.iter().map(|v| v.zinnia_type()).collect();
     Ok(Value::List(CompositeData {
         elements_type: types,
@@ -240,101 +219,114 @@ pub fn fancy_index_static(data: &CompositeData, idx_array: &Value) -> Result<Val
     walk(data, idx_array)
 }
 
-/// Try to dispatch a single-axis composite index as boolean masking or fancy
-/// indexing. Returns:
-/// - `Ok(Some(value))` on success
-/// - `Ok(None)` if the index doesn't look like an advanced index at all
-///   (e.g. a heterogeneous list — caller should keep its existing handling)
-/// - `Err(msg)` if the index *looks* like advanced indexing but isn't
-///   compile-time resolvable; caller should hard-error with `msg`.
-pub fn try_advanced_index_static(
-    data: &CompositeData,
-    idx: &Value,
-) -> Result<Option<Value>, String> {
-    // Only a list is an advanced index. A tuple `t` indexes one axis per
-    // entry (`a[t]` is `a[t[0], t[1], ...]`); the caller's subscript
-    // handles it (see `static_array::read::tuple_index`).
-    match idx {
-        Value::List(_) => {}
-        _ => return Ok(None),
+/// `val[idx]` for an array-valued `idx` (an array, or a list of numbers) on
+/// a static array or a list `val`. NumPy reads it by `idx`'s dtype
+/// (`array_ops::array_index_kind`): a bool `idx` is a boolean mask, an
+/// integer `idx` lists positions on axis 0. `None` when `idx` is not
+/// array-valued.
+///
+/// * A mask keeps the elements where it is true, in order: natively on a
+///   static array (`static_array::mask`, which also takes a mask of the
+///   leading axes), at compile time for a constant mask on a list, and by a
+///   runtime-shaped filter otherwise.
+/// * Integer positions gather: at compile time for constant in-range
+///   positions on a list; otherwise through `static_array_subscript`,
+///   which wraps each position once (a negative one counts from the end)
+///   and checks it against the axis length (`checked_axis_index`: a compile
+///   error for a constant out-of-range position on code that always runs,
+///   a check under the execution predicate otherwise).
+/// * A runtime-shaped `idx` (e.g. `np.nonzero(m)[0]`) reads through
+///   `dyn_subscript` on the promoted array.
+pub fn subscript_with_index_array(b: &mut IRBuilder, val: &Value, idx: &Value) -> Option<Value> {
+    use crate::helpers::array_ops::ArrayIndexKind;
+    let kind = crate::helpers::array_ops::array_index_kind(b, idx)?;
+    if let Value::DynamicNDArray(_) = idx {
+        let Value::DynamicNDArray(data) = promote_static(b, val) else {
+            unreachable!("static promotion produces a DynamicNDArray")
+        };
+        return Some(crate::helpers::array_ops::dyn_subscript(
+            b,
+            &data,
+            &[SliceIndex::Single(idx.clone())],
+        ));
     }
-    if all_const_bool(idx) {
-        return boolean_mask_static(&Value::List(data.clone()), idx).map(Some);
+    if kind == ArrayIndexKind::Mask && matches!(idx, Value::StaticArray { .. }) {
+        if let Some(out) = super::static_array::mask::try_apply_boolean_mask_read(b, val, idx) {
+            return Some(out);
+        }
     }
-    if all_const_int_strict(idx) {
-        return fancy_index_static(data, idx).map(Some);
+    let val_list = super::static_array::base::to_value_list(b, val);
+    let idx_list = super::static_array::base::to_value_list(b, idx);
+    if let Value::List(data) | Value::Tuple(data) = &val_list {
+        if let Some(out) = constant_index_read(data, &idx_list, kind) {
+            if let (Some(input), Some(output)) = (val.value_id(), out.value_id()) {
+                crate::optim::resolver::relay_forall_eq_const_from_input(b, input, output);
+            }
+            return Some(out);
+        }
     }
-    // Looks like an array-valued index but its leaves aren't compile-time
-    // resolvable as either bools or ints. This is the case the user said to
-    // hard-error on, with a "to be implemented" hint.
-    Err(
-        "array-valued indices (boolean masking / fancy indexing) currently \
-         require compile-time-constant index values. Non-constant cases \
-         (to be implemented: lowering to dynamic ndarray)."
-            .into(),
-    )
+    let arr = super::static_array::base::to_static_array(b, &val_list)
+        .unwrap_or_else(|| panic!("an index array can only index an array of numbers"));
+    Some(match kind {
+        ArrayIndexKind::Mask => {
+            let mask = super::static_array::base::to_static_array(b, &idx_list)
+                .expect("a list mask is numeric");
+            super::static_array::mask::try_apply_boolean_mask_read(b, &arr, &mask)
+                .unwrap_or_else(|| {
+                    // Complex elements: the runtime-shaped filter.
+                    let data = promote_static(b, &arr);
+                    crate::helpers::array_ops::filter(b, &data, &[mask])
+                })
+        }
+        ArrayIndexKind::Positions => {
+            let positions = integer_positions(b, &idx_list);
+            super::static_array::read::static_array_subscript(b, &arr, &[SliceIndex::Single(positions)])
+        }
+    })
 }
 
-fn dynamic_bool_mask_from_static(b: &mut IRBuilder, mask: &Value) -> Option<Value> {
-    if !crate::helpers::array_ops::is_boolean_mask(mask)
-        && !super::value_ops::is_numeric_composite(mask)
-    {
-        return None;
-    }
-    let shape = super::composite::get_composite_shape(mask);
-    let cells = super::composite::flatten_composite_with_builder(b, mask);
-    if cells.is_empty() {
-        return None;
-    }
-    let bool_cells: Vec<Value> = cells.iter().map(|v| b.ir_bool_cast(v)).collect();
-    let segment_id = super::segment::alloc_and_write_values(b, &bool_cells, NumberType::Integer);
-    let total: usize = shape.iter().product();
-    let strides = super::shape_arith::row_major_strides(&shape);
-    Some(Value::DynamicNDArray(DynamicNDArrayData {
-        envelope: Envelope::from_static_shape(&mut b.dim_table, &shape),
-        dtype: NumberType::Integer,
-        segment_id,
-        meta: crate::types::DynArrayMeta {
-            logical_shape: shape.clone(),
-            logical_offset: 0,
-            logical_strides: strides.clone(),
-            runtime_length: ScalarValue::new(Some(total as i64), None),
-            runtime_rank: ScalarValue::new(Some(shape.len() as i64), None),
-            runtime_shape: shape
-                .iter()
-                .map(|&s| ScalarValue::new(Some(s as i64), None))
-                .collect(),
-            runtime_strides: strides
-                .iter()
-                .map(|&s| ScalarValue::new(Some(s as i64), None))
-                .collect(),
-            runtime_offset: ScalarValue::new(Some(0), None),
-        },
-        value_id: ValueId::next(),
-    }))
-}
-
-pub fn try_dynamic_boolean_mask_from_static(
-    b: &mut IRBuilder,
+/// `data[idx]` at compile time: for a mask with every cell constant and
+/// `data`'s shape, or for positions that are all constant and in range.
+/// `None` otherwise (the runtime paths handle it, and report an
+/// out-of-range position or a mask of another shape).
+fn constant_index_read(
     data: &CompositeData,
     idx: &Value,
+    kind: crate::helpers::array_ops::ArrayIndexKind,
 ) -> Option<Value> {
-    let data_value = Value::List(data.clone());
-    let data_shape = super::composite::get_composite_shape(&data_value);
-    let mask_shape = super::composite::get_composite_shape(idx);
-    if data_shape != mask_shape {
-        return None;
+    use crate::helpers::array_ops::ArrayIndexKind;
+    match kind {
+        ArrayIndexKind::Mask => boolean_mask_static(&Value::List(data.clone()), idx).ok(),
+        ArrayIndexKind::Positions => {
+            let all_int = composite::flatten_composite(idx)
+                .iter()
+                .all(|leaf| matches!(leaf, Value::Integer(_)) && leaf.int_val().is_some());
+            if !all_int {
+                return None;
+            }
+            fancy_index_static(data, idx).ok()
+        }
     }
-    let dyn_data = super::promote::promote_static_to_dynamic(b, &data_value);
-    let dyn_mask = dynamic_bool_mask_from_static(b, idx)?;
-    let Value::DynamicNDArray(d) = dyn_data else {
-        unreachable!("static promotion must produce DynamicNDArray")
-    };
-    Some(crate::helpers::array_ops::filter(
-        b,
-        &Value::DynamicNDArray(d),
-        &[dyn_mask],
-    ))
+}
+
+/// An integer index list with every bool entry as an integer (NumPy reads
+/// the index list `[True, 2]` as the positions `[1, 2]`).
+fn integer_positions(b: &mut IRBuilder, idx: &Value) -> Value {
+    match idx {
+        Value::List(d) => {
+            let values: Vec<Value> = d.values.iter().map(|v| integer_positions(b, v)).collect();
+            let types = values.iter().map(|v| v.zinnia_type()).collect();
+            Value::List(CompositeData::new(types, values))
+        }
+        Value::Boolean(_) => b.ir_int_cast(idx),
+        _ => idx.clone(),
+    }
+}
+
+/// A static array or list as a runtime-shaped array with the same cells.
+fn promote_static(b: &mut IRBuilder, val: &Value) -> Value {
+    let list = super::static_array::base::deep_to_value_list(b, val);
+    super::promote::promote_static_to_dynamic(b, &list)
 }
 
 /// Apply trailing `np.newaxis` markers to a scalar value, wrapping it in

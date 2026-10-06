@@ -591,7 +591,11 @@ impl IRGenerator {
             }
             "dtype" => {
                 let flat = crate::helpers::composite::flatten_composite(&target);
-                dtype_of_elements(&flat)
+                if crate::helpers::array_ops::is_bool_array(&self.builder, &target_orig) {
+                    Value::Class(ZinniaType::Boolean)
+                } else {
+                    dtype_of_elements(&flat)
+                }
             }
             "append" | "extend" | "pop" | "remove" | "clear" | "reverse" | "count"
             | "index" => {

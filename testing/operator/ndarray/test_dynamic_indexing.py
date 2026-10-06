@@ -258,11 +258,13 @@ def test_dynamic_start_stop():
 # ── Masked assignment ────────────────────────────────────────────────────
 
 def test_masked_assign_scalar():
-    """dyn[mask] = scalar: set masked positions to a constant."""
+    """dyn[mask] = scalar: set masked positions to a constant. (The mask is a
+    bool array: an integer array `[1, 0, 1, 0, 1]` lists positions, as in
+    NumPy, and used to be misread as a mask here.)"""
     @zk_circuit
     def foo():
         a = np.promote_to_dynamic(np.asarray([1, 2, 3, 4, 5]))
-        mask = np.promote_to_dynamic(np.asarray([1, 0, 1, 0, 1]))
+        mask = np.promote_to_dynamic(np.asarray([True, False, True, False, True]))
         a[mask] = 0
         # [0, 2, 0, 4, 0] → sum = 6
         assert a.sum() == 6
@@ -340,7 +342,7 @@ def test_masked_assign_rejects_same_product_different_mask_shape():
     @zk_circuit
     def foo():
         a = np.promote_to_dynamic(np.asarray([[1, 5, 3], [7, 2, 8]]))
-        mask = np.promote_to_dynamic(np.asarray([0, 1, 0, 1, 0, 1]))
+        mask = np.promote_to_dynamic(np.asarray([False, True, False, True, False, True]))
         a[mask] = 0
         assert a.sum() == 6
 
@@ -374,7 +376,7 @@ def test_masked_assign_broadcast_scalar():
     @zk_circuit
     def foo():
         a = np.promote_to_dynamic(np.asarray([10, 20, 30, 40, 50]))
-        mask = np.promote_to_dynamic(np.asarray([0, 1, 0, 1, 0]))
+        mask = np.promote_to_dynamic(np.asarray([False, True, False, True, False]))
         a[mask] = 99
         # [10, 99, 30, 99, 50] → sum = 288
         assert a.sum() == 288
@@ -618,7 +620,7 @@ def test_boolean_mask_dynamic_rejects_same_product_different_shape():
     @zk_circuit
     def foo():
         a = np.promote_to_dynamic(np.asarray([[1, 5, 3], [7, 2, 8]]))
-        mask = np.promote_to_dynamic(np.asarray([0, 1, 0, 1, 0, 1]))
+        mask = np.promote_to_dynamic(np.asarray([False, True, False, True, False, True]))
         result = a[mask]
         assert result.sum() == 20
 

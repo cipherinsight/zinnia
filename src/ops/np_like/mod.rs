@@ -125,6 +125,10 @@ pub(crate) fn vectorize_minmax(
                     let cond = int_cmp(builder, a, b);
                     let out = builder.ir_select_i(&cond, a, b);
                     builder.deposit_minmax_facts(&out, a, b, is_max);
+                    // The extreme of two NumPy bools is a bool.
+                    if builder.is_bool_cell(a) && builder.is_bool_cell(b) {
+                        builder.record_bool_cell(&out);
+                    }
                     out
                 }
             }
@@ -445,6 +449,10 @@ macro_rules! define_np_minmax {
                         let cond = builder.$int_cmp(x1, x2);
                         let out = builder.ir_select_i(&cond, x1, x2);
                         builder.deposit_minmax_facts(&out, x1, x2, $op_name == "maximum");
+                        // The extreme of two NumPy bools is a bool.
+                        if builder.is_bool_cell(x1) && builder.is_bool_cell(x2) {
+                            builder.record_bool_cell(&out);
+                        }
                         out
                     }
                     (crate::types::Value::Float(_), crate::types::Value::Float(_)) => {

@@ -21,6 +21,10 @@ pub fn dyn_setitem(
             tuple.values.iter().cloned().map(SliceIndex::Single).collect();
         return dyn_setitem(b, data, &expanded, value);
     }
+    // A boolean mask or a runtime-shaped index array among several indices
+    // has no write path here (the scatter below reads every index array as
+    // static integer positions).
+    super::reject_unsupported_index_arrays(b, indices);
     // Fancy-index scatter: any axis indexed by an integer array (StaticArray /
     // List / Tuple) means `for k in 0..L: dst[idx_axes[k]] = rhs[k] | rhs`.
     // Without this branch, `compute_flat_addr` would try to multiply an array
@@ -35,6 +39,16 @@ pub fn dyn_setitem(
     }
 
     let indices = &wrap_and_check_dynamic_indices(b, data, indices, "dyn_setitem");
+    // `a[i] = v` on an array of higher rank assigns the whole sub-array
+    // `a[i, :, ...]` (it used to write only its first cell). The indices are
+    // already wrapped and checked against the runtime shape.
+    let rank = data.envelope.rank();
+    if indices.len() < rank {
+        let mut full = indices.to_vec();
+        full.resize(rank, SliceIndex::Range(None, None, None));
+        return dyn_setitem_slice(b, data, &full, value);
+    }
+
     let addr = compute_flat_addr(b, data, indices);
     if data.envelope.total_bound > 0 {
         crate::optim::resolver::discharge_index_in_range(
@@ -46,7 +60,7 @@ pub fn dyn_setitem(
         );
     }
 
-    let write_val = cast_to_dtype(b, value, data.dtype);
+    let write_val = cast_for_array(b, value, data);
     crate::helpers::segment::write_typed(b, data.segment_id, &addr, &write_val, data.dtype);
 
     after_write(data)
@@ -311,8 +325,8 @@ pub fn dyn_setitem_mask(
         let keep = b.ir_bool_cast(&mask_elements[i]);
 
         let new_val = match &rhs {
-            Rhs::Scalar(v) => cast_to_dtype(b, v, data.dtype),
-            Rhs::FullShape(cells) => cast_to_dtype(b, &cells[i], data.dtype),
+            Rhs::Scalar(v) => cast_for_array(b, v, data),
+            Rhs::FullShape(cells) => cast_for_array(b, &cells[i], data),
             Rhs::Compacted(cells) => {
                 // rhs[#trues before i], one-hot over the prefix counter (at
                 // most i trues can precede position i, and no more than the
@@ -321,7 +335,7 @@ pub fn dyn_setitem_mask(
                 for (k, c) in cells.iter().enumerate().take(i + 1) {
                     let k_c = b.ir_constant_int(k as i64);
                     let eq = b.ir_equal_i(&prefix, &k_c);
-                    let c_cast = cast_to_dtype(b, c, data.dtype);
+                    let c_cast = cast_for_array(b, c, data);
                     acc = crate::helpers::value_ops::select_value(b, &eq, &c_cast, &acc);
                 }
                 acc
@@ -339,6 +353,10 @@ pub fn dyn_setitem_mask(
     }
 
     let segment_id = crate::helpers::segment::alloc_and_write_values(b, &out_elements, data.dtype);
+    // The written array keeps its dtype.
+    if b.is_bool_segment(data.segment_id) {
+        b.mark_bool_segment(segment_id);
+    }
 
     Value::DynamicNDArray(DynamicNDArrayData {
         envelope: data.envelope.clone(),
@@ -607,9 +625,9 @@ pub fn dyn_setitem_slice(
                 }
             };
             let write_val = if value_is_scalar {
-                cast_to_dtype(b, value, data.dtype)
+                cast_for_array(b, value, data)
             } else {
-                cast_to_dtype(b, &value_elements[val_flat], data.dtype)
+                cast_for_array(b, &value_elements[val_flat], data)
             };
             crate::helpers::segment::write_typed(b, data.segment_id, &addr, &write_val, data.dtype);
         }
@@ -730,9 +748,9 @@ pub fn dyn_setitem_slice(
             let current =
                 crate::helpers::segment::read_typed(b, data.segment_id, &addr, data.dtype);
             let write_val = if value_is_scalar {
-                cast_to_dtype(b, value, data.dtype)
+                cast_for_array(b, value, data)
             } else {
-                cast_to_dtype(b, &value_elements[val_flat], data.dtype)
+                cast_for_array(b, &value_elements[val_flat], data)
             };
             let selected =
                 crate::helpers::value_ops::select_value(b, &in_bounds, &write_val, &current);
@@ -741,6 +759,16 @@ pub fn dyn_setitem_slice(
     }
 
     after_write(data)
+}
+
+/// `v` converted to `data`'s dtype before it is stored in `data` (NumPy
+/// converts an assigned value to the array's dtype; a bool array stores
+/// truth values, `IRBuilder::bool_dtype_cell`).
+fn cast_for_array(b: &mut IRBuilder, v: &Value, data: &DynamicNDArrayData) -> Value {
+    if data.dtype == NumberType::Integer && b.is_bool_segment(data.segment_id) {
+        return b.bool_dtype_cell(v);
+    }
+    cast_to_dtype(b, v, data.dtype)
 }
 
 fn cast_to_dtype(b: &mut IRBuilder, v: &Value, dtype: NumberType) -> Value {
@@ -764,4 +792,48 @@ fn cast_to_dtype(b: &mut IRBuilder, v: &Value, dtype: NumberType) -> Value {
             crate::helpers::value_ops::pack_complex_value(real, imag)
         }
     }
+}
+
+/// `target[idx] = value` for a runtime-shaped integer index array `idx`
+/// (e.g. `np.nonzero(m)[0]`) and a scalar `value`, on a static or a
+/// runtime-shaped array. Each slot `k` of `idx` in use (`k < len(idx)`) is an
+/// element write `target[idx[k]] = value`, wrapped and checked like a scalar
+/// index; it is emitted as code that runs only where the slot is in use
+/// (`IRBuilder::under_condition`), so the padding slots past the runtime
+/// length neither write nor fail a check. Repeated positions write the same
+/// value, so their order does not matter.
+pub fn setitem_runtime_positions(
+    b: &mut IRBuilder,
+    target: &Value,
+    idx: &DynamicNDArrayData,
+    value: &Value,
+) -> Value {
+    assert!(
+        value.is_number(),
+        "assigning an array through a runtime-shaped index array is not supported; \
+         assign a scalar"
+    );
+    assert!(
+        idx.envelope.rank() == 1,
+        "assigning through a runtime-shaped index array of rank {} is not supported",
+        idx.envelope.rank()
+    );
+    let idx = crate::ops::dyn_ndarray::force_contiguous(b, idx);
+    let positions =
+        crate::helpers::segment::read_all_typed(b, idx.segment_id, idx.max_length(), idx.dtype);
+    let len = super::indexing::scalar_i64_value(b, &idx.meta.runtime_length);
+    let mut current = target.clone();
+    for (k, position) in positions.iter().enumerate() {
+        let k_v = b.ir_constant_int(k as i64);
+        let in_use = b.ir_less_than_i(&k_v, &len);
+        let element = [SliceIndex::Single(position.clone())];
+        current = b.under_condition(&in_use, |b| match &current {
+            Value::StaticArray { .. } => {
+                crate::helpers::static_array::write::static_array_setitem(b, &current, &element, value)
+            }
+            Value::DynamicNDArray(d) => dyn_setitem(b, d, &element, value),
+            _ => unreachable!("an array-valued assignment target"),
+        });
+    }
+    current
 }
