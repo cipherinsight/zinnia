@@ -61,6 +61,8 @@ def accepts(program, *args, backend="mock"):
 AB = 'a: Float[Array, "3"], b: Integer[Array, "3"]'
 IB = 'i: Integer[Array, "3"], b: Integer[Array, "3"]'
 MB = 'm: Integer[Array, "5"], b: Integer[Array, "5"]'
+M_X = 'm: Integer[Array, "5"], x: Integer[Array, "5 2"]'
+X52 = np.arange(1, 11).reshape(5, 2)
 
 GATHERS = {
     # The reported bug: a runtime integer array of `b`'s shape.
@@ -191,6 +193,10 @@ WRITES = {
     "runtime_positions_on_runtime_data": (
         kernel(MB, "c = b[m > 0]\nd = m[m > 0]\nc[d % 3] = 0\nreturn c"), (M5, B5)),
     "runtime_mask_on_runtime_data": (kernel(MB, "c = b[m > 0]\nc[c > 30] = 0\nreturn c"), (M5, B5)),
+    # A row of a runtime-shaped matrix (it used to write only the row's first cell).
+    "runtime_row": (kernel(M_X, "c = x[m > 0]\nc[-1] = 0\nreturn c"), (M5, X52)),
+    "runtime_rows_by_positions": (kernel(M_X, "c = x[m > 0]\nc[np.array([0, -1])] = 7\nreturn c"), (M5, X52)),
+    "runtime_row_from_array": (kernel(M_X, "c = x[m > 0]\nc[1] = np.array([5, 6])\nreturn c"), (M5, X52)),
 }
 
 
@@ -273,6 +279,17 @@ def test_position_past_runtime_length_is_rejected():
     for claimed in (20, 60, 70):
         assert not accepts(program, M5, B5, claimed)
     assert accepts(program, np.array([1, 1, 1, 1, 0]), B5, 50)
+
+
+@pytest.mark.parametrize("assignment", [
+    "c[k, 0] = 0",                      # a mask among several indices
+    "c[d, 0] = 0",                      # a runtime-shaped index array among several indices
+    "c[np.array([True, False, True, False, False]), 0] = 0",
+])
+def test_index_arrays_among_several_indices_of_runtime_shaped_data_are_rejected(assignment):
+    body = f"c = x[m > 0]\nk = (m > 2)[m > 0]\nd = m[m > 0] % 3\n{assignment}\nreturn c"
+    with pytest.raises(BaseException, match="combined with other indices is not supported"):
+        compile_kernel(kernel(M_X, body))
 
 
 def test_constant_out_of_range_position_is_a_compile_error():

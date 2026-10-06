@@ -21,6 +21,10 @@ pub fn dyn_setitem(
             tuple.values.iter().cloned().map(SliceIndex::Single).collect();
         return dyn_setitem(b, data, &expanded, value);
     }
+    // A boolean mask or a runtime-shaped index array among several indices
+    // has no write path here (the scatter below reads every index array as
+    // static integer positions).
+    super::reject_unsupported_index_arrays(b, indices);
     // Fancy-index scatter: any axis indexed by an integer array (StaticArray /
     // List / Tuple) means `for k in 0..L: dst[idx_axes[k]] = rhs[k] | rhs`.
     // Without this branch, `compute_flat_addr` would try to multiply an array
@@ -35,6 +39,16 @@ pub fn dyn_setitem(
     }
 
     let indices = &wrap_and_check_dynamic_indices(b, data, indices, "dyn_setitem");
+    // `a[i] = v` on an array of higher rank assigns the whole sub-array
+    // `a[i, :, ...]` (it used to write only its first cell). The indices are
+    // already wrapped and checked against the runtime shape.
+    let rank = data.envelope.rank();
+    if indices.len() < rank {
+        let mut full = indices.to_vec();
+        full.resize(rank, SliceIndex::Range(None, None, None));
+        return dyn_setitem_slice(b, data, &full, value);
+    }
+
     let addr = compute_flat_addr(b, data, indices);
     if data.envelope.total_bound > 0 {
         crate::optim::resolver::discharge_index_in_range(
