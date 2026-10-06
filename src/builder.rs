@@ -408,7 +408,7 @@ impl IRBuilder {
         };
         if let (Some(mn), Some(mx)) = (resolver_min, resolver_max) {
             if mn <= mx {
-                return Some((mn, mx));
+                return Some(self.narrow_dtype_wide_bounds(val, (mn, mx)));
             }
         }
         // Direct fact lookup on this value_id.
@@ -438,6 +438,34 @@ impl IRBuilder {
             return Some(bounds);
         }
         self.deep_bounds_walk(val)
+    }
+
+    /// Narrow the resolver's bound `(min, max)` of `val` by the facts.
+    ///
+    /// The range pass reads only the IR, so for an input it knows just the
+    /// dtype's domain: with `@requires(0 <= n <= 8)` it bounds `n - 1` by
+    /// about `[-2^63, 2^63)`, and `ask_bounds` returned that, ignoring the
+    /// precondition (`range(n - 1, 0, -1)` was rejected as unbounded, while
+    /// `range(n + 1, 0, -1)`, whose resolver bound overflows and falls back
+    /// to the facts, compiled). Both bounds hold for every value of `val`,
+    /// so their intersection does. Only a bound wider than any array (2^32)
+    /// is narrowed, which keeps the extra walk off the common path.
+    fn narrow_dtype_wide_bounds(&mut self, val: &Value, resolved: (i64, i64)) -> (i64, i64) {
+        const WIDE: i64 = 1 << 32;
+        let (mn, mx) = resolved;
+        if mx.saturating_sub(mn) < WIDE {
+            return resolved;
+        }
+        let from_facts = val
+            .value_id()
+            .and_then(|vid| crate::optim::resolver::derive_bounds_from_facts(&self.facts, vid))
+            .or_else(|| val.value_id().and_then(|vid| self.scalar_value_bounds.get(&vid).copied()))
+            .or_else(|| self.ask_bounds_via_arith(val))
+            .or_else(|| self.deep_bounds_walk(val));
+        match from_facts {
+            Some((lo, hi)) if mn.max(lo) <= mx.min(hi) => (mn.max(lo), mx.min(hi)),
+            _ => resolved,
+        }
     }
 
     /// Deep IR-walk bound estimator used as the last fallback in
