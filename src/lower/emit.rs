@@ -6,10 +6,13 @@
 //!    group. Each precondition fact that no free fact proves and no
 //!    candidate establishes gets a *check node*: the framework emits the
 //!    check through `builder/guard.rs`, under the fact's scope.
-//! 3. **Program checks.** An assertion of the program whose fact a free fact
-//!    proves is dropped. One whose fact some candidate establishes becomes a
-//!    root requirement whose own producer is the assertion itself (kept when
-//!    selected, at its cost), so a postcondition can discharge it.
+//! 3. **Program checks.** An assertion of the program that an earlier one
+//!    implies, or whose fact a scalar gadget's postcondition establishes
+//!    (`facts`), is dropped. One whose fact some candidate establishes, or
+//!    that implies a candidate's precondition, becomes a root requirement
+//!    whose own producer is the assertion itself (kept when selected, at its
+//!    cost): a postcondition can discharge it, and it can justify a
+//!    precondition.
 //! 4. **Selection** per connected part of the graph (`select`).
 //! 5. **Emission** in a topological order of statements, node starts and
 //!    lanes: a node starts right before its first lane, with its inputs
@@ -58,11 +61,10 @@ pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction
     let groups = collect_groups(graph);
     let facts = FreeFacts::new(graph);
     let program_checks = checks::program_checks(graph);
-    let freely_proven: HashSet<StmtId> = program_checks
-        .iter()
-        .filter(|c| c.forms.iter().any(|f| facts.proves(f)))
-        .map(|c| c.stmt)
-        .collect();
+    let mut freely_proven = checks::dominated(&program_checks);
+    freely_proven.extend(
+        program_checks.iter().filter(|c| c.forms.iter().any(|f| facts.established_by_gadget(f))).map(|c| c.stmt),
+    );
     if groups.is_empty() && freely_proven.is_empty() {
         return None;
     }
@@ -80,10 +82,13 @@ pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction
         }
     }
     let established: Vec<Fact> = nodes.iter().flat_map(|n| n.post_facts()).collect();
+    let wanted: Vec<Fact> = nodes.iter().flat_map(|n| n.pre_facts()).collect();
     let mut roots: Vec<Requirement> = groups.iter().flat_map(|g| g.lanes.iter().map(|l| Requirement::Lane(l.stmt))).collect();
     for check in program_checks.iter().filter(|c| !freely_proven.contains(&c.stmt)) {
-        if let Some(fact) = check.forms.iter().find(|f| established.iter().any(|e| e.implies(f))) {
-            roots.push(Requirement::Fact(*fact));
+        let provable = check.forms.iter().any(|f| established.iter().any(|e| e.implies(f)));
+        let useful = check.forms.iter().any(|f| wanted.iter().any(|w| f.implies(w)));
+        if provable || useful {
+            roots.push(Requirement::Fact(check.forms[0]));
             nodes.push(NodeEntry::program_check(check, target));
         }
     }
@@ -168,23 +173,24 @@ impl NodeEntry {
     }
 
     fn post_facts(&self) -> impl Iterator<Item = Fact> + '_ {
-        self.node.post.iter().filter_map(|r| match r {
-            Requirement::Fact(f) => Some(*f),
-            _ => None,
-        })
+        facts_of(&self.node.post)
     }
+
+    fn pre_facts(&self) -> impl Iterator<Item = Fact> + '_ {
+        facts_of(&self.node.pre)
+    }
+}
+
+fn facts_of(requirements: &[Requirement]) -> impl Iterator<Item = Fact> + '_ {
+    requirements.iter().filter_map(|r| match r {
+        Requirement::Fact(f) => Some(*f),
+        _ => None,
+    })
 }
 
 /// A check node for every precondition fact no node establishes.
 fn add_check_nodes(nodes: &mut Vec<NodeEntry>, target: Target) {
-    let wanted: Vec<Fact> = nodes
-        .iter()
-        .flat_map(|n| n.node.pre.iter())
-        .filter_map(|r| match r {
-            Requirement::Fact(f) => Some(*f),
-            _ => None,
-        })
-        .collect();
+    let wanted: Vec<Fact> = nodes.iter().flat_map(|n| n.pre_facts()).collect();
     let mut added: HashSet<Fact> = HashSet::new();
     for fact in wanted {
         let required = Requirement::Fact(fact);
@@ -382,7 +388,12 @@ fn emit(graph: &IRGraph, groups: &[Group], nodes: Vec<NodeEntry>, selected: &[us
     }
 
     let lanes: HashMap<StmtId, &Lane> = groups.iter().flat_map(|g| g.lanes.iter().map(|l| (l.stmt, l))).collect();
-    let order = emission_order(graph, groups, &lane_producer, &starts);
+    let check_inputs: HashMap<usize, Vec<StmtId>> = state
+        .checks_for
+        .iter()
+        .map(|(&node, facts)| (node, facts.iter().flat_map(Fact::subjects).collect()))
+        .collect();
+    let order = emission_order(graph, groups, &lane_producer, &starts, &check_inputs);
 
     let mut b = IRBuilder::new();
     b.reserve_segment_ids_below(next_free_segment_id(graph));
@@ -415,7 +426,13 @@ fn emit(graph: &IRGraph, groups: &[Group], nodes: Vec<NodeEntry>, selected: &[us
 /// Statements in their order, each node's start placed right before the
 /// first lane it produces once its inputs are emitted (Kahn's algorithm,
 /// ties by position).
-fn emission_order(graph: &IRGraph, groups: &[Group], lane_producer: &HashMap<StmtId, usize>, starts: &[usize]) -> Vec<Unit> {
+fn emission_order(
+    graph: &IRGraph,
+    groups: &[Group],
+    lane_producer: &HashMap<StmtId, usize>,
+    starts: &[usize],
+    check_inputs: &HashMap<usize, Vec<StmtId>>,
+) -> Vec<Unit> {
     let position: HashMap<StmtId, usize> = graph.stmts.iter().enumerate().map(|(i, s)| (s.stmt_id, i)).collect();
     let mut deps: HashMap<Unit, Vec<Unit>> = HashMap::new();
     let mut priority: HashMap<Unit, usize> = HashMap::new();
@@ -436,6 +453,7 @@ fn emission_order(graph: &IRGraph, groups: &[Group], lane_producer: &HashMap<Stm
         for (lane, _) in lane_producer.iter().filter(|(_, &p)| p == node) {
             inputs.extend(group_of[lane].shared.iter().map(|s| Unit::Stmt(*s)));
         }
+        inputs.extend(check_inputs.get(&node).into_iter().flatten().map(|s| Unit::Stmt(*s)));
         inputs.sort_unstable();
         inputs.dedup();
         deps.insert(Unit::Start(node), inputs);

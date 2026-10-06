@@ -2862,7 +2862,7 @@ impl IRBuilder {
 
     /// `IR::Hint`: lane `rank` of `kind(elements)`, a value the prover
     /// supplies. It constrains nothing; the caller must pin it (see
-    /// `optim::sort_lowering`).
+    /// `lower::sort`).
     pub fn ir_hint(
         &mut self,
         kind: crate::ir_defs::HintKind,

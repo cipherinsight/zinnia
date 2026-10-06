@@ -2,7 +2,7 @@
 //! `np.take` for common fixed-shape NumPy programs.
 //!
 //! A sort emits one `IR::Sorted` placeholder per output; the late pass
-//! `optim::sort_lowering` lowers the live ones (a sorting network or pinned
+//! `lower::sort` lowers the live ones (a sorting network or pinned
 //! prover hints, by a cost rule).
 
 use std::collections::HashMap;
@@ -107,7 +107,7 @@ pub fn try_apply_sort(
         let fiber: std::sync::Arc<[Value]> = (0..axis_len)
             .map(|j| b.ensure_ptr(&cells[base + j * axis_stride]))
             .collect();
-        // One placeholder per output; `optim::sort_lowering` lowers the
+        // One placeholder per output; `lower::sort` lowers the
         // outputs that remain live after dead-code elimination.
         for rank in 0..axis_len {
             out[base + rank * axis_stride] = b.ir_sorted(&fiber, rank as u32, argsort);

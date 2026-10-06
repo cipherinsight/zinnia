@@ -1,7 +1,7 @@
 //! Checks: the program's assertions read as facts, the cost of a check on
 //! each target, and the emission of a check for a fact.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::builder::IRBuilder;
 use crate::ir::IRGraph;
@@ -90,6 +90,31 @@ fn condition_claim(graph: &IRGraph, c: StmtId, constant: &dyn Fn(StmtId) -> Opti
         (IR::EqI, &[a, b]) => Some(Claim::Equal(a, b)),
         _ => None,
     }
+}
+
+/// The checks an earlier check implies ("range checks ⇒ bounds": a later
+/// `0 <= x < 8` after `0 <= x < 4`, or `x >= 0` after it). The IR has no
+/// control flow, so every assertion is a constraint of the circuit; an
+/// implied one adds nothing. Only earlier checks count, so a backend that
+/// reads the bound a check proves for the statements after it (a cheaper
+/// gadget for a value proven in range) still finds a bound as early.
+pub fn dominated(checks: &[ProgramCheck]) -> HashSet<StmtId> {
+    let mut known: HashMap<StmtId, Vec<Fact>> = HashMap::new();
+    let mut dominated = HashSet::new();
+    for check in checks {
+        let implied = check.forms.iter().any(|form| {
+            let subject = form.claim.subjects()[0];
+            known.get(&subject).is_some_and(|facts| facts.iter().any(|k| k.implies(form)))
+        });
+        if implied {
+            dominated.insert(check.stmt);
+            continue;
+        }
+        for form in &check.forms {
+            known.entry(form.claim.subjects()[0]).or_default().push(*form);
+        }
+    }
+    dominated
 }
 
 /// The estimated cost of checking `claim` on `target` (halo2-base cells,

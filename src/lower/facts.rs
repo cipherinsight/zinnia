@@ -34,7 +34,15 @@ impl<'a> FreeFacts<'a> {
 
     /// `true` when `fact` holds without any construction.
     pub fn proves(&self, fact: &Fact) -> bool {
-        self.established.iter().any(|f| f.implies(fact)) || self.proves_by_bounds(&fact.claim)
+        self.established_by_gadget(fact) || self.proves_by_bounds(&fact.claim)
+    }
+
+    /// `true` when a scalar gadget's postcondition implies `fact`. Program
+    /// checks are discharged only this way: a check that bounds alone prove
+    /// is the job of `AlwaysSatisfiedElimination`, which runs earlier with
+    /// the same range engine and SMT.
+    pub fn established_by_gadget(&self, fact: &Fact) -> bool {
+        self.established.iter().any(|f| f.implies(fact))
     }
 
     fn proves_by_bounds(&self, claim: &Claim) -> bool {

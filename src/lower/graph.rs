@@ -111,6 +111,15 @@ impl Fact {
         Fact { claim, scope: Scope::Everywhere }
     }
 
+    /// The statements the fact is about, its scope's predicate included.
+    pub fn subjects(&self) -> Vec<StmtId> {
+        let mut subjects = self.claim.subjects();
+        if let Scope::When(p) = self.scope {
+            subjects.push(p);
+        }
+        subjects
+    }
+
     /// `true` when `self` established implies `other`: the scope of `self`
     /// covers `other`'s, and its claim implies `other`'s.
     pub fn implies(&self, other: &Fact) -> bool {
