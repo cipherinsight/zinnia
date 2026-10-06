@@ -525,6 +525,26 @@ pub fn fp_sqrt(x: Fp, precision_bits: u32) -> Fp {
     }
 }
 
+/// Bits of the admitted radicands of [`fp_sqrt_product_int`]: `n < 2^(126 - 2P)`,
+/// the largest range whose roots `floor(sqrt(n) * 2^P)` stay below `2^63`, in
+/// the fixed-point window (`2^62` at `P = 32`).
+pub fn sqrt_int_bits(precision_bits: u32) -> u32 {
+    126 - 2 * precision_bits
+}
+
+/// `sqrt(b * c)` of two integers as a Q value, rounded down:
+/// `floor(sqrt(n) * 2^P)` for the field product `n = b * c`, the largest `y`
+/// with `y^2 <= n * 2^(2P)` (`IR::SqrtProductIF`). Admits `0 <= b < 2^64` and
+/// `0 <= n < 2^sqrt_int_bits(P)`, radicands far beyond the window of
+/// `fp_sqrt(float(n))` (which needs `n < 2^31`); `None` outside, where every
+/// backend has no proof. The bound on `b` lets a caller show that the field
+/// product is the integer product (`|c| < p / 2^65` suffices).
+pub fn fp_sqrt_product_int(b: Fp, c: Fp, precision_bits: u32) -> Option<Fp> {
+    fp_to_i128(b).filter(|v| (0..1i128 << 64).contains(v))?;
+    let n = fp_to_i128(b * c).filter(|v| (0..1i128 << sqrt_int_bits(precision_bits)).contains(v))?;
+    Some(i128_to_fp(isqrt_u128((n as u128) << (2 * precision_bits)) as i128))
+}
+
 /// π and π/2 in Q-encoding (rounded). Sine reduces its argument modulo
 /// `2 * pi_q` and folds it onto `[0, half_pi_q]`.
 pub fn pi_q(precision_bits: u32) -> i128 {

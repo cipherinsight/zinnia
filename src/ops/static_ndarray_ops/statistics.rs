@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
+use crate::builder::guard::Execution;
 use crate::builder::IRBuilder;
+use crate::lower::{ArrayOp, OpKind};
 use crate::helpers::static_array::elementwise::payload_cells;
 use crate::types::{CompositeData, NumberType, Value, ZinniaType};
 
@@ -526,10 +528,11 @@ fn runtime_shaped_percentile(b: &mut IRBuilder, data: &crate::types::DynamicNDAr
 }
 
 /// `np.corrcoef(x, y)` of two 1-D static arrays of the same length
-/// `n >= 2`: `[[1, r], [r, 1]]` with
+/// `n >= 2`: `[[1, r], [r, 1]]` with Pearson's
 /// `r = sum(dx * dy) / sqrt(sum(dx^2) * sum(dy^2))`, `dx = x - mean(x)`.
-/// Each of the three sums of products is one `ProductSumF` (rescaled
-/// once, `IRBuilder::ir_dot_f`).
+/// `r` is one array-operator placeholder (`OpKind::Corrcoef`), lowered by
+/// the statistics family (`lower::stats`) after dead-code elimination: by
+/// exact integer sums for integer inputs, in fixed point otherwise.
 pub fn np_corrcoef(b: &mut IRBuilder, args: &[Value]) -> Value {
     assert!(args.len() >= 2, "np.corrcoef: requires x and y");
     let length_of = |v: &Value| match v {
@@ -543,27 +546,31 @@ pub fn np_corrcoef(b: &mut IRBuilder, args: &[Value]) -> Value {
     if n <= 1 {
         panic!("np.corrcoef: at least two observations are required");
     }
-    let deviations = |b: &mut IRBuilder, arr: &Value| -> Vec<Value> {
-        let cells: Vec<Value> = payload_cells(b, arr)
-            .iter()
-            .map(|c| crate::helpers::value_ops::ensure_float(b, c))
-            .collect();
-        let sum = b.ir_sum_f(&cells);
-        let count = b.ir_constant_float(n as f64);
-        let mean = b.ir_div_f(&sum, &count);
-        cells.iter().map(|c| b.ir_sub_f(c, &mean)).collect()
+    let mut shared: Vec<Value> = payload_cells(b, &args[0]);
+    shared.extend(payload_cells(b, &args[1]));
+    let mut shared: Vec<Value> = shared.iter().map(|c| b.ensure_ptr(c)).collect();
+    let integer = shared.iter().all(|c| matches!(c, Value::Integer(_) | Value::Boolean(_)));
+    let guarded = match b.execution() {
+        Execution::Always => false,
+        Execution::When(p) => {
+            shared.push(p);
+            true
+        }
+        // The call never runs: its value is never observed.
+        Execution::Never => {
+            let zero = b.ir_constant_float(0.0);
+            let cells = vec![zero.clone(), zero.clone(), zero.clone(), zero];
+            return crate::helpers::static_array::base::build_static_array_from_flat(b, cells, vec![2, 2], NumberType::Float);
+        }
     };
-    let dx = deviations(b, &args[0]);
-    let dy = deviations(b, &args[1]);
-    let pairs = |u: &[Value], v: &[Value]| -> Vec<(Value, Value)> {
-        u.iter().cloned().zip(v.iter().cloned()).collect()
+    let op = ArrayOp {
+        kind: OpKind::Corrcoef { n: n as u32, integer, guarded },
+        shared: shared.len() as u32,
+        output: 0,
+        position: Some(0),
     };
-    let cov = b.ir_dot_f(&pairs(&dx, &dy));
-    let var_x = b.ir_dot_f(&pairs(&dx, &dx));
-    let var_y = b.ir_dot_f(&pairs(&dy, &dy));
-    let denom_sq = b.ir_mul_f(&var_x, &var_y);
-    let denom = b.ir_sqrt_f(&denom_sq);
-    let corr = b.ir_div_f(&cov, &denom);
+    let shared: std::sync::Arc<[Value]> = shared.into();
+    let corr = b.ir_array_op(op, &shared, &[]);
     let one = b.ir_constant_float(1.0);
     crate::helpers::static_array::base::build_static_array_from_flat(
         b,

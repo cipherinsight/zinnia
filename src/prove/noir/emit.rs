@@ -42,6 +42,15 @@ const Q_BITS: u32 = 32;
 /// and two arithmetic gates).
 const INDICATOR_GATES: usize = 3;
 const Q_U64: u64 = 1u64 << 32;
+/// Measured `bb gates` of a native array read whose address is checked on its
+/// own (`array_index`'s two range checks and the ROM read), and of one whose
+/// root is checked once for all its reads (the ROM read and the `u32`
+/// address arithmetic; the root's check is shared).
+const NATIVE_READ_GATES: usize = 10;
+const NATIVE_READ_AT_CHECKED_ROOT_GATES: usize = 3;
+/// Measured `bb gates` of checking one root (`array_index`), shared by the
+/// reads at it.
+const ROOT_CHECK_GATES: usize = 8;
 
 /// Output of [`emit_circuit`].
 pub struct EmitOutput {
@@ -87,6 +96,7 @@ pub fn emit_circuit(
     emitter.implied_comparisons = implied_comparisons(ir, &emitter.asserted_comparisons);
     emitter.multiplied = multiplied(ir);
     emitter.root_guards = crate::prove::guards::root_guards(ir);
+    emitter.divisor_guards = crate::prove::guards::divisor_guards(ir);
     interpret_ir(ir, &mut emitter)?;
 
     let main_nr = render_main_nr(&input_params, &emitter);
@@ -674,6 +684,9 @@ pub struct NoirEmitter<'a> {
     asserted_comparisons: HashSet<u32>,
     /// Asserted `x >= 0` with a later `sqrt(x)` (`crate::prove::guards`).
     root_guards: HashSet<u32>,
+    /// Asserted `d != 0` with a later division by `d` (`crate::prove::guards`):
+    /// emitted as nothing, `d` recorded in `nonzero` (see `asserted_distinct`).
+    divisor_guards: HashSet<u32>,
     /// Cells an emitted `assert(x != 0)` proves non-zero.
     nonzero: HashSet<String>,
     /// `out -> (a, b)` for every emitted sum `out = a + b`.
@@ -1234,15 +1247,22 @@ impl<'a> NoirEmitter<'a> {
         let t = self.fresh();
         let _ = writeln!(self.body, "    let {t}: Field = {gap};");
         let _ = writeln!(self.body, "    {t}.assert_max_bit_size::<{width}>();");
-        // low + strict <= high < low + strict + 2^W.
+        // low + strict <= high < low + strict + 2^W: an operand with a known
+        // range (a constant, or a range an earlier check proves) bounds the
+        // other one, an integer then too.
         let span = 1i128 << width;
         let offset = strict as i128;
-        if let Some(c) = self.raw_constant(high) {
-            self.narrow_proven_range(low, c - offset - span + 1, c - offset);
+        if let Some((lo, hi)) = self.known_range(high) {
+            self.narrow_proven_range(low, lo - offset - span + 1, hi - offset);
         }
-        if let Some(c) = self.raw_constant(low) {
-            self.narrow_proven_range(high, c + offset, c + offset + span - 1);
+        if let Some((lo, hi)) = self.known_range(low) {
+            self.narrow_proven_range(high, lo + offset, hi + offset + span - 1);
         }
+    }
+
+    /// The range of a constant or of a cell whose range an emitted check proves.
+    fn known_range(&self, cell: &str) -> Option<(i128, i128)> {
+        self.raw_constant(cell).map(|c| (c, c)).or_else(|| self.proven_range.get(cell).copied())
     }
 
     /// Remember that `out = a + b`, so a select between `out` and one of
@@ -1304,13 +1324,27 @@ impl<'a> NoirEmitter<'a> {
         if !asserted {
             return None;
         }
-        let _ = writeln!(self.body, "    assert({a} != {b});");
+        // `d != 0` before a division by `d` (`crate::prove::guards`): the
+        // division of a divisor in `nonzero` bounds its remainder by `|d|`
+        // (`d_mag - 1 - r_mag` or `d - 1 - r` range-checked), which has no
+        // solution for `d = 0`, so the assertion emits nothing.
+        let guarded_divisor = self.current_stmt.is_some_and(|id| self.divisor_guards.contains(&id))
+            && [(a, b), (b, a)].into_iter().any(|(d, zero)| self.raw_constant(zero) == Some(0) && self.raw_constant(d).is_none());
+        if !guarded_divisor {
+            let _ = writeln!(self.body, "    assert({a} != {b});");
+        }
         for (x, other) in [(a, b), (b, a)] {
             if self.raw_constant(other) == Some(0) {
                 self.nonzero.insert(x.to_string());
             }
         }
         Some(self.literal_int(1))
+    }
+
+    /// Whether every accepted witness has `cell >= 0`: an emitted check
+    /// (`proven_range`) or the static interval of its IR value (`ival`).
+    fn known_non_negative(&self, cell: &str) -> bool {
+        self.proven_range.get(cell).is_some_and(|(lo, _)| *lo >= 0) || self.ival(cell).is_some_and(|(lo, _)| lo >= 0)
     }
 
     /// `a == b` for an `==` whose only uses are asserts: the assertion
@@ -1416,9 +1450,13 @@ impl<'a> NoirEmitter<'a> {
     /// `x = i64::MIN`, whose magnitude overflows int64 (the raw Q32 value of
     /// a float lives in the same window). `sign_abs`'s magnitude is not used
     /// here because it admits `2^63`.
+    /// `|x|` (`noir_fpc::abs_int64`); its check `2|x| + sign < 2^64` puts the
+    /// result in `[0, 2^63)`, recorded in `proven_range`.
     fn abs_int64(&mut self, x: &str) -> String {
         self.use_lib("abs_int64");
-        self.bind(&format!("abs_int64({x})"))
+        let mag = self.bind(&format!("abs_int64({x})"));
+        self.narrow_proven_range(&mag, 0, (1i128 << 63) - 1);
+        mag
     }
 
     /// `x != 0` (`nonzero`) or `x == 0` as a 0/1 cell; for a scaled bit
@@ -1797,8 +1835,7 @@ impl<'a> NoirEmitter<'a> {
     /// epoch's array, which the epoch's dynamic reads share. Two-root reads
     /// always gather: their stage-1 planes are shared across reads, which
     /// measured cheaper than native reads on every case that has them.
-    fn prefer_native_read(&self, segment_id: u32, one_hot_gates: usize) -> bool {
-        const NATIVE_READ_GATES: usize = 10;
+    fn prefer_native_read(&self, segment_id: u32, one_hot_gates: usize, read_gates: usize) -> bool {
         const ARRAY_ELEMENT_GATES: usize = 3;
         let epoch = self.write_version.get(&segment_id).copied().unwrap_or(0);
         let len = self.memories.get(&segment_id).map_or(0, |m| m.len());
@@ -1807,7 +1844,33 @@ impl<'a> NoirEmitter<'a> {
         } else {
             (ARRAY_ELEMENT_GATES * len).div_ceil(self.epoch_dynamic_reads(segment_id))
         };
-        len > 0 && len < (1 << 27) && build + NATIVE_READ_GATES < one_hot_gates
+        len > 0 && len < (1 << 27) && build + read_gates < one_hot_gates
+    }
+
+    /// `root`'s largest value `last` when the address `root * scale + offset`
+    /// is a valid slot exactly for `root ∈ [0, last]`: `0 <= offset < scale`
+    /// and the feasible roots are `0..=last` (`vs`, from `feasible`). Then
+    /// checking `root` once covers every read at that root.
+    fn checked_root_bound(scale: i64, offset: i64, vs: &[i64]) -> Option<i64> {
+        let last = *vs.last()?;
+        let contiguous = vs.iter().enumerate().all(|(k, v)| *v == k as i64);
+        (scale > 0 && (0..scale).contains(&offset) && contiguous).then_some(last)
+    }
+
+    /// `mem[root * scale + offset]` through a native array, with `root`
+    /// checked into `[0, last]` once (`array_index`, shared by every read at
+    /// that root through the binding cache) and the address computed in
+    /// `u32` from it: `root <= last` keeps it inside the array
+    /// (`checked_root_bound`), so the read needs no check of its own. An
+    /// IR root is an integer, so a valid address implies `root ∈ [0, last]`
+    /// (`offset < scale`, and `last` is the largest root with a valid slot):
+    /// the check rejects exactly the reads the mock rejects.
+    fn native_read_at_root(&mut self, segment_id: u32, root: &str, last: i64, scale: i64, offset: i64) -> String {
+        let array = self.segment_array(segment_id);
+        let index = self.array_index(root, last as u64 + 1);
+        let out = self.bind(&format!("{array}[{index} * {scale} + {offset}]"));
+        self.apply_segment_iv(segment_id, &out);
+        out
     }
 
     /// Dynamic reads of the segment's current write epoch (at least 1).
@@ -1944,6 +2007,7 @@ impl<'a> NoirEmitter<'a> {
             wrapped_index_ranges: HashMap::new(),
             asserted_comparisons: HashSet::new(),
             root_guards: HashSet::new(),
+            divisor_guards: HashSet::new(),
             nonzero: HashSet::new(),
             sum_of: HashMap::new(),
             sum_terms: HashMap::new(),
@@ -2252,6 +2316,17 @@ impl Synthesizer for NoirEmitter<'_> {
 
     fn add_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let out = self.integer_arith(a, b, '+');
+        // The sum of two values with proven ranges (integers far below p/2)
+        // is the integer sum: its range is the sum of the ranges.
+        if let (Some((al, ah)), Some((bl, bh))) =
+            (self.proven_range.get(a.as_str()).copied(), self.proven_range.get(b.as_str()).copied())
+        {
+            if let (Some(lo), Some(hi)) = (al.checked_add(bl), ah.checked_add(bh)) {
+                if lo > -(1i128 << 120) && hi < 1i128 << 120 {
+                    self.narrow_proven_range(&out, lo, hi);
+                }
+            }
+        }
         if let Some(c) = self.s_int_of(b) {
             self.add_const_of.insert(out.clone(), (a.clone(), c as i64));
         } else if let Some(c) = self.s_int_of(a) {
@@ -2419,6 +2494,21 @@ impl Synthesizer for NoirEmitter<'_> {
             }
         }
         if self.nonzero.contains(b.as_str()) {
+            // A divisor known non-negative: `divmod_by_positive` bounds the
+            // remainder by the divisor itself (`d - 1 - r` 64 bits, so
+            // `d >= 1`; a wrong sign would only fail the proof), with no sign
+            // projection; floor and Euclid agree for `d > 0`. An integral
+            // float `b = n * 2^32` cancels the scale, as halo2-base's
+            // `fixed_div` does: the Euclidean quotient of `a` by `n` equals
+            // that of `a * 2^32` by `b`.
+            let (numerator, divisor) = match self.integral_float.get(b.as_str()) {
+                Some(n) => (a.to_string(), n.clone()),
+                None => (format!("{a} * {Q_U64}"), b.clone()),
+            };
+            if self.known_non_negative(&divisor) {
+                self.use_lib("divmod_by_positive");
+                return Ok(self.bind(&format!("divmod_by_positive::<64>({numerator}, {divisor}).0")));
+            }
             let (_, mag) = self.sign_abs(b);
             self.use_lib("qdiv_nonzero_of");
             return Ok(self.bind(&format!("qdiv_nonzero_of({a}, {b}, {mag})")));
@@ -2665,6 +2755,16 @@ impl Synthesizer for NoirEmitter<'_> {
         let (negative, mag) = self.sign_abs(a);
         self.use_lib("qsqrt_of");
         Ok(self.bind(&format!("qsqrt_of({negative}, {mag})")))
+    }
+    /// `floor(sqrt(b * c) * 2^32)` of integers with `0 <= b < 2^64` and
+    /// `0 <= b * c < 2^62` (`qsqrt_product_int`'s checks; `noir_fpc`
+    /// hardcodes P = 32). Its floor root `y` satisfies
+    /// `y^2 <= b * c * 2^64 < 2^126`, so `y` lies in `[0, 2^63)`.
+    fn sqrt_product_i_f(&mut self, b: &CellRef, c: &CellRef) -> Result<CellRef, ProvingError> {
+        self.use_lib("qsqrt_product_int");
+        let root = self.bind(&format!("qsqrt_product_int({b}, {c})"));
+        self.narrow_proven_range(&root, 0, (1i128 << 63) - 1);
+        Ok(root)
     }
     fn exp_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qexp");
@@ -3114,8 +3214,18 @@ impl Synthesizer for NoirEmitter<'_> {
                 .count();
             let indicator_share =
                 (INDICATOR_GATES * new_indicators).div_ceil(self.epoch_dynamic_reads(segment_id));
-            if self.prefer_native_read(segment_id, indicator_share + vs.len()) {
-                return Ok(self.native_read(segment_id, addr));
+            let checked_root = Self::checked_root_bound(scale, offset, &vs);
+            let native_gates = match checked_root {
+                Some(_) => {
+                    NATIVE_READ_AT_CHECKED_ROOT_GATES + ROOT_CHECK_GATES.div_ceil(self.epoch_dynamic_reads(segment_id))
+                }
+                None => NATIVE_READ_GATES,
+            };
+            if self.prefer_native_read(segment_id, indicator_share + vs.len(), native_gates) {
+                return Ok(match checked_root {
+                    Some(last) => self.native_read_at_root(segment_id, &root, last, scale, offset),
+                    None => self.native_read(segment_id, addr),
+                });
             }
             self.assert_one_hot(&root.clone(), &vs);
             let mut parts: Vec<String> = Vec::with_capacity(vs.len());

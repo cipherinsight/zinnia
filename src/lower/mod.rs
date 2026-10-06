@@ -17,7 +17,7 @@
 //! * [`facts`] and [`checks`]: free facts, program checks as facts, and the
 //!   emission of checks through `builder/guard.rs`.
 //!
-//! Families: [`sort`], [`gather`]; scatter registers its own in [`registry`].
+//! Families: [`sort`], [`gather`], [`stats`]; scatter registers its own in [`registry`].
 //! See `eval-redo/layer/core-api.md` for how to add a family.
 
 pub mod checks;
@@ -30,6 +30,7 @@ pub mod op;
 pub mod scatter;
 pub mod select;
 pub mod sort;
+pub mod stats;
 #[cfg(test)]
 mod tests;
 
@@ -45,5 +46,6 @@ pub fn registry() -> Vec<&'static dyn Construction> {
     all.extend(sort::constructions());
     all.extend(gather::constructions());
     all.extend(scatter::constructions());
+    all.extend(stats::constructions());
     all
 }

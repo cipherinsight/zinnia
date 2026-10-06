@@ -68,6 +68,13 @@ pub(super) struct Plan {
     /// Asserted `x >= 0` with a later `sqrt(x)` (`crate::prove::guards`;
     /// see `Halo2BaseSynthesizer::assert_nonneg_by_root`).
     pub root_guards: HashSet<u32>,
+    /// Asserted `d != 0` with a later division by `d` (`crate::prove::guards`;
+    /// see `Halo2BaseSynthesizer::assert_distinct`).
+    pub divisor_guards: HashSet<u32>,
+    /// Private `ReadInteger` statements with an `AssertU128Lt(x, hi)` of a
+    /// constant `hi > 0` (the smallest): the input is loaded inside the gate
+    /// of that check (see `Halo2BaseSynthesizer::read_bounded_input`).
+    pub bounded_inputs: HashMap<u32, i128>,
 }
 
 /// `select([r == k_m], x_m, ... select([r == k_1], x_1, x_0))` where
@@ -106,6 +113,8 @@ impl Plan {
             onehot_links: HashSet::new(),
             cellless_bit_masks: cellless_bit_masks(ir, &uses),
             root_guards: crate::prove::guards::root_guards(ir),
+            divisor_guards: crate::prove::guards::divisor_guards(ir),
+            bounded_inputs: bounded_inputs(ir),
         }
         .with_onehot_chains(ir, &uses)
     }
@@ -212,6 +221,21 @@ fn planned_bounds(ir: &IRGraph) -> HashMap<ValueId, i128> {
         let Some(x) = ir.stmts.get(stmt.arguments[0] as usize) else { continue };
         let entry = bounds.entry(x.value_id).or_insert(hi as i128);
         *entry = (*entry).min(hi as i128);
+    }
+    bounds
+}
+
+/// `x -> hi` for private integer inputs `x` with an `AssertU128Lt(x, hi)`,
+/// `hi` a positive constant (the smallest when there are several).
+fn bounded_inputs(ir: &IRGraph) -> HashMap<u32, i128> {
+    let mut bounds: HashMap<u32, i128> = HashMap::new();
+    for stmt in &ir.stmts {
+        let (IR::AssertU128Lt, [x, hi]) = (&stmt.ir, stmt.arguments.as_slice()) else { continue };
+        let Some(hi) = constant_int(ir, *hi).filter(|hi| *hi > 0) else { continue };
+        if matches!(ir.stmts.get(*x as usize).map(|s| &s.ir), Some(IR::ReadInteger { is_public: false, .. })) {
+            let entry = bounds.entry(*x).or_insert(hi as i128);
+            *entry = (*entry).min(hi as i128);
+        }
     }
     bounds
 }

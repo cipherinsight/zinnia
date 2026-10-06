@@ -158,6 +158,11 @@ pub enum IR {
     TanF,
     TanHF,
     SqrtF,
+    /// `sqrt(b * c)` of two integers as a float, rounded down to the
+    /// fixed-point grid: `floor(sqrt(b * c) * 2^P)` for `0 <= b < 2^64` and
+    /// `0 <= b * c < 2^(126 - 2P)` (`2^62` at `P = 32`), radicands far beyond
+    /// the float window; no proof outside (`kernel::fp_sqrt_product_int`).
+    SqrtProductIF,
     ExpF,
     LogF,
     ArcSinF,
@@ -527,6 +532,7 @@ impl IR {
             IR::TanF => "tan_f".to_string(),
             IR::TanHF => "tanh_f".to_string(),
             IR::SqrtF => "sqrt_f".to_string(),
+            IR::SqrtProductIF => "sqrt_product_i_f".to_string(),
             IR::ExpF => "exp_f".to_string(),
             IR::LogF => "log_f".to_string(),
             IR::ArcSinF => "arcsin_f".to_string(),
@@ -809,6 +815,7 @@ impl IR {
             IR::TanF => "TanFIR",
             IR::TanHF => "TanHFIR",
             IR::SqrtF => "SqrtFIR",
+            IR::SqrtProductIF => "SqrtProductIFIR",
             IR::ExpF => "ExpFIR",
             IR::LogF => "LogFIR",
             IR::ArcSinF => "ArcSinFIR",
@@ -1150,6 +1157,7 @@ impl IR {
             "TanFIR" => Ok(IR::TanF),
             "TanHFIR" => Ok(IR::TanHF),
             "SqrtFIR" => Ok(IR::SqrtF),
+            "SqrtProductIFIR" => Ok(IR::SqrtProductIF),
             "ExpFIR" => Ok(IR::ExpF),
             "LogFIR" => Ok(IR::LogF),
             "ArcSinFIR" => Ok(IR::ArcSinF),
@@ -1557,6 +1565,7 @@ mod tests {
             IR::PackKey { index_bits: 7 },
             IR::PackedKeyLess { index_bits: 7 },
             IR::PackedKeyIndex { index_bits: 7 },
+            IR::SqrtProductIF,
         ];
         for ir in irs {
             let exported = ir.export();

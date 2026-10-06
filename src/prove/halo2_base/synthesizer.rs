@@ -388,6 +388,51 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         assigned
     }
 
+    /// A private input `x` that an `AssertU128Lt(x, bound)` constrains to
+    /// `[0, bound)` (`Plan::bounded_inputs`), for `bound <= 2^lookup_bits`:
+    /// `x` is assigned inside that check's gate instead of a cell of its own,
+    /// and the check is done here (the assertion later finds `x`'s range
+    /// proven and emits nothing; it holds on every path, so checking at the
+    /// read is the same constraint). `None` when the bound needs no gate.
+    ///
+    /// Soundness: `x` and the gate's other cell `t` are each looked up in
+    /// `[0, 2^lb)`, so both are small integers and the gate is an integer
+    /// identity. For `bound = 2^b < 2^lb`, `t = x·2^(lb-b) < 2^lb` gives
+    /// `x < 2^b`; otherwise `t = bound - 1 - x >= 0` gives `x <= bound - 1`.
+    fn read_bounded_input(&mut self, value: Fp, bound: i128) -> Option<Halo2BaseCell> {
+        let lookup_bits = self.params.lookup_bits as usize;
+        let full = 1i128 << lookup_bits;
+        if bound <= 1 || bound >= full {
+            return None;
+        }
+        if !kernel::fp_to_i128(value).is_some_and(|v| (0..bound).contains(&v)) {
+            self.note_unsat(move || format!("Witness does not satisfy circuit constraints: an input is not below {bound}"));
+        }
+        let ctx = self.builder.main(0);
+        let (x, t) = if (bound as u128).is_power_of_two() {
+            let k = kernel::i128_to_fp(full / bound);
+            ctx.assign_region(
+                [QuantumCell::Constant(Fp::zero()), QuantumCell::Witness(value), QuantumCell::Constant(k), QuantumCell::Witness(value * k)],
+                [0],
+            );
+            (ctx.get(-3), ctx.get(-1))
+        } else {
+            let limit = kernel::i128_to_fp(bound - 1);
+            ctx.assign_region(
+                [QuantumCell::Witness(limit - value), QuantumCell::Witness(value), QuantumCell::Constant(Fp::one()), QuantumCell::Constant(limit)],
+                [0],
+            );
+            (ctx.get(-3), ctx.get(-4))
+        };
+        let x = self.wrap(x, value);
+        let t_value = *t.value();
+        let t = self.wrap(t, t_value);
+        self.range_check(&x, lookup_bits);
+        self.range_check(&t, lookup_bits);
+        self.prove_range(&x, Interval { lo: 0, hi: bound - 1 });
+        Some(x)
+    }
+
     /// `assert x >= 0` (`x`, then the constant 0) when the plan found a later
     /// `sqrt(x)` (`Plan::root_guards`) and `x` is already proven inside the
     /// window: no check here, `x`'s range becomes `[0, hi]`, and `sqrt_f`
@@ -724,6 +769,21 @@ impl<'a> Halo2BaseSynthesizer<'a> {
     /// a float cast stands for. Returns the constant `true`.
     fn assert_distinct(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
         let zero = |s: &Self, x: &Halo2BaseCell| s.is_const_cell(x) && x.value == Fp::zero();
+        // `d != 0` before a division by `d` (`Plan::divisor_guards`): record
+        // `d` as non-zero and emit nothing. The division then takes
+        // `div_rem_nonzero`, whose remainder bound `0 <= |r| <= |d| - 1`
+        // (`assert_below_cell`) has no solution for `d = 0`; a circuit has no
+        // control flow, so that constraint holds wherever it is emitted.
+        if self.plan.divisor_guards.contains(&self.current_stmt) {
+            let divisor = if zero(self, b) { Some(*a) } else if zero(self, a) { Some(*b) } else { None };
+            if let Some(d) = divisor.filter(|d| !self.is_const_cell(d)) {
+                if d.value == Fp::zero() {
+                    self.note_unsat(|| "Witness does not satisfy circuit constraints: an asserted `!=` is false".to_string());
+                }
+                self.record_nonzero(&d);
+                return self.constant_bool(true);
+            }
+        }
         let difference = if zero(self, b) {
             *a
         } else if zero(self, a) {
@@ -738,12 +798,18 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         let product = self.gate_cell(difference.value * inverse.value, |gate, ctx| gate.mul(ctx, difference.quantum(), inverse.quantum()));
         self.assert_const(&product, Fp::one());
         if zero(self, b) || zero(self, a) {
-            self.nonzero.insert(difference.id);
-            if let Some(n) = self.float_casts.get(&difference.id).copied() {
-                self.nonzero.insert(n.id); // n·2^P ≠ 0 exactly when n ≠ 0
-            }
+            self.record_nonzero(&difference);
         }
         self.constant_bool(true)
+    }
+
+    /// Record that the constraints (or a later division's) make `d` non-zero,
+    /// and with it the integer `n` of a float cast `d = n·2^P`.
+    fn record_nonzero(&mut self, d: &Halo2BaseCell) {
+        self.nonzero.insert(d.id);
+        if let Some(n) = self.float_casts.get(&d.id).copied() {
+            self.nonzero.insert(n.id); // n·2^P ≠ 0 exactly when n ≠ 0
+        }
     }
 
     /// `a == b` as an assertion, for an `==` whose only use is `Assert`: a
@@ -1293,6 +1359,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         });
         self.sqrt_nonneg(&clamped, 64)
     }
+    fn sqrt_product_i_f(&mut self, b: &Self::CellRef, c: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        self.sqrt_product_int(b, c)
+    }
     fn exp_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("exp_f") }
     fn log_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("log_f") }
     /// `arcsin(x) = 2 * atan(x / (1 + sqrt(1 - x^2)))`, as `kernel::fp_arcsin`
@@ -1459,6 +1528,13 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
 
     fn read_input(&mut self, path: &InputPath, is_public: bool) -> Result<Self::CellRef, ProvingError> {
         let val = self.get_witness_fp_path(path).unwrap_or(Fp::zero());
+        if !is_public {
+            if let Some(&bound) = self.plan.bounded_inputs.get(&self.current_stmt) {
+                if let Some(cell) = self.read_bounded_input(val, bound) {
+                    return Ok(cell);
+                }
+            }
+        }
         let cell = self.cell(val);
         if is_public {
             self.expose_public(&cell, &path.display())?;

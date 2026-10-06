@@ -57,6 +57,13 @@ pub enum OpKind {
     /// `t` per lane (the lane's one own operand): the number of entries
     /// `<= t` (`right`) or `< t` (left). Output 0, position `None`.
     SearchSorted { right: bool },
+    // ── statistics family (`lower::stats`) ────────────────────────────
+    /// Pearson's `r` of `np.corrcoef(x, y)` (its off-diagonal entry) for two
+    /// 1-D arrays of `n` elements. Shared operands: `x`, then `y`, then (when
+    /// `guarded`) the execution predicate under which the call runs.
+    /// `integer`: every element is an integer or a Boolean. One lane
+    /// (output 0, position 0). No proof for a zero variance (NumPy: nan).
+    Corrcoef { n: u32, integer: bool, guarded: bool },
     // ── gather family (`lower::gather`) ───────────────────────────────
     /// The first position whose shared 0/1 flag is set (`min` of
     /// `np.flatnonzero`, of an `np.argwhere` coordinate). One lane, at
@@ -109,6 +116,7 @@ impl OpKind {
         match self {
             OpKind::Sort => &super::sort::SortSemantics,
             OpKind::SearchSorted { .. } => &super::sort::SearchSortedSemantics,
+            OpKind::Corrcoef { .. } => &super::stats::CorrcoefSemantics,
             OpKind::FirstSet
             | OpKind::LastSet
             | OpKind::ArgmaxOfFlags
@@ -127,6 +135,7 @@ impl OpKind {
             OpKind::Sort => "sort",
             OpKind::SearchSorted { right: true } => "searchsorted_right",
             OpKind::SearchSorted { right: false } => "searchsorted_left",
+            OpKind::Corrcoef { .. } => "corrcoef",
             OpKind::FirstSet => "first_set",
             OpKind::LastSet => "last_set",
             OpKind::ArgmaxOfFlags => "argmax_of_flags",

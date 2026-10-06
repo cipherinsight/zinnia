@@ -351,6 +351,12 @@ pub trait Synthesizer {
     fn tan_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
     fn tanh_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
     fn sqrt_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
+    /// `IR::SqrtProductIF`: `floor(sqrt(b * c) * 2^P)` of two integers, with
+    /// no proof unless `0 <= b < 2^64` and `0 <= b * c < 2^sqrt_int_bits(P)`
+    /// (`kernel::fp_sqrt_product_int`).
+    fn sqrt_product_i_f(&mut self, _b: &Self::CellRef, _c: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        Err(ProvingError::synthesis("this backend does not support the square root of an integer product"))
+    }
     fn exp_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
     fn log_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
     fn arcsin_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;

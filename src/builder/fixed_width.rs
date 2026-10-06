@@ -161,6 +161,7 @@ fn role(ir: &IR, operands: usize) -> Role {
         | IR::TanF
         | IR::TanHF
         | IR::SqrtF
+        | IR::SqrtProductIF
         | IR::ExpF
         | IR::LogF
         | IR::ArcSinF

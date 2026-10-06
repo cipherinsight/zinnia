@@ -134,6 +134,7 @@ pub fn run(graph: &IRGraph) -> BoundMap {
             | IR::TanF
             | IR::TanHF
             | IR::SqrtF
+            | IR::SqrtProductIF
             | IR::ExpF
             | IR::LogF
             | IR::ArcSinF

@@ -821,9 +821,16 @@ pub fn np_unravel_index(
     } else {
         (0..shape.len()).collect()
     };
-    for axis in axes {
-        let dim = shape[axis] as i64;
-        let dim_val = b.ir_constant_int(dim);
+    // `0 <= idx < prod(shape)` holds (checked above), so after dividing by
+    // every other axis's length the remaining quotient is already below the
+    // last axis's length: it is that coordinate, with no `% dim`.
+    let last = *axes.last().expect("a non-empty shape");
+    for &axis in &axes {
+        if axis == last {
+            coords[axis] = rem.clone();
+            break;
+        }
+        let dim_val = b.ir_constant_int(shape[axis] as i64);
         coords[axis] = b.ir_mod_i(&rem, &dim_val);
         rem = b.ir_floor_div_i(&rem, &dim_val);
     }
@@ -1554,7 +1561,10 @@ pub fn np_ravel_multi_index(
     let mut out_cells: Vec<Value> = Vec::with_capacity(n_out);
     for j in 0..n_out {
         let mut acc = b.ir_constant_int(0);
-        for axis in 0..rank {
+        // Accumulate from the unit-stride axis up (the last axis in C order),
+        // so the sum starts with a term that needs no product.
+        let axes: Vec<usize> = if order == "C" { (0..rank).rev().collect() } else { (0..rank).collect() };
+        for axis in axes {
             let idx = if vec_len.is_some() {
                 &idx_cells[axis * n_out + j]
             } else {

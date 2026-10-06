@@ -22,8 +22,12 @@ pub(super) struct Units {
     pub select: u64,
     /// `[x < y]` of two small bounded values.
     pub less_than: u64,
-    /// A native array read (Noir; halo2-base has none).
+    /// A native array read at an index already checked (Noir; halo2-base
+    /// has none): the ROM read and its `u32` address.
     pub native_read: u64,
+    /// The range check of one distinct index of native reads, shared by
+    /// every read at that index (the Noir emitter checks each index once).
+    pub native_index: u64,
     /// One element of a native array, built once per array.
     pub native_element: u64,
 }
@@ -38,6 +42,7 @@ pub(super) fn units(target: Target) -> Units {
             select: 7,
             less_than: 20,
             native_read: u64::MAX / 4,
+            native_index: 0,
             native_element: 0,
         },
         Target::Noir => Units {
@@ -47,7 +52,8 @@ pub(super) fn units(target: Target) -> Units {
             eq_const: 3,
             select: 1,
             less_than: 8,
-            native_read: 10,
+            native_read: 3,
+            native_index: 8,
             native_element: 3,
         },
     }
@@ -129,13 +135,20 @@ pub(super) fn permutation_scatter(n: u64, target: Target) -> u64 {
     n * n * units(target).mul_add
 }
 
-/// `reads` reads of `n` cells through memory: halo2-base builds the
-/// indicators of each distinct index (`indices`) and an inner product per
-/// read; Noir reads a native array (the emitter's measured costs).
-pub(super) fn element_by_memory(n: u64, reads: u64, indices: u64, target: Target) -> u64 {
+/// `reads` reads of `n` cells through memory at the distinct indices
+/// `index_reads` (for each, the number of element reads at that index in the
+/// whole program, which share its check): halo2-base builds the indicators
+/// of each distinct index and an inner product per read; Noir reads a native
+/// array, checking each index once (measured on 0319: 3 gates per read at a
+/// checked index, 3 per array element, about 8 per index check).
+pub(super) fn element_by_memory(n: u64, reads: u64, index_reads: &[u64], target: Target) -> u64 {
     let u = units(target);
+    let indices = index_reads.len() as u64;
     match target {
         Target::Halo2Base => indices * n * u.eq_const + reads * n * u.mul_add,
-        Target::Noir => n * u.native_element + reads * u.native_read,
+        Target::Noir => {
+            let checks: u64 = index_reads.iter().map(|&r| u.native_index.div_ceil(r.max(1))).sum();
+            n * u.native_element + reads * u.native_read + checks
+        }
     }
 }

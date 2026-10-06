@@ -9,10 +9,25 @@ For every DS-1000 case that has a handwritten halo2-base baseline (`target.rs`):
 * **halo2_hw**: `halo2_hw stats` with input `A` of the case's fixture (the
   baseline's own copy of the same sizing rule).
 
-The cost metric is advice + lookup cells (the cells the prover commits to) and
-the chosen `k`. The ratio is Zinnia / halo2_hw; the summary gives its geometric
-mean over the `perf` cases and over every case measured (functional duplicates
-included). Proving time is measured by the harness, not here.
+**Cells** are advice + lookup cells (the cells the prover commits to). Both sides
+pick `k` by the same rule, `lookup_bits = min(8, k - 1)`, so when the two `k`s
+differ the two circuits are laid out at different **lookup widths**: every range
+check is split into `lookup_bits`-wide limbs, and a circuit at a narrower width
+has more limbs (more cells) for the same constraints. Cells at different widths
+are not comparable: a case can look costlier only because its `k`, and with it
+its lookup width, is smaller than the other side's.
+
+Each row therefore records, per side, the cells at its own chosen `k` (and that
+`k` and lookup width), and both sides' cells at the **common lookup width**, the
+larger of the two sides' `lookup_bits` (the side whose width is narrower is
+re-synthesized at the wider one: Zinnia through `halo2_base_cell_stats` with
+explicit parameters, the baseline through `halo2_hw stats --k --lookup-bits`).
+**The comparison ratio is Zinnia / halo2_hw at the common lookup width**; the
+ratio at each side's own `k` is listed next to it (`ratio_own_k`). When both sides
+choose the same `k` the two ratios are equal. The summary gives the geometric
+mean of the common-width ratio over the `perf` cases and over every case
+measured (functional duplicates included). Proving time is measured by the
+harness, not here.
 
 Usage:
 
@@ -31,10 +46,12 @@ position by position (the harness's decoder and tolerance) and with the mock
 backend's public values.
 
 `--baseline-from` reuses the halo2_hw numbers of an earlier run (they only change
-when the baselines change). `--compare` prints a before/after table against an
-earlier output of this script. Every Zinnia compile runs in its own child process
-under the memory cap (`eval-redo/tools/memrun.sh` when present), so a case that
-exhausts memory is recorded as such instead of stopping the run.
+when the baselines change; the baseline's cells at a common width it did not
+choose are measured when that output lacks them). `--compare` prints a
+before/after table against an earlier output of this script. Every Zinnia compile
+runs in its own child process under the memory cap (`eval-redo/tools/memrun.sh`
+when present), so a case that exhausts memory is recorded as such instead of
+stopping the run.
 """
 
 from __future__ import annotations
@@ -95,8 +112,11 @@ def fixture_path(case: str, entries: dict[str, dict]) -> Path | None:
 # ------------------------------------------------------------------ Zinnia side
 
 
-def zinnia_one(case: str) -> dict:
-    """Compile one kernel and measure it (runs inside the child process)."""
+def zinnia_one(case: str, other_lookup_bits: int | None = None) -> dict:
+    """Compile one kernel and measure it (runs inside the child process).
+
+    When `other_lookup_bits` (the baseline's width) is wider than the width
+    Zinnia chose, the record also carries `at_common`: the cells at that width."""
     from benchmarking.harness.kernels import compile_kernel
     from zinnia._zinnia_core import halo2_base_cell_stats
 
@@ -109,6 +129,11 @@ def zinnia_one(case: str) -> dict:
         if name in CENSUS_OPS:
             census[name] += 1
     stats = json.loads(halo2_base_cell_stats(compiled._compiled_ir))
+    if other_lookup_bits is not None and other_lookup_bits > stats["lookup_bits"]:
+        params = {"k": stats["k"], "precision_bits": stats["precision_bits"],
+                  "lookup_bits": other_lookup_bits}
+        wider = json.loads(halo2_base_cell_stats(compiled._compiled_ir, json.dumps(params)))
+        stats["at_common"] = {key: wider[key] for key in ("lookup_bits", "advice", "lookup")}
     stats["ops"] = dict(sorted(census.items()))
     stats["ir_stmts"] = len(compiled.get_ir_stmts())
     stats["compile_s"] = round(compiled_s, 3)
@@ -198,8 +223,11 @@ def check_passed(case: str, record: dict, known: set[str]) -> bool:
             and record.get("mock_equal") is True and numpy_ok)
 
 
-def zinnia_child(case: str, memory_max: str | None, timeout: float, mode: str = "--zinnia-one") -> dict:
+def zinnia_child(case: str, memory_max: str | None, timeout: float, mode: str = "--zinnia-one",
+                 other_lookup_bits: int | None = None) -> dict:
     cmd = [sys.executable, "-m", "benchmarking.harness.costs_halo2", mode, case]
+    if other_lookup_bits is not None:
+        cmd += ["--other-lookup-bits", str(other_lookup_bits)]
     env = dict(os.environ)
     if memory_max and MEMRUN.exists():
         cmd = [str(MEMRUN), *cmd]
@@ -220,11 +248,16 @@ def zinnia_child(case: str, memory_max: str | None, timeout: float, mode: str = 
 # ---------------------------------------------------------------- baseline side
 
 
-def halo2_hw_stats(case: str, fixture: Path | None, binary: Path, timeout: float) -> dict:
+def halo2_hw_stats(case: str, fixture: Path | None, binary: Path, timeout: float,
+                   lookup_bits: int | None = None) -> dict:
+    """The baseline's cells at its own chosen size, or at `lookup_bits` if given."""
     if fixture is None:
         return {"error": "no fixture"}
     cmd = [str(binary), "stats", "--case", str(paths.DS1000_PERF / case),
            "--fixture", str(fixture), "--input", "A"]
+    if lookup_bits is not None:
+        # `--lookup-bits` needs a `k`; the cell counts depend on the width only.
+        cmd += ["--k", str(lookup_bits + 1), "--lookup-bits", str(lookup_bits)]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -248,11 +281,47 @@ def committed(record: dict | None) -> int | None:
     return record["advice"] + record["lookup"]
 
 
-def ratio(row: dict) -> float | None:
+def ratio_own_k(row: dict) -> float | None:
+    """Zinnia / halo2_hw cells, each side at its own chosen `k` and lookup width."""
     z, h = committed(row.get("zinnia")), committed(row.get("halo2_hw"))
     if z is None or h is None or h == 0:
         return None
     return z / h
+
+
+def ratio(row: dict) -> float | None:
+    """The comparison ratio: Zinnia / halo2_hw cells at the common lookup width
+    (the larger of the two sides' `lookup_bits`). Rows written before this field
+    existed fall back to the own-`k` ratio."""
+    common = row.get("common")
+    if not common:
+        return ratio_own_k(row)
+    z, h = committed(common.get("zinnia")), committed(common.get("halo2_hw"))
+    if z is None or h is None or h == 0:
+        return None
+    return z / h
+
+
+def common_width(zinnia: dict, hw: dict, case: str, fixture: Path | None, binary: Path,
+                 timeout: float, reused: dict | None) -> dict | None:
+    """Both sides' cells at the larger of their two lookup widths."""
+    if "error" in zinnia or "error" in hw:
+        return None
+    width = max(zinnia["lookup_bits"], hw["lookup_bits"])
+    if width == zinnia["lookup_bits"]:
+        z = {"advice": zinnia["advice"], "lookup": zinnia["lookup"]}
+    else:
+        z = {key: zinnia["at_common"][key] for key in ("advice", "lookup")}
+    if width == hw["lookup_bits"]:
+        h = {"advice": hw["advice"], "lookup": hw["lookup"]}
+    elif reused and reused.get("lookup_bits") == width and "halo2_hw" in reused:
+        h = reused["halo2_hw"]
+    else:
+        wider = halo2_hw_stats(case, fixture, binary, timeout, lookup_bits=width)
+        if "error" in wider:
+            return {"lookup_bits": width, "zinnia": z, "halo2_hw": wider}
+        h = {"advice": wider["advice"], "lookup": wider["lookup"]}
+    return {"lookup_bits": width, "zinnia": z, "halo2_hw": h}
 
 
 def geomean(values: list[float]) -> float | None:
@@ -271,6 +340,10 @@ def summary(rows: dict[str, dict]) -> dict:
         "measured_perf": sum(r is not None for r in perf),
         "measured_all": sum(r is not None for r in every),
         "zinnia_cheaper_perf": sum(r is not None and r < 1 for r in perf),
+        "zinnia_costlier_perf": sum(r is not None and r > 1 for r in perf),
+        "geomean_ratio_own_k_perf": geomean([r for r in (ratio_own_k(x) for x in rows.values()
+                                                          if x["status"] == "perf") if r is not None]),
+        "ratio": "Zinnia / halo2_hw cells at the common lookup width (max of both sides' lookup_bits)",
         "zinnia_failed": sorted(c for c, r in rows.items() if "error" in (r.get("zinnia") or {})),
     }
 
@@ -284,19 +357,29 @@ def fmt_cells(record: dict | None) -> str:
 
 
 def fmt_ratio(value: float | None) -> str:
-    return "-" if value is None else f"{value:.2f}"
+    return "-" if value is None else f"{value:.3f}"
+
+
+def fmt_k(record: dict | None) -> str:
+    if not record or "error" in record:
+        return "-"
+    return f"{record['k']}/{record['lookup_bits']}"
 
 
 def table(rows: dict[str, dict]) -> str:
-    """Markdown table sorted by ratio, worst first."""
-    lines = ["| case | status | Zinnia advice + lookup | k | halo2_hw advice + lookup | k | ratio |",
-             "|---|---|---|---|---|---|---|"]
+    """Markdown table sorted by the common-width ratio, worst first."""
+    lines = ["| case | status | Zinnia advice + lookup | k/lb | halo2_hw advice + lookup | k/lb | "
+             "ratio own k | common lb | Zinnia at common | halo2_hw at common | ratio |",
+             "|---|---|---|---|---|---|---|---|---|---|---|"]
     order = sorted(rows, key=lambda c: -(ratio(rows[c]) or float("inf")))
     for case in order:
         row = rows[case]
         z, h = row.get("zinnia") or {}, row.get("halo2_hw") or {}
-        lines.append(f"| {case[-4:]} | {row['status']} | {fmt_cells(z)} | {z.get('k', '-')} | "
-                     f"{fmt_cells(h)} | {h.get('k', '-')} | {fmt_ratio(ratio(row))} |")
+        common = row.get("common") or {}
+        lines.append(f"| {case[-4:]} | {row['status']} | {fmt_cells(z)} | {fmt_k(z)} | "
+                     f"{fmt_cells(h)} | {fmt_k(h)} | {fmt_ratio(ratio_own_k(row))} | "
+                     f"{common.get('lookup_bits', '-')} | {fmt_cells(common.get('zinnia'))} | "
+                     f"{fmt_cells(common.get('halo2_hw'))} | {fmt_ratio(ratio(row))} |")
     return "\n".join(lines)
 
 
@@ -350,6 +433,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--profile", help="print the cells per IR operation type of one case")
     ap.add_argument("--check", action="store_true", help="prove, verify and output-check instead")
     ap.add_argument("--zinnia-one", help=argparse.SUPPRESS)
+    ap.add_argument("--other-lookup-bits", type=int, help=argparse.SUPPRESS)
     ap.add_argument("--zinnia-check", help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
 
@@ -367,7 +451,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.zinnia_one:
-        print(json.dumps(zinnia_one(args.zinnia_one)), flush=True)
+        print(json.dumps(zinnia_one(args.zinnia_one, args.other_lookup_bits)), flush=True)
         return 0
 
     entries = case_entries()
@@ -385,11 +469,14 @@ def main(argv: list[str] | None = None) -> int:
             hw = reused[case]["halo2_hw"]
         else:
             hw = halo2_hw_stats(case, fixture, args.halo2_bin, args.timeout)
-        zinnia = zinnia_child(case, memory_max, args.timeout)
+        zinnia = zinnia_child(case, memory_max, args.timeout, other_lookup_bits=hw.get("lookup_bits"))
+        common = common_width(zinnia, hw, case, fixture, args.halo2_bin, args.timeout,
+                              (reused.get(case) or {}).get("common"))
         rows[case] = {"status": entries.get(case, {}).get("status", "unknown"),
-                      "zinnia": zinnia, "halo2_hw": hw}
-        print(f"{case}  zinnia={fmt_cells(zinnia)} k={zinnia.get('k')}  "
-              f"halo2_hw={fmt_cells(hw)} k={hw.get('k')}  ratio={fmt_ratio(ratio(rows[case]))}"
+                      "zinnia": zinnia, "halo2_hw": hw, "common": common}
+        print(f"{case}  zinnia={fmt_cells(zinnia)} k={fmt_k(zinnia)}  "
+              f"halo2_hw={fmt_cells(hw)} k={fmt_k(hw)}  ratio_own_k={fmt_ratio(ratio_own_k(rows[case]))}  "
+              f"common lb={(common or {}).get('lookup_bits')} ratio={fmt_ratio(ratio(rows[case]))}"
               + (f"  {zinnia['error']}" if "error" in zinnia else ""), flush=True)
         if args.out:
             args.out.write_text(json.dumps({"cases": rows, "summary": summary(rows)}, indent=1))
