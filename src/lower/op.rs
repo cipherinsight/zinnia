@@ -61,6 +61,14 @@ pub enum OpKind {
     /// cells, row-major by slice. A position outside `[-rows, rows]` has no
     /// proof (NumPy raises).
     Insert { rows: u32, lanes: u32 },
+    /// The cells of an array after `a[..., i, ...] = v` at a runtime index
+    /// `i` on an axis of length `axis_len` (the other axes static). Shared
+    /// operand: the index (guarded by the write's execution predicate). Each
+    /// lane is one cell the write may touch: own operands `[old, written]`,
+    /// then the execution predicate when the write is conditional; its
+    /// position is the cell's coordinate on the indexed axis. An index
+    /// outside `[-axis_len, axis_len)` has no proof (NumPy raises).
+    IndexWrite { axis_len: u32 },
 }
 
 impl OpKind {
@@ -69,6 +77,7 @@ impl OpKind {
         match self {
             OpKind::Sort => &super::sort::SortSemantics,
             OpKind::Insert { .. } => &super::scatter::InsertSemantics,
+            OpKind::IndexWrite { .. } => &super::scatter::IndexWriteSemantics,
         }
     }
 
@@ -77,6 +86,7 @@ impl OpKind {
         match self {
             OpKind::Sort => "sort",
             OpKind::Insert { .. } => "insert",
+            OpKind::IndexWrite { .. } => "index_write",
         }
     }
 }

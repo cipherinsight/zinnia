@@ -1498,6 +1498,57 @@ fn static_array_slice_setitem(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// A slice write through exactly one runtime index (`a[i, :] = v`; the
+/// other axes static), lowered by the scatter family: every cell it may
+/// touch becomes an `OpKind::IndexWrite` lane over the index's pinned
+/// one-hot (`lower::scatter::write`), which also proves `-n <= i < n` (a
+/// slice write had no bounds check of its own). Integer and float arrays.
+struct OneHotWriteAxis {
+    axis: usize,
+    shared: std::sync::Arc<[Value]>,
+    kind: crate::lower::OpKind,
+    /// The write's execution predicate, when it is a runtime value.
+    predicate: Option<Value>,
+}
+
+impl OneHotWriteAxis {
+    fn of(b: &mut IRBuilder, dtype: NumberType, shape: &[usize], axis_specs: &[(usize, AxisCoords)]) -> Option<Self> {
+        if !matches!(dtype, NumberType::Integer | NumberType::Float) {
+            return None;
+        }
+        let mut runtime = axis_specs.iter().filter_map(|(axis, spec)| match spec {
+            AxisCoords::Single(v) if v.int_val().is_none() => Some((*axis, v)),
+            _ => None,
+        });
+        let (axis, index) = runtime.next()?;
+        if runtime.next().is_some() || axis_specs.iter().any(|(_, s)| matches!(s, AxisCoords::Dynamic { .. })) {
+            return None;
+        }
+        let predicate = b.write_predicate().cloned().filter(|p| {
+            p.bool_val().or_else(|| p.int_val().map(|v| v != 0)) != Some(true)
+        });
+        let index = b.guard_operand(index, 0);
+        let index = b.ensure_ptr(&index);
+        let kind = crate::lower::OpKind::IndexWrite { axis_len: shape[axis] as u32 };
+        Some(OneHotWriteAxis { axis, shared: std::sync::Arc::from(vec![index]), kind, predicate })
+    }
+
+    /// The new value of the cell at `coords` (holding `old`).
+    fn cell(&self, b: &mut IRBuilder, coords: &[usize], old: &Value, written: &Value) -> Value {
+        let mut own = vec![old.clone(), written.clone()];
+        if let Some(p) = &self.predicate {
+            own.push(p.clone());
+        }
+        let op = crate::lower::ArrayOp {
+            kind: self.kind,
+            shared: 1,
+            output: 0,
+            position: Some(coords[self.axis] as u32),
+        };
+        b.ir_array_op(op, &self.shared, &own)
+    }
+}
+
 fn try_overlay_dynamic_single_slice_setitem(
     b: &mut IRBuilder,
     dtype: NumberType,
@@ -1526,6 +1577,7 @@ fn try_overlay_dynamic_single_slice_setitem(
         return false;
     };
     let logical_strides = row_major_strides(shape);
+    let one_hot_write = OneHotWriteAxis::of(b, dtype, shape, axis_specs);
     for flat in 0..total {
         let coords = decode_coords(flat, shape, &logical_strides);
         let abs = abs_offset_for_coords(offset, strides, &coords);
@@ -1538,6 +1590,8 @@ fn try_overlay_dynamic_single_slice_setitem(
         let mut targeted = true;
         for (src_axis, spec) in axis_specs {
             match spec {
+                // The one-hot write tests its runtime index itself.
+                AxisCoords::Single(_) if one_hot_write.as_ref().is_some_and(|w| w.axis == *src_axis) => {}
                 AxisCoords::Single(v) => {
                     conds.push(index_equals_coord(
                         b,
@@ -1558,6 +1612,21 @@ fn try_overlay_dynamic_single_slice_setitem(
             }
         }
         if !targeted {
+            continue;
+        }
+        if let Some(axis) = &one_hot_write {
+            // The other indices are constants here: their tests are known.
+            if conds.iter().any(|c| c.bool_val() == Some(false)) {
+                continue;
+            }
+            let raw_write = if value_is_scalar {
+                value.clone()
+            } else {
+                let rhs_flat: usize = rhs_coords.iter().zip(value_strides).map(|(c, s)| c * s).sum();
+                value_elements[rhs_flat].clone()
+            };
+            let write_val = cast_for_segment(b, segment_id, &raw_write, dtype);
+            cells[abs] = axis.cell(b, &coords, &cells[abs], &write_val);
             continue;
         }
         // Compile-time-overlay-only path: fold the conditional-write

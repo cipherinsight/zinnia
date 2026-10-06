@@ -2860,9 +2860,12 @@ impl Synthesizer for NoirEmitter<'_> {
     }
 
     /// `a` in {0, 1}, checked directly (no bound or interval consulted).
+    /// `a ∈ {0, 1}`; every accepted witness then has `a` boolean (the
+    /// circuit has no control flow), so later lowerings may use it as a
+    /// flag without a zero test.
     fn assert_bit(&mut self, a: &CellRef) -> Result<(), ProvingError> {
-        let af = a;
-        let _ = writeln!(self.body, "    assert({} * ({} - 1) == 0);", af, af);
+        let _ = writeln!(self.body, "    assert({a} * ({a} - 1) == 0);");
+        self.set_bound(a, 1);
         Ok(())
     }
 
