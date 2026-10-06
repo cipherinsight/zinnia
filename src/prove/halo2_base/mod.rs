@@ -525,6 +525,7 @@ pub fn cell_stats(ir: &IRGraph, lookup_bits: u32, precision_bits: u32) -> Result
     let params = ProvingParams { k: ESTIMATE_K_MAX, lookup_bits, precision_bits };
     let instances = {
         let mut synth = Halo2BaseSynthesizer::new(&mut builder, None, params, &ir.provenance);
+        synth.plan_ahead(ir);
         interpret_ir(ir, &mut synth)?;
         synth.public_values().len()
     };
@@ -554,6 +555,7 @@ pub fn cell_profile(
     let params = ProvingParams { k: ESTIMATE_K_MAX, lookup_bits, precision_bits };
     let profile = {
         let mut synth = Halo2BaseSynthesizer::new(&mut builder, None, params, &ir.provenance);
+        synth.plan_ahead(ir);
         synth.enable_profile();
         interpret_ir(ir, &mut synth)?;
         synth.take_profile().map(|p| p.per_stmt).unwrap_or_default()
@@ -653,6 +655,7 @@ fn build_circuit(
     } else {
         let mut synth =
             Halo2BaseSynthesizer::new(&mut builder, witness.cloned(), params.clone(), &ir.provenance);
+        synth.plan_ahead(ir);
         interpret_ir(ir, &mut synth).map_err(|e| {
             ProvingError::synthesis(format!("halo2-base synthesis failed: {}", e))
         })?;

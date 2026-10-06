@@ -13,10 +13,12 @@ use halo2_base::{
 mod bitwise;
 mod fixed_point;
 mod memory;
+mod plan;
 mod ranges;
 
 use self::fixed_point::Divisor;
 use self::memory::MemoryState;
+use self::plan::Plan;
 use self::ranges::{Comparison, Interval, Operand, TwoValued};
 use crate::circuit_input::{InputPath, ResolvedWitness};
 use crate::prove::error::ProvingError;
@@ -95,6 +97,17 @@ pub struct Halo2BaseSynthesizer<'a> {
     /// (cheap `Arc` clones). Built on first range use so circuits without
     /// range checks pay no setup. Byte-identical to `builder.range_chip()`.
     range: Option<RangeChip<Fp>>,
+    /// Facts read off the whole IR graph ahead of synthesis (see `plan.rs`);
+    /// empty unless [`Halo2BaseSynthesizer::plan_ahead`] is called.
+    plan: Plan,
+    /// The statement being lowered (from `on_stmt_begin`).
+    current_stmt: u32,
+    /// Deferred products by placeholder id: the factors of a `MulI` that the
+    /// plan fuses into its one consumer (see `mul_i`).
+    deferred: HashMap<u64, (Halo2BaseCell, Halo2BaseCell)>,
+    /// `(cell id, advice length)` right after `gate_from` emitted the cell:
+    /// while the length is unchanged, that cell is the context's last one.
+    last_output: Option<(u64, usize)>,
     /// Per-statement cell counts, recorded only when enabled (see
     /// [`Halo2BaseSynthesizer::enable_profile`]); a measurement aid.
     profile: Option<CellProfile>,
@@ -148,10 +161,20 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             first_unsat: None,
             gate: GateChip::<Fp>::new(),
             range: None,
+            plan: Plan::default(),
+            current_stmt: 0,
+            deferred: HashMap::new(),
+            last_output: None,
             profile: None,
             #[cfg(test)]
             tamper: tamper::HintTamper::default(),
         }
+    }
+
+    /// Read the facts of `ir` the lowering uses ahead of the statements that
+    /// establish them (planned bounds, deferred products; see `plan.rs`).
+    pub fn plan_ahead(&mut self, ir: &crate::ir::IRGraph) {
+        self.plan = Plan::of(ir);
     }
 
     /// Record the advice and lookup cells each statement emits (costly:
@@ -357,6 +380,61 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         self.wrap(assigned, value)
     }
 
+    /// `first + b·c` by halo2-base's vertical gate `[first, b, c, out]`.
+    /// When `first` is the last advice cell of the context (it was the
+    /// output of the previous `gate_from`), the gate starts at that cell
+    /// instead of copying it: three cells instead of four. halo2-base lays
+    /// out gates that share a cell (its inner products do the same) and
+    /// copies a shared cell across a column break. The decision depends
+    /// only on the order of emission, never on values, so key generation
+    /// and proving lay out the same gates.
+    fn gate_from(&mut self, first: &Halo2BaseCell, b: QuantumCell<Fp>, c: QuantumCell<Fp>, value: Fp) -> Halo2BaseCell {
+        let ctx = self.builder.main(0);
+        let assigned = if self.last_output == Some((first.id, ctx.advice.len())) {
+            ctx.assign_region_last([b, c, QuantumCell::Witness(value)], [-1])
+        } else {
+            ctx.assign_region_last([QuantumCell::Existing(first.assigned), b, c, QuantumCell::Witness(value)], [0])
+        };
+        let out = self.wrap(assigned, value);
+        self.last_output = Some((out.id, self.builder.main(0).advice.len()));
+        out
+    }
+
+    /// A stand-in for the product `a·b` of a `MulI` that the plan fuses into
+    /// its only consumer (an `AddI`, or a `SubI` subtracting it): no cell is
+    /// assigned (`cell: None`); the consumer emits `acc ± a·b` as one gate
+    /// from the recorded factors. The plan admits only products that no
+    /// other statement and no affine view of a memory address reads, so the
+    /// stand-in never reaches a gate; if it did, key generation would stop
+    /// on the missing cell instead of building a circuit.
+    fn defer_product(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Halo2BaseCell {
+        let value = a.value * b.value;
+        let placeholder = AssignedValue { value: halo2_base::halo2_proofs::plonk::Assigned::Trivial(value), cell: None };
+        let cell = self.wrap(placeholder, value);
+        self.deferred.insert(cell.id, (*a, *b));
+        cell
+    }
+
+    /// `cell` itself, or for a deferred product its product as a cell (when
+    /// both operands of a sum are deferred products, one is emitted).
+    fn materialize(&mut self, cell: &Halo2BaseCell) -> Halo2BaseCell {
+        let Some((a, b)) = self.deferred.get(&cell.id).copied() else { return *cell };
+        let out = self.gate_cell(cell.value, |gate, ctx| gate.mul(ctx, a.assigned, b.assigned));
+        self.propagate_range(&out, &a, &b, Interval::mul);
+        out
+    }
+
+    /// `acc + a·b` in one gate, with the range of the sum propagated.
+    fn multiply_add(&mut self, acc: &Halo2BaseCell, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Halo2BaseCell {
+        let out = self.gate_from(acc, QuantumCell::Existing(a.assigned), QuantumCell::Existing(b.assigned), acc.value + a.value * b.value);
+        if let (Some(ra), Some(rb), Some(racc)) = (self.proven_range(a), self.proven_range(b), self.proven_range(acc)) {
+            if let Some(range) = ra.mul(&rb).and_then(|p| p.add(&racc)) {
+                self.prove_range(&out, range);
+            }
+        }
+        out
+    }
+
     fn truthy_bit(&mut self, a: &Halo2BaseCell) -> Halo2BaseCell {
         if self.is_bit(a) {
             return *a;
@@ -434,6 +512,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
 
 impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn on_stmt_begin(&mut self, stmt_id: u32) {
+        self.current_stmt = stmt_id;
         if self.profile.is_none() {
             return;
         }
@@ -478,7 +557,14 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn add_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let out = self.gate_cell(a.value + b.value, |gate, ctx| gate.add(ctx, a.assigned, b.assigned));
+        if let Some((x, y)) = self.deferred.get(&b.id).copied() {
+            let acc = self.materialize(a);
+            return Ok(self.multiply_add(&acc, &x, &y));
+        }
+        if let Some((x, y)) = self.deferred.get(&a.id).copied() {
+            return Ok(self.multiply_add(b, &x, &y));
+        }
+        let out = self.gate_from(a, QuantumCell::Existing(b.assigned), QuantumCell::Constant(Fp::one()), a.value + b.value);
         self.propagate_range(&out, a, b, Interval::add);
         self.propagate_two_valued(&out, a, b, |x, c| x.checked_add(c));
         self.propagate_two_valued(&out, b, a, |x, c| x.checked_add(c));
@@ -486,6 +572,17 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn sub_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if let Some((x, y)) = self.deferred.get(&b.id).copied() {
+            // `a - x·y` as halo2-base's `[a - x·y, x, y, a]` gate.
+            let a = &self.materialize(a);
+            let out = self.gate_cell(a.value - x.value * y.value, |gate, ctx| gate.sub_mul(ctx, a.assigned, x.assigned, y.assigned));
+            if let (Some(ra), Some(rx), Some(ry)) = (self.proven_range(a), self.proven_range(&x), self.proven_range(&y)) {
+                if let Some(range) = rx.mul(&ry).and_then(|p| ra.sub(&p)) {
+                    self.prove_range(&out, range);
+                }
+            }
+            return Ok(out);
+        }
         // A fresh cell per IR value (provenance maps cells to values one to
         // one); later selects on the same operands may reuse it.
         let out = self.gate_cell(a.value - b.value, |gate, ctx| gate.sub(ctx, a.assigned, b.assigned));
@@ -497,6 +594,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn mul_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.plan.deferred_products.contains(&self.current_stmt) {
+            return Ok(self.defer_product(a, b));
+        }
         let out = self.gate_cell(a.value * b.value, |gate, ctx| gate.mul(ctx, a.assigned, b.assigned));
         self.propagate_range(&out, a, b, Interval::mul);
         self.propagate_two_valued(&out, a, b, |x, c| x.checked_mul(c));

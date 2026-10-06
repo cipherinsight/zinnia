@@ -292,6 +292,11 @@ impl Halo2BaseSynthesizer<'_> {
         if self.proven_range(x).is_some_and(|r| r.within(&domain)) {
             return Ok(());
         }
+        // A bound `x < hi` the circuit asserts anyway (see `plan.rs`), emitted
+        // here: it proves `x` in `[0, hi)`, inside the domain, more cheaply.
+        if let Some(hi) = self.planned_bound(x).filter(|hi| Interval::new(0, hi - 1).is_some_and(|r| r.within(&domain))) {
+            return self.assert_less(x, Operand::Constant(hi));
+        }
         if domain == Interval::UNSIGNED64 {
             self.range_check(x, 64);
         } else if domain == Interval::SIGNED64 {
@@ -305,6 +310,13 @@ impl Halo2BaseSynthesizer<'_> {
         }
         self.prove_range(x, domain);
         Ok(())
+    }
+
+    /// The constant bound `hi` of an `AssertU128Lt(x, hi)` statement of the
+    /// circuit on `x`'s IR value, if there is one.
+    fn planned_bound(&self, x: &Halo2BaseCell) -> Option<i128> {
+        let vid = self.vid_of_cell.get(&x.id)?;
+        self.plan.bounds.get(vid).copied()
     }
 
     /// Constrain a hinted quotient `q` so that its division identity holds
@@ -401,7 +413,7 @@ impl Halo2BaseSynthesizer<'_> {
             if let Some(sign) = self.sign_bits.get(&x.id) {
                 return Ok(*sign);
             }
-            if self.proven_range(&x).is_none_or(|r| !r.within(&Interval::SIGNED64)) {
+            if self.proven_range(&x).is_none_or(|r| !r.within(&Interval::SIGNED64)) && self.planned_bound(&x).is_none() {
                 return self.sign_test(&x);
             }
         }

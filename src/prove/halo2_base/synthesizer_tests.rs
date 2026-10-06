@@ -1079,3 +1079,180 @@ fn branch_attack_on_arcsin() {
     let new = unary(|s, a| s.arcsin_f(a));
     assert_eq!(synthesize(&*new, &[q(0.5)], &[]).outputs, vec![y]);
 }
+
+// ── Whole-graph plans: planned bounds, fused sums of products ──────────
+
+mod graphs {
+    use super::*;
+    use crate::circuit_input::{InputNode, InputParam};
+    use crate::ir::{IRGraph, IRStatement};
+    use crate::ir_defs::IR;
+    use crate::prove::interpreter::interpret_ir;
+    use crate::types::ValueId;
+
+    /// Small IR graph builder: statement ids are indices.
+    #[derive(Default)]
+    pub(super) struct Graph {
+        stmts: Vec<IRStatement>,
+        vids: Vec<ValueId>,
+    }
+
+    impl Graph {
+        pub fn push(&mut self, ir: IR, args: &[u32]) -> u32 {
+            let id = self.stmts.len() as u32;
+            let vid = ValueId::next();
+            let arg_values = args.iter().map(|a| self.vids[*a as usize]).collect();
+            self.stmts.push(IRStatement::new(id, vid, ir, args.to_vec(), arg_values, None));
+            self.vids.push(vid);
+            id
+        }
+
+        pub fn read(&mut self, name: &str) -> u32 {
+            self.push(IR::ReadInteger { path: InputPath::new(name, vec![]), is_public: false }, &[])
+        }
+
+        pub fn int(&mut self, value: i64) -> u32 {
+            self.push(IR::ConstantInt { value }, &[])
+        }
+
+        /// The frontend's input-domain check of an int64 input.
+        pub fn domain_check(&mut self, x: u32) {
+            let (lo, hi) = (self.int(i64::MIN), self.int(i64::MAX));
+            let above = self.push(IR::GteI, &[x, lo]);
+            self.push(IR::Assert, &[above]);
+            let below = self.push(IR::LteI, &[x, hi]);
+            self.push(IR::Assert, &[below]);
+        }
+
+        pub fn finish(self) -> IRGraph {
+            IRGraph::new(self.stmts)
+        }
+    }
+
+    pub(super) struct Run {
+        pub outputs: Vec<Fp>,
+        pub accepted: bool,
+        pub advice: usize,
+    }
+
+    /// Synthesize `ir` (with its plan) on the integer inputs `ints` and run
+    /// the MockProver against `claimed` public values (the synthesized
+    /// outputs when `None`).
+    pub(super) fn run(ir: &IRGraph, ints: &[(&str, i64)], claimed: Option<Vec<Fp>>) -> Run {
+        let mut inputs = CircuitInputs::new();
+        for (name, value) in ints {
+            inputs.params.push(InputParam {
+                name: name.to_string(),
+                is_public: false,
+                dtype: serde_json::Value::Null,
+                value: InputNode::Int(*value),
+            });
+        }
+        let mut builder = BaseCircuitBuilder::<Fp>::from_stage(CircuitBuilderStage::Mock);
+        builder.set_k(K as usize);
+        builder.set_lookup_bits(LOOKUP_BITS as usize);
+        builder.set_instance_columns(1);
+        let params = ProvingParams { k: K, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
+        let outputs = {
+            let witness = ResolvedWitness::new(inputs, PRECISION_BITS);
+            let mut synth = Halo2BaseSynthesizer::new(&mut builder, Some(witness), params, &ir.provenance);
+            synth.plan_ahead(ir);
+            interpret_ir(ir, &mut synth).expect("synthesis failed");
+            synth.public_values().to_vec()
+        };
+        let advice = builder.statistics().gate.total_advice_per_phase[0];
+        builder.calculate_params(Some(20));
+        let instance = claimed.unwrap_or_else(|| outputs.clone());
+        let accepted = MockProver::run(K, &builder, vec![instance]).expect("MockProver::run").verify().is_ok();
+        Run { outputs, accepted, advice }
+    }
+}
+
+/// An input that the circuit also bounds with `AssertU128Lt(x, 8)` (an
+/// index) gets that bound check in place of its 64-bit window check: the
+/// domain checks then cost nothing, and values outside `[0, 8)` (including
+/// ones outside the int64 window) have no witness.
+#[test]
+fn domain_checks_of_bounded_inputs_use_the_bound() {
+    use crate::ir_defs::IR;
+    use graphs::*;
+    let build = |with_domain_check: bool| {
+        let mut g = Graph::default();
+        let x = g.read("x");
+        if with_domain_check {
+            g.domain_check(x);
+        }
+        let eight = g.int(8);
+        g.push(IR::AssertU128Lt, &[x, eight]);
+        g.push(IR::ExposePublicI, &[x]);
+        g.finish()
+    };
+    let (checked, bare) = (build(true), build(false));
+    for x in [0i64, 7] {
+        let outcome = run(&checked, &[("x", x)], None);
+        assert!(outcome.accepted && outcome.outputs == vec![int(x)], "{x} rejected");
+    }
+    for x in [8i64, -1, i64::MAX, i64::MIN] {
+        assert!(!run(&checked, &[("x", x)], None).accepted, "{x} accepted");
+    }
+    // The two loaded bounds and the two shared truth constants.
+    assert_eq!(run(&checked, &[("x", 3)], None).advice, run(&bare, &[("x", 3)], None).advice + 4);
+}
+
+/// `acc + a·b` and `acc - a·b` with a product used only there are one gate
+/// (no product cell); a chain of them shares the accumulator cell between
+/// gates (three cells per term). The outputs equal the integer arithmetic,
+/// a wrong claimed output is rejected, and a product used twice is still a
+/// cell of its own.
+#[test]
+fn sums_of_products_fuse_into_one_gate_per_term() {
+    use crate::ir_defs::IR;
+    use graphs::*;
+    let dot = |terms: usize| {
+        let mut g = Graph::default();
+        let reads: Vec<(u32, u32)> = (0..terms).map(|i| (g.read(&format!("a{i}")), g.read(&format!("b{i}")))).collect();
+        let mut acc = g.push(IR::MulI, &[reads[0].0, reads[0].1]);
+        for (a, b) in &reads[1..] {
+            let product = g.push(IR::MulI, &[*a, *b]);
+            acc = g.push(IR::AddI, &[acc, product]);
+        }
+        let (c, d) = (g.read("c"), g.read("d"));
+        let product = g.push(IR::MulI, &[c, d]);
+        let diff = g.push(IR::SubI, &[acc, product]);
+        g.push(IR::ExposePublicI, &[diff]);
+        g.finish()
+    };
+    let values = |terms: usize| -> Vec<(String, i64)> {
+        let mut v: Vec<(String, i64)> = (0..terms).flat_map(|i| [(format!("a{i}"), 3 + i as i64), (format!("b{i}"), -5 + 2 * i as i64)]).collect();
+        v.push(("c".to_string(), 7));
+        v.push(("d".to_string(), -2));
+        v
+    };
+    let expected = |terms: usize| -> i64 { (0..terms as i64).map(|i| (3 + i) * (-5 + 2 * i)).sum::<i64>() + 14 };
+    for terms in [2usize, 3, 4] {
+        let ir = dot(terms);
+        let named = values(terms);
+        let ints: Vec<(&str, i64)> = named.iter().map(|(n, v)| (n.as_str(), *v)).collect();
+        let honest = run(&ir, &ints, None);
+        assert!(honest.accepted && honest.outputs == vec![int(expected(terms))], "{terms} terms");
+        assert!(!run(&ir, &ints, Some(vec![int(expected(terms) + 1)])).accepted, "{terms} terms: wrong sum accepted");
+    }
+    let cells = |terms: usize| {
+        let named = values(terms);
+        let ints: Vec<(&str, i64)> = named.iter().map(|(n, v)| (n.as_str(), *v)).collect();
+        run(&dot(terms), &ints, None).advice
+    };
+    // One more term: two loaded inputs and three cells of the chained gate.
+    assert_eq!(cells(4) - cells(3), 2 + 3);
+
+    // A product read twice keeps its own cell and both uses see it.
+    let mut g = Graph::default();
+    let (a, b, c) = (g.read("a"), g.read("b"), g.read("c"));
+    let product = g.push(IR::MulI, &[a, b]);
+    let sum = g.push(IR::AddI, &[c, product]);
+    let twice = g.push(IR::AddI, &[sum, product]);
+    g.push(IR::ExposePublicI, &[twice]);
+    let ir = g.finish();
+    let outcome = run(&ir, &[("a", 4), ("b", 5), ("c", 1)], None);
+    assert!(outcome.accepted && outcome.outputs == vec![int(41)]);
+}
