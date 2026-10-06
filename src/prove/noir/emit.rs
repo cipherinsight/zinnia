@@ -653,6 +653,10 @@ pub struct NoirEmitter<'a> {
     nonzero: HashSet<String>,
     /// `out -> (a, b)` for every emitted sum `out = a + b`.
     sum_of: HashMap<String, (String, String)>,
+    /// Cells bound to the cast of one value (`b as Field`, `bs[i] as
+    /// Field`, typically a comparison's `bool`), which Noir keeps as a single
+    /// witness (see `select`).
+    cast_cells: HashSet<String>,
     /// Asserted comparisons a bounds check elsewhere implies (see
     /// `implied_comparisons`): they emit nothing.
     implied_comparisons: HashSet<u32>,
@@ -1810,6 +1814,7 @@ impl<'a> NoirEmitter<'a> {
             asserted_comparisons: HashSet::new(),
             nonzero: HashSet::new(),
             sum_of: HashMap::new(),
+            cast_cells: HashSet::new(),
             implied_comparisons: HashSet::new(),
             current_stmt: None,
             proven_range: HashMap::new(),
@@ -1888,6 +1893,9 @@ impl<'a> NoirEmitter<'a> {
         // bind_typed).
         let _ = writeln!(self.body, "    let {}: Field = {};", v, expr);
         self.cse_cache.insert(expr.to_string(), v.clone());
+        if is_single_cast(expr) {
+            self.cast_cells.insert(v.clone());
+        }
         // NOTE: the IR-analysis bound is NOT stamped here. `bind()` runs
         // for every *intermediate* cell produced while dispatching a
         // statement, but `current_stmt_bound` describes only the
@@ -2520,8 +2528,10 @@ impl Synthesizer for NoirEmitter<'_> {
     }
     fn logical_or(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let (a, b) = (self.booleanize(a), self.booleanize(b));
-        let (af, bf) = (&a, &b);
-        Ok(self.bind_flag(&format!("{} + {} - {} * {}", af, bf, af, bf)))
+        // `a + (1 - a) * b`, the same polynomial as `a + b - a * b`: in a
+        // chain of ORs (an `any` over a mask) Noir lowers this form with
+        // fewer gates (measured with nargo 1.0.0-beta.20 / bb 5.0.0).
+        Ok(self.bind_flag(&format!("{a} + (1 - {a}) * {b}")))
     }
     fn logical_not(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         let a = self.booleanize(a);
@@ -2534,10 +2544,18 @@ impl Synthesizer for NoirEmitter<'_> {
         if_true: &CellRef,
         if_false: &CellRef,
     ) -> Result<CellRef, ProvingError> {
-        // `c * t + (1 - c) * f` picks a branch only for c in {0, 1}; any
+        // `f - c * f + c * t` picks a branch only for c in {0, 1}; any
         // other condition is reduced to 0/1 first (Python truthiness, as the
         // mock). When `f == 0` (the common dyn-slice / mask-then-default-zero
         // pattern) the second half is dead and the binding is `c * t`.
+        // When c is the cast of one bool (a comparison result), the select
+        // is written `f - c * f + c * t`, without a `1 - c` factor: for a
+        // chain of selects (a running argmax) Noir binds `1 - c` to a witness
+        // of its own, one more gate per select. For any other condition (a
+        // product, `1 - x`, a sum) that form costs more gates than the
+        // `(1 - c)` form on the DS-1000 set, so it keeps that form. Both are
+        // the same polynomial; only Noir's lowering of the text differs (the
+        // gate counts were measured with nargo 1.0.0-beta.20 / bb 5.0.0).
         let c = self.booleanize(cond);
         let is_zero_int = self.s_int_of(if_false) == Some(0);
         let is_zero_flt = self.s_float_of(if_false) == Some(0.0);
@@ -2559,6 +2577,9 @@ impl Synthesizer for NoirEmitter<'_> {
         } else if let Some(x) = difference(if_false, if_true) {
             // f = t + x: t + (1 - c) * x.
             format!("{if_true} + (1 - {c}) * {x}")
+        } else if self.cast_cells.contains(&c) {
+            // c is one witness: no `1 - c` factor (see above).
+            format!("{if_false} - {c} * {if_false} + {c} * {if_true}")
         } else {
             format!("{} * {} + (1 - {}) * {}", c, if_true, c, if_false)
         };
@@ -3209,6 +3230,14 @@ fn render_main_nr(inputs: &[EmittedInput], emitter: &NoirEmitter) -> String {
     out
 }
 
+/// Whether `expr` is `x as Field` for one identifier or one indexed
+/// identifier `x`.
+fn is_single_cast(expr: &str) -> bool {
+    expr.strip_suffix(" as Field").is_some_and(|x| {
+        !x.is_empty() && x.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '[' | ']'))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3541,3 +3570,4 @@ mod tests {
         assert_eq!(em.bound_of(&result1), Some(1));
     }
 }
+

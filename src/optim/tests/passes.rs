@@ -470,6 +470,33 @@ mod tests {
         assert!(result.len() <= 4);
     }
 
+    /// `x - x` is the constant 0, for integers and for (Q32) floats: a
+    /// comparison of an array with its own row then needs no circuit.
+    #[test]
+    fn test_pattern_match_sub_self_is_zero() {
+        for float in [false, true] {
+            let read = if float {
+                IR::ReadFloat { path: crate::circuit_input::InputPath::new("x", vec![]), is_public: false }
+            } else {
+                IR::ReadInteger { path: crate::circuit_input::InputPath::new("x", vec![]), is_public: false }
+            };
+            let (sub, expose) = if float { (IR::SubF, IR::ExposePublicF) } else { (IR::SubI, IR::ExposePublicI) };
+            let stmts = vec![
+                IRStatement::new(0, crate::types::ValueId::next(), read, vec![], vec![], None),
+                IRStatement::new(1, crate::types::ValueId::next(), sub, vec![0, 0], vec![], None),
+                IRStatement::new(2, crate::types::ValueId::next(), expose, vec![1], vec![], None),
+            ];
+            let result = PatternMatchOptim.exec(IRGraph::new(stmts));
+            assert!(!result.stmts.iter().any(|s| matches!(s.ir, IR::SubF | IR::SubI)), "float = {float}");
+            let exposed = result.stmts.last().unwrap();
+            let zero = &result.stmts[exposed.arguments[0] as usize].ir;
+            assert!(
+                matches!(zero, IR::ConstantFloat { value } if *value == 0.0) || matches!(zero, IR::ConstantInt { value: 0 }),
+                "float = {float}: {zero:?}"
+            );
+        }
+    }
+
     #[test]
     fn test_memory_trace_injection() {
         let stmts = vec![

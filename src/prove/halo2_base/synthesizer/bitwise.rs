@@ -61,7 +61,7 @@ impl Halo2BaseSynthesizer<'_> {
             _ if width == WORD => {
                 let offset = Fp::from(1u64 << 63);
                 let shifted = self.gate_cell(x.value + offset, |gate, ctx| {
-                    gate.add(ctx, x.assigned, QuantumCell::Constant(offset))
+                    gate.add(ctx, x.quantum(), QuantumCell::Constant(offset))
                 });
                 let mut bits = self.hinted_bits(&shifted, WORD)?;
                 bits[WORD - 1] = self.logical_not(&bits[WORD - 1])?;
@@ -73,11 +73,11 @@ impl Halo2BaseSynthesizer<'_> {
                 let power = kernel::i128_to_fp(1i128 << width);
                 let high = self.hint(kernel::i128_to_fp(value >> width));
                 let low = self.gate_cell(x.value - high.value * power, |gate, ctx| {
-                    gate.sub_mul(ctx, x.assigned, high.assigned, QuantumCell::Constant(power))
+                    gate.sub_mul(ctx, x.quantum(), high.quantum(), QuantumCell::Constant(power))
                 });
                 let window = kernel::i128_to_fp(1i128 << (63 - width));
                 let shifted = self.gate_cell(high.value + window, |gate, ctx| {
-                    gate.add(ctx, high.assigned, QuantumCell::Constant(window))
+                    gate.add(ctx, high.quantum(), QuantumCell::Constant(window))
                 });
                 self.range_check(&shifted, WORD - width);
                 self.prove_range(x, Interval::SIGNED64);
@@ -97,6 +97,8 @@ impl Halo2BaseSynthesizer<'_> {
             .map(|v| self.hint_value(v))
             .collect();
         let powers: Vec<Fp> = (0..width).map(|i| kernel::i128_to_fp(1i128 << i)).collect();
+        // Before `row`: loading a constant `x` would shift the layout.
+        let x_cell = self.assigned(x);
         let row = self.builder.main(0).advice.len();
         let sum = self.gate.inner_product(
             self.builder.main(0),
@@ -104,7 +106,7 @@ impl Halo2BaseSynthesizer<'_> {
             powers.iter().map(|p| QuantumCell::Constant(*p)),
         );
         let ctx = self.builder.main(0);
-        ctx.constrain_equal(&x.assigned, &sum);
+        ctx.constrain_equal(&x_cell, &sum);
         // inner_product lays out | b_0 | (c_1 | b_1 | acc_1) ... : b_0 at
         // `row`, b_i at `row + 1 + 3(i - 1)`.
         let assigned: Vec<_> = (0..width)
@@ -113,7 +115,7 @@ impl Halo2BaseSynthesizer<'_> {
         let mut bits = Vec::with_capacity(width);
         for (cell, value) in assigned.into_iter().zip(bit_values) {
             let bit = self.wrap(cell, value);
-            self.gate.assert_bit(self.builder.main(0), bit.assigned);
+            self.gate.assert_bit(self.builder.main(0), cell);
             self.mark_bit(&bit);
             bits.push(bit);
         }
@@ -215,7 +217,7 @@ impl Halo2BaseSynthesizer<'_> {
                 Ok(self.gate_cell(value, |gate, ctx| {
                     gate.inner_product(
                         ctx,
-                        terms.iter().map(|(c, _)| QuantumCell::Existing(c.assigned)),
+                        terms.iter().map(|(c, _)| c.quantum()),
                         terms.iter().map(|(_, w)| QuantumCell::Constant(kernel::i128_to_fp(*w))),
                     )
                 }))
