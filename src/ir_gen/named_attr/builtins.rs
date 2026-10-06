@@ -43,13 +43,13 @@ impl IRGenerator {
                 }
                 crate::ops::static_ndarray_ops::builtin_len(&mut self.builder, visited_args)
             }
-            "int" => {
-                if visited_args.is_empty() {
-                    self.builder.ir_constant_int(0)
-                } else {
-                    self.builder.ir_int_cast(&visited_args[0])
-                }
-            }
+            "int" => match visited_args.first() {
+                None => self.builder.ir_constant_int(0),
+                // `int(flag)` of a bool is an integer, not a bool cell (an
+                // array of them indexes by position).
+                Some(v @ (Value::Integer(_) | Value::Boolean(_))) => self.builder.int_dtype_cell(v),
+                Some(v) => self.builder.ir_int_cast(v),
+            },
             "float" => {
                 if visited_args.is_empty() {
                     self.builder.ir_constant_float(0.0)

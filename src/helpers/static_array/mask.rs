@@ -497,6 +497,13 @@ pub fn try_apply_boolean_mask_write(
                 }
             }
         };
+        // NumPy converts the assigned value to the array's dtype (a bool
+        // array stores truth values).
+        let new_raw = if b.is_bool_segment(arr_seg) {
+            b.bool_dtype_cell(&new_raw)
+        } else {
+            new_raw
+        };
         let new_cast = cast_to_dtype(b, &new_raw, arr_dtype);
         let cur_cast = cast_to_dtype(b, &arr_cells[i], arr_dtype);
         let selected = if matches!(arr_dtype, NumberType::Float) {

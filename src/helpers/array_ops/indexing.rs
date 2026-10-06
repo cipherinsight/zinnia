@@ -3,7 +3,7 @@
 //!
 //! Sibling modules:
 //! * [`super::bounded_axis`] — stride-layout dispatch + strict-mode env var.
-//! * [`super::boolean_mask`] — boolean-mask classification predicate.
+//! * [`super::array_index`] — how an array-valued index is read (mask or positions).
 
 use crate::builder::IRBuilder;
 use crate::helpers::shape_arith::row_major_strides;

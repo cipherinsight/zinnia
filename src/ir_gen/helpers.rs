@@ -6,7 +6,9 @@ impl IRGenerator {
     pub(crate) fn cast_composite(&mut self, val: &Value, to_float: bool) -> Value {
         Self::map_composite_leaves(&mut self.builder, val, &mut |b, leaf| match leaf {
             Value::Integer(_) | Value::Boolean(_) if to_float => b.ir_float_cast(leaf),
-            Value::Float(_) | Value::Boolean(_) if !to_float => b.ir_int_cast(leaf),
+            Value::Float(_) if !to_float => b.ir_int_cast(leaf),
+            // A bool becomes an integer cell (it indexes by position).
+            Value::Integer(_) | Value::Boolean(_) if !to_float => b.int_dtype_cell(leaf),
             _ => leaf.clone(),
         })
     }
@@ -15,7 +17,7 @@ impl IRGenerator {
     /// conversion to `dtype=bool` (`np.array(x, dtype=bool)`).
     pub(crate) fn truth_composite(&mut self, val: &Value) -> Value {
         Self::map_composite_leaves(&mut self.builder, val, &mut |b, leaf| match leaf {
-            Value::Integer(_) | Value::Float(_) => b.ir_bool_cast(leaf),
+            Value::Integer(_) | Value::Float(_) | Value::Boolean(_) => b.bool_dtype_cell(leaf),
             _ => leaf.clone(),
         })
     }

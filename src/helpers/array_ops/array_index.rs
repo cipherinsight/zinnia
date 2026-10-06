@@ -83,20 +83,16 @@ pub fn reject_unsupported_index_arrays(b: &IRBuilder, indices: &[crate::types::S
 }
 
 /// Whether `v` is a NumPy bool array: a list whose every leaf is a bool cell
-/// (`np.array` of it is bool), or a segment-backed array stored in a bool
-/// segment or (for a static array) whose cached cells are all bool cells.
+/// (`np.array` of it is bool), or an array stored in a bool segment. (An
+/// array's dtype is its segment's, whatever its cells hold now: an integer
+/// array stays one after bools are assigned into it.)
 pub fn is_bool_array(b: &IRBuilder, v: &Value) -> bool {
     match v {
         Value::List(_) | Value::Tuple(_) => {
             let leaves = crate::helpers::composite::flatten_composite(v);
             !leaves.is_empty() && leaves.iter().all(|leaf| b.is_bool_cell(leaf))
         }
-        Value::StaticArray { segment_id, .. } => {
-            b.is_bool_segment(*segment_id)
-                || b.static_array_payload.get(segment_id).is_some_and(|cells| {
-                    !cells.is_empty() && cells.iter().all(|c| b.is_bool_cell(c))
-                })
-        }
+        Value::StaticArray { segment_id, .. } => b.is_bool_segment(*segment_id),
         Value::DynamicNDArray(d) => b.is_bool_segment(d.segment_id),
         _ => false,
     }
@@ -205,5 +201,30 @@ mod tests {
         let ints = crate::helpers::static_array::base::to_value_list(&mut b, &ints);
         let promoted = crate::helpers::promote::promote_static_to_dynamic(&mut b, &ints);
         assert_eq!(array_index_kind(&b, &promoted), Some(ArrayIndexKind::Positions));
+    }
+
+    #[test]
+    fn integer_conversion_ends_the_bool_dtype() {
+        let mut b = IRBuilder::new();
+        let x = runtime_int(&mut b, "x");
+        let zero = b.ir_constant_int(0);
+        let flag = b.ir_less_than_i(&x, &zero);
+        let mask = crate::helpers::static_array::base::to_static_array(&mut b, &list(vec![flag.clone(); 2])).unwrap();
+        let Value::StaticArray { segment_id, .. } = &mask else { unreachable!() };
+        b.static_array_payload.remove(segment_id);
+        // Cells read back from memory: integers in the IR, bools in NumPy.
+        let reread = crate::helpers::static_array::base::to_value_list(&mut b, &mask);
+        let cells = crate::helpers::composite::flatten_composite(&reread);
+        assert!(cells.iter().all(|c| matches!(c, Value::Integer(_)) && b.is_bool_cell(c)));
+        // `astype(int)` of them lists positions.
+        let ints: Vec<Value> = cells.iter().map(|c| b.int_dtype_cell(c)).collect();
+        assert_eq!(array_index_kind(&b, &list(ints)), Some(ArrayIndexKind::Positions));
+        // The integer view of a `Boolean` (`ir_int_cast`) is an integer, even
+        // when something tries to record it; as a bool array's cell it is
+        // the `Boolean` again.
+        let view = b.ir_int_cast(&flag);
+        b.record_bool_cell(&view);
+        assert!(!b.is_bool_cell(&view));
+        assert!(matches!(b.bool_dtype_cell(&view), Value::Boolean(_)));
     }
 }

@@ -190,10 +190,7 @@ fn take_runtime_indices(b: &mut IRBuilder, arr: &Value, indices: &Value, axis: u
             let list = super::base::to_value_list(b, indices);
             let entries = crate::helpers::composite::flatten_composite(&list);
             let shape = crate::helpers::composite::get_composite_shape(&list);
-            let entries: Vec<Value> = entries
-                .iter()
-                .map(|v| if matches!(v, Value::Boolean(_)) { b.ir_int_cast(v) } else { v.clone() })
-                .collect();
+            let entries: Vec<Value> = entries.iter().map(|v| b.int_dtype_cell(v)).collect();
             super::base::build_static_array_from_flat(b, entries, shape, NumberType::Integer)
         }
         Value::Boolean(_) => b.ir_int_cast(indices),

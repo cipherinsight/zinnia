@@ -832,6 +832,11 @@ pub fn np_unravel_index(
 }
 
 fn static_delete_indices(b: &mut IRBuilder, idx: &Value, axis_len: usize) -> Vec<usize> {
+    // NumPy reads `obj` by its dtype, like an index: a bool `obj` is a mask
+    // of the entries to delete, not the positions 0 and 1.
+    if crate::helpers::array_ops::is_bool_array(b, idx) {
+        return static_delete_mask(b, idx, axis_len);
+    }
     let raw: Vec<i64> = match idx {
         Value::Integer(_) => vec![idx
             .int_val()
@@ -875,6 +880,36 @@ fn static_delete_indices(b: &mut IRBuilder, idx: &Value, axis_len: usize) -> Vec
     }
     out.sort_unstable();
     out
+}
+
+/// The positions where the bool `mask` (a list or a static array) is true;
+/// it must be one-dimensional, of the axis's length, and compile-time
+/// constant.
+fn static_delete_mask(b: &mut IRBuilder, mask: &Value, axis_len: usize) -> Vec<usize> {
+    let (shape, cells) = match mask {
+        Value::StaticArray { shape, .. } => (shape.clone(), payload_cells(b, mask)),
+        Value::List(_) | Value::Tuple(_) => (
+            crate::helpers::composite::get_composite_shape(mask),
+            crate::helpers::composite::flatten_composite(mask),
+        ),
+        _ => panic!("np.delete: only static boolean obj arrays are supported"),
+    };
+    if shape != [axis_len] {
+        panic!(
+            "np.delete: boolean array argument obj to delete must be one dimensional and \
+             match the axis length of {axis_len}"
+        );
+    }
+    cells
+        .iter()
+        .enumerate()
+        .filter_map(|(i, cell)| {
+            let deleted = cell
+                .int_val()
+                .expect("np.delete: obj array values must be static booleans");
+            (deleted != 0).then_some(i)
+        })
+        .collect()
 }
 
 pub fn np_delete(

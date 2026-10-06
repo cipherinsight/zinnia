@@ -61,6 +61,8 @@ def accepts(program, *args, backend="mock"):
 AB = 'a: Float[Array, "3"], b: Integer[Array, "3"]'
 IB = 'i: Integer[Array, "3"], b: Integer[Array, "3"]'
 MB = 'm: Integer[Array, "5"], b: Integer[Array, "5"]'
+MP = 'm: Bool[Array, "3"], b: Integer[Array, "3"]'
+M3 = np.array([True, False, True])
 M_X = 'm: Integer[Array, "5"], x: Integer[Array, "5 2"]'
 X52 = np.arange(1, 11).reshape(5, 2)
 
@@ -96,6 +98,20 @@ GATHERS = {
     "mask_times_one": (kernel(AB, "return b[(a > 1.5) * 1]"), (A3, B3)),
     "list_of_bool_and_int": (kernel(IB, "return b[[i[0] > 5, i[1] + 2]]"), (I3, B3)),
     "list_data": (kernel(AB, "c = b[[0, 1, 2]]\nreturn c[np.argsort(a)]"), (A3, B3)),
+    # Conversions of bool arrays whose cells are integers in the circuit
+    # (parameters, runtime-shaped arrays, arrays after a write) to integers.
+    "astype_int_of_bool_parameter": (kernel(MP, "return b[m.astype(int)]"), (M3, B3)),
+    "int_of_bool_parameter_cells": (kernel(MP, "return b[np.array([int(x) for x in m])]"), (M3, B3)),
+    "array_int_of_bool_parameter": (kernel(MP, "return b[np.array(m, dtype=int)]"), (M3, B3)),
+    "astype_int_after_mask_write": (
+        kernel(AB, "m = a > 1.5\nm[a < 2.5] = False\nreturn b[m.astype(int)]"), (A3, B3)),
+    "astype_int_of_runtime_shaped_mask": (
+        kernel(MB, "c = (b > 25)[m > 0]\nreturn b[c.astype(int)]"), (M5, B5)),
+    "astype_int_on_runtime_data": (
+        kernel(MB, "c = b[m > 0]\nd = (m[m > 0] > 2).astype(int)\nreturn c[d]"), (M5, B5)),
+    # An integer array stays one when bools are assigned into it.
+    "int_array_assigned_bools": (
+        kernel(AB, "m = np.zeros(3, dtype=int)\nm[:] = a > 1.5\nreturn b[m]"), (A3, B3)),
     "comprehension": (kernel(AB, "return np.array([b[j] for j in np.argsort(a)])"), (A3, B3)),
     # np.take reads its indices as integers.
     "take_runtime": (kernel(IB, "return np.take(b, i)"), (I3, B3)),
@@ -157,6 +173,17 @@ MASKS = {
     "filtered_mask": (kernel(MB, "c = b[m > 0]\nk = (m > 2)[m > 0]\nreturn c[k]"), (M5, B5)),
     "runtime_astype_bool": (kernel(MB, "c = m[m > 0]\nreturn c[(c % 2).astype(bool)]"), (M5, B5)),
     "nonzero_tuple": (kernel(MB, "return b[np.nonzero(m)]"), (M5, B5)),
+    # A choice between cells of bool arrays is a bool, also after a write
+    # into the array or a sort of it (their cells are integers in the circuit).
+    "where_of_runtime_written_mask": (
+        kernel(AB + ", j: Integer", "m = a > 1.5\nm[j] = False\nreturn b[np.where(a > 0, m, False)]"),
+        (A3, B3, 0)),
+    "where_of_constant_written_mask": (
+        kernel(AB, "m = a > 1.5\nm[0] = False\nreturn b[np.where(a > 0, m, False)]"), (A3, B3)),
+    "where_of_slice_written_mask": (
+        kernel(AB, "m = a > 1.5\nm[1:] = False\nreturn b[np.where(a > 0, m, False)]"), (A3, B3)),
+    "where_of_sorted_mask": (kernel(AB, "m = np.sort(a > 1.5)\nreturn b[np.where(a > 0, m, False)]"), (A3, B3)),
+    "where_of_bool_parameter": (kernel(MP, "return b[np.where(m, m, False)]"), (M3, B3)),
 }
 
 
@@ -204,6 +231,31 @@ WRITES = {
 def test_assignments(name):
     source, args = WRITES[name]
     assert_numpy(source, *args)
+
+
+# NumPy converts a value assigned into a bool array to its truth value.
+BOOL_ARRAY_WRITES = {
+    "runtime_element": (kernel('j: Integer, b: Integer[Array, "3"]',
+                               "m = np.zeros(3, dtype=bool)\nm[j] = b[0]\nreturn m.sum(), b[m]"), (1, B3)),
+    "constant_element": (kernel('b: Integer[Array, "3"]',
+                                "m = np.zeros(3, dtype=bool)\nm[1] = 2\nreturn m.sum(), b[m]"), (B3,)),
+    "slice": (kernel('b: Integer[Array, "3"]', "m = np.zeros(3, dtype=bool)\nm[1:] = b[1:] - 20\n"
+                                               "return m.sum(), b[m]"), (B3,)),
+    "mask": (kernel(AB, "m = a > 5\nm[a > 1.5] = b[0]\nreturn m.sum(), b[m]"), (A3, B3)),
+    "runtime_shaped": (kernel(MB, "c = (m > 9)[m > 0]\nc[0] = 7\nreturn c.sum(), b[m > 0][c]"), (M5, B5)),
+}
+
+
+@pytest.mark.parametrize("name", BOOL_ARRAY_WRITES)
+def test_writes_into_bool_arrays_store_truth_values(name):
+    source, args = BOOL_ARRAY_WRITES[name]
+    assert_numpy(source, *args)
+
+
+@pytest.mark.parametrize("obj", ["[True, False, True]", "np.array([True, False, True])", "[True, 2]"])
+def test_delete_reads_obj_by_dtype(obj):
+    # A bool `obj` is a mask of the entries to delete; `[True, 2]` is positions 1 and 2.
+    assert_numpy(kernel('b: Integer[Array, "3"]', f"return np.delete(b, {obj})"), B3)
 
 
 # ── Wrong outputs and out-of-range indices have no proof ─────────────────
@@ -279,6 +331,14 @@ def test_position_past_runtime_length_is_rejected():
     for claimed in (20, 60, 70):
         assert not accepts(program, M5, B5, claimed)
     assert accepts(program, np.array([1, 1, 1, 1, 0]), B5, 50)
+
+
+@pytest.mark.parametrize("backend", ["mock", "halo2-base"])
+def test_converted_bool_parameter_positions_are_pinned(backend):
+    program = compile_kernel(kernel(MP + ', expected: Integer[Array, "3"]',
+                                    "assert (b[m.astype(int)] == expected).all()"))
+    assert accepts(program, M3, B3, np.array([20, 10, 20]), backend=backend)
+    assert not accepts(program, M3, B3, np.array([10, 30, 30]), backend=backend)  # read as a mask
 
 
 @pytest.mark.parametrize("assignment", [

@@ -2594,7 +2594,14 @@ impl IRBuilder {
                         ));
                         self.ir_select_f(&p, value, &old_f)
                     }
-                    _ => self.ir_select_i(&p, value, &old_raw),
+                    _ => {
+                        let stored = self.ir_select_i(&p, value, &old_raw);
+                        // A bool written into a bool array stays a bool.
+                        if self.is_bool_cell(value) && self.is_bool_cell(&old_raw) {
+                            self.record_bool_cell(&stored);
+                        }
+                        stored
+                    }
                 })
             }
         }

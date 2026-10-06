@@ -53,6 +53,18 @@ fn materialize_before_predicated_write(b: &mut IRBuilder, val: &Value) {
     }
 }
 
+/// `v` converted to the dtype of the array stored in `segment_id` before it
+/// is stored there (NumPy converts an assigned value to the array's dtype).
+/// A bool array stores truth values as bool cells
+/// (`IRBuilder::bool_dtype_cell`), which keeps its cached cells bool cells
+/// (see `builder/bool_dtype.rs`).
+fn cast_for_segment(b: &mut IRBuilder, segment_id: u32, v: &Value, dtype: NumberType) -> Value {
+    if dtype == NumberType::Integer && b.is_bool_segment(segment_id) {
+        return b.bool_dtype_cell(v);
+    }
+    cast_to_dtype(b, v, dtype)
+}
+
 /// Cast a value to match the target dtype before storing it in a segment.
 fn cast_to_dtype(b: &mut IRBuilder, v: &Value, dtype: NumberType) -> Value {
     match dtype {
@@ -133,7 +145,15 @@ fn select_typed(
 ) -> Value {
     match dtype {
         NumberType::Float => b.ir_select_f(cond, true_val, false_val),
-        NumberType::Integer => b.ir_select_i(cond, true_val, false_val),
+        NumberType::Integer => {
+            let out = b.ir_select_i(cond, true_val, false_val);
+            // A choice between two NumPy bools is a bool (a write into a
+            // bool array keeps its cached cells bool cells).
+            if b.is_bool_cell(true_val) && b.is_bool_cell(false_val) {
+                b.record_bool_cell(&out);
+            }
+            out
+        }
         NumberType::Complex => {
             panic!("select_typed does not handle Complex StaticArray overlays")
         }
@@ -684,7 +704,7 @@ fn slice_setitem_via_legacy(
     for (i, leaf) in flat.iter().enumerate() {
         let abs = offset + i;
         let addr = b.ir_constant_int(abs as i64);
-        let cast = cast_to_dtype(b, leaf, dtype);
+        let cast = cast_for_segment(b, segment_id, leaf, dtype);
         b.ir_write_memory(segment_id, &addr, &cast);
     }
     cache_invalidate(b, segment_id);
@@ -967,7 +987,7 @@ fn static_array_element_setitem(
     }
 
     // Cast the RHS value to the segment's dtype.
-    let cast_val = cast_to_dtype(b, value, dtype);
+    let cast_val = cast_for_segment(b, segment_id, value, dtype);
 
     // All-static path: use the cached-wire-update strategy.
     let all_static = idx_vals.iter().all(|v| v.int_val().is_some());
@@ -1326,9 +1346,9 @@ fn static_array_slice_setitem(
             };
 
             let write_val = if value_is_scalar {
-                cast_to_dtype(b, value, dtype)
+                cast_for_segment(b, segment_id, value, dtype)
             } else {
-                cast_to_dtype(b, &value_elements[val_flat], dtype)
+                cast_for_segment(b, segment_id, &value_elements[val_flat], dtype)
             };
             // Cache what was actually stored (predicated under a branch).
             let stored = b.ir_write_memory(segment_id, &addr, &write_val);
@@ -1431,9 +1451,9 @@ fn static_array_slice_setitem(
 
             let current = b.ir_read_memory(segment_id, &addr);
             let write_val = if value_is_scalar {
-                cast_to_dtype(b, value, dtype)
+                cast_for_segment(b, segment_id, value, dtype)
             } else {
-                cast_to_dtype(b, &value_elements[val_flat], dtype)
+                cast_for_segment(b, segment_id, &value_elements[val_flat], dtype)
             };
             let selected = if dtype == NumberType::Float {
                 b.ir_select_f(&in_bounds, &write_val, &current)
@@ -1533,7 +1553,7 @@ fn try_overlay_dynamic_single_slice_setitem(
             }
             value_elements[rhs_flat].clone()
         };
-        let write_val = cast_to_dtype(b, &raw_write, dtype);
+        let write_val = cast_for_segment(b, segment_id, &raw_write, dtype);
         let old = cells[abs].clone();
         cells[abs] = select_typed(b, dtype, &cond, &write_val, &old);
     }

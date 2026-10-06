@@ -110,7 +110,14 @@ pub(super) fn write_output(b: &mut IRBuilder, result: &Value, target: &Value, ma
         let coordinates = crate::helpers::shape_arith::decode_coords(i, shape, &logical_strides);
         let addr = offset + coordinates.iter().zip(strides).map(|(i,s)| i*s).sum::<usize>();
         let addr = b.ir_constant_int(addr as i64);
-        let value = if *dtype == crate::types::NumberType::Float { crate::helpers::value_ops::ensure_float(b, cell) } else { cell.clone() };
+        let value = if *dtype == crate::types::NumberType::Float {
+            crate::helpers::value_ops::ensure_float(b, cell)
+        } else if b.is_bool_segment(*segment_id) {
+            // NumPy converts the values to the bool array's dtype.
+            b.bool_dtype_cell(cell)
+        } else {
+            cell.clone()
+        };
         crate::helpers::segment::write_typed(b, *segment_id, &addr, &value, *dtype);
     }
     b.static_array_payload.remove(segment_id);
@@ -303,10 +310,10 @@ pub(super) fn astype(b: &mut IRBuilder, input: &Value, dtype: &Value) -> Value {
     // being bools, so it indexes as positions).
     let convert = |b: &mut IRBuilder, value: &Value| {
         match value {
-            Value::Boolean(_) if target == Target::Bool => value.clone(),
-            _ if target == Target::Bool => b.ir_bool_cast(value),
+            _ if target == Target::Bool => b.bool_dtype_cell(value),
             Value::Integer(_) | Value::Boolean(_) if to_float => b.ir_float_cast(value),
-            Value::Float(_) | Value::Boolean(_) if !to_float => b.ir_int_cast(value),
+            Value::Float(_) if !to_float => b.ir_int_cast(value),
+            Value::Integer(_) | Value::Boolean(_) => b.int_dtype_cell(value),
             _ => value.clone(),
         }
     };

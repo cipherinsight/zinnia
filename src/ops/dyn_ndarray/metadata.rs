@@ -90,9 +90,13 @@ pub fn dyn_astype(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) 
                 crate::helpers::value_ops::pack_complex_value(real, imag)
             }
             NumberType::Float => b.ir_float_cast(&val),
-            // `astype(bool)` is each element's truth value (NumPy: `x != 0`).
-            NumberType::Integer if to_bool => b.ir_bool_cast(&val),
-            NumberType::Integer => b.ir_int_cast(&val),
+            // `astype(bool)` is each element's truth value (NumPy: `x != 0`);
+            // `astype(int)` of a bool array has integer cells.
+            NumberType::Integer if to_bool => b.bool_dtype_cell(val),
+            NumberType::Integer if matches!(val, Value::Integer(_) | Value::Boolean(_)) => {
+                b.int_dtype_cell(val)
+            }
+            NumberType::Integer => b.ir_int_cast(val),
         })
         .collect();
 
