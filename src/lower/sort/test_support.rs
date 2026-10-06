@@ -26,6 +26,8 @@ pub(crate) enum Forced {
     PackedBatcher,
     /// The adjacent-swap network.
     AdjacentSwap,
+    /// Inner products with the rank selectors of pairwise comparisons.
+    RankSelectors,
     /// One pinned run over every rank (the permutation check).
     Permutation,
     /// The live constant ranks in maximal runs of consecutive ranks, each
@@ -81,6 +83,7 @@ fn plan_for(forced: Forced, demand: &Demand) -> Plan {
         },
         Forced::PackedBatcher => Plan::Network { network: Network::PackedMergeExchange },
         Forced::AdjacentSwap => Plan::Network { network: Network::AdjacentSwap },
+        Forced::RankSelectors => Plan::RankSelectors,
         Forced::Permutation => {
             Plan::Hinted { runs: vec![Run { first: 0, last: demand.n - 1, pin: Pin::Keys }] }
         }
