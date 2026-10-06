@@ -430,6 +430,29 @@ fn field_division_is_total_and_pinned() {
     assert_sound("1/0", &*inverse, &[int(0)], &[int(0)], &[]);
 }
 
+/// The hinted quotient and remainder of a rescale (and of every division)
+/// are witnesses of the division gate `r + d·q = a` itself: the rescale costs
+/// that gate's four cells plus the remainder's range check and the
+/// quotient's window check, and a shifted quotient hint is still rejected.
+#[test]
+fn quotient_and_remainder_are_cells_of_the_division_gate() {
+    let rescale: Box<Op> = Box::new(|s, c| Ok(vec![s.rescale_by(&c[0], 32)?]));
+    let checks: Box<Op> = Box::new(|s, c| {
+        s.range_check(&c[0], 32);
+        s.ensure_signed64(&c[1])?;
+        Ok(vec![])
+    });
+    let raw = kernel::i128_to_fp((5i128 << 32) + 7);
+    let (rescale_advice, rescale_lookup) = cells_of(&*rescale, &[raw]);
+    let (checks_advice, checks_lookup) = cells_of(&*checks, &[int(7), int(5)]);
+    // One input instead of two, and the gate's four cells.
+    assert_eq!((rescale_advice, rescale_lookup), (checks_advice - 1 + 4, checks_lookup));
+    assert_eq!(synthesize(&*rescale, &[raw], &[]).outputs, vec![int(5)]);
+    for delta in [Fp::one(), -Fp::one()] {
+        assert!(!synthesize(&*rescale, &[raw], &[(0, delta)]).accepted);
+    }
+}
+
 /// Advice and lookup cells of `op` synthesized on free inputs.
 fn cells_of(op: &Op, inputs: &[Fp]) -> (usize, usize) {
     let mut builder = BaseCircuitBuilder::<Fp>::from_stage(CircuitBuilderStage::Keygen);

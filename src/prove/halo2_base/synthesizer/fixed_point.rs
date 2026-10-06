@@ -196,10 +196,7 @@ impl Halo2BaseSynthesizer<'_> {
             (Some(av), Some(bv)) => kernel::div_rem_or_zero(av, bv, rounding).0,
             _ => 0,
         };
-        let q = self.hint(kernel::i128_to_fp(q_value));
-        let r = self.gate_cell(a.value - b_fp * q.value, |gate, ctx| {
-            gate.sub_mul(ctx, a.quantum(), b_quantum, q.quantum())
-        });
+        let (q, r) = self.quotient_gate(a, b_quantum, b_fp, kernel::i128_to_fp(q_value));
         let implied = match divisor {
             Divisor::Constant(c) => self.proven_range(a).and_then(|range| quotient_range(range, c)),
             _ => None,
@@ -246,6 +243,29 @@ impl Halo2BaseSynthesizer<'_> {
     }
 
 
+    /// A hinted quotient `q` of `dividend` by `divisor` and the remainder
+    /// `r = dividend - divisor·q`, as one gate `r + divisor·q = dividend`
+    /// laid out `[r, divisor, q, dividend]`: `q` and `r` are witnesses of the
+    /// gate itself (four cells), not a loaded hint plus a `sub_mul` gate (five).
+    /// The caller bounds `q` and `r`; `q` is a hint (see [`Self::hint`]).
+    fn quotient_gate(
+        &mut self,
+        dividend: &Halo2BaseCell,
+        divisor: QuantumCell<Fp>,
+        divisor_value: Fp,
+        q_value: Fp,
+    ) -> (Halo2BaseCell, Halo2BaseCell) {
+        let q_value = self.hint_value(q_value);
+        let r_value = dividend.value - divisor_value * q_value;
+        let ctx = self.builder.main(0);
+        ctx.assign_region(
+            [QuantumCell::Witness(r_value), divisor, QuantumCell::Witness(q_value), dividend.quantum()],
+            [0],
+        );
+        let (r, q) = (ctx.get(-4), ctx.get(-2));
+        (self.wrap(q, q_value), self.wrap(r, r_value))
+    }
+
     /// `floor(raw / 2^shift)`, for `shift <= 64`.
     ///
     /// Soundness: the hint `q` and `rem = raw - q·2^shift` (one gate), with
@@ -257,10 +277,7 @@ impl Halo2BaseSynthesizer<'_> {
     pub(super) fn rescale_by(&mut self, raw: &Halo2BaseCell, shift: u32) -> Result<Halo2BaseCell, ProvingError> {
         let q_value = kernel::fp_to_i128(raw.value).map_or(0, |v| v >> shift);
         let scale = kernel::i128_to_fp(1i128 << shift);
-        let q = self.hint(kernel::i128_to_fp(q_value));
-        let rem = self.gate_cell(raw.value - q.value * scale, |gate, ctx| {
-            gate.sub_mul(ctx, raw.quantum(), q.quantum(), QuantumCell::Constant(scale))
-        });
+        let (q, rem) = self.quotient_gate(raw, QuantumCell::Constant(scale), scale, kernel::i128_to_fp(q_value));
         self.range_check(&rem, shift as usize);
         // A proven range [lo, hi] of `raw` bounds the floor to
         // [lo >> shift, hi >> shift]; once the identity holds over the
