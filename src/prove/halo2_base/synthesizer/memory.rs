@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use halo2_base::gates::GateInstructions;
 use halo2_base::QuantumCell;
 
+use super::super::circuit::ram::{RamAddress, RamRow, RamTrace};
 use super::ranges::{Interval, Operand};
 use super::{Fp, Halo2BaseCell, Halo2BaseSynthesizer};
 use crate::prove::error::ProvingError;
@@ -62,6 +63,18 @@ pub(super) struct Segment {
     overlay: Vec<(Halo2BaseCell, Halo2BaseCell)>,
     /// Bumped whenever `slots` changes; keys the gathered-plane cache.
     slots_version: u64,
+    /// In RAM mode (from the first runtime-address write of a segment the
+    /// plan chose): its trace and contents (see [`RamState`]).
+    ram: Option<RamState>,
+}
+
+/// A segment in RAM mode: the index of its trace in
+/// `Halo2BaseSynthesizer::ram`, the contents the honest prover tracks to
+/// supply read values, and the next access's time.
+struct RamState {
+    trace: usize,
+    contents: Vec<Fp>,
+    next_time: u64,
 }
 
 /// Whether an overlay write affects a read: decided at synthesis time when
@@ -94,6 +107,8 @@ pub(super) struct MemoryState {
     segments: HashMap<u32, Segment>,
     /// `[root == v]` indicator bits, shared by every read on the same root.
     indicators: HashMap<(u64, i64), Halo2BaseCell>,
+    /// The tag of each (segment, slots version) read as a table.
+    table_tags: HashMap<(u32, u64), u64>,
     /// `(root id, value set)` memberships already asserted.
     memberships: std::collections::HashSet<(u64, Vec<i64>)>,
     /// Stage-1 planes of two-root reads, keyed by (segment, slots version,
@@ -107,6 +122,9 @@ pub(super) struct MemoryState {
     /// A lower budget for tests.
     #[cfg(test)]
     pub(super) overlay_budget: Option<usize>,
+    /// Put every segment written at a runtime address in RAM mode (tests).
+    #[cfg(test)]
+    pub(super) force_ram: bool,
 }
 
 impl Halo2BaseSynthesizer<'_> {
@@ -117,6 +135,7 @@ impl Halo2BaseSynthesizer<'_> {
             slots: vec![None; size as usize],
             overlay: Vec::new(),
             slots_version,
+            ram: None,
         };
         self.memory.segments.insert(segment_id, segment);
     }
@@ -130,6 +149,12 @@ impl Halo2BaseSynthesizer<'_> {
         addr: &Halo2BaseCell,
         value: &Halo2BaseCell,
     ) -> Result<(), ProvingError> {
+        if self.segment(segment_id)?.ram.is_none() && !self.is_const_cell(addr) && self.ram_chosen(segment_id) {
+            self.start_ram(segment_id)?;
+        }
+        if self.segment(segment_id)?.ram.is_some() {
+            return self.ram_access(segment_id, addr, Some(value)).map(|_| ());
+        }
         let len = self.segment(segment_id)?.slots.len();
         let const_addr = self.is_const_cell(addr).then(|| kernel::fp_to_i64(addr.value));
         match const_addr {
@@ -157,6 +182,9 @@ impl Halo2BaseSynthesizer<'_> {
     }
 
     pub(super) fn memory_read(&mut self, segment_id: u32, addr: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        if self.segment(segment_id)?.ram.is_some() {
+            return self.ram_access(segment_id, addr, None);
+        }
         let base = if self.is_const_cell(addr) {
             let idx = usize::try_from(kernel::fp_to_i64(addr.value)).unwrap_or(usize::MAX);
             self.slot_cell(segment_id, idx)?
@@ -166,6 +194,137 @@ impl Halo2BaseSynthesizer<'_> {
         // The overlay compares the read address with write addresses by cell.
         let addr = &if self.segment(segment_id)?.overlay.is_empty() { *addr } else { self.materialize_address(addr)? };
         self.apply_overlay(segment_id, addr, base)
+    }
+
+    /// `IR::ReadTable`: the slot at `addr` by a dynamic lookup into the
+    /// segment's table (`circuit/tables.rs`), which proves `0 <= addr < n`
+    /// and the value. A constant address must be in bounds at synthesis
+    /// time and reads the slot directly. The segment may not have a pending
+    /// runtime-address write (its slots would not be its contents); the
+    /// layer only emits table reads of segments written at constant
+    /// addresses.
+    pub(super) fn memory_read_table(&mut self, segment_id: u32, addr: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        let segment = self.segment(segment_id)?;
+        let len = segment.slots.len();
+        if !segment.overlay.is_empty() || segment.ram.is_some() {
+            return Err(ProvingError::synthesis("table read of a segment written at a runtime address"));
+        }
+        if self.is_const_cell(addr) {
+            let idx = usize::try_from(kernel::fp_to_i64(addr.value)).ok().filter(|&i| i < len);
+            let idx = idx.ok_or_else(|| ProvingError::synthesis("table read out of bounds"))?;
+            return self.slot_cell(segment_id, idx);
+        }
+        let tag = self.table_tag(segment_id)?;
+        let index = usize::try_from(kernel::fp_to_i64(addr.value)).ok().filter(|&i| i < len);
+        if index.is_none() {
+            self.note_unsat(|| format!("Witness does not satisfy circuit constraints: table read at an address outside [0, {len})"));
+        }
+        let value = match index {
+            Some(i) => match self.slot_value(segment_id, i)? {
+                SlotValue::Cell(cell) => cell.value,
+                SlotValue::Init(v) => v,
+            },
+            None => Fp::zero(),
+        };
+        // A prover-supplied value, pinned by the lookup to the slot at `addr`.
+        let read = self.hint(value);
+        let (index_cell, value_cell) = (self.assigned(addr), self.assigned(&read));
+        self.tables.reads.push((tag, index_cell, value_cell));
+        if let Some(range) = Interval::new(0, len as i128 - 1) {
+            self.prove_range(addr, range);
+        }
+        Ok(read)
+    }
+
+    /// The table of the segment's current slots: registered (one row per
+    /// slot, the slot's cell or a constant cell for an unwritten slot) the
+    /// first time this version of the segment is read as a table.
+    fn table_tag(&mut self, segment_id: u32) -> Result<u64, ProvingError> {
+        let version = self.segment(segment_id)?.slots_version;
+        if let Some(tag) = self.memory.table_tags.get(&(segment_id, version)) {
+            return Ok(*tag);
+        }
+        let tag = self.memory.table_tags.len() as u64;
+        self.memory.table_tags.insert((segment_id, version), tag);
+        let len = self.segment(segment_id)?.slots.len();
+        for address in 0..len {
+            let slot = self.slot_cell(segment_id, address)?;
+            let value = self.assigned(&slot);
+            self.tables.rows.push((tag, address as u64, value));
+        }
+        Ok(tag)
+    }
+
+    /// Whether `segment_id`'s accesses after its first runtime-address write
+    /// go through a RAM trace (`Plan::ram_segments`).
+    fn ram_chosen(&self, segment_id: u32) -> bool {
+        #[cfg(test)]
+        if self.memory.force_ram {
+            return true;
+        }
+        self.plan.ram_segments.contains(&segment_id)
+    }
+
+    /// Puts the segment in RAM mode: a new trace with one initial row per
+    /// slot (time 0, the slot's cell or its constant initial value).
+    fn start_ram(&mut self, segment_id: u32) -> Result<(), ProvingError> {
+        let len = self.segment(segment_id)?.slots.len();
+        let mut rows = Vec::with_capacity(len);
+        let mut contents = Vec::with_capacity(len);
+        for address in 0..len {
+            let slot = self.slot_cell(segment_id, address)?;
+            contents.push(slot.value);
+            rows.push(RamRow { time: 0, read: false, address: RamAddress::Fixed(address as u64), value: self.assigned(&slot) });
+        }
+        self.ram.traces.push(RamTrace { slots: len as u64, rows });
+        let trace = self.ram.traces.len() - 1;
+        let segment = self.memory.segments.get_mut(&segment_id).expect("checked above");
+        segment.ram = Some(RamState { trace, contents, next_time: 1 });
+        Ok(())
+    }
+
+    /// An access of a segment in RAM mode: a write of `value` (returned) or
+    /// a read (a hint the trace pins; see `circuit/ram.rs`), as the next row
+    /// of its trace. The trace proves the address in `[0, n)`; a constant
+    /// address must be in bounds at synthesis time.
+    fn ram_access(
+        &mut self,
+        segment_id: u32,
+        addr: &Halo2BaseCell,
+        write: Option<&Halo2BaseCell>,
+    ) -> Result<Halo2BaseCell, ProvingError> {
+        let len = self.segment(segment_id)?.slots.len();
+        let index = usize::try_from(kernel::fp_to_i64(addr.value)).ok().filter(|&i| i < len);
+        let address = if self.is_const_cell(addr) {
+            let index = index.ok_or_else(|| ProvingError::synthesis("memory access out of bounds"))?;
+            RamAddress::Fixed(index as u64)
+        } else {
+            if index.is_none() {
+                self.note_unsat(|| format!("Witness does not satisfy circuit constraints: memory access at an address outside [0, {len})"));
+            }
+            let cell = self.materialize_address(addr)?;
+            if let Some(range) = Interval::new(0, len as i128 - 1) {
+                self.prove_range(&cell, range);
+            }
+            RamAddress::Cell(self.assigned(&cell))
+        };
+        let state = self.memory.segments.get(&segment_id).and_then(|s| s.ram.as_ref()).expect("RAM mode");
+        let current = index.map_or(Fp::zero(), |i| state.contents[i]);
+        let cell = match write {
+            Some(value) => *value,
+            // A prover-supplied value, pinned by the trace to the last write.
+            None => self.hint(current),
+        };
+        let row = RamRow { time: 0, read: write.is_none(), address, value: self.assigned(&cell) };
+        let state = self.memory.segments.get_mut(&segment_id).and_then(|s| s.ram.as_mut()).expect("RAM mode");
+        if let (Some(i), Some(value)) = (index, write) {
+            state.contents[i] = value.value;
+        }
+        let row = RamRow { time: state.next_time, ..row };
+        state.next_time += 1;
+        let trace = state.trace;
+        self.ram.traces[trace].rows.push(row);
+        Ok(cell)
     }
 
     fn segment(&self, segment_id: u32) -> Result<&Segment, ProvingError> {

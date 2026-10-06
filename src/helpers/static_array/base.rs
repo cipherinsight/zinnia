@@ -536,7 +536,17 @@ pub(crate) fn normalize_dynamic_index(b: &mut IRBuilder, idx: &Value, axis_len: 
 /// `p - n`, outside the unsigned bound); for any other `i` neither does, so
 /// there is no witness. So `s` is pinned and `w` is NumPy's position. Cost: a
 /// bit, one select and the bound check the access needs anyway.
+///
+/// On code that runs on every path the position is a placeholder of the
+/// memory family (`lower::memory::wrap`), which lowers it this way or by the
+/// pinned position one-hot, per target; the check stays here.
 fn wrap_by_pinned_sign(b: &mut IRBuilder, idx: &Value, axis_len: usize) -> Value {
+    if matches!(b.execution(), crate::builder::guard::Execution::Always) {
+        let wrapped = crate::lower::memory::wrap::wrap_lane(b, idx, axis_len);
+        let len = b.ir_constant_int(axis_len as i64);
+        b.ir_assert_u128_lt(&wrapped, &len);
+        return wrapped;
+    }
     let zero = b.ir_constant_int(0);
     let negative = b.ir_hint(crate::ir_defs::HintKind::Negative, std::slice::from_ref(idx), &zero);
     b.ir_assert_bit(&negative);
@@ -613,6 +623,9 @@ pub(crate) fn index_equals_coord(
         return b.ir_constant_bool(i == coord as i64);
     }
     let normalized = normalize_dynamic_index(b, idx, axis_len);
+    if let Some(hit) = crate::lower::memory::wrap::hit_lane(b, &normalized, coord) {
+        return hit;
+    }
     let coord_v = b.ir_constant_int(coord as i64);
     b.ir_equal_i(&normalized, &coord_v)
 }

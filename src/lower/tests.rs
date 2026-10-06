@@ -386,3 +386,19 @@ fn a_challenged_construction_alone_has_no_selection_on_noir() {
     let noir = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| super::emit::lower(&graph, Target::Noir, &[&challenged])));
     assert!(noir.is_err(), "selected without a challenge");
 }
+
+/// Claims' value lists are numbered per lowering: an id does not depend on
+/// what was interned before the lowering started.
+#[test]
+fn list_ids_are_numbered_per_lowering() {
+    use super::graph::{ListEntry, ListId};
+    let first = |earlier: usize| {
+        for k in 0..earlier {
+            ListId::intern(&[ListEntry::Int(k as i64 + 100)]);
+        }
+        let graph = independent_sorts(1);
+        super::emit::lower(&graph, Target::Halo2Base, &super::registry()).expect("a lane");
+        ListId::range(3)
+    };
+    assert_eq!(first(0), first(5));
+}

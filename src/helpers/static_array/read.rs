@@ -128,12 +128,9 @@ fn read_at_scan_result(
     Some(scalar_i64_to_value(&value_to_scalar_i64(&out), dtype))
 }
 
-/// A read at checked indices of which exactly one is runtime, from an array
-/// whose cells are known values (`IRBuilder::static_array_payload`): an
-/// element placeholder over the line along that axis
-/// (`lower::gather::checked_element_lane`), whose construction the layer
-/// chooses per target (`lower::gather`, `lower::memory`). `None` otherwise
-/// (the caller reads through the segment).
+/// A read at checked indices of which one or more are runtime, from an array
+/// whose cells are known values (`IRBuilder::static_array_payload`): see
+/// [`read_cells`]. `None` otherwise (the caller reads through the segment).
 fn read_line(
     b: &mut IRBuilder,
     segment_id: u32,
@@ -143,32 +140,83 @@ fn read_line(
     indices: &[Value],
     dtype: NumberType,
 ) -> Option<Value> {
-    let mut dynamic = indices.iter().enumerate().filter(|(_, v)| v.int_val().is_none());
-    let (axis, index) = dynamic.next()?;
-    if dynamic.next().is_some() || index.stmt_id().is_none() {
+    let mut base = base_offset;
+    let mut runtime: Vec<(usize, Value)> = Vec::new();
+    for (axis, index) in indices.iter().enumerate() {
+        match index.int_val() {
+            Some(i) => base += i as usize * strides[axis],
+            None => runtime.push((axis, index.clone())),
+        }
+    }
+    read_cells(b, segment_id, base, &runtime, strides, shape, dtype)
+}
+
+/// The most cells a read at several runtime indices selects among through a
+/// placeholder (the product of their axes' lengths); beyond it the read goes
+/// through the segment.
+const MAX_MULTI_INDEX_CELLS: usize = 4096;
+
+/// `cells[base + sum_a i_a * strides[a]]` for runtime indices `i_a` on the
+/// distinct axes `a` of `runtime` (each wrapped and checked into
+/// `[0, shape[a])` where the read runs), from an array whose cells are known
+/// values: an element placeholder (`lower::gather::checked_element_lane`)
+/// over the cells those indices select among, in row-major order of the
+/// axes, at the combined index `sum_a i_a * prod_{b > a} shape[b]`; the
+/// layer chooses its construction per target (`lower::gather`,
+/// `lower::memory`). Each index is in its axis, so the combined index is in
+/// `[0, cells)` wherever the read runs.
+///
+/// `None` (the caller reads through the segment) when the cells are not
+/// known, are all constants (`lower::sort::table` reads an affine constant
+/// table in closed form, and backends read constant segments without
+/// per-cell witnesses), are complex, or exceed `MAX_MULTI_INDEX_CELLS` for
+/// several indices.
+fn read_cells(
+    b: &mut IRBuilder,
+    segment_id: u32,
+    base: usize,
+    runtime: &[(usize, Value)],
+    strides: &[usize],
+    shape: &[usize],
+    dtype: NumberType,
+) -> Option<Value> {
+    if runtime.is_empty() || dtype == NumberType::Complex || runtime.iter().any(|(_, i)| i.stmt_id().is_none()) {
+        return None;
+    }
+    let extents: Vec<usize> = runtime.iter().map(|(axis, _)| shape[*axis]).collect();
+    let count: usize = extents.iter().product();
+    if runtime.len() > 1 && count > MAX_MULTI_INDEX_CELLS {
         return None;
     }
     if b.static_array_product_provenance.contains_key(&segment_id) {
         super::base::force_static_array_product_provenance(b, segment_id);
     }
     let cells = b.static_array_payload.get(&segment_id)?;
-    let fixed: usize = base_offset
-        + indices
-            .iter()
-            .enumerate()
-            .filter(|(ax, _)| *ax != axis)
-            .map(|(ax, v)| v.int_val().expect("static") as usize * strides[ax])
-            .sum::<usize>();
-    let line: Vec<Value> = (0..shape[axis]).map(|k| cells.get(fixed + k * strides[axis]).cloned()).collect::<Option<_>>()?;
-    // A table of constants stays a memory read: `lower::sort::table` reads
-    // an affine one in closed form, and backends read constant segments
-    // without per-cell witnesses.
-    if line.iter().all(|c| c.int_val().is_some() || c.float_val().is_some() || c.bool_val().is_some()) {
+    let picked: Vec<Value> = (0..count)
+        .map(|flat| {
+            let mut rest = flat;
+            let mut address = base;
+            for (k, (axis, _)) in runtime.iter().enumerate().rev() {
+                address += (rest % extents[k]) * strides[*axis];
+                rest /= extents[k];
+            }
+            cells.get(address).cloned()
+        })
+        .collect::<Option<_>>()?;
+    if picked.iter().all(|c| c.int_val().is_some() || c.float_val().is_some() || c.bool_val().is_some()) {
         return None;
     }
-    let out = match line.as_slice() {
+    let out = match picked.as_slice() {
         [only] => only.clone(),
-        _ => crate::lower::gather::checked_element_lane(b, &line, index),
+        _ => {
+            let mut index = runtime[0].1.clone();
+            for (k, (_, i)) in runtime.iter().enumerate().skip(1) {
+                let extent = b.ir_constant_int(extents[k] as i64);
+                let scaled = b.ir_mul_i(&index, &extent);
+                index = b.ir_add_i(&scaled, i);
+            }
+            crate::lower::gather::checked_element_lane(b, &picked, &index)
+        }
     };
     if b.is_bool_segment(segment_id) {
         b.record_bool_cell(&out);
@@ -625,6 +673,8 @@ fn try_fancy_subscript(
         // The axis and index of the last runtime index (the only one when
         // `dynamic_parts` has one entry).
         let mut dynamic_index: Option<(usize, Value)> = None;
+        // Every runtime index with its axis (`read_cells`).
+        let mut runtime_indices: Vec<(usize, Value)> = Vec::new();
 
         for (src_axis, plan) in plans.iter().enumerate() {
             match plan {
@@ -637,6 +687,7 @@ fn try_fancy_subscript(
                         let stride_val = b.ir_constant_int(strides[src_axis] as i64);
                         dynamic_parts.push(b.ir_mul_i(v, &stride_val));
                         dynamic_index = Some((src_axis, v.clone()));
+                        runtime_indices.push((src_axis, v.clone()));
                     }
                 }
                 FancyAxisPlan::Range { coords } => {
@@ -668,6 +719,7 @@ fn try_fancy_subscript(
                         let stride_val = b.ir_constant_int(strides[src_axis] as i64);
                         dynamic_parts.push(b.ir_mul_i(&idx_val, &stride_val));
                         dynamic_index = Some((src_axis, idx_val.clone()));
+                        runtime_indices.push((src_axis, idx_val.clone()));
                     }
                 }
             }
@@ -708,6 +760,8 @@ fn try_fancy_subscript(
             } else {
                 leaves.push(read_leaf_at_flat(b, segment_id, 0, abs, dtype));
             }
+        } else if let Some(read) = read_cells(b, segment_id, static_addr as usize, &runtime_indices, strides, shape, dtype) {
+            leaves.push(read);
         } else {
             let mut addr = b.ir_constant_int(static_addr);
             for part in &dynamic_parts {

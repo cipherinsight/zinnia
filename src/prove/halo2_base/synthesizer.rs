@@ -59,6 +59,12 @@ pub struct Halo2BaseSynthesizer<'a> {
     /// Checks laid out after the verifier's challenges (`circuit.rs`),
     /// registered by the lowerings that need them.
     pub(crate) second_phase: super::circuit::SecondPhase,
+    /// Read-only memory tables and the reads looked up in them
+    /// (`IR::ReadTable`, `circuit/tables.rs`).
+    pub(crate) tables: super::circuit::Tables,
+    /// Read-write memory traces (`circuit/ram.rs`) of the segments the plan
+    /// puts in RAM mode.
+    pub(crate) ram: super::circuit::Ram,
     witness: Option<ResolvedWitness>,
     params: ProvingParams,
     public_values: Vec<Fp>,
@@ -177,6 +183,8 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         Self {
             builder,
             second_phase: super::circuit::SecondPhase::default(),
+            tables: super::circuit::Tables::default(),
+            ram: super::circuit::Ram::default(),
             witness,
             params,
             public_values: Vec::new(),
@@ -1646,6 +1654,10 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn assert_u128_lt_bit(&mut self, idx: &Self::CellRef, hi: u64, bit: u32, bits: u32) -> Result<Self::CellRef, ProvingError> {
         let key = (idx.id, hi, bits);
         if !self.u128_lt_bit_cache.contains_key(&key) {
+            if !kernel::fp_to_i128(idx.value).is_some_and(|i| 0 <= i && i < hi as i128) {
+                let i = kernel::fp_to_i64(idx.value);
+                self.note_unsat(move || format!("Witness does not satisfy circuit constraints: index {i} is not below {hi}"));
+            }
             self.assert_less(idx, Operand::Constant(hi as i128))?;
             let idx_cell = self.assigned(idx);
             let decomposed = self.gate.num_to_bits(self.builder.main(0), idx_cell, bits as usize);
@@ -1701,6 +1713,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
     fn read_memory(&mut self, segment_id: u32, addr: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         self.memory_read(segment_id, addr)
+    }
+    fn read_table(&mut self, segment_id: u32, addr: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        self.memory_read_table(segment_id, addr)
     }
     fn memory_trace_emit(&mut self, _: u32, _: bool, _: &[Self::CellRef]) -> Result<(), ProvingError> { Ok(()) }
     fn memory_trace_seal(&mut self) -> Result<(), ProvingError> { Ok(()) }

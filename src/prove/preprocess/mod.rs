@@ -521,6 +521,16 @@ impl<'a> Preprocessor<'a> {
                 mem[addr] = args[1];
                 Ok(None)
             }
+            IR::ReadTable { segment_id } => {
+                let mem = self
+                    .memories
+                    .get(segment_id)
+                    .ok_or_else(|| ProvingError::synthesis("Segment not allocated"))?;
+                // An address outside the segment has no witness; the
+                // backends (and the mock) reject it, the value here is moot.
+                let addr = usize::try_from(kernel::fp_to_i64(args[0])).ok().filter(|&a| a < mem.len());
+                Ok(Some(addr.map_or(Fp::zero(), |a| mem[a])))
+            }
             IR::ReadMemory { segment_id } => {
                 let addr = kernel::fp_to_i64(args[0]) as usize;
                 let init = self

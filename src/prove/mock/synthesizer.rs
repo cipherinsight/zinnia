@@ -572,6 +572,24 @@ impl Synthesizer for MockSynthesizer {
         Ok(MockCell(val))
     }
 
+    /// The slot at `addr`; an address outside the segment is unsatisfied
+    /// (every proving backend has no witness for it).
+    fn read_table(&mut self, segment_id: u32, addr: &MockCell) -> Result<MockCell, ProvingError> {
+        let a = kernel::fp_to_i64(addr.fp());
+        let mem = self
+            .memories
+            .get(&segment_id)
+            .ok_or_else(|| ProvingError::synthesis("Segment not allocated"))?;
+        match usize::try_from(a).ok().and_then(|a| mem.get(a)) {
+            Some(value) => Ok(MockCell(*value)),
+            None => {
+                self.satisfied = false;
+                self.assertion_failures.push(format!("table read out of bounds: segment {segment_id} address {a}"));
+                Ok(MockCell(Fp::zero()))
+            }
+        }
+    }
+
     fn memory_trace_emit(&mut self, _: u32, _: bool, _: &[MockCell]) -> Result<(), ProvingError> {
         Ok(())
     }

@@ -152,6 +152,7 @@ pub fn has_encoding(b: &IRBuilder, v: &Value) -> bool {
                 .collect();
             encoded_values(&values).is_some()
         }
+        IR::ArrayOp(op) if matches!(op.kind, OpKind::Wrap { .. }) => op.output == 0,
         IR::ArrayOp(op) => ScanKind::of(op.kind).is_some(),
         _ => false,
     }
