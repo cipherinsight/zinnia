@@ -836,7 +836,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn abs_i(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        Ok(self.sign_and_abs(a)?.1)
+        self.magnitude(a)
     }
 
     /// `sign(a) = [a != 0] - 2 * [a < 0]`, from the pinned sign bit of

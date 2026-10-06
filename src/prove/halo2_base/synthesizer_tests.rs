@@ -406,6 +406,43 @@ fn abs_and_sign_are_pinned() {
     }
 }
 
+/// `|x|` of a value already proven inside the window: a hinted sign `s`,
+/// `x·(1 - 2s)` and one range check. The sign is pinned for `x != 0`; at
+/// `x = 0` either sign gives 0, so it is not reused as `x`'s sign (a later
+/// `x < 0` makes its own). `|i64::MIN|` overflows int64: no proof.
+#[test]
+fn magnitudes_of_window_values_are_pinned() {
+    let abs_then_sign: Box<Op> = Box::new(|s, c| {
+        s.ensure_signed64(&c[0])?;
+        let magnitude = s.abs_i(&c[0])?;
+        let zero = s.constant_int(0)?;
+        Ok(vec![magnitude, s.lt_i(&c[0], &zero)?])
+    });
+    for (x, a) in [(-5i64, 5i64), (5, 5), (i64::MIN + 1, i64::MAX), (i64::MAX, i64::MAX)] {
+        assert_sound(&format!("|{x}|, {x} < 0"), &*abs_then_sign, &[int(x)], &[int(a), bit(x < 0)], &[]);
+    }
+    let honest = synthesize(&*abs_then_sign, &[int(0)], &[]);
+    assert!(honest.accepted);
+    assert_eq!(honest.outputs, vec![int(0), bit(false)]);
+    for index in 0..honest.hints {
+        for delta in deltas(&[]) {
+            let tampered = synthesize(&*abs_then_sign, &[int(0)], &[(index, delta)]);
+            assert!(!tampered.accepted || tampered.outputs == honest.outputs, "x = 0: hint #{index} + {delta:?} changed the outputs");
+        }
+    }
+    assert!(!synthesize(&*abs_then_sign, &[int(i64::MIN)], &[]).accepted, "|i64::MIN| overflows int64");
+    let window_abs: Box<Op> = Box::new(|s, c| {
+        s.ensure_signed64(&c[0])?;
+        Ok(vec![s.abs_i(&c[0])?])
+    });
+    let window_only: Box<Op> = Box::new(|s, c| {
+        s.ensure_signed64(&c[0])?;
+        Ok(vec![])
+    });
+    let cost = cells_of(&*window_abs, &[int(-5)]).0 - cells_of(&*window_only, &[int(-5)]).0;
+    assert!(cost <= 40, "|x| of a window value costs {cost} advice cells");
+}
+
 #[test]
 fn integer_power_is_pinned() {
     let pow = binary(|s, a, b| s.pow_i(a, b));
