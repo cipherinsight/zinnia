@@ -1348,15 +1348,24 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         self.mark_bit(&flip);
         self.negate_if(&value, &flip)
     }
-    fn sinh_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("sinh_f") }
+    /// `sinh x = floor((exp x - exp -x) / 2)`, as `kernel::fp_sinh`: two
+    /// pinned `exp`s and a pinned rescale by one bit.
+    fn sinh_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.half_exp_combination(a, false) }
     /// `cos(a) = sin(a + pi/2)`, as `kernel::fp_cos`.
     fn cos_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         let shifted = self.add_constant(a, kernel::half_pi_q(self.params.precision_bits));
         self.sin_f(&shifted)
     }
-    fn cosh_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("cosh_f") }
+    /// `cosh x = floor((exp x + exp -x) / 2)`, as `kernel::fp_cosh`.
+    fn cosh_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.half_exp_combination(a, true) }
     fn tan_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("tan_f") }
-    fn tanh_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("tanh_f") }
+    /// `tanh x = sinh x / cosh x` (the fixed-point quotient), as
+    /// `kernel::fp_tanh`; the division pins its quotient.
+    fn tanh_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        let sinh = self.sinh_f(a)?;
+        let cosh = self.cosh_f(a)?;
+        self.fixed_div(&sinh, &cosh)
+    }
     /// `sqrt` as `kernel::fp_sqrt`: `floor(sqrt(a * 2^P))`, and 0 for a
     /// negative input. The pinned sign bit of `sign_and_abs` zeroes a
     /// negative input; `sqrt_nonneg` pins the root.
@@ -1416,7 +1425,8 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         self.prove_range(&out, Interval { lo: 0, hi: (1i128 << 63) - 1 });
         Ok(out)
     }
-    fn log_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("log_f") }
+    /// `log`, as `kernel::fp_log` (see `fixed_log`).
+    fn log_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.fixed_log(a) }
     /// `arcsin(x) = 2 * atan(x / (1 + sqrt(1 - x^2)))`, as `kernel::fp_arcsin`
     /// (0 outside `[-1, 1]`).
     ///

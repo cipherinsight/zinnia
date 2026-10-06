@@ -328,17 +328,13 @@ fn powers_follow_the_mock_and_are_pinned() {
     }
     assert!(!synthesize(&*dynamic, &[q(1.25), int(9)], &[]).accepted, "an exponent above 8 has no witness");
     assert!(!synthesize(&*dynamic, &[q(1.25), int(-1)], &[]).accepted);
-    let float_exponent = with_constant_rhs(|s, a, b| s.pow_f(a, b), q(3.0));
-    assert_sound("1.5 ** 3.0", &*float_exponent, &[q(1.5)], &[mock_power(q(1.5), 3)], &[]);
-    let fractional = with_constant_rhs(|s, a, b| s.pow_f(a, b), q(0.5));
-    let mut builder = BaseCircuitBuilder::<Fp>::from_stage(CircuitBuilderStage::Keygen);
-    builder.set_k(K as usize);
-    builder.set_lookup_bits(LOOKUP_BITS as usize);
-    let provenance = ProvenanceTable::new();
-    let params = ProvingParams { k: K, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
-    let mut synth = Halo2BaseSynthesizer::new(&mut builder, None, params, &provenance);
-    let x = synth.cell(q(2.0));
-    assert!(fractional(&mut synth, &[x]).is_err(), "a fractional exponent must be rejected, not proved");
+    // A float exponent (`PowF`), constant or not, is `kernel::fp_pow`
+    // (exp/log), the mock's and Noir's value; fractional exponents included.
+    for (base, e) in [(1.5, 3.0), (2.0, 0.5), (2.0, -2.0)] {
+        let float_exponent = with_constant_rhs(|s, a, b| s.pow_f(a, b), q(e));
+        let expected = kernel::fp_pow(q(base), q(e), PRECISION_BITS).unwrap();
+        assert_eq!(synthesize(&*float_exponent, &[q(base)], &[]).outputs, vec![expected], "{base} ** {e}");
+    }
 }
 
 /// Quotients of dividends with a proven range are checked against the range
@@ -458,6 +454,65 @@ fn exp_is_pinned_and_equals_the_kernel() {
         assert!(kernel::fp_exp(q(x), PRECISION_BITS).is_none());
         assert!(!synthesize(&*exp, &[q(x)], &[]).accepted, "exp({x}) leaves the window but was accepted");
     }
+}
+
+/// `log` proves `kernel::fp_log`'s value with every hint pinned (the mantissa
+/// decomposition included); `x <= 0` has no witness.
+#[test]
+fn log_is_pinned_and_equals_the_kernel() {
+    let log = unary(|s, a| s.log_f(a));
+    for x in [1.0, 0.5, 3.0, 1e-9, 1.5e9] {
+        let expected = kernel::fp_log(q(x), PRECISION_BITS).expect("inside the domain");
+        assert_sound(&format!("log({x})"), &*log, &[q(x)], &[expected], &[(1u128 << 33) + 7]);
+    }
+    for raw in [1i128, 2, (1 << 32) - 1, 1 << 33, (1i128 << 63) - 1] {
+        let x = kernel::i128_to_fp(raw);
+        let honest = synthesize(&*log, &[x], &[]);
+        assert!(honest.accepted, "log(raw {raw}): honest witness rejected");
+        assert_eq!(honest.outputs, vec![kernel::fp_log(x, PRECISION_BITS).unwrap()], "log(raw {raw})");
+    }
+    for x in [0.0, -1.0, -1e-9] {
+        assert!(!synthesize(&*log, &[q(x)], &[]).accepted, "log({x}) has no real value but was accepted");
+    }
+}
+
+/// `a ** b` proves `kernel::fp_pow`'s value with every hint pinned; NumPy's
+/// `nan` (negative base, fractional exponent) and `inf` (zero to a negative
+/// power) have no witness.
+#[test]
+fn pow_is_pinned_and_follows_numpy_domains() {
+    let pow = binary(|s, a, b| s.pow_f(a, b));
+    for (a, b) in [(2.0, 0.5), (-2.0, 3.0), (0.0, 2.5), (0.0, 0.0)] {
+        let expected = kernel::fp_pow(q(a), q(b), PRECISION_BITS).expect("inside the domain");
+        assert_sound(&format!("{a} ** {b}"), &*pow, &[q(a), q(b)], &[expected], &[(1u128 << 33) + 7]);
+    }
+    for (a, b) in [(0.3, 7.5), (-2.0, -2.0), (10.0, 9.0), (5.0, 0.0), (-0.5, 1.0)] {
+        let honest = synthesize(&*pow, &[q(a), q(b)], &[]);
+        assert!(honest.accepted, "{a} ** {b}: honest witness rejected");
+        assert_eq!(honest.outputs, vec![kernel::fp_pow(q(a), q(b), PRECISION_BITS).unwrap()], "{a} ** {b}");
+    }
+    for (a, b) in [(-2.0, 0.5), (0.0, -1.0), (10.0, 10.0)] {
+        assert!(kernel::fp_pow(q(a), q(b), PRECISION_BITS).is_none());
+        assert!(!synthesize(&*pow, &[q(a), q(b)], &[]).accepted, "{a} ** {b} has no value but was accepted");
+    }
+}
+
+/// `sinh`, `cosh`, `tanh` prove the kernel's values (built from `exp`) with
+/// every hint pinned; beyond `exp`'s window there is no witness.
+#[test]
+fn hyperbolic_functions_are_pinned_and_equal_the_kernel() {
+    let sinh = unary(|s, a| s.sinh_f(a));
+    let cosh = unary(|s, a| s.cosh_f(a));
+    let tanh = unary(|s, a| s.tanh_f(a));
+    for x in [0.0, 0.75, -3.5] {
+        assert_sound(&format!("sinh({x})"), &*sinh, &[q(x)], &[kernel::fp_sinh(q(x), PRECISION_BITS).unwrap()], &[]);
+        assert_sound(&format!("cosh({x})"), &*cosh, &[q(x)], &[kernel::fp_cosh(q(x), PRECISION_BITS).unwrap()], &[]);
+    }
+    for x in [0.0, 1.25, -20.0] {
+        assert_sound(&format!("tanh({x})"), &*tanh, &[q(x)], &[kernel::fp_tanh(q(x), PRECISION_BITS).unwrap()], &[]);
+    }
+    assert!(kernel::fp_tanh(q(30.0), PRECISION_BITS).is_none());
+    assert!(!synthesize(&*tanh, &[q(30.0)], &[]).accepted, "tanh(30) uses exp(30), beyond the window");
 }
 
 #[test]
@@ -1221,6 +1276,8 @@ fn new_lowerings_are_witness_independent() {
         ("sqrt", unary(|s, a| s.sqrt_f(a)), vec![q(2.0)]),
         ("arcsin", unary(|s, a| s.arcsin_f(a)), vec![q(0.3)]),
         ("exp", unary(|s, a| s.exp_f(a)), vec![q(-3.5)]),
+        ("log", unary(|s, a| s.log_f(a)), vec![q(7.25)]),
+        ("pow_f", binary(|s, a, b| s.pow_f(a, b)), vec![q(-1.5), q(3.0)]),
         ("pow", binary(|s, a, b| s.pow_i(a, b)), vec![int(3), int(5)]),
         ("int_cast", unary(|s, a| s.int_cast(a)), vec![q(-2.5)]),
     ];
