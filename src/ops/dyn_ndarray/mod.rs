@@ -283,17 +283,26 @@ impl IRGenerator {
             "real" => metadata::dyn_complex_real(&mut self.builder, &data),
             "imag" => metadata::dyn_complex_imag(&mut self.builder, &data),
             "conjugate" | "conj" => metadata::dyn_complex_conjugate(&mut self.builder, &data),
-            "T" => reshape::dyn_transpose(&mut self.builder, &data, &[]),
-            "transpose" => {
-                let axes_args = if let Some(axes_val) = kwargs.get("axes") {
-                    vec![axes_val.clone()]
-                } else {
-                    args.to_vec()
+            // NumPy views; a layout Zinnia cannot give as one (a runtime-
+            // strided buffer) is a copy, linked to the array so that writes
+            // through either are tracked (`ir_gen::detached_copies`).
+            "T" | "transpose" | "moveaxis" | "swapaxes" => {
+                let result = match method {
+                    "T" => reshape::dyn_transpose(&mut self.builder, &data, &[]),
+                    "transpose" => {
+                        let axes_args = if let Some(axes_val) = kwargs.get("axes") {
+                            vec![axes_val.clone()]
+                        } else {
+                            args.to_vec()
+                        };
+                        reshape::dyn_transpose(&mut self.builder, &data, &axes_args)
+                    }
+                    "moveaxis" => reshape::dyn_moveaxis(&mut self.builder, &data, args),
+                    _ => reshape::dyn_swapaxes(&mut self.builder, &data, args),
                 };
-                reshape::dyn_transpose(&mut self.builder, &data, &axes_args)
+                self.record_view_result(&val, &result);
+                result
             }
-            "moveaxis" => reshape::dyn_moveaxis(&mut self.builder, &data, args),
-            "swapaxes" => reshape::dyn_swapaxes(&mut self.builder, &data, args),
             "squeeze" => {
                 let squeeze_args = if let Some(axis_val) = kwargs.get("axis") {
                     vec![axis_val.clone()]

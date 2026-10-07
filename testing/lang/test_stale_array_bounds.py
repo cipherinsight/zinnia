@@ -15,9 +15,10 @@ NumPy (errors raised) on the mock; one is proved on halo2-base. A bound that
 still holds is still used: the unwritten array keeps its discharged check.
 """
 import numpy as np
+
+from testing.lang.mock_outputs import numpy_argument, run_mock
 import pytest
 
-from testing.lang.mock_outputs import run_mock
 from zinnia import ZKCircuit
 
 
@@ -38,7 +39,7 @@ def run_numpy(source, *args):
     exec(compile(ast.fix_missing_locations(tree), "<kernel>", "exec"), env)
     try:
         with np.errstate(all="raise"):
-            return env["kernel"](*[np.copy(a) for a in args])
+            return env["kernel"](*[numpy_argument(a) for a in args])
     except (IndexError, ZeroDivisionError, FloatingPointError):
         return None
 

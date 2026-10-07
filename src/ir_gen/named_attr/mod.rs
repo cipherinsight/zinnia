@@ -234,6 +234,14 @@ impl IRGenerator {
         } else {
             value
         };
+        // NumPy answers these with a view of their first argument: where
+        // Zinnia's result is a copy, writes through either one are tracked
+        // (`detached_copies`).
+        if RETURNS_A_VIEW.contains(&ctx.member) {
+            if let Some(base) = ctx.args_orig.first() {
+                self.record_view_result(base, &value);
+            }
+        }
         if ctx.member == "clip" {
             return value;
         }
@@ -747,3 +755,11 @@ fn ufunc_input_count(name: &str) -> Option<usize> {
         None
     }
 }
+
+/// `np.*` functions NumPy answers with a view of their first argument (when
+/// it is an array): a write through the result changes the argument, and
+/// the other way round.
+const RETURNS_A_VIEW: &[&str] = &[
+    "atleast_1d", "atleast_2d", "atleast_3d", "expand_dims", "flip", "fliplr", "flipud",
+    "moveaxis", "rot90", "squeeze", "swapaxes", "transpose",
+];

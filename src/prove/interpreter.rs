@@ -3,7 +3,7 @@ use crate::ir_defs::IR;
 use crate::prove::error::ProvingError;
 use crate::prove::traits::Synthesizer;
 use crate::types::StmtId;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Walk the IRGraph in statement order and dispatch each IR instruction
 /// to the corresponding `Synthesizer` method.
@@ -450,8 +450,6 @@ fn version_cells<C>(arrays: &HashMap<StmtId, Vec<C>>, handle: Option<StmtId>) ->
 struct RamDiscipline {
     /// Versions a `RamWrite` has consumed, with the consuming statement.
     consumed: HashMap<StmtId, StmtId>,
-    /// Versions defined so far.
-    defined: HashSet<StmtId>,
 }
 
 impl RamDiscipline {
@@ -461,7 +459,6 @@ impl RamDiscipline {
                 "memory version {from} written twice (statements {earlier} and {to}): the RAM discipline is broken"
             )));
         }
-        self.defined.insert(to);
         Ok(())
     }
 

@@ -8,8 +8,11 @@
 //! RAM discipline, so statement order is the memories' access order): a
 //! write `(t, write, base_t + a, value)`, a read `(t, read, base_t + a,
 //! hint)`. The trace pins every read to the last earlier write at its
-//! address (or the initial cell) and proves every address in `[0, N)`; the
-//! program's index check keeps `a` in `[0, n_t)`.
+//! address (or the initial cell) and proves every trace address in `[0,
+//! N)`. That alone would let `a` outside `[0, n_t)` reach another memory's
+//! cells, so each access at a runtime address also asserts `a < n_t`
+//! (`assert_less`; free when the program's index check already proved it):
+//! an address outside its memory has no witness here, as on every backend.
 //!
 //! So the trace's fixed columns and arguments are paid once per program
 //! (`lower::challenge::RAM`), and each memory adds its rows.
@@ -21,7 +24,7 @@ use crate::prove::kernel;
 use crate::types::StmtId;
 
 use super::super::circuit::ram::{RamAddress, RamRow, RamTrace};
-use super::ranges::Interval;
+use super::ranges::Operand;
 use super::{Fp, Halo2BaseCell, Halo2BaseSynthesizer};
 
 /// The memories of one synthesis: which trace they share, the next access
@@ -112,9 +115,9 @@ impl Halo2BaseSynthesizer<'_> {
             if index.is_none() {
                 self.note_unsat(|| format!("Witness does not satisfy circuit constraints: memory access at an address outside [0, {len})"));
             }
-            if let Some(range) = Interval::new(0, len as i128 - 1) {
-                self.prove_range(address, range);
-            }
+            // The trace proves only the global address; this memory's own
+            // bound is asserted here (no witness for `a` outside `[0, len)`).
+            self.assert_less(address, Operand::Constant(len as i128))?;
             RamAddress::Cell { base: memory.base, cell: self.assigned(address) }
         };
         let row = RamRow { time: self.memories.next_time, read, address, value: self.assigned(value) };

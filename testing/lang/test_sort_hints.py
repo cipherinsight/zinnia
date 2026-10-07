@@ -11,9 +11,10 @@ tests (a wrong hint is rejected on mock, halo2-base and Noir) are Rust tests:
 sort_hints_are_pinned`, `prove::noir::soundness_tests::sort_hints_are_pinned_in_noir`.
 """
 import numpy as np
+
+from testing.lang.mock_outputs import numpy_argument, run_mock
 import pytest
 
-from testing.lang.mock_outputs import run_mock
 from zinnia import ZKCircuit
 from zinnia.config.zinnia_config import ZinniaConfig
 
@@ -55,7 +56,7 @@ def reference(source):
 
 
 def assert_numpy(source, target, *args, atol=1e-6):
-    expected = np.asarray(reference(source)(*[np.copy(a) for a in args]), dtype=float).ravel()
+    expected = np.asarray(reference(source)(*[numpy_argument(a) for a in args]), dtype=float).ravel()
     satisfied, outputs = run_mock(compile_for(source, target), *args)
     assert satisfied, "honest witness rejected"
     np.testing.assert_allclose(np.asarray(outputs, dtype=float), expected, atol=atol, rtol=0)

@@ -13,9 +13,10 @@ are Rust tests: `lower::sort::routed_tests`,
 `prove::halo2_base::synthesizer::tests::routing_settings_are_rejected_or_give_numpys_outputs`.
 """
 import numpy as np
+
+from testing.lang.mock_outputs import numpy_argument, run_mock
 import pytest
 
-from testing.lang.mock_outputs import run_mock
 from testing.lang.test_sort_hints import assert_halo2_base_agrees, compile_for, ir_classes, reference
 
 
@@ -71,7 +72,7 @@ def assert_routed(program, n):
 
 
 def assert_matches_numpy(source, program, *args):
-    expected = np.asarray(reference(source)(*[np.copy(a) for a in args]), dtype=float).ravel()
+    expected = np.asarray(reference(source)(*[numpy_argument(a) for a in args]), dtype=float).ravel()
     satisfied, outputs = run_mock(program, *args)
     assert satisfied, "honest witness rejected"
     np.testing.assert_allclose(np.asarray(outputs, dtype=float), expected, atol=1e-9, rtol=0)

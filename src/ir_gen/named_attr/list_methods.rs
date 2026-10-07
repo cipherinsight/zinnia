@@ -80,6 +80,10 @@ impl IRGenerator {
                         value_id: crate::types::ValueId::next(),
                         ..data.clone()
                     }),
+                    // A runtime-shaped array's copy is a new array, as for
+                    // a static one (it used to be the same array, so writes
+                    // through either reached the other).
+                    Value::DynamicNDArray(_) => super::array_compat::copy_array(&mut self.builder, &v),
                     _ => v,
                 }
             }

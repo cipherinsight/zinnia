@@ -30,7 +30,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::ir_array::{AccessAxis, ArrayAccess, ArrayElem};
-use crate::types::{NumberType, StmtId, Value};
+use crate::types::{NumberType, Value};
 
 use super::IRBuilder;
 
@@ -38,11 +38,6 @@ use super::IRBuilder;
 pub(crate) struct Storage {
     elem: ArrayElem,
     state: State,
-    /// The execution predicate the storage was created under: such a
-    /// storage is invisible where that predicate is false (it escapes only
-    /// through a merge under it), so its writes under the same predicate
-    /// need no select.
-    created_under: Option<StmtId>,
     /// A bound of every cell some producer knows (`np.nonzero`'s
     /// coordinates), published as facts on its reads.
     cell_bounds: Option<(i64, i64)>,
@@ -110,11 +105,10 @@ impl IRBuilder {
     fn new_storage(&mut self, cells: Vec<Value>, dtype: NumberType, zero_filled: bool) -> u32 {
         let elem = elem_of(dtype);
         let cells: Vec<Value> = cells.into_iter().map(|c| self.stored_as(elem, &c)).collect();
-        let created_under = self.write_predicate().and_then(Value::stmt_id);
         let id = self.store.next_id;
         self.store.next_id += 1;
         self.track_storage_alloc(id, &cells, zero_filled);
-        self.store.storages.insert(id, Storage { elem, state: State::Cells(cells), created_under, cell_bounds: None, last_write: 0, imag: None });
+        self.store.storages.insert(id, Storage { elem, state: State::Cells(cells), cell_bounds: None, last_write: 0, imag: None });
         id
     }
 
@@ -170,29 +164,6 @@ impl IRBuilder {
         self.force_pending_cells(storage);
         let known = |s: &Storage| matches!(s.state, State::Cells(_));
         known(self.storage(storage)) && self.storage(storage).imag.is_none_or(|imag| known(self.storage(imag)))
-    }
-
-    /// Replace the known cells of `storage` by `cells` computed from them by
-    /// a write at a runtime position resolved at compile time (each new cell
-    /// is `select(hit ∧ p, x, old)`: the write predicate is already in it).
-    /// A write: the storage's derived records are dropped, as for any write.
-    ///
-    /// # Panics
-    /// When the cells are not known or `cells` has another length.
-    pub fn overlay_known_cells(&mut self, storage: u32, cells: Vec<Value>) {
-        let elem = self.storage(storage).elem;
-        let State::Cells(old) = &self.storage(storage).state else {
-            panic!("an overlay of array storage {storage}, whose cells are not known")
-        };
-        assert_eq!(old.len(), cells.len(), "an overlay keeps the array's length");
-        let cells: Vec<Value> = cells.iter().map(|c| self.stored_as(elem, c)).collect();
-        for cell in &cells {
-            self.track_storage_write(storage, cell);
-        }
-        self.provenance.on_segment_write(storage);
-        self.storage_mut(storage).cell_bounds = None;
-        self.note_storage_written(storage);
-        self.storage_mut(storage).state = State::Cells(cells);
     }
 
     /// Replace each known cell `c` of `storage` by `f(c)`, another reading
@@ -424,7 +395,7 @@ impl IRBuilder {
             self.storage_write(storage, usize::try_from(a).expect("a non-negative address"), value);
             return;
         }
-        let Some(predicate) = self.storage_write_predicate(storage) else { return };
+        let Some(predicate) = self.storage_write_predicate() else { return };
         let len = self.storage_len(storage);
         let address = self.guard_address(address, Some(len as u32));
         let elem = self.storage(storage).elem;
@@ -489,23 +460,27 @@ impl IRBuilder {
         self.store.storages.get_mut(&storage).unwrap_or_else(|| panic!("array storage {storage} does not exist"))
     }
 
-    /// The predicate a write to `storage` happens under: `None` (outer)
-    /// when the write cannot happen, `Some(None)` unconditionally (no
-    /// predicate, a constant true one, or a branch-local storage under its
-    /// own predicate), `Some(Some(p))` under the runtime predicate `p`.
-    fn storage_write_predicate(&self, storage: u32) -> Option<Option<Value>> {
+    /// The predicate a write happens under: `None` (outer) when the write
+    /// cannot happen, `Some(None)` unconditionally (no predicate, or a
+    /// constant true one), `Some(Some(p))` under the runtime predicate `p`.
+    ///
+    /// Every write under a runtime predicate keeps it, whatever storage it
+    /// writes. (A storage created under `p` is not invisible where `p` is
+    /// false: a rebinding under `p` merges `select(p, new, old)` into a new
+    /// storage, which holds the old cells there; skipping the predicate on
+    /// it proved writes of a branch not taken, review finding F1.)
+    fn storage_write_predicate(&self) -> Option<Option<Value>> {
         let Some(p) = self.write_predicate().cloned() else { return Some(None) };
         match constant_truth(&p) {
             Some(true) => Some(None),
             Some(false) => None,
-            None if p.stmt_id().is_some() && self.storage(storage).created_under == p.stmt_id() => Some(None),
             None => Some(Some(p)),
         }
     }
 
     /// [`Self::storage_write_predicate`] conjoined with `condition`.
     fn write_condition(&mut self, storage: u32, condition: Option<&Value>) -> Option<Option<Value>> {
-        let predicate = self.storage_write_predicate(storage)?;
+        let predicate = self.storage_write_predicate()?;
         let Some(condition) = condition else { return Some(predicate) };
         match (constant_truth(condition), predicate) {
             (Some(false), _) => None,

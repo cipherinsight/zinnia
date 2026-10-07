@@ -11,9 +11,10 @@ different function from NumPy (audit finding B5).
 Every test compares the circuit's outputs with NumPy position by position.
 """
 import numpy as np
+
+from testing.lang.mock_outputs import assert_matches_numpy, compile_kernel, numpy_argument, numpy_kernel, run_mock
 import pytest
 
-from testing.lang.mock_outputs import assert_matches_numpy, compile_kernel, numpy_kernel, run_mock
 
 
 # ── true division ────────────────────────────────────────────────────────
@@ -156,7 +157,7 @@ def test_folded_float_remainder_has_divisor_sign():
      (np.array([0, 2, 7, 5]),)),
 ])
 def test_bitwise_operators_match_numpy(source, args):
-    expected = np.asarray(numpy_kernel(source)(*[np.copy(a) for a in args])).ravel()
+    expected = np.asarray(numpy_kernel(source)(*[numpy_argument(a) for a in args])).ravel()
     satisfied, outputs = run_mock(compile_kernel(source), *args)
     assert satisfied
     if len(outputs) != expected.size:  # 1-D dynamic: length (= its dim), padded payload

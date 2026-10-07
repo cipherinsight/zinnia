@@ -7,9 +7,10 @@ that makes the lowering cheaper (so a regression to the old construction
 fails here, not only in a cost table).
 """
 import numpy as np
+
+from testing.lang.mock_outputs import assert_matches_numpy, compile_kernel, numpy_argument, numpy_kernel, run_mock
 import pytest
 
-from testing.lang.mock_outputs import assert_matches_numpy, compile_kernel, numpy_kernel, run_mock
 
 BN254_P = 0x30644E72E131A029B85045B68181585D2833E84879B9709143E1F593F0000001
 HALO2_PARAMS = {"k": 12, "precision_bits": 32, "lookup_bits": 8}
@@ -243,7 +244,7 @@ def test_comparison_on_equal_and_unequal_values(op):
      (np.array([0.5, 1.5, -2.25, 0.5, 3.0]), np.array([0.5, -2.25]))),
 ])
 def test_membership_matches_numpy(source, args):
-    expected = np.asarray(numpy_kernel(source)(*[np.copy(a) for a in args]))
+    expected = np.asarray(numpy_kernel(source)(*[numpy_argument(a) for a in args]))
     satisfied, outputs = run_mock(compile_kernel(source), *args)
     assert satisfied
     if "A[" in source:  # runtime-shaped, rank 1: length (= its dim), padded payload
@@ -409,7 +410,7 @@ def test_corrcoef_halo2_base_matches_mock():
      (np.array([[1, 2, 3], [4, 5, 6], [0, 8, 9], [7, 1, 2]]),)),
 ])
 def test_mask_compaction_matches_numpy(source, args):
-    expected = np.asarray(numpy_kernel(source)(*[np.copy(a) for a in args]))
+    expected = np.asarray(numpy_kernel(source)(*[numpy_argument(a) for a in args]))
     satisfied, outputs = run_mock(compile_kernel(source), *args)
     assert satisfied
     assert outputs[0] == expected.size  # runtime length (element count)

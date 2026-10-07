@@ -97,6 +97,14 @@ impl IRPass for SelectMerge {
     }
 }
 
+/// Whether `[lo, hi]` holds at most `MAX_POINTS` integers. The width is
+/// taken in i128: an interval spanning most of i64 overflows an i64
+/// subtraction, which in a release build wrapped to a small number and
+/// made the pass enumerate 2^64 points (a compile that never finished).
+fn few_points(lo: i64, hi: i64) -> bool {
+    i128::from(hi) - i128::from(lo) < i128::from(MAX_POINTS)
+}
+
 /// The proofs of one graph: the range engine and the mock's operations.
 struct Prover<'a> {
     graph: &'a IRGraph,
@@ -117,7 +125,7 @@ impl<'a> Prover<'a> {
             return None;
         }
         for s in self.pivots(p) {
-            let Some((lo, hi)) = self.bounds(s).filter(|(lo, hi)| hi - lo < MAX_POINTS) else { continue };
+            let Some((lo, hi)) = self.bounds(s).filter(|&(lo, hi)| few_points(lo, hi)) else { continue };
             let (Some(pc), Some(xc), Some(yc)) = (self.cone(p, s), self.cone(x, s), self.cone(y, s)) else { continue };
             let mut agree_where_false = true;
             let mut agree_where_true = true;
@@ -324,5 +332,13 @@ mod tests {
         b.ir_expose_public_i(&out);
         let graph = b.export_ir_graph();
         assert_eq!(selects(&merged(&graph)), 1);
+    }
+
+    #[test]
+    fn an_interval_spanning_int64_is_not_few_points() {
+        assert!(few_points(0, MAX_POINTS - 1));
+        assert!(!few_points(0, MAX_POINTS));
+        assert!(!few_points(i64::MIN, i64::MAX));
+        assert!(!few_points(-2, i64::MAX));
     }
 }

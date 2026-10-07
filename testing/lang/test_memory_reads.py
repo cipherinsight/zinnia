@@ -16,9 +16,10 @@ own choice, and check:
 import os
 
 import numpy as np
+
+from testing.lang.mock_outputs import compile_kernel, numpy_argument, numpy_kernel, run_mock
 import pytest
 
-from testing.lang.mock_outputs import compile_kernel, numpy_kernel, run_mock
 from testing.lang.test_dtype_conversions import halo2_accepts, noir_accepts
 
 CONSTRUCTIONS = [
@@ -65,7 +66,7 @@ def compiled(source, construction, backend="halo2"):
 
 def numpy_result(source, *args):
     try:
-        return np.asarray(numpy_kernel(source)(*[np.copy(a) for a in args]), dtype=float).ravel()
+        return np.asarray(numpy_kernel(source)(*[numpy_argument(a) for a in args]), dtype=float).ravel()
     except IndexError:
         return None
 

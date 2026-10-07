@@ -15,11 +15,9 @@
 //!
 //! - **Element write at a static index**: a write of that cell (the store
 //!   applies the write predicate).
-//! - **Small element/slice writes at runtime indices**: a compile-time
-//!   overlay of the known cells (`select(idx == coord ∧ p, new, old)` per
-//!   cell, `IRBuilder::overlay_known_cells`).
-//! - **Larger or unsupported writes**: writes at runtime positions of the
-//!   storage (`ArrayWrite`), which the lowering layer constructs.
+//! - **Writes at runtime indices**: writes at runtime positions of the
+//!   storage (`ArrayWrite`), whose representation (an overlay of selects, a
+//!   RAM, ...) the lowering layer chooses.
 //!
 //! View-write fidelity: `Value::StaticArray` views (e.g. `arr[i]` for ≥2-D
 //! `arr`, or `arr[a:b]` static contiguous slices from P2) inherit the

@@ -2310,3 +2310,67 @@ fn layered_ram_proves_with_real_keys() {
     tampered[1] += Fp::one();
     assert!(!verify_with_keys(&keys, &proof.proof, &tampered).valid, "changed read verified");
 }
+
+/// Two memories in one RAM trace from IR whose positions the program does
+/// NOT check (review finding F2): memory `a` (3 cells) and `b` (2 cells),
+/// `a[pa] = va`, `b[pb] = vb`, then `b[s]` and `a[r]` exposed, lowered by the
+/// RAM trace alone. The trace bounds only the global address, so before the
+/// per-access bound a read of `a[-1]` with a hinted value of `b[1]` was
+/// accepted; now a position outside its own memory has no witness for any
+/// value of the read (MockProver), as on the mock.
+fn unchecked_two_memories() -> crate::ir::IRGraph {
+    use crate::builder::IRBuilder;
+    use crate::circuit_input::InputPath;
+    use crate::ir_array::{AccessAxis, ArrayAccess, ArrayElem};
+    let mut b = IRBuilder::new();
+    let input = |b: &mut IRBuilder, name: &str| b.ir_read_integer(InputPath::new(name, vec![]), false);
+    let flat = |len: usize| ArrayAccess::new(len as u32, ArrayElem::Int, 0, vec![AccessAxis { len: len as u32, stride: 1 }]);
+    let xs: Vec<_> = (0..3).map(|k| input(&mut b, &format!("x{k}"))).collect();
+    let ys: Vec<_> = (0..2).map(|k| input(&mut b, &format!("y{k}"))).collect();
+    let yes = b.ir_constant_bool(true);
+    let a0 = b.ir_array_init(&xs, ArrayElem::Int);
+    let (pa, va) = (input(&mut b, "pa"), input(&mut b, "va"));
+    let a1 = b.ir_array_write(&a0, flat(3), &[pa], &va, &yes);
+    let b0 = b.ir_array_init(&ys, ArrayElem::Int);
+    let (pb, vb) = (input(&mut b, "pb"), input(&mut b, "vb"));
+    let b1 = b.ir_array_write(&b0, flat(2), &[pb], &vb, &yes);
+    let s = input(&mut b, "s");
+    let read_b = b.ir_array_read(&b1, flat(2), &[s]);
+    b.ir_expose_public_i(&read_b);
+    let r = input(&mut b, "r");
+    let read_a = b.ir_array_read(&a1, flat(3), &[r]);
+    b.ir_expose_public_i(&read_a);
+    let graph = b.export_ir_graph();
+    let lowered = crate::lower::emit::lower(&graph, crate::lower::Target::Halo2Base, &[&crate::lower::memory::versions::RamTrace])
+        .expect("a lowering");
+    crate::optim::IRPass::exec(&crate::optim::DeadCodeElimination, lowered)
+}
+
+#[test]
+fn ram_trace_rejects_a_position_outside_its_own_memory() {
+    use crate::ir_defs::IR;
+    let ir = unchecked_two_memories();
+    assert_eq!(ir.stmts.iter().filter(|s| matches!(s.ir, IR::RamInit { .. })).count(), 2, "two memories");
+    let run = |pb: i64, s: i64, r: i64, tamper: &[(usize, Fp)]| {
+        let mut ints: Vec<(String, i64)> =
+            vec![("x0".into(), 100), ("x1".into(), 101), ("x2".into(), 102), ("y0".into(), 200), ("y1".into(), 201), ("pa".into(), 0), ("va".into(), 7)];
+        ints.extend([("pb".to_string(), pb), ("vb".to_string(), 9), ("s".to_string(), s), ("r".to_string(), r)]);
+        synthesize_graph(&ir, &witness_of(&ints), tamper)
+    };
+    let honest = run(1, 0, 2, &[]);
+    assert!(honest.accepted, "honest in-range accesses");
+    assert_eq!(honest.outputs, vec![int(200), int(102)]);
+    // Every read value a prover could claim for an access outside its own
+    // memory: the other memory's cells, the honest (zero) hint, anything.
+    let claims = [0i64, 9, 100, 101, 102, 200, 201];
+    for (pb, s, r) in [(1, -1, 2), (1, 2, 2), (-1, 0, 2), (2, 0, 2), (1, 0, -1), (1, 0, -2), (1, 0, 3)] {
+        for &claim in &claims {
+            for hint in 0..2 {
+                // The hint is the read at the bad position (or the other read).
+                let o = run(pb, s, r, &[(hint, int(claim))]);
+                assert!(!o.accepted, "pb={pb} s={s} r={r}: read #{hint} claimed as {claim} was accepted");
+            }
+        }
+        assert!(!run(pb, s, r, &[]).accepted, "pb={pb} s={s} r={r}: accepted");
+    }
+}

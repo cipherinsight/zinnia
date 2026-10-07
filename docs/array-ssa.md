@@ -318,9 +318,12 @@ Rules that follow from it:
 - **One source of truth.** There is no second copy of the cells: the payload cache, lazy
   segments and materialization disappear, and with them the class of the masked-write bug (a
   cache updated differently from memory). The write predicate is applied in exactly one place.
-- **Branch-local storages.** A storage created under a runtime execution predicate `p` is
-  invisible where `p` is false (it escapes only through a merge under `p`), so constant writes
-  to it under the same `p` store `x` without the select (today's `predicate_exempt_segments`).
+- **No branch-local exemption.** Every write under a runtime predicate `p` keeps `p`. (An
+  earlier version let a storage created under `p` skip it, assuming such a storage is invisible
+  where `p` is false. It is not: rebinding a name under `p` merges `select(p, new, old)` cell by
+  cell into a new storage created under `p`, which holds the old cells where `p` is false, so a
+  later write under `p` changed values of the branch not taken: review finding F1. The base's
+  `predicate_exempt_segments` had the same bug for constant-index writes.)
 - **Constant accesses stay compile-time** while no runtime write has happened (`Cells`), exactly
   as the cache did; after one, they are IR reads of the version, which the layer resolves
   (overlay: the cell; RAM: a trace read) and the folds of 2.4 simplify.
@@ -419,9 +422,12 @@ argument (tamper test). Noir native RAM — ACIR memory semantics plus `array_in
   table group's fixed columns (`TABLE_GROUP_CELLS`); slots beyond one group's rows are priced
   per slot inside the candidates.
 - `RAM` (halo2-base): one RAM trace for the whole program. The backend lays every RAM array
-  into one trace (addresses of array `t` offset by the sizes of the arrays before it); each
-  array's accesses are in range by the memory group's precondition facts, and the trace proves
-  every global address is in `[0, total)`. Producer cost: the trace's fixed columns
+  into one trace (addresses of array `t` offset by the sizes of the arrays before it). The trace
+  proves only that every global address is in `[0, total)`, which would let an address outside
+  array `t` reach another array's cells; so every access at a runtime address also asserts its
+  own bound `a < n_t` in the circuit (free when the program's index check already proved it).
+  Review finding F2: before, the backend relied on the frontend's check alone and recorded the
+  bound as proven. Producer cost: the trace's fixed columns
   (`RAM_FIXED_CELLS`); rows priced in the candidates.
 
 `emit::select_all` already enumerates subsets of producible program-wide requirements and pays
@@ -466,7 +472,9 @@ each once; Noir has none (its native ROM/RAM cost is per array).
   `ram_segments` / `reads_per_root` / `address_only`; `circuit/ram.rs` and `tables.rs` stay,
   driven by `Ram*`/`Rom*` ops. Noir: segments, epochs, one-hot gathers and scatters of
   `emit.rs`; native arrays stay for `Rom*`/`Ram*`. Mock and preprocess: segment code. Legacy
-  halo2 (compiled, retired from proving): `Rom*`/`Ram*` mapped onto its select-based memory.
+  halo2 (compiled, retired from proving) implements neither `Rom*` nor `Ram*`: a program whose
+  lowering keeps a table or a memory is rejected there ("unsupported"), which is acceptable only
+  while it stays retired.
 
 After lowering the backends receive scalar ops, `Hint`/`IdentityCheck`, and `Rom*`/`Ram*`.
 
@@ -544,6 +552,32 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
   105 passed; harness run of the 79 NPBench/Pythran entries on zinnia_halo2 and zinnia_noir: 158
   of 158 ok (scattering included; its cost is not in the tables, which skip it on both sides).
 
+- Soundness review fixes (branch `array-ssa-fix`, `eval-redo/layer/array-ssa-review/REVIEW.md`;
+  regression tests `testing/lang/test_array_ssa_review.py` on the mock, halo2-base and Noir):
+  - F1 (wrong output provable): the branch-local exemption is gone (section 3.1): every write
+    under a runtime predicate keeps it.
+  - F2: halo2-base asserts each RAM access's own bound `a < n_t` (the shared trace bounds only
+    the global address) and no longer records the bound as proven without a constraint; the
+    trait documents the per-memory requirement; MockProver test of unchecked IR reading another
+    memory's cells.
+  - F4 (wrong output provable, pre-existing): `np.swapaxes`, `np.asarray`, `np.atleast_1d`,
+    `np.atleast_2d` are views of an array argument; `np.array` of an array and `.copy()` of a
+    runtime-shaped array are copies. Where Zinnia's result is a copy of what NumPy returns as a
+    view (`np.flip`, `np.fliplr`, `np.flipud`, `np.rot90`, `.T` / `transpose` / `swapaxes` /
+    `moveaxis` of a runtime-strided array, and the listed functions on any fallback path), the
+    two arrays are linked (`ir_gen::detached_copies`), so a write through either is a compile
+    error when the other is read afterwards.
+  - F5: the RAM emitter asserts that it serves reads in statement order and that no write it
+    is past changes a read's cell; dead code removed (`overlay_known_cells`,
+    `RamDiscipline::defined`); the legacy-halo2 claim corrected (section 5); the NumPy
+    reference helpers keep scalar arguments scalars; `SelectMerge` computed an interval's width
+    in i64, which overflowed and enumerated 2^64 points (the fuzz program that hung the
+    compiler). The 37 GB acceptance compile: the acceptance entries that hit resource limits
+    (`pythran_zero`, `pythran_mandel`, `case0489`, `pythran_factorize_naive` and six timeouts)
+    are the same on the base; `zero` and `mandel` build 1,024 x 1,024 lists from runtime-bounded
+    loops, which the compiler unrolls to their bounds, so an uncapped compile grows without
+    limit. Not a bug of this branch; reported.
+
 ### Open
 - Dynamic-array lanes beyond the runtime length: `1.0 / x[x > 0]` and `x[x > 0] ** -1.5` used to
   be compile errors (the division's or power's precondition could not be stated over the
@@ -553,11 +587,18 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
   pythran convnet now stop at a later unsupported construct, a runtime `np.ndarray` length). The
   fix is to compute a runtime-shaped array's lanes under their validity (`lane < length`) as the
   execution predicate; it changes the IR of every runtime-shaped elementwise operation, so it is
-  left for a decision.
+  left for a decision. (Review finding F3, sound but incomplete; the affected set also includes
+  `np.log(x[x > 0])`, `np.sqrt(x[x > 0] - 1.0)`, and, already on the base, integer `100 // y`
+  and `100 % y` with `y = x[x > 0]`.) When fixing it, keep each padding lane's *result* pinned,
+  e.g. `select(valid, r, 0)`: padding results are public values (a length-4 array exposes all
+  its capacity cells), and a guarded division's quotient hint must not become free on them.
 
 - Not implemented from section 4: the program-wide `TABLES` requirement (each `ElementByTable`
-  candidate still prices its table group's fixed columns itself) and the RAM construction's
-  per-axis facts as postconditions (no case needs them); `ElementOfWrite` stays (it applies to
+  candidate still prices its table group's fixed columns itself). The RAM constructions state no
+  per-axis facts as postconditions, and must not without more: the backends' per-access bound
+  is on the flat address `a < n_t`, which does not imply each position's own axis bound (on a
+  2-D access `a[1, 5]` of a 4x4 array the flat address 9 is in range), so such a fact would let
+  the selection drop the program's per-axis check (review finding F2); `ElementOfWrite` stays (it applies to
   any select pattern a program builds, and costs nothing when it does not).
 - (resolved) 0345-0347 were 15-17 halo2-base cells over the base: the writes fold away, the
   selection priced the column reads alone, and its estimate of a select chain over a bounded index

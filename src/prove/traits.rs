@@ -628,7 +628,10 @@ pub trait Synthesizer {
     }
 
     /// `RamWrite`: the version `to` is `from` with the cell at `address`
-    /// set to `value`; no witness for an address outside the memory.
+    /// set to `value`. Every implementation must leave no witness for an
+    /// address outside `[0, len)` of this memory, not only outside all the
+    /// program's memories (halo2-base's shared trace bounds the global
+    /// address, so it asserts each access's own bound as well).
     fn ram_write(
         &mut self,
         _from: StmtId,
@@ -639,8 +642,9 @@ pub trait Synthesizer {
         Err(unsupported("RamWrite"))
     }
 
-    /// `RamRead`: the cell of the memory version `version` at `address`; no
-    /// witness for an address outside the memory.
+    /// `RamRead`: the cell of the memory version `version` at `address`; as
+    /// for [`Self::ram_write`], no witness for an address outside `[0, len)`
+    /// of this memory.
     fn ram_read(&mut self, _version: StmtId, _address: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         Err(unsupported("RamRead"))
     }

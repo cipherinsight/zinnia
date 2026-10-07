@@ -759,7 +759,7 @@ fn ram_candidate(group: &Group, cx: &Context, pre: Vec<Requirement>, cost: impl 
     }
     let post = constant_read_lanes(group).chain(runtime_read_lanes(&tree)).collect();
     let cost = cost(&tree, cx);
-    vec![Candidate { pre, post, cost, emitter: Box::new(RamEmitter { tree, memory: None, written: 0 }) }]
+    vec![Candidate { pre, post, cost, emitter: Box::new(RamEmitter { tree, memory: None, written: 0, last_read: None }) }]
 }
 
 struct RamEmitter {
@@ -768,6 +768,8 @@ struct RamEmitter {
     memory: Option<Value>,
     /// The writes emitted so far (a prefix of the chain).
     written: usize,
+    /// The last read emitted.
+    last_read: Option<StmtId>,
 }
 
 impl RamEmitter {
@@ -822,7 +824,31 @@ impl Emitter for RamEmitter {
 
     fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, lane: &Lane) -> Value {
         let read = self.tree.reads.iter().find(|r| r.stmt == lane.stmt).cloned().expect("a read of this tree");
+        // Every read is served by the current memory: the reads must come in
+        // statement order (`Tree::is_chain_in_order` justifies the memory's
+        // state per position in that order), and the writes the memory is
+        // past the read's version must not change the read's cell.
+        assert!(
+            self.last_read.is_none_or(|last| last < read.stmt),
+            "RAM lowering: read {} emitted after read {:?}",
+            read.stmt,
+            self.last_read
+        );
+        self.last_read = Some(read.stmt);
         self.advance(b, cx, read.version);
+        let after = match self.tree.writes[..self.written].iter().position(|w| w.stmt == read.version) {
+            Some(k) => k + 1,
+            None => {
+                assert_eq!(read.version, self.tree.root, "RAM lowering: a read of an unwritten version");
+                0
+            }
+        };
+        assert!(
+            self.tree.writes[after..self.written].iter().all(|w| w.access.disjoint_from(&w.constants, &read.access, &read.constants)),
+            "RAM lowering: read {} of version {} after a write that may change its cell",
+            read.stmt,
+            read.version
+        );
         let positions: Vec<StmtId> = read.position.into_iter().collect();
         let address = Self::address(b, cx, &read.access, &positions);
         let memory = self.memory.clone().expect("begin ran");

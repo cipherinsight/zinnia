@@ -39,9 +39,11 @@ impl Link {
         match self {
             Link::View => {
                 "it is linked by NumPy view semantics to an array that was modified afterwards, \
-                 but Zinnia had to copy it (the view's position depends on a private index, or \
-                 it is a reversed or runtime-bounded slice), so it would not show the \
-                 modification. Index the original array directly instead of keeping the view."
+                 but Zinnia had to copy it (the view's position depends on a private index, it \
+                 is a reversed or runtime-bounded slice, or it is the result of a function \
+                 NumPy returns a view from, such as `np.flip` or `np.rot90`), so it would not \
+                 show the modification. Index the original array directly instead of keeping \
+                 the view."
             }
             Link::PathDependentAlias => {
                 "a name that refers to this array on some paths and to another array on others \
@@ -114,6 +116,20 @@ impl IRGenerator {
             return;
         };
         if base_segment != result_segment && is_basic_indexing(indices) {
+            self.detached_copies.pairs.push((result_segment, base_segment, Link::View));
+        }
+    }
+
+    /// Record `result = f(base, ...)` for a function or method that NumPy
+    /// always answers with a view of `base` (`np.flip`, `np.rot90`, `.T`,
+    /// ...), when Zinnia's result does not share `base`'s memory: a later
+    /// write to either one makes the other stale (a compile error when it is
+    /// read), instead of a result that silently misses the write.
+    pub(crate) fn record_view_result(&mut self, base: &Value, result: &Value) {
+        let (Some(base_segment), Some(result_segment)) = (array_segment(base), array_segment(result)) else {
+            return;
+        };
+        if base_segment != result_segment {
             self.detached_copies.pairs.push((result_segment, base_segment, Link::View));
         }
     }

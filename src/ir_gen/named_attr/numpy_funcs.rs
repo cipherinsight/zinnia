@@ -878,6 +878,28 @@ fn np_indices(b: &mut crate::builder::IRBuilder, args: &[Value]) -> Value {
     )
 }
 
+/// How `np.atleast_{n}d` answers an array argument as a view.
+enum AtleastView {
+    /// The array itself (its rank is at least `n`).
+    Itself,
+    /// A 1-D static array with a leading axis of 1 (`atleast_2d`).
+    LeadingAxis,
+}
+
+/// The view `np.atleast_{n}d(args[0])` is, for an array argument it can be
+/// given as one (`None`: the general path).
+fn atleast_view(args: &[Value], n: usize) -> Option<AtleastView> {
+    if args.len() != 1 {
+        return None;
+    }
+    match &args[0] {
+        Value::StaticArray { shape, .. } if shape.len() >= n => Some(AtleastView::Itself),
+        Value::StaticArray { shape, .. } if n == 2 && shape.len() == 1 => Some(AtleastView::LeadingAxis),
+        Value::DynamicNDArray(data) if data.max_rank() >= n => Some(AtleastView::Itself),
+        _ => None,
+    }
+}
+
 /// Check if the first arg is a list/tuple containing DynamicNDArrays.
 fn has_dynamic_array_in_list(args: &[Value]) -> bool {
     match args.first() {
@@ -1014,6 +1036,25 @@ impl IRGenerator {
             ("np", "pi") | ("math", "pi") => self.builder.ir_constant_float(std::f64::consts::PI),
             ("np", "e") | ("math", "e") => self.builder.ir_constant_float(std::f64::consts::E),
             ("np", "asarray" | "array") => {
+                // An array argument: `np.asarray(x)` is `x` itself and
+                // `np.array(x)` a copy (also when a `dtype` changes nothing:
+                // then `np.asarray` is still `x`).
+                let dtype = visited_args_orig.get(1).or_else(|| visited_kwargs_orig.get("dtype")).filter(|d| !matches!(d, Value::None));
+                if let Some(arr @ (Value::StaticArray { .. } | Value::DynamicNDArray(_))) = visited_args_orig.first() {
+                    let converted = match dtype {
+                        Some(dtype) => {
+                            let dtype = Dtype::required(dtype, &format!("np.{member}"));
+                            crate::helpers::dtype::convert(&mut self.builder, arr, dtype)
+                        }
+                        None => arr.clone(),
+                    };
+                    let same = super::super::detached_copies::array_segment(&converted) == super::super::detached_copies::array_segment(arr);
+                    return Some(if member == "array" && same {
+                        super::array_compat::copy_array(&mut self.builder, &converted)
+                    } else {
+                        converted
+                    });
+                }
                 // np.asarray(x) — pass through if already a composite
                 if !visited_args.is_empty() {
                     let val = &visited_args[0];
@@ -1374,6 +1415,16 @@ impl IRGenerator {
                 crate::ops::static_ndarray_ops::np_column_stack(&mut self.builder, visited_args)
             }
             ("np", "swapaxes") => {
+                // An array: the method's view (`m.swapaxes`).
+                match visited_args_orig.first() {
+                    Some(arr @ Value::StaticArray { .. }) => {
+                        return Some(crate::ops::static_ndarray_ops::ndarray_swapaxes(&mut self.builder, arr, &visited_args_orig[1..]));
+                    }
+                    Some(Value::DynamicNDArray(data)) => {
+                        return Some(crate::ops::dyn_ndarray::reshape::dyn_swapaxes(&mut self.builder, data, &visited_args_orig[1..]));
+                    }
+                    _ => {}
+                }
                 let val = visited_args.first().cloned().unwrap_or(Value::None);
                 crate::ops::static_ndarray_ops::ndarray_swapaxes(
                     &mut self.builder,
@@ -1503,6 +1554,20 @@ impl IRGenerator {
             }
             ("np", "broadcast_to") => {
                 crate::ops::static_ndarray_ops::np_broadcast_to(&mut self.builder, visited_args)
+            }
+            // An array of rank at least `n` is returned itself; a 1-D array
+            // to `atleast_2d` is the view `x[np.newaxis, :]` (NumPy).
+            ("np", "atleast_1d" | "atleast_2d") if atleast_view(visited_args_orig, if member == "atleast_1d" { 1 } else { 2 }).is_some() => {
+                let n = if member == "atleast_1d" { 1 } else { 2 };
+                let arr = visited_args_orig[0].clone();
+                match atleast_view(visited_args_orig, n).expect("checked") {
+                    AtleastView::Itself => arr,
+                    AtleastView::LeadingAxis => {
+                        let zero = self.builder.ir_constant_int(0);
+                        crate::helpers::static_array::shape::try_apply_expand_dims(&mut self.builder, &arr, Some(&zero))
+                            .expect("a 1-D static array gets a leading axis")
+                    }
+                }
             }
             ("np", "atleast_1d") => {
                 crate::ops::static_ndarray_ops::np_atleast_nd(&mut self.builder, visited_args, 1)

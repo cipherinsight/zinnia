@@ -12,9 +12,10 @@ agree with the mock. The tamper tests are Rust tests (`lower::sort::grand_produc
 two_phase_tests`).
 """
 import numpy as np
+
+from testing.lang.mock_outputs import numpy_argument, run_mock
 import pytest
 
-from testing.lang.mock_outputs import run_mock
 from testing.lang.test_sort_hints import assert_halo2_base_agrees, compile_for, ir_classes, reference
 
 GRAND_PRODUCT = "sort: grand-product permutation"
@@ -24,7 +25,7 @@ DIRECT = "linear: direct product sums"
 
 
 def assert_matches_numpy(source, program, *args, atol=1e-9):
-    expected = np.asarray(reference(source)(*[np.copy(a) for a in args]), dtype=float).ravel()
+    expected = np.asarray(reference(source)(*[numpy_argument(a) for a in args]), dtype=float).ravel()
     satisfied, outputs = run_mock(program, *args)
     assert satisfied, "honest witness rejected"
     np.testing.assert_allclose(np.asarray(outputs, dtype=float), expected, atol=atol, rtol=0)

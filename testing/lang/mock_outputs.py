@@ -14,6 +14,23 @@ from zinnia import ZKCircuit
 Q32 = 2**32
 
 
+def numpy_argument(a):
+    """An argument as the NumPy reference receives it: an array is copied (the
+    kernel may write it); a Python number becomes the NumPy scalar of the
+    circuit input's type (int64, float64, bool). It stays a scalar: `np.copy`
+    would make a 0-d array, which NumPy takes as an advanced index
+    (`m[i][j] = 0` would then write a copy)."""
+    if isinstance(a, np.ndarray):
+        return np.copy(a)
+    if isinstance(a, bool):
+        return np.bool_(a)
+    if isinstance(a, int):
+        return np.int64(a)
+    if isinstance(a, float):
+        return np.float64(a)
+    return a
+
+
 def compile_kernel(source: str):
     """Compile ``def kernel(...)`` source (``np`` and the Zinnia types in scope)."""
     return ZKCircuit.from_source("kernel", source).compile()
@@ -62,7 +79,7 @@ def numpy_kernel(source: str):
 def assert_matches_numpy(source: str, *args, atol: float = 1e-6):
     """Compile and mock-prove ``source`` on ``args``; the outputs must equal
     NumPy's result position by position (flattened, row-major)."""
-    expected = np.asarray(numpy_kernel(source)(*[np.copy(a) for a in args]), dtype=float).ravel()
+    expected = np.asarray(numpy_kernel(source)(*[numpy_argument(a) for a in args]), dtype=float).ravel()
     satisfied, outputs = run_mock(compile_kernel(source), *args)
     assert satisfied, "honest witness rejected"
     np.testing.assert_allclose(np.asarray(outputs, dtype=float), expected, atol=atol, rtol=0)
@@ -91,10 +108,11 @@ def run_mock_layout(program, *args):
 
 def numpy_outputs(source: str, *args):
     """NumPy's outputs of ``kernel`` (its return value) as ``(values, shapes)``,
-    flattened the way the harness compares them."""
+    flattened the way the harness compares them (arguments as `numpy_argument`
+    makes them)."""
     from benchmarking.harness.outputs import reference_leaves
 
-    leaves, shapes = reference_leaves(numpy_kernel(source)(*[np.copy(a) for a in args]))
+    leaves, shapes = reference_leaves(numpy_kernel(source)(*[numpy_argument(a) for a in args]))
     return [leaf.value for leaf in leaves], shapes
 
 
@@ -104,7 +122,7 @@ def numpy_in_place_outputs(source: str, names: list[str], *args):
     import inspect
 
     kernel = numpy_kernel(source)
-    copies = [np.copy(a) if isinstance(a, np.ndarray) else a for a in args]
+    copies = [numpy_argument(a) for a in args]
     assert kernel(*copies) is None
     params = list(inspect.signature(kernel).parameters)
     leaves, shapes = reference_leaves(tuple(copies[params.index(n)] for n in names))
