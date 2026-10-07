@@ -8,6 +8,8 @@ pub mod synthesizer;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod array_tests;
 
 use crate::circuit_input::ResolvedWitness;
 use crate::ir::IRGraph;

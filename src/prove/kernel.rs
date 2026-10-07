@@ -172,6 +172,32 @@ pub fn fp_to_i64(v: Fp) -> i64 {
     }
 }
 
+/// The integer `p` in `[0, len)` with `v = p`, or `None` when `v` is no
+/// such integer (a negative value, a large one, or any other field element).
+/// Exact: unlike [`fp_to_i64`], no field element outside `[0, len)` reads as
+/// a position.
+pub fn field_position(v: Fp, len: u64) -> Option<u64> {
+    let bytes = v.to_repr();
+    let bytes = bytes.as_ref();
+    if bytes[8..].iter().any(|b| *b != 0) {
+        return None;
+    }
+    let p = u64::from_le_bytes(bytes[..8].try_into().unwrap());
+    (p < len).then_some(p)
+}
+
+/// The cell `access` names for the positions `positions` (one field element
+/// per axis), or `None` when a position is not an integer in its axis's range
+/// (`crate::ir_array`: no witness).
+pub fn array_address(access: &crate::ir_array::ArrayAccess, positions: &[Fp]) -> Option<usize> {
+    assert_eq!(positions.len(), access.axes.len(), "one position per axis");
+    let mut address = u64::from(access.offset);
+    for (axis, &p) in access.axes.iter().zip(positions) {
+        address += field_position(p, u64::from(axis.len))? * u64::from(axis.stride);
+    }
+    Some(address as usize)
+}
+
 /// Check if a field element represents a negative value (> (p-1)/2).
 ///
 /// The BN254 scalar field has p ≈ 2^254. The "negative" half is [(p+1)/2, p-1].

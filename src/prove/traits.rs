@@ -2,6 +2,20 @@ use crate::circuit_input::{InputPath, ResolvedWitness};
 use crate::ir::IRGraph;
 use crate::prove::error::ProvingError;
 use crate::prove::types::{ProofArtifact, ProvingParams, VerifyResult};
+use crate::ir_array::ArrayAccess;
+use crate::types::StmtId;
+
+/// The error of a backend given an array operation the lowering layer
+/// should have replaced.
+fn not_lowered(op: &str) -> ProvingError {
+    ProvingError::synthesis(format!("an {op} reached the prover; lower::ArrayLowering must lower it"))
+}
+
+/// The error of a backend without an implementation of a table or memory
+/// operation.
+fn unsupported(op: &str) -> ProvingError {
+    ProvingError::synthesis(format!("this backend does not implement {op}"))
+}
 
 // ---------------------------------------------------------------------------
 // ProverBackend — top-level backend trait
@@ -600,6 +614,77 @@ pub trait Synthesizer {
         index: &Self::CellRef,
         value: &Self::CellRef,
     ) -> Result<(), ProvingError>;
+
+    // ── Arrays before lowering (`IR::ArrayWrite`, `IR::ArrayRead`) ─────
+    //
+    // The interpreter keeps every version's cells and passes them in. Only
+    // the mock evaluates arrays before lowering (the layer's tests, and
+    // checks of the IR against NumPy before it is lowered); a proving
+    // backend receives lowered IR and rejects them.
+
+    /// The cells of `ArrayWrite(version, positions, value, predicate)` for
+    /// the version's `cells` (`crate::ir_array`).
+    fn array_write(
+        &mut self,
+        _cells: &[Self::CellRef],
+        _access: &ArrayAccess,
+        _positions: &[Self::CellRef],
+        _value: &Self::CellRef,
+        _predicate: &Self::CellRef,
+    ) -> Result<Vec<Self::CellRef>, ProvingError> {
+        Err(not_lowered("ArrayWrite"))
+    }
+
+    /// `ArrayRead(version, positions)` of the version's `cells`.
+    fn array_read(
+        &mut self,
+        _cells: &[Self::CellRef],
+        _access: &ArrayAccess,
+        _positions: &[Self::CellRef],
+    ) -> Result<Self::CellRef, ProvingError> {
+        Err(not_lowered("ArrayRead"))
+    }
+
+    // ── Tables and memories (`IR::Rom*`, `IR::Ram*`) ──────────────────
+    //
+    // Emitted by the array lowering layer. A table or memory version is
+    // named by its defining statement; the interpreter checks the RAM
+    // discipline (`crate::ir_array`) before calling these, so a backend may
+    // lay out the accesses of a memory in statement order.
+
+    /// `RomInit`: the table `table` holds `cells`.
+    fn rom_init(&mut self, _table: StmtId, _cells: &[Self::CellRef]) -> Result<(), ProvingError> {
+        Err(unsupported("RomInit"))
+    }
+
+    /// `RomRead`: the cell of `table` at `address`; no witness for an
+    /// address outside the table.
+    fn rom_read(&mut self, _table: StmtId, _address: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        Err(unsupported("RomRead"))
+    }
+
+    /// `RamInit`: the memory version `memory` holds `cells`.
+    fn ram_init(&mut self, _memory: StmtId, _cells: &[Self::CellRef]) -> Result<(), ProvingError> {
+        Err(unsupported("RamInit"))
+    }
+
+    /// `RamWrite`: the version `to` is `from` with the cell at `address`
+    /// set to `value`; no witness for an address outside the memory.
+    fn ram_write(
+        &mut self,
+        _from: StmtId,
+        _to: StmtId,
+        _address: &Self::CellRef,
+        _value: &Self::CellRef,
+    ) -> Result<(), ProvingError> {
+        Err(unsupported("RamWrite"))
+    }
+
+    /// `RamRead`: the cell of the memory version `version` at `address`; no
+    /// witness for an address outside the memory.
+    fn ram_read(&mut self, _version: StmtId, _address: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        Err(unsupported("RamRead"))
+    }
 
     // ── Sort keys ─────────────────────────────────────────────────────
 

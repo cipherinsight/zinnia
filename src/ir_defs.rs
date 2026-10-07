@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::circuit_input::InputPath;
+pub use crate::ir_array::{AccessAxis, ArrayAccess, ArrayElem};
 
 // ---------------------------------------------------------------------------
 // IR enum — all 78 IR instruction types as a single Rust enum
@@ -286,6 +287,35 @@ pub enum IR {
         is_write: bool,
     },
     MemoryTraceSeal,
+
+    // ── Arrays (`crate::ir_array`, `docs/array-ssa.md`) ────────────────
+    /// An array version holding its `len` operands, cells of type `elem`.
+    ArrayInit { len: u32, elem: ArrayElem },
+    /// `[version, positions..., value, predicate]`: the version with the
+    /// cell the access names set to `value` when `predicate` is nonzero
+    /// (the version itself otherwise). No witness for a position outside its
+    /// axis. Pure: a new version, nothing changes.
+    ArrayWrite(ArrayAccess),
+    /// `[version, positions...]`: the cell the access names. No witness for
+    /// a position outside its axis.
+    ArrayRead(ArrayAccess),
+    /// A read-only table holding its `len` operands (emitted by the array
+    /// lowering layer only).
+    RomInit { len: u32, elem: ArrayElem },
+    /// `[table, address]`: the table's cell; no witness for an address
+    /// outside `[0, len)`.
+    RomRead { len: u32, elem: ArrayElem },
+    /// A read-write memory holding its `len` operands, its first version
+    /// (emitted by the array lowering layer only; see the RAM discipline in
+    /// `crate::ir_array`).
+    RamInit { len: u32, elem: ArrayElem },
+    /// `[memory, address, value]`: the memory's next version, with the cell
+    /// at `address` set to `value`; no witness for an address outside
+    /// `[0, len)`.
+    RamWrite { len: u32, elem: ArrayElem },
+    /// `[memory, address]`: the cell of that version of the memory; no
+    /// witness for an address outside `[0, len)`.
+    RamRead { len: u32, elem: ArrayElem },
 
     // ── Dynamic NDArray ───────────────────────────────────────────────
     AllocateDynamicNDArrayMeta {
@@ -738,6 +768,16 @@ impl IR {
             } => format!("memory_trace_emit[{}][{}]", segment_id, is_write),
             IR::MemoryTraceSeal => "memory_trace_seal".to_string(),
 
+            // Arrays
+            IR::ArrayInit { len, elem } => format!("array_init[{}][{:?}]", len, elem),
+            IR::ArrayWrite(access) => format!("array_write[{}]", access.describe()),
+            IR::ArrayRead(access) => format!("array_read[{}]", access.describe()),
+            IR::RomInit { len, elem } => format!("rom_init[{}][{:?}]", len, elem),
+            IR::RomRead { len, elem } => format!("rom_read[{}][{:?}]", len, elem),
+            IR::RamInit { len, elem } => format!("ram_init[{}][{:?}]", len, elem),
+            IR::RamWrite { len, elem } => format!("ram_write[{}][{:?}]", len, elem),
+            IR::RamRead { len, elem } => format!("ram_read[{}][{:?}]", len, elem),
+
             // Dynamic NDArray
             IR::AllocateDynamicNDArrayMeta {
                 array_id,
@@ -820,6 +860,32 @@ impl IR {
             IR::IdentityCheck(identity) => format!("identity_check[{}]", identity.describe()),
             IR::RescaleRawF => "rescale_raw_f".to_string(),
         }
+    }
+
+    /// Whether this is an array, table or memory operation
+    /// (`crate::ir_array`).
+    pub fn is_array_op(&self) -> bool {
+        matches!(
+            self,
+            IR::ArrayInit { .. }
+                | IR::ArrayWrite(_)
+                | IR::ArrayRead(_)
+                | IR::RomInit { .. }
+                | IR::RomRead { .. }
+                | IR::RamInit { .. }
+                | IR::RamWrite { .. }
+                | IR::RamRead { .. }
+        )
+    }
+
+    /// Whether this operation's value is a handle (an array version, a
+    /// table, a memory version), not a number: only array, table and memory
+    /// operations take it, as their first operand.
+    pub fn defines_handle(&self) -> bool {
+        matches!(
+            self,
+            IR::ArrayInit { .. } | IR::ArrayWrite(_) | IR::RomInit { .. } | IR::RamInit { .. } | IR::RamWrite { .. }
+        )
     }
 
     /// Returns `true` if this IR is a "fixed" IR that should not be eliminated
@@ -970,6 +1036,14 @@ impl IR {
             IR::ReadTable { .. } => "ReadTableIR",
             IR::MemoryTraceEmit { .. } => "MemoryTraceEmitIR",
             IR::MemoryTraceSeal => "MemoryTraceSealIR",
+            IR::ArrayInit { .. } => "ArrayInitIR",
+            IR::ArrayWrite(_) => "ArrayWriteIR",
+            IR::ArrayRead(_) => "ArrayReadIR",
+            IR::RomInit { .. } => "RomInitIR",
+            IR::RomRead { .. } => "RomReadIR",
+            IR::RamInit { .. } => "RamInitIR",
+            IR::RamWrite { .. } => "RamWriteIR",
+            IR::RamRead { .. } => "RamReadIR",
             IR::AllocateDynamicNDArrayMeta { .. } => "AllocateDynamicNDArrayMetaIR",
             IR::WitnessDynamicNDArrayMeta { .. } => "WitnessDynamicNDArrayMetaIR",
             IR::AssertDynamicNDArrayMeta { .. } => "AssertDynamicNDArrayMetaIR",
@@ -1072,6 +1146,16 @@ impl IR {
                 segment_id,
                 is_write,
             } => serde_json::json!({ "segment_id": segment_id, "is_write": is_write }),
+
+            IR::ArrayInit { len, elem }
+            | IR::RomInit { len, elem }
+            | IR::RomRead { len, elem }
+            | IR::RamInit { len, elem }
+            | IR::RamWrite { len, elem }
+            | IR::RamRead { len, elem } => serde_json::json!({ "len": len, "elem": elem }),
+            IR::ArrayWrite(access) | IR::ArrayRead(access) => {
+                serde_json::to_value(access).expect("an array access serializes")
+            }
 
             IR::AllocateDynamicNDArrayMeta {
                 array_id,
@@ -1398,6 +1482,25 @@ impl IR {
             }),
             "MemoryTraceSealIR" => Ok(IR::MemoryTraceSeal),
 
+            "ArrayInitIR" | "RomInitIR" | "RomReadIR" | "RamInitIR" | "RamWriteIR" | "RamReadIR" => {
+                let len = data["len"].as_u64().ok_or("array op without a length")? as u32;
+                let elem: ArrayElem =
+                    serde_json::from_value(data["elem"].clone()).map_err(|e| format!("array element type: {e}"))?;
+                Ok(match class_name {
+                    "ArrayInitIR" => IR::ArrayInit { len, elem },
+                    "RomInitIR" => IR::RomInit { len, elem },
+                    "RomReadIR" => IR::RomRead { len, elem },
+                    "RamInitIR" => IR::RamInit { len, elem },
+                    "RamWriteIR" => IR::RamWrite { len, elem },
+                    _ => IR::RamRead { len, elem },
+                })
+            }
+            "ArrayWriteIR" => serde_json::from_value(data.clone())
+                .map(IR::ArrayWrite)
+                .map_err(|e| format!("ArrayWrite: {e}")),
+            "ArrayReadIR" => serde_json::from_value(data.clone())
+                .map(IR::ArrayRead)
+                .map_err(|e| format!("ArrayRead: {e}")),
             "AllocateDynamicNDArrayMetaIR" => Ok(IR::AllocateDynamicNDArrayMeta {
                 array_id: data["array_id"].as_u64().unwrap_or(0) as u32,
                 dtype_name: data["dtype_name"].as_str().unwrap_or("").to_string(),
@@ -1643,6 +1746,19 @@ mod tests {
                 output_idx: 0,
                 is_float: false,
             },
+            IR::ArrayInit { len: 6, elem: ArrayElem::Float },
+            IR::ArrayWrite(ArrayAccess::new(
+                12,
+                ArrayElem::Int,
+                2,
+                vec![AccessAxis { len: 3, stride: 4 }, AccessAxis { len: 2, stride: 1 }],
+            )),
+            IR::ArrayRead(ArrayAccess::constant(12, ArrayElem::Float, 7)),
+            IR::RomInit { len: 5, elem: ArrayElem::Int },
+            IR::RomRead { len: 5, elem: ArrayElem::Int },
+            IR::RamInit { len: 9, elem: ArrayElem::Float },
+            IR::RamWrite { len: 9, elem: ArrayElem::Float },
+            IR::RamRead { len: 9, elem: ArrayElem::Float },
             IR::AllocateMemory {
                 segment_id: 1,
                 size: 100,

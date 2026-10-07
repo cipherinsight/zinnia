@@ -478,6 +478,14 @@ impl IROp for IR {
             | IR::AssertU128LtBit { .. }
             | IR::ExposePublicI
             | IR::ExposePublicF
+            | IR::ArrayInit { .. }
+            | IR::ArrayWrite(_)
+            | IR::ArrayRead(_)
+            | IR::RomInit { .. }
+            | IR::RomRead { .. }
+            | IR::RamInit { .. }
+            | IR::RamWrite { .. }
+            | IR::RamRead { .. }
             | IR::AllocateMemory { .. }
             | IR::WriteMemory { .. }
             | IR::ReadMemory { .. }

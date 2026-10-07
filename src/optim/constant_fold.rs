@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::builder::IRBuilder;
 use crate::ir::IRGraph;
+use crate::ir_defs::IR;
 use crate::types::{StmtId, Value};
 
 use super::IRPass;
@@ -56,7 +57,17 @@ impl IRPass for ConstantFold {
                 })
                 .collect();
 
-            let new_val = builder.create_ir(&stmt.ir, &ir_args);
+            // Array reads and writes through the builder's folds
+            // (`builder/arrays.rs`): a read whose cell the operands decide
+            // becomes that cell.
+            let new_val = match &stmt.ir {
+                IR::ArrayRead(access) => builder.ir_array_read(&ir_args[0], access.clone(), &ir_args[1..]),
+                IR::ArrayWrite(access) => {
+                    let rank = access.rank();
+                    builder.ir_array_write(&ir_args[0], access.clone(), &ir_args[1..1 + rank], &ir_args[1 + rank], &ir_args[2 + rank])
+                }
+                _ => builder.create_ir(&stmt.ir, &ir_args),
+            };
             value_lookup.insert(stmt.stmt_id, new_val);
         }
 

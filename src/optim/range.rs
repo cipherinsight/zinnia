@@ -551,6 +551,23 @@ impl RangeResolver {
                     .map_or_else(IntInterval::unbounded, |iv| IntInterval { min: iv.lo, max: iv.hi })
             }
 
+            // An array version is bounded by the hull of the cells it can
+            // hold, and a read by its version's (`crate::ir_array`).
+            IR::ArrayInit { .. } | IR::RomInit { .. } | IR::RamInit { .. } => stmt
+                .arguments
+                .iter()
+                .map(|&cell| self.interval_of(cell, stmts))
+                .reduce(IntInterval::select)
+                .unwrap_or_else(IntInterval::unbounded),
+            IR::ArrayWrite(_) | IR::RamWrite { .. } => {
+                let written = match &stmt.ir {
+                    IR::ArrayWrite(access) => stmt.arguments[access.rank() + 1],
+                    _ => stmt.arguments[2],
+                };
+                IntInterval::select(self.interval_of(stmt.arguments[0], stmts), self.interval_of(written, stmts))
+            }
+            IR::ArrayRead(_) | IR::RomRead { .. } | IR::RamRead { .. } => self.interval_of(stmt.arguments[0], stmts),
+
             // Everything else falls through to commit 3 / unbounded.
             _ => IntInterval::unbounded(),
         };

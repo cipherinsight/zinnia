@@ -6,6 +6,7 @@ pub mod circuit_input;
 pub mod error;
 pub mod helpers;
 pub mod ir;
+pub mod ir_array;
 pub mod ir_ctx;
 pub mod ir_defs;
 pub mod ir_gen;

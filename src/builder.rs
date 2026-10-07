@@ -6,6 +6,7 @@ use crate::lower::Constant;
 use crate::optim::resolver::{Resolver, StaticOnlyResolver};
 use crate::types::{NumberType, ScalarValue, StmtId, StringValue, Value};
 
+mod arrays;
 mod fixed_width;
 mod bool_dtype;
 mod same_value;
@@ -259,6 +260,10 @@ pub struct IRBuilder {
     /// whose value is a NumPy bool.
     bool_segments: HashSet<u32>,
     bool_cells: HashSet<StmtId>,
+    /// The operands of every `ArrayInit` and `ArrayWrite` this builder
+    /// built, by statement, for the folds of `ir_array_read`
+    /// (`builder/arrays.rs`).
+    array_defs: HashMap<StmtId, Vec<Value>>,
 }
 
 impl Default for IRBuilder {
@@ -304,6 +309,7 @@ impl IRBuilder {
             fixed_width: fixed_width::FixedWidthValues::default(),
             bool_segments: HashSet::new(),
             bool_cells: HashSet::new(),
+            array_defs: HashMap::new(),
         }
     }
 
@@ -1272,6 +1278,9 @@ impl IRBuilder {
         let stmt = IRStatement::new(ir_id, value_id, ir.clone(), arguments, arg_values, None);
         self.stmts.push(stmt);
         self.record_value_id(&val);
+        if matches!(ir, IR::ArrayInit { .. } | IR::ArrayWrite(_)) {
+            self.array_defs.insert(ir_id, materialized.clone());
+        }
         self.deposit_provenance(ir, &materialized, &val);
         self.track_statement(ir, ir_id, &materialized);
         val
@@ -1472,6 +1481,30 @@ impl IRBuilder {
                 }
                 if have_any {
                     self.provenance.set_interval(vid, iv);
+                }
+            }
+            // An array version's interval is the hull of the cells it can
+            // hold; a read takes its version's (`crate::ir_array`).
+            IR::ArrayInit { .. } | IR::RomInit { .. } | IR::RamInit { .. } => {
+                let hull = args.iter().map(|c| interval_of(self, c)).try_fold(None, |acc: Option<Interval>, iv| {
+                    iv.map(|iv| Some(acc.map_or(iv, |a| Interval::union(a, iv))))
+                });
+                if let (Some(vid), Some(Some(hull))) = (out.value_id(), hull) {
+                    self.provenance.set_interval(vid, hull);
+                }
+            }
+            IR::ArrayWrite(_) | IR::RamWrite { .. } => {
+                let written = match ir {
+                    IR::ArrayWrite(access) => &args[access.rank() + 1],
+                    _ => &args[2],
+                };
+                if let (Some(vid), Some(old), Some(new)) = (out.value_id(), interval_of(self, &args[0]), interval_of(self, written)) {
+                    self.provenance.set_interval(vid, Interval::union(old, new));
+                }
+            }
+            IR::ArrayRead(_) | IR::RomRead { .. } | IR::RamRead { .. } => {
+                if let (Some(vid), Some(hull)) = (out.value_id(), interval_of(self, &args[0])) {
+                    self.provenance.set_interval(vid, hull);
                 }
             }
             IR::ReadMemory { segment_id } | IR::ReadTable { segment_id } | IR::DynamicNDArrayGetItem { segment_id, .. } => {
@@ -3491,6 +3524,19 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
         IR::ScalarPrecondition { .. } => Value::None,
         IR::ExposePublicI | IR::ExposePublicF => Value::None,
 
+        // ── Arrays (`crate::ir_array`) ────────────────────────────
+        // A version, table or memory is a handle, not a number: only array
+        // operations take it, and only the builder's array store holds it.
+        IR::ArrayInit { .. } | IR::ArrayWrite(_) | IR::RomInit { .. } | IR::RamInit { .. } | IR::RamWrite { .. } => {
+            Value::Integer(ScalarValue::new(None, Some(ir_id)))
+        }
+        IR::ArrayRead(crate::ir_array::ArrayAccess { elem, .. }) | IR::RomRead { elem, .. } | IR::RamRead { elem, .. } => {
+            match elem {
+                crate::ir_array::ArrayElem::Float => Value::Float(ScalarValue::new(None, Some(ir_id))),
+                crate::ir_array::ArrayElem::Int => Value::Integer(ScalarValue::new(None, Some(ir_id))),
+            }
+        }
+
         // ── Memory operations (fixed) ─────────────────────────────
         IR::AllocateMemory { .. } => Value::None,
         IR::WriteMemory { .. } => Value::None,
@@ -3684,6 +3730,11 @@ fn min_required_arity(ir: &IR) -> usize {
         IR::PackedKeyIndex { .. } | IR::RescaleRawF => 1,
         IR::IdentityCheck(identity) => identity.operands(),
         IR::ArrayOp(op) => op.shared as usize,
+        IR::ArrayInit { len, .. } | IR::RomInit { len, .. } | IR::RamInit { len, .. } => *len as usize,
+        IR::ArrayWrite(access) => access.rank() + 3,
+        IR::ArrayRead(access) => access.rank() + 1,
+        IR::RomRead { .. } | IR::RamRead { .. } => 2,
+        IR::RamWrite { .. } => 3,
     }
 }
 

@@ -14,6 +14,8 @@ use crate::prove::error::ProvingError;
 use crate::prove::kernel::{self, Field};
 use crate::prove::traits::Synthesizer;
 use crate::prove::types::ProvingParams;
+use crate::ir_array::ArrayAccess;
+use crate::types::StmtId;
 
 // ---------------------------------------------------------------------------
 // MockCell — the CellRef type for MockSynthesizer
@@ -46,6 +48,8 @@ pub struct MockSynthesizer {
     pub public_outputs: HashMap<String, String>,
     memories: HashMap<u32, Vec<Fp>>,
     memory_init: HashMap<u32, Fp>,
+    /// The cells of every table and memory version (`IR::Rom*`, `IR::Ram*`).
+    vectors: HashMap<StmtId, Vec<Fp>>,
     dyn_meta_bounds: HashMap<u32, (u32, Vec<u32>)>,
 }
 
@@ -69,6 +73,45 @@ impl MockSynthesizer {
         })
     }
 
+    /// Mark the proof unsatisfied (no witness), with the reason.
+    fn unsatisfied(&mut self, message: String) {
+        self.satisfied = false;
+        self.assertion_failures.push(message);
+    }
+
+    /// The cell an array access names, or `None` (unsatisfied: no witness)
+    /// when a position is outside its axis.
+    fn address_of(&mut self, access: &ArrayAccess, positions: &[MockCell], what: &str) -> Option<usize> {
+        let fps: Vec<Fp> = positions.iter().map(MockCell::fp).collect();
+        let address = kernel::array_address(access, &fps);
+        if address.is_none() {
+            let shown: Vec<i64> = fps.iter().map(|&p| kernel::fp_to_i64(p)).collect();
+            self.unsatisfied(format!("{what} out of bounds: positions {shown:?} of {}", access.describe()));
+        }
+        address
+    }
+
+    /// The cells of a table or memory version.
+    fn vector(&self, handle: StmtId) -> Result<&Vec<Fp>, ProvingError> {
+        self.vectors
+            .get(&handle)
+            .ok_or_else(|| ProvingError::synthesis(format!("statement {handle} is not a table or memory")))
+    }
+
+    /// The cell of a table or memory version at `address`; outside it the
+    /// proof is unsatisfied.
+    fn vector_read(&mut self, handle: StmtId, address: &MockCell, what: &str) -> Result<MockCell, ProvingError> {
+        let cells = self.vector(handle)?;
+        match kernel::field_position(address.fp(), cells.len() as u64) {
+            Some(a) => Ok(MockCell(cells[a as usize])),
+            None => {
+                let shown = kernel::fp_to_i64(address.fp());
+                self.unsatisfied(format!("{what} out of bounds: address {shown} of statement {handle}"));
+                Ok(MockCell(Fp::zero()))
+            }
+        }
+    }
+
     pub fn new(witness: ResolvedWitness, params: ProvingParams) -> Self {
         Self {
             witness,
@@ -78,6 +121,7 @@ impl MockSynthesizer {
             public_outputs: HashMap::new(),
             memories: HashMap::new(),
             memory_init: HashMap::new(),
+            vectors: HashMap::new(),
             dyn_meta_bounds: HashMap::new(),
         }
     }
@@ -566,6 +610,60 @@ impl Synthesizer for MockSynthesizer {
                 Ok(MockCell(Fp::zero()))
             }
         }
+    }
+
+    // ── Arrays, tables, memories (`crate::ir_array`) ──────────────────
+
+    fn array_write(
+        &mut self,
+        cells: &[MockCell],
+        access: &ArrayAccess,
+        positions: &[MockCell],
+        value: &MockCell,
+        predicate: &MockCell,
+    ) -> Result<Vec<MockCell>, ProvingError> {
+        let mut new = cells.to_vec();
+        if let Some(address) = self.address_of(access, positions, "array write") {
+            if predicate.is_truthy() {
+                new[address] = value.clone();
+            }
+        }
+        Ok(new)
+    }
+
+    fn array_read(&mut self, cells: &[MockCell], access: &ArrayAccess, positions: &[MockCell]) -> Result<MockCell, ProvingError> {
+        Ok(match self.address_of(access, positions, "array read") {
+            Some(address) => cells[address].clone(),
+            None => MockCell(Fp::zero()),
+        })
+    }
+
+    fn rom_init(&mut self, table: StmtId, cells: &[MockCell]) -> Result<(), ProvingError> {
+        self.vectors.insert(table, cells.iter().map(MockCell::fp).collect());
+        Ok(())
+    }
+
+    fn rom_read(&mut self, table: StmtId, address: &MockCell) -> Result<MockCell, ProvingError> {
+        self.vector_read(table, address, "table read")
+    }
+
+    fn ram_init(&mut self, memory: StmtId, cells: &[MockCell]) -> Result<(), ProvingError> {
+        self.vectors.insert(memory, cells.iter().map(MockCell::fp).collect());
+        Ok(())
+    }
+
+    fn ram_write(&mut self, from: StmtId, to: StmtId, address: &MockCell, value: &MockCell) -> Result<(), ProvingError> {
+        let mut cells = self.vector(from)?.clone();
+        match kernel::field_position(address.fp(), cells.len() as u64) {
+            Some(a) => cells[a as usize] = value.fp(),
+            None => self.unsatisfied(format!("memory write out of bounds: version {from}")),
+        }
+        self.vectors.insert(to, cells);
+        Ok(())
+    }
+
+    fn ram_read(&mut self, version: StmtId, address: &MockCell) -> Result<MockCell, ProvingError> {
+        self.vector_read(version, address, "memory read")
     }
 
     fn memory_trace_emit(&mut self, _: u32, _: bool, _: &[MockCell]) -> Result<(), ProvingError> {

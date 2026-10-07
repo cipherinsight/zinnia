@@ -206,6 +206,18 @@ fn role(ir: &IR, operands: usize) -> Role {
         IR::WriteMemory { segment_id } | IR::DynamicNDArraySetItem { segment_id, .. } => {
             Role::Writes(*segment_id)
         }
+        // Array versions are handles, not values; the builder's array store
+        // tracks what a storage holds and records its reads itself
+        // (`IRBuilder::array_read`). Tables and memories are emitted by the
+        // lowering, after tracking.
+        IR::ArrayInit { .. }
+        | IR::ArrayWrite(_)
+        | IR::ArrayRead(_)
+        | IR::RomInit { .. }
+        | IR::RomRead { .. }
+        | IR::RamInit { .. }
+        | IR::RamWrite { .. }
+        | IR::RamRead { .. } => Role::ValueOnly,
         IR::InvokeExternal { .. } | IR::ExportExternalI { .. } | IR::ExportExternalF { .. } => {
             Role::External
         }

@@ -70,6 +70,8 @@ struct Preprocessor<'a> {
     callback: &'a dyn ExternalCallback,
     memories: HashMap<u32, Vec<Fp>>,
     memory_init: HashMap<u32, Fp>,
+    /// The cells of every array version, table and memory version.
+    vectors: HashMap<crate::types::StmtId, Vec<Fp>>,
 }
 
 #[derive(Debug, Clone)]
@@ -93,6 +95,7 @@ impl<'a> Preprocessor<'a> {
             callback,
             memories: HashMap::new(),
             memory_init: HashMap::new(),
+            vectors: HashMap::new(),
         }
     }
 
@@ -104,8 +107,10 @@ impl<'a> Preprocessor<'a> {
             // a CONSUMED operand has no produced value — error loudly rather
             // than letting `filter_map` compact the list and silently shift
             // every later operand left (mirrors `interpreter.rs` strictness).
-            let args: Vec<Fp> = stmt
-                .arguments
+            // An array, table or memory operation's first operand is a
+            // handle (no value), passed by statement.
+            let handle = crate::prove::interpreter::handle_operand(&stmt.ir).then(|| stmt.arguments[0]);
+            let args: Vec<Fp> = stmt.arguments[usize::from(handle.is_some())..]
                 .iter()
                 .map(|&arg_id| {
                     self.values[arg_id as usize].ok_or_else(|| {
@@ -117,12 +122,69 @@ impl<'a> Preprocessor<'a> {
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let result = self.eval_ir(&stmt.ir, &args, id)?;
+            let result = match self.eval_array(&stmt.ir, stmt.stmt_id, handle, &args) {
+                Some(result) => result?,
+                None => self.eval_ir(&stmt.ir, &args, id)?,
+            };
             if id < self.values.len() {
                 self.values[id] = result;
             }
         }
         Ok(())
+    }
+
+    /// Array, table and memory operations (`crate::ir_array`), on the
+    /// vectors of their versions; `None` for any other operation. An index
+    /// outside its range has no witness: the value here is moot (the
+    /// backends and the mock reject the proof).
+    fn eval_array(
+        &mut self,
+        ir: &IR,
+        stmt: crate::types::StmtId,
+        handle: Option<crate::types::StmtId>,
+        args: &[Fp],
+    ) -> Option<Result<Option<Fp>, ProvingError>> {
+        ir.is_array_op().then(|| self.eval_array_op(ir, stmt, handle, args))
+    }
+
+    fn eval_array_op(
+        &mut self,
+        ir: &IR,
+        stmt: crate::types::StmtId,
+        handle: Option<crate::types::StmtId>,
+        args: &[Fp],
+    ) -> Result<Option<Fp>, ProvingError> {
+        let mut cells = match handle {
+            Some(h) => self
+                .vectors
+                .get(&h)
+                .cloned()
+                .ok_or_else(|| ProvingError::synthesis(format!("statement {h} is not an array, table or memory")))?,
+            None => args.to_vec(),
+        };
+        let flat = |cells: &[Fp], a: Fp| kernel::field_position(a, cells.len() as u64).map(|a| a as usize);
+        let at = |cells: &[Fp], address: Option<usize>| address.map_or(Fp::zero(), |a| cells[a]);
+        match ir {
+            IR::ArrayInit { .. } | IR::RomInit { .. } | IR::RamInit { .. } => {}
+            IR::ArrayWrite(access) => {
+                let rank = access.rank();
+                if let Some(a) = kernel::array_address(access, &args[..rank]) {
+                    if args[rank + 1] != Fp::zero() {
+                        cells[a] = args[rank];
+                    }
+                }
+            }
+            IR::RamWrite { .. } => {
+                if let Some(a) = flat(&cells, args[0]) {
+                    cells[a] = args[1];
+                }
+            }
+            IR::ArrayRead(access) => return Ok(Some(at(&cells, kernel::array_address(access, args)))),
+            IR::RomRead { .. } | IR::RamRead { .. } => return Ok(Some(at(&cells, flat(&cells, args[0])))),
+            other => unreachable!("not an array operation: {other:?}"),
+        }
+        self.vectors.insert(stmt, cells);
+        Ok(None)
     }
 
     fn eval_ir(
@@ -462,6 +524,15 @@ impl<'a> Preprocessor<'a> {
             IR::StructuralPredicate { .. } => Ok(None),
             IR::ScalarPrecondition { .. } => Ok(None),
             IR::MemoryTraceEmit { .. } | IR::MemoryTraceSeal => Ok(None),
+            // Evaluated by `eval_array` before this match.
+            IR::ArrayInit { .. }
+            | IR::ArrayWrite(_)
+            | IR::ArrayRead(_)
+            | IR::RomInit { .. }
+            | IR::RomRead { .. }
+            | IR::RamInit { .. }
+            | IR::RamWrite { .. }
+            | IR::RamRead { .. } => unreachable!("array operations are evaluated by eval_array"),
             IR::WitnessDynamicNDArrayMeta { .. } | IR::AssertDynamicNDArrayMeta { .. } => Ok(None),
 
             // Memory

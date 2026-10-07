@@ -2,6 +2,8 @@ use crate::ir::IRGraph;
 use crate::ir_defs::IR;
 use crate::prove::error::ProvingError;
 use crate::prove::traits::Synthesizer;
+use crate::types::StmtId;
+use std::collections::{HashMap, HashSet};
 
 /// Walk the IRGraph in statement order and dispatch each IR instruction
 /// to the corresponding `Synthesizer` method.
@@ -81,14 +83,18 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
     let n = graph.stmts.len();
     let mut cells: Vec<Option<S::CellRef>> = Vec::with_capacity(n);
     cells.resize_with(n, || None);
+    // The cells of every array version (`ArrayInit`, `ArrayWrite`).
+    let mut arrays: HashMap<StmtId, Vec<S::CellRef>> = HashMap::new();
+    let mut ram = RamDiscipline::default();
 
     for stmt in &graph.stmts {
         let id = stmt.stmt_id as usize;
         synth.on_stmt_begin(stmt.stmt_id);
 
-        // Collect argument cell references.
-        let args: Vec<S::CellRef> = stmt
-            .arguments
+        // Collect argument cell references. The first operand of an array,
+        // table or memory operation is a handle (no cell), passed by statement.
+        let handle = handle_operand(&stmt.ir).then(|| stmt.arguments[0]);
+        let args: Vec<S::CellRef> = stmt.arguments[usize::from(handle.is_some())..]
             .iter()
             .map(|&arg_id| {
                 cells[arg_id as usize].clone().ok_or_else(|| {
@@ -307,6 +313,45 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
                 None
             }
 
+            // ── Arrays, tables, memories (`crate::ir_array`) ──────────
+            IR::ArrayInit { .. } => {
+                arrays.insert(stmt.stmt_id, args);
+                None
+            }
+            IR::ArrayWrite(access) => {
+                // `args` are the operands after the version: positions,
+                // value, predicate.
+                let rank = access.rank();
+                let cells = version_cells(&arrays, handle)?;
+                let new = synth.array_write(cells, access, &args[..rank], &args[rank], &args[rank + 1])?;
+                arrays.insert(stmt.stmt_id, new);
+                None
+            }
+            IR::ArrayRead(access) => {
+                let cells = version_cells(&arrays, handle)?;
+                Some(synth.array_read(cells, access, &args)?)
+            }
+            IR::RomInit { .. } => {
+                synth.rom_init(stmt.stmt_id, &args)?;
+                None
+            }
+            IR::RomRead { .. } => Some(synth.rom_read(handle.expect("a handle"), &args[0])?),
+            IR::RamInit { .. } => {
+                synth.ram_init(stmt.stmt_id, &args)?;
+                None
+            }
+            IR::RamWrite { .. } => {
+                let from = handle.expect("a handle");
+                ram.consume(from, stmt.stmt_id)?;
+                synth.ram_write(from, stmt.stmt_id, &args[0], &args[1])?;
+                None
+            }
+            IR::RamRead { .. } => {
+                let version = handle.expect("a handle");
+                ram.check_current(version, stmt.stmt_id)?;
+                Some(synth.ram_read(version, &args[0])?)
+            }
+
             // ── Dynamic NDArray ───────────────────────────────────────
             IR::AllocateDynamicNDArrayMeta {
                 array_id,
@@ -413,4 +458,55 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
     }
 
     Ok(())
+}
+
+/// Whether the first operand of `ir` is a handle: an array version, a table
+/// or a memory version, which has no cell (`crate::ir_array`).
+pub(crate) fn handle_operand(ir: &IR) -> bool {
+    matches!(
+        ir,
+        IR::ArrayWrite(_) | IR::ArrayRead(_) | IR::RomRead { .. } | IR::RamWrite { .. } | IR::RamRead { .. }
+    )
+}
+
+/// The cells of the array version `handle`.
+fn version_cells<C>(arrays: &HashMap<StmtId, Vec<C>>, handle: Option<StmtId>) -> Result<&[C], ProvingError> {
+    let version = handle.expect("an array operation has a version operand");
+    arrays
+        .get(&version)
+        .map(Vec::as_slice)
+        .ok_or_else(|| ProvingError::synthesis(format!("statement {version} is not an array version")))
+}
+
+/// The RAM discipline (`crate::ir_array`): each memory version is consumed
+/// by at most one `RamWrite`, and read only before that write. Checked here
+/// for every backend, so each may lay out a memory's accesses in statement
+/// order.
+#[derive(Default)]
+struct RamDiscipline {
+    /// Versions a `RamWrite` has consumed, with the consuming statement.
+    consumed: HashMap<StmtId, StmtId>,
+    /// Versions defined so far.
+    defined: HashSet<StmtId>,
+}
+
+impl RamDiscipline {
+    fn consume(&mut self, from: StmtId, to: StmtId) -> Result<(), ProvingError> {
+        if let Some(earlier) = self.consumed.insert(from, to) {
+            return Err(ProvingError::synthesis(format!(
+                "memory version {from} written twice (statements {earlier} and {to}): the RAM discipline is broken"
+            )));
+        }
+        self.defined.insert(to);
+        Ok(())
+    }
+
+    fn check_current(&self, version: StmtId, read: StmtId) -> Result<(), ProvingError> {
+        match self.consumed.get(&version) {
+            Some(write) => Err(ProvingError::synthesis(format!(
+                "memory version {version} read at statement {read} after its write at {write}: the RAM discipline is broken"
+            ))),
+            None => Ok(()),
+        }
+    }
 }

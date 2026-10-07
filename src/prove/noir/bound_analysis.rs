@@ -32,6 +32,12 @@ pub type BoundMap = HashMap<u32, u64>;
 
 const U32_MAX: u64 = (1u64 << 32) - 1;
 
+/// The largest of the bounds, or `None` when one is unknown (or there are
+/// none).
+fn max_bound(bounds: &[Option<u64>]) -> Option<u64> {
+    bounds.iter().copied().try_fold(None, |acc: Option<u64>, b| b.map(|b| Some(acc.map_or(b, |a| a.max(b)))))?
+}
+
 /// Run the forward pass. Only bounds that provably fit `u32` are kept;
 /// anything wider is treated as unbounded (returns None implicitly).
 pub fn run(graph: &IRGraph) -> BoundMap {
@@ -214,6 +220,13 @@ pub fn run(graph: &IRGraph) -> BoundMap {
             | IR::InvokeExternal { .. }
             | IR::ExportExternalI { .. }
             | IR::ExportExternalF { .. } => None,
+
+            // Arrays, tables, memories: a handle's bound is the largest bound
+            // of the cells it can hold, which a read inherits (`crate::ir_array`).
+            IR::ArrayInit { .. } | IR::RomInit { .. } | IR::RamInit { .. } => max_bound(&arg_bounds),
+            IR::ArrayWrite(access) => max_bound(&[arg_bounds[0], arg_bounds[access.rank() + 1]]),
+            IR::RamWrite { .. } => max_bound(&[arg_bounds[0], arg_bounds[2]]),
+            IR::ArrayRead(_) | IR::RomRead { .. } | IR::RamRead { .. } => arg_bounds[0],
 
             // Memory / dynamic-NDArray reads return witness values — unknown bound.
             IR::ReadMemory { .. } | IR::ReadTable { .. } | IR::DynamicNDArrayGetItem { .. } => None,
