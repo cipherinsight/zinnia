@@ -1130,6 +1130,14 @@ fn axis_argmax_argmin(
 /// `path.segments = [Index(_)]`), return that parameter's name.
 /// Used to bind reduction outputs to `@requires(forall(<name>, ...))`
 /// preconditions for element-bound propagation.
+///
+/// Every cell of the array's storage (`builder/store.rs`), not only the
+/// first, must be such a read: a `forall` bound holds for the input's
+/// elements as passed, so it holds for an array all of whose cells are those
+/// elements (the input, a view or alias of it, which share its storage), and
+/// says nothing once a write has put another value in a cell. A storage
+/// whose cells are not known (after a write at a runtime position) has no
+/// bound this way.
 fn input_param_name_of_static_array(b: &IRBuilder, arr: &Value) -> Option<String> {
     use crate::circuit_input::PathSegment;
     use crate::ir_defs::IR;
@@ -1137,17 +1145,46 @@ fn input_param_name_of_static_array(b: &IRBuilder, arr: &Value) -> Option<String
         Value::StaticArray { segment_id, .. } => *segment_id,
         _ => return None,
     };
-    let first = b.known_cell_now(seg, 0)?;
-    let stmt_id = first.value_id().and_then(|_| first.stmt_id())?;
-    let stmt = b.stmts.get(stmt_id as usize)?;
-    let path = match &stmt.ir {
-        IR::ReadInteger { path, .. } | IR::ReadFloat { path, .. } => path,
-        _ => return None,
+    let param_of = |cell: &Value| -> Option<&str> {
+        let stmt = b.stmts.get(cell.value_id().and_then(|_| cell.stmt_id())? as usize)?;
+        let path = match &stmt.ir {
+            IR::ReadInteger { path, .. } | IR::ReadFloat { path, .. } => path,
+            _ => return None,
+        };
+        matches!(path.segments.first(), Some(PathSegment::Index(_))).then_some(path.param.as_str())
     };
-    if !matches!(path.segments.first(), Some(PathSegment::Index(_))) {
-        return None;
+    let param = param_of(b.known_cell_now(seg, 0)?)?;
+    (0..b.storage_len(seg))
+        .all(|address| b.known_cell_now(seg, address).and_then(param_of) == Some(param))
+        .then(|| param.to_string())
+}
+
+/// When an `array_in_range` fact was stated: the array's storages (a static
+/// complex array has two) and the store's write clock then. The fact is used
+/// only while none of those storages has been written since, so it does not
+/// outlive a write to the array, an alias or a view of it (which share its
+/// storage).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ArrayContents {
+    storages: Vec<u32>,
+    clock: u64,
+}
+
+impl ArrayContents {
+    pub(crate) fn of(b: &IRBuilder, arr: &Value) -> Option<ArrayContents> {
+        let storage = match arr {
+            Value::StaticArray { segment_id, .. } => *segment_id,
+            Value::DynamicNDArray(d) => d.segment_id,
+            _ => return None,
+        };
+        let storages = std::iter::once(storage).chain(b.imag_storage(storage)).collect();
+        Some(ArrayContents { storages, clock: b.storage_write_clock() })
     }
-    Some(path.param.clone())
+
+    /// The array still holds what it held when this was recorded.
+    fn unchanged(&self, b: &IRBuilder) -> bool {
+        self.storages.iter().all(|&s| !b.storage_written_since(s, self.clock))
+    }
 }
 
 /// Propagate `forall(<input>, in_range/lt_bound/is_nonneg)` element
@@ -1206,10 +1243,14 @@ pub(crate) fn read_array_element_bounds(b: &IRBuilder, arr: &Value) -> Option<(i
         }
     }
 
-    // (b) array_in_range fact scan keyed on the array's value_id.
-    // Works for derived / in-place-mutated arrays whose origin can't
-    // be traced back to a single input name.
-    if let Some(vid) = arr_vid {
+    // (b) array_in_range fact scan keyed on the array's value_id, for
+    // derived arrays whose origin can't be traced back to a single input
+    // name. A fact counts only while the array has not been written since
+    // it was stated (`ArrayContents`): an in-place write keeps the value_id.
+    let unchanged = arr_vid
+        .and_then(|vid| b.array_in_range_contents.get(&vid))
+        .is_some_and(|contents| contents.unchanged(b));
+    if let Some(vid) = arr_vid.filter(|_| unchanged) {
         for fact in b.facts.visible_facts() {
             if let ContractTerm::PredicateApp { kind, args } = fact {
                 if kind != "array_in_range" || args.len() != 3 {
@@ -1236,16 +1277,15 @@ pub(crate) fn read_array_element_bounds(b: &IRBuilder, arr: &Value) -> Option<(i
     }
 }
 
-/// Deposit an `array_in_range(arr_vid, lo, hi)` fact on `arr_vid`'s
-/// FactStack entry. Idempotent — duplicate facts are filtered out by
-/// `prove` consumers via the connectivity fast-path's set semantics.
-pub(crate) fn deposit_array_in_range_fact(
-    b: &mut IRBuilder,
-    arr_vid: crate::types::ValueId,
-    lo: i64,
-    hi: i64,
-) {
+/// Deposit an `array_in_range(arr, lo, hi)` fact on `arr`'s value_id,
+/// stating that every element of `arr` as it is now lies in `[lo, hi]`; when
+/// it was stated is recorded so that the fact is not used after a write
+/// (`read_array_element_bounds`). Idempotent — duplicate facts are filtered
+/// out by `prove` consumers via the connectivity fast-path's set semantics.
+pub(crate) fn deposit_array_in_range_fact(b: &mut IRBuilder, arr: &Value, lo: i64, hi: i64) {
     use crate::optim::predicates::formula::{ContractTerm, ContractVar};
+    let (Some(arr_vid), Some(contents)) = (arr.value_id(), ArrayContents::of(b, arr)) else { return };
+    b.array_in_range_contents.insert(arr_vid, contents);
     b.facts.insert_for(
         arr_vid,
         ContractTerm::PredicateApp {

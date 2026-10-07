@@ -181,8 +181,8 @@ pub fn try_apply_boolean_mask_read(b: &mut IRBuilder, arr: &Value, mask: &Value)
         leading_total,
         &trailing_dims,
     );
-    if let (Some((lo, hi)), Some(out_vid)) = (input_bounds, out.value_id()) {
-        super::reductions::deposit_array_in_range_fact(b, out_vid, lo, hi);
+    if let Some((lo, hi)) = input_bounds {
+        super::reductions::deposit_array_in_range_fact(b, &out, lo, hi);
     }
     // The kept elements keep their dtype (the compaction's selects do not).
     if let (true, Value::DynamicNDArray(d)) = (keeps_bool, &out) {
@@ -262,11 +262,7 @@ pub fn deposit_mask_write_post(b: &mut IRBuilder, pre: MaskWritePreBounds, updat
         val_bounds,
     } = pre;
     if let (Some((arr_lo, arr_hi)), Some((val_lo, val_hi))) = (arr_bounds, val_bounds) {
-        if let Some(out_vid) = updated.value_id() {
-            let new_lo = arr_lo.min(val_lo);
-            let new_hi = arr_hi.max(val_hi);
-            super::reductions::deposit_array_in_range_fact(b, out_vid, new_lo, new_hi);
-        }
+        super::reductions::deposit_array_in_range_fact(b, updated, arr_lo.min(val_lo), arr_hi.max(val_hi));
     }
 }
 

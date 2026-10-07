@@ -210,6 +210,11 @@ pub struct IRBuilder {
     /// but treating it as a Fact pinned the downstream slice shape and
     /// broke 0509's output type).
     pub scalar_value_bounds: HashMap<crate::types::ValueId, (i64, i64)>,
+    /// For each array carrying an `array_in_range` fact, what it held when
+    /// the fact was stated; the fact is used only while that is unchanged
+    /// (`helpers::static_array::reductions::ArrayContents`).
+    pub(crate) array_in_range_contents:
+        HashMap<crate::types::ValueId, crate::helpers::static_array::reductions::ArrayContents>,
     /// Which statements and segments hold values of NumPy's fixed-width
     /// integer types (`builder/fixed_width.rs`).
     fixed_width: fixed_width::FixedWidthValues,
@@ -259,6 +264,7 @@ impl IRBuilder {
             // builder construction so this matches the desired semantics.
             telemetry: crate::optim::telemetry::TelemetrySink::from_env(),
             scalar_value_bounds: HashMap::new(),
+            array_in_range_contents: HashMap::new(),
             fixed_width: fixed_width::FixedWidthValues::default(),
             bool_segments: HashSet::new(),
             bool_cells: HashSet::new(),

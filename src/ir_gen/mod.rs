@@ -568,27 +568,11 @@ impl IRGenerator {
                     bound_value.as_ref(),
                 );
             }
-            // Op-contract enrichment: also deposit an `array_in_range`
-            // fact on the input array's value_id so derived/mutated
-            // arrays can pick up the bound without relying on the
-            // payload-cache → input-name resolution path (which gets
-            // invalidated by in-place writes / op rewrites).
-            if req.kind == "forall_in_range" && req.args.len() == 3 {
-                if let Some(arr_val) = self.ctx.get(&req.args[0]) {
-                    if let (Some(arr_vid), Ok(lo), Ok(hi)) = (
-                        arr_val.value_id(),
-                        req.args[1].parse::<i64>(),
-                        req.args[2].parse::<i64>(),
-                    ) {
-                        crate::helpers::static_array::reductions::deposit_array_in_range_fact(
-                            &mut self.builder,
-                            arr_vid,
-                            lo,
-                            hi,
-                        );
-                    }
-                }
-            }
+            // No `array_in_range` fact is deposited for the input: the
+            // `forall` bound is found through the input's cells
+            // (`reductions::read_array_element_bounds`), which a write to the
+            // array, an alias or a view replaces. A fact keyed by the array's
+            // value_id outlived such writes (AF-1).
         }
 
         // Emit scalar-precondition atoms + their witness-time enforcement.

@@ -253,11 +253,9 @@ pub fn dyn_scalar_binary_op(
                 _ => None,
             };
             if let Some((Some(new_lo), Some(new_hi))) = computed {
-                if let Some(out_vid) = out_val.value_id() {
-                    crate::helpers::static_array::reductions::deposit_array_in_range_fact(
-                        b, out_vid, new_lo, new_hi,
-                    );
-                }
+                crate::helpers::static_array::reductions::deposit_array_in_range_fact(
+                    b, &out_val, new_lo, new_hi,
+                );
             }
         }
     }
