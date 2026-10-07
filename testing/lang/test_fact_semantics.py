@@ -193,3 +193,33 @@ def test_dynamic_input_extents_are_checked_per_axis():
     honest = np.zeros((2, 3), dtype=int)
     assert _prove_with_runtime_shape(program, honest, [2, 3])
     assert not _prove_with_runtime_shape(program, honest, [7, 0])
+
+
+# `prove()` minted every value as a Z3 integer, floats included. A float is a
+# point of the Q32 grid: as an integer, `x > -0.5` entailed `x >= 0`, so
+# `sqrt`'s domain check was dropped and sqrt(-0.25) had a proof; and
+# `-0.5 < x < 0.5` entailed `x == 0`, so `y / x` was rejected at compile time.
+
+@zk_circuit
+@requires(lambda x: x > -0.5)
+def sqrt_above_minus_half(x: float) -> float:
+    return np.sqrt(x)
+
+
+@zk_circuit
+@requires(lambda x: x > -0.5)
+@requires(lambda x: x < 0.5)
+def divide_by_small(x: float, y: float) -> float:
+    return y / x
+
+
+def test_float_precondition_does_not_imply_the_sqrt_domain():
+    satisfied, _, values = prove(sqrt_above_minus_half, 0.25)
+    assert satisfied and values == [round(0.5 * Q32)]
+    assert not prove(sqrt_above_minus_half, -0.25)[0]
+
+
+def test_float_precondition_does_not_force_a_divisor_to_zero():
+    satisfied, _, values = prove(divide_by_small, 0.25, 1.0)
+    assert satisfied and values == [round(4.0 * Q32)]
+    assert not prove(divide_by_small, 0.0, 1.0)[0]

@@ -29,10 +29,10 @@
 //!   time and re-asking is rare. Adding a `(term, fact-set, paths)`-keyed
 //!   cache later is straightforward; see the card README for the design.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use z3::ast::{Bool, Int};
+use z3::ast::{Bool, Int, Real};
 
 use crate::builder::IRBuilder;
 
@@ -109,15 +109,38 @@ pub fn prove(b: &IRBuilder, term: &ContractTerm) -> ProveOutcome {
         .into_iter()
         .cloned()
         .collect::<Vec<Fact>>();
-    prove_with_facts(term, &facts, &paths)
+    let floats = float_values(b, facts.iter().chain(&paths).chain(std::iter::once(term)));
+    prove_typed(term, &facts, &paths, &floats)
+}
+
+/// The values among `terms`' variables that `b`'s IR computes as floats.
+fn float_values<'a>(b: &IRBuilder, terms: impl Iterator<Item = &'a ContractTerm>) -> BTreeSet<ValueId> {
+    let mut values = BTreeSet::new();
+    for term in terms {
+        fact_walk_vars(term, &mut |var| {
+            if let ContractVar::Value(vid) = *var {
+                let float = b.value_id_to_stmt_id(vid).is_some_and(|sid| b.is_float_stmt(sid));
+                if float {
+                    values.insert(vid);
+                }
+            }
+        });
+    }
+    values
 }
 
 /// Same as [`prove`] but takes an explicit fact list and path-condition
 /// list. Useful for tests and for deferred queries against a stashed
-/// [`FactScope`].
+/// [`FactScope`]. Which values are floats is inferred from the terms alone
+/// (see [`substitution_for`]).
 pub fn prove_with_facts(term: &ContractTerm, facts: &[Fact], paths: &[Fact]) -> ProveOutcome {
+    prove_typed(term, facts, paths, &BTreeSet::new())
+}
+
+/// [`prove_with_facts`] with the values known to be floats.
+fn prove_typed(term: &ContractTerm, facts: &[Fact], paths: &[Fact], floats: &BTreeSet<ValueId>) -> ProveOutcome {
     PROVE_CALL_COUNT.fetch_add(1, Ordering::Relaxed);
-    let outcome = prove_with_facts_inner(term, facts, paths);
+    let outcome = prove_with_facts_inner(term, facts, paths, floats);
     match outcome {
         ProveOutcome::Proved => PROVE_PROVED_COUNT.fetch_add(1, Ordering::Relaxed),
         ProveOutcome::Disproved => PROVE_DISPROVED_COUNT.fetch_add(1, Ordering::Relaxed),
@@ -126,7 +149,7 @@ pub fn prove_with_facts(term: &ContractTerm, facts: &[Fact], paths: &[Fact]) -> 
     outcome
 }
 
-fn prove_with_facts_inner(term: &ContractTerm, facts: &[Fact], paths: &[Fact]) -> ProveOutcome {
+fn prove_with_facts_inner(term: &ContractTerm, facts: &[Fact], paths: &[Fact], floats: &BTreeSet<ValueId>) -> ProveOutcome {
     // Compound-term decomposition. For And/Or/Not we recurse on
     // operands and combine outcomes structurally:
     //
@@ -163,7 +186,7 @@ fn prove_with_facts_inner(term: &ContractTerm, facts: &[Fact], paths: &[Fact]) -
             let mut all_proved = true;
             let mut all_disproved = true;
             for sub in operands {
-                match prove_with_facts(sub, facts, paths) {
+                match prove_typed(sub, facts, paths, floats) {
                     ProveOutcome::Proved => {
                         any_proved = true;
                         all_disproved = false;
@@ -200,7 +223,7 @@ fn prove_with_facts_inner(term: &ContractTerm, facts: &[Fact], paths: &[Fact]) -
             };
         }
         ContractTerm::Not(inner) => {
-            return match prove_with_facts(inner, facts, paths) {
+            return match prove_typed(inner, facts, paths, floats) {
                 ProveOutcome::Proved => ProveOutcome::Disproved,
                 ProveOutcome::Disproved => ProveOutcome::Proved,
                 ProveOutcome::Unknown => ProveOutcome::Unknown,
@@ -210,13 +233,13 @@ fn prove_with_facts_inner(term: &ContractTerm, facts: &[Fact], paths: &[Fact]) -
     }
 
     // Atomic path — single Cmp / PredicateApp / Var / etc.
-    prove_atomic_with_facts(term, facts, paths)
+    prove_atomic_with_facts(term, facts, paths, floats)
 }
 
 /// Atomic-term prove. Runs the two pre-Z3 fast-paths first, then falls
 /// through to the Z3 solver. Callers go through [`prove_with_facts`],
 /// which decomposes compound terms and only reaches this for leaves.
-fn prove_atomic_with_facts(term: &ContractTerm, facts: &[Fact], paths: &[Fact]) -> ProveOutcome {
+fn prove_atomic_with_facts(term: &ContractTerm, facts: &[Fact], paths: &[Fact], floats: &BTreeSet<ValueId>) -> ProveOutcome {
     // Pre-Z3 fast-path 1: pure-opaque PredicateApp. If `term` is a
     // PredicateApp whose registered kind has no numeric meta-facts
     // (e.g. `is_sorted`), Z3 can only entail or contradict it via a
@@ -285,12 +308,12 @@ fn prove_atomic_with_facts(term: &ContractTerm, facts: &[Fact], paths: &[Fact]) 
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(z3_budget::PROVE_RLIMIT);
 
-    let entails = check_unsat(facts, paths, term, /* negate */ true, rlimit);
+    let entails = check_unsat(facts, paths, term, floats, /* negate */ true, rlimit);
     match entails {
         Some(true) => return ProveOutcome::Proved,
         Some(false) | None => {}
     }
-    let contradicts = check_unsat(facts, paths, term, /* negate */ false, rlimit);
+    let contradicts = check_unsat(facts, paths, term, floats, /* negate */ false, rlimit);
     match contradicts {
         Some(true) => ProveOutcome::Disproved,
         _ => ProveOutcome::Unknown,
@@ -544,37 +567,15 @@ fn check_unsat(
     facts: &[Fact],
     paths: &[Fact],
     term: &ContractTerm,
+    floats: &BTreeSet<ValueId>,
     negate: bool,
     rlimit: u32,
 ) -> Option<bool> {
     PROVE_Z3_INVOCATIONS.fetch_add(1, Ordering::Relaxed);
-    // Build a single Substitution over every Input / Value(vid) the
-    // assembled formula references. Fresh symbolic Ints per name/value_id;
-    // the SMT layer then sees the names by string identity (same
-    // Input(name) maps to the same Int symbol across the assertion set,
-    // and the same Value(vid) maps to the same Int symbol too).
-    let mut input_seen: BTreeMap<String, Int> = BTreeMap::new();
-    let mut value_seen: BTreeMap<ValueId, Int> = BTreeMap::new();
-    let mut shape_seen: BTreeMap<String, Int> = BTreeMap::new();
-
-    for f in facts {
-        collect_vars(f, &mut input_seen, &mut value_seen, &mut shape_seen);
-    }
-    for p in paths {
-        collect_vars(p, &mut input_seen, &mut value_seen, &mut shape_seen);
-    }
-    collect_vars(term, &mut input_seen, &mut value_seen, &mut shape_seen);
-
-    let mut subst = Substitution::new();
-    for (name, int) in &input_seen {
-        subst = subst.with_input(name.clone(), int.clone());
-    }
-    for (vid, int) in &value_seen {
-        subst = subst.with_value_id(*vid, int.clone());
-    }
-    for (name, int) in &shape_seen {
-        subst = subst.with_shape_param(name.clone(), int.clone());
-    }
+    // One symbol per Input / Value(vid) / shape parameter the assembled
+    // formula references, shared by every assertion.
+    let terms: Vec<&ContractTerm> = facts.iter().chain(paths).chain(std::iter::once(term)).collect();
+    let subst = substitution_for(&terms, floats);
 
     let solver = z3_budget::solver(rlimit);
 
@@ -626,26 +627,9 @@ fn optimize_shape_param(
     maximize: bool,
     rlimit: u32,
 ) -> Option<i64> {
-    let mut input_seen: BTreeMap<String, Int> = BTreeMap::new();
-    let mut value_seen: BTreeMap<ValueId, Int> = BTreeMap::new();
-    let mut shape_seen: BTreeMap<String, Int> = BTreeMap::new();
-    for f in facts {
-        collect_vars(f, &mut input_seen, &mut value_seen, &mut shape_seen);
-    }
-    shape_seen
-        .entry(symbol.to_string())
-        .or_insert_with(|| Int::fresh_const(&format!("prove_shape_{symbol}_")));
-
-    let mut subst = Substitution::new();
-    for (name, int) in &input_seen {
-        subst = subst.with_input(name.clone(), int.clone());
-    }
-    for (vid, int) in &value_seen {
-        subst = subst.with_value_id(*vid, int.clone());
-    }
-    for (name, int) in &shape_seen {
-        subst = subst.with_shape_param(name.clone(), int.clone());
-    }
+    let symbol_term = ContractTerm::Var(ContractVar::ShapeParam(symbol.to_string()));
+    let terms: Vec<&ContractTerm> = facts.iter().chain(std::iter::once(&symbol_term)).collect();
+    let subst = substitution_for(&terms, &BTreeSet::new());
 
     let opt = z3_budget::optimize(rlimit);
     for f in facts {
@@ -676,51 +660,81 @@ fn optimize_shape_param(
     }
 }
 
-/// Walk `term` and record every distinct `Input(name)` / `Value(vid)` leaf,
-/// minting a fresh Z3 `Int` for each. Idempotent: a name/value_id seen
-/// twice reuses the existing entry.
-fn collect_vars(
-    term: &ContractTerm,
-    inputs: &mut BTreeMap<String, Int>,
-    values: &mut BTreeMap<ValueId, Int>,
-    shapes: &mut BTreeMap<String, Int>,
-) {
+/// Z3 symbols for every variable of `terms`, minted in order of first
+/// appearance: a `Real` for a float, an `Int` otherwise; shape parameters
+/// are `Int`s. The floats are `floats` and, to a fixpoint, every variable
+/// compared or combined in arithmetic with a float literal or another real
+/// variable. A float is a point of the Q32 grid, not an integer: as an
+/// `Int`, the fact `x > -0.5` would entail `x >= 0` (and `-0.5 < x < 0.5`
+/// would entail `x == 0`). Modelling an integer as a real only forgets its
+/// integrality, which is sound.
+fn substitution_for(terms: &[&ContractTerm], floats: &BTreeSet<ValueId>) -> Substitution {
+    let mut reals: HashSet<ContractVar> = floats.iter().map(|vid| ContractVar::Value(*vid)).collect();
+    loop {
+        let before = reals.len();
+        for term in terms {
+            mark_reals(term, &mut reals);
+        }
+        if reals.len() == before {
+            break;
+        }
+    }
+    let mut subst = Substitution::new();
+    let mut seen: HashSet<ContractVar> = HashSet::new();
+    for term in terms {
+        fact_walk_vars(term, &mut |var| {
+            if !seen.insert(var.clone()) {
+                return;
+            }
+            subst = bind(std::mem::take(&mut subst), var, reals.contains(var));
+        });
+    }
+    subst
+}
+
+/// `subst` with a fresh symbol for `var`: a `Real` when `real`, else an `Int`.
+fn bind(subst: Substitution, var: &ContractVar, real: bool) -> Substitution {
+    use crate::optim::smt_encoding::Z3Term;
+    let fresh = |name: String| if real { Z3Term::Real(Real::fresh_const(&name)) } else { Z3Term::Int(Int::fresh_const(&name)) };
+    match var {
+        ContractVar::Input(name) => subst.with_input_term(name.clone(), fresh(format!("prove_in_{name}_"))),
+        ContractVar::Value(vid) => subst.with_value_id_term(*vid, fresh(format!("prove_v{}_", vid.0))),
+        ContractVar::ShapeParam(name) => subst.with_shape_param(name.clone(), Int::fresh_const(&format!("prove_shape_{name}_"))),
+        ContractVar::Output | ContractVar::Formal(_) => subst,
+    }
+}
+
+/// Mark as real every variable of a comparison or an arithmetic term one of
+/// whose sides mentions a float literal or a real variable.
+fn mark_reals(term: &ContractTerm, reals: &mut HashSet<ContractVar>) {
     match term {
-        ContractTerm::Var(ContractVar::Input(name)) => {
-            inputs
-                .entry(name.clone())
-                .or_insert_with(|| Int::fresh_const(&format!("prove_in_{name}_")));
-        }
-        ContractTerm::Var(ContractVar::Value(vid)) => {
-            values
-                .entry(*vid)
-                .or_insert_with(|| Int::fresh_const(&format!("prove_v{}_", vid.0)));
-        }
-        ContractTerm::Var(ContractVar::ShapeParam(name)) => {
-            shapes
-                .entry(name.clone())
-                .or_insert_with(|| Int::fresh_const(&format!("prove_shape_{name}_")));
-        }
-        ContractTerm::Var(ContractVar::Output)
-        | ContractTerm::Var(ContractVar::Formal(_))
-        | ContractTerm::LitInt(_)
-        | ContractTerm::LitFloat(_)
-        | ContractTerm::LitBool(_) => {}
         ContractTerm::Arith { lhs, rhs, .. } | ContractTerm::Cmp { lhs, rhs, .. } => {
-            collect_vars(lhs, inputs, values, shapes);
-            collect_vars(rhs, inputs, values, shapes);
-        }
-        ContractTerm::BoolComb { operands, .. } => {
-            for o in operands {
-                collect_vars(o, inputs, values, shapes);
+            if mentions_real(lhs, reals) || mentions_real(rhs, reals) {
+                for side in [lhs, rhs] {
+                    fact_walk_vars(side, &mut |var| {
+                        if !matches!(var, ContractVar::ShapeParam(_)) {
+                            reals.insert(var.clone());
+                        }
+                    });
+                }
             }
+            mark_reals(lhs, reals);
+            mark_reals(rhs, reals);
         }
-        ContractTerm::Not(inner) => collect_vars(inner, inputs, values, shapes),
-        ContractTerm::PredicateApp { args, .. } => {
-            for a in args {
-                collect_vars(a, inputs, values, shapes);
-            }
+        ContractTerm::BoolComb { operands, .. } => operands.iter().for_each(|o| mark_reals(o, reals)),
+        ContractTerm::Not(inner) => mark_reals(inner, reals),
+        _ => {}
+    }
+}
+
+fn mentions_real(term: &ContractTerm, reals: &HashSet<ContractVar>) -> bool {
+    match term {
+        ContractTerm::LitFloat(_) => true,
+        ContractTerm::Var(var) => reals.contains(var),
+        ContractTerm::Arith { lhs, rhs, .. } | ContractTerm::Cmp { lhs, rhs, .. } => {
+            mentions_real(lhs, reals) || mentions_real(rhs, reals)
         }
+        _ => false,
     }
 }
 

@@ -1092,6 +1092,12 @@ impl IRBuilder {
     /// (sound for the witness-fallback path: the worst case is using an
     /// `*I` op on a wire that would have benefited from an `*F` form,
     /// which still produces a deterministic boolean answer).
+    /// Whether statement `sid` computes a float (see
+    /// [`Self::value_from_stmt_id_for_value`]).
+    pub(crate) fn is_float_stmt(&self, sid: StmtId) -> bool {
+        matches!(self.value_from_stmt_id_for_value(sid, crate::types::ValueId(0)), Value::Float(_))
+    }
+
     fn value_from_stmt_id_for_value(&self, sid: StmtId, value_id: crate::types::ValueId) -> Value {
         let stmt = match self.stmts.get(sid as usize) {
             Some(s) => s,
