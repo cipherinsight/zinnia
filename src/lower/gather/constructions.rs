@@ -585,7 +585,7 @@ impl IndexedRead {
         let indices: Vec<StmtId> = group.lanes.iter().map(|l| l.own[0]).collect();
         let cost: u64 = indices
             .iter()
-            .zip(index_reads(cx, &indices))
+            .zip(index_reads(cx, group, &indices))
             .map(|(&index, reads)| self.cost(cx, n, index, reads))
             .sum();
         let candidate = |proves: bool| {
@@ -673,14 +673,14 @@ impl Emitter for IndexedReadEmitter {
     }
 }
 
-/// For each index, the number of element reads at it over every element
-/// group of the program (reads at one index share its check).
-fn index_reads(cx: &Context, indices: &[StmtId]) -> Vec<u64> {
+/// For each index, the number of element reads at it over the element
+/// groups that share costs with `group` (reads at one index share its
+/// check; `Context::sharing_groups`).
+fn index_reads(cx: &Context, group: &Group, indices: &[StmtId]) -> Vec<u64> {
     indices
         .iter()
         .map(|index| {
-            cx.groups
-                .iter()
+            cx.sharing_groups(group)
                 .filter(|g| g.kind == OpKind::Element)
                 .flat_map(|g| &g.lanes)
                 .filter(|lane| lane.own.first() == Some(index))

@@ -107,6 +107,10 @@ pub struct Context<'a> {
     pub(super) facts: &'a FreeFacts<'a>,
     pub(super) users: &'a HashMap<StmtId, Vec<StmtId>>,
     pub(super) lane_group: &'a HashMap<StmtId, GroupId>,
+    /// Price every group as if it were the only one (the local selection,
+    /// `ZINNIA_ABLATE_JOINT`): a cost shared with other groups is not
+    /// divided among them ([`Context::sharing_groups`]).
+    pub(super) alone: bool,
 }
 
 impl Context<'_> {
@@ -124,6 +128,14 @@ impl Context<'_> {
     /// The statements that read `id`'s value.
     pub fn users(&self, id: StmtId) -> &[StmtId] {
         self.users.get(&id).map_or(&[], Vec::as_slice)
+    }
+
+    /// The groups that share a cost with `group` in a construction's price
+    /// (the element reads at one index share its equality tests, the table
+    /// reads the tables' fixed columns): every group of the program, or
+    /// `group` alone when each group is priced on its own.
+    pub fn sharing_groups<'b>(&'b self, group: &'b Group) -> impl Iterator<Item = &'b Group> + 'b {
+        self.groups.iter().filter(move |g| !self.alone || g.id == group.id)
     }
 
     /// The group whose lane `stmt` is.

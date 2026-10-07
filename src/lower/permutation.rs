@@ -97,10 +97,11 @@ fn lane_and_fact(group: &Group) -> Vec<Requirement> {
 }
 
 /// Whether a permutation scatter over the same values exists (its hits are
-/// the check's equality tests).
+/// the check's equality tests) among the groups sharing costs with `group`.
 fn scatter_shares_tests(group: &Group, cx: &Context) -> bool {
     let n = group.shared.len();
-    cx.groups.iter().any(|g| g.kind == OpKind::PermutationScatter && g.shared.len() == 2 * n && g.shared[..n] == group.shared[..])
+    cx.sharing_groups(group)
+        .any(|g| g.kind == OpKind::PermutationScatter && g.shared.len() == 2 * n && g.shared[..n] == group.shared[..])
 }
 
 /// `is_permutation(p)` by hit counts (`emit_hit_counts`). Preconditions:

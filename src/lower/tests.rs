@@ -1,6 +1,8 @@
 //! The framework: selection (exact against greedy, sharing, acyclic
 //! justification) and the driver's discharge of checks.
 
+use std::any::Any;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::builder::IRBuilder;
@@ -420,4 +422,299 @@ fn list_ids_are_numbered_per_lowering() {
         ListId::range(3)
     };
     assert_eq!(first(0), first(5));
+}
+
+// ── Local selection (measurement only, `ZINNIA_ABLATE_JOINT`) ───────────
+
+fn joint() -> super::emit::Options {
+    super::emit::Options::default()
+}
+
+fn local() -> super::emit::Options {
+    super::emit::Options { local: true, ..Default::default() }
+}
+
+fn lower_opts(
+    graph: &IRGraph,
+    target: Target,
+    constructions: &[&dyn Construction],
+    options: &super::emit::Options,
+) -> IRGraph {
+    super::emit::lower_with(graph, target, constructions, options).expect("lanes to lower")
+}
+
+/// The challenge costs `C` once. Alone, a group does not pay it for a saving
+/// of `0.6 C`; together, two or three groups would, and the compiler takes
+/// it. Deciding each group on its own, no group takes it. A saving larger
+/// than `C` makes every group take it alone (and the challenge is still one
+/// requirement of the program).
+#[test]
+fn locally_each_group_pays_the_challenge_alone() {
+    let c = super::challenge::HALO2_BASE_CHALLENGE_COST;
+    let plain = ElementAt { element: 0, cost: c * 7 / 10, challenged: false };
+    let challenged = ElementAt { element: 1, cost: c / 10, challenged: true };
+    let lowered = |groups, options: &super::emit::Options| {
+        lower_opts(&independent_sorts(groups), Target::Halo2Base, &[&plain, &challenged], options)
+    };
+    assert_eq!(challenged_groups(&lowered(3, &joint())), 3);
+    assert_eq!(challenged_groups(&lowered(3, &local())), 0, "a group alone does not pay the challenge");
+    let costly = ElementAt { element: 0, cost: c * 2, challenged: false };
+    let graph = independent_sorts(3);
+    assert_eq!(challenged_groups(&lower_opts(&graph, Target::Halo2Base, &[&costly, &challenged], &local())), 3);
+}
+
+/// A test construction for one group (`on`): its lane is element `element`,
+/// at `cost`; it may need or produce the shared value `INDEX`'s statement
+/// value `SHARED` (a `SharedAt` of `at`), produce it without a lane
+/// (`producer`), or prove `0 <= x < 4` for `x = at`. Equal `name`s make
+/// candidates variants of one construction.
+struct OnGroup {
+    name: &'static str,
+    on: usize,
+    element: usize,
+    cost: u64,
+    needs_shared: bool,
+    producer: bool,
+    proves: bool,
+    needs_fact: bool,
+    at: StmtId,
+}
+
+const SHARED: &str = "test: shared";
+
+impl OnGroup {
+    fn new(name: &'static str, on: usize, element: usize, cost: u64, at: StmtId) -> OnGroup {
+        OnGroup { name, on, element, cost, needs_shared: false, producer: false, proves: false, needs_fact: false, at }
+    }
+}
+
+struct SharedProducerEmitter;
+
+impl Emitter for SharedProducerEmitter {
+    fn lane(&mut self, _b: &mut IRBuilder, _cx: &mut EmitCx, _lane: &Lane) -> Value {
+        unreachable!("no lane")
+    }
+
+    fn shared_at(&mut self, _b: &mut IRBuilder, _cx: &mut EmitCx, _at: StmtId, _name: &'static str) -> Rc<dyn Any> {
+        Rc::new(())
+    }
+}
+
+/// The lane is element `.0`; the shared value is read first when `.1`.
+struct ElementReadingShared(StmtId, Option<StmtId>);
+
+impl Emitter for ElementReadingShared {
+    fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, _lane: &Lane) -> Value {
+        if let Some(at) = self.1 {
+            cx.shared_at::<()>(b, at, SHARED);
+        }
+        cx.value(self.0)
+    }
+}
+
+impl Construction for OnGroup {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn candidates(&self, group: &Group, _cx: &Context) -> Vec<Candidate> {
+        if group.id != self.on {
+            return Vec::new();
+        }
+        let shared = Requirement::SharedAt { at: self.at, name: SHARED };
+        if self.producer {
+            return vec![Candidate { pre: Vec::new(), post: vec![shared], cost: self.cost, emitter: Box::new(SharedProducerEmitter) }];
+        }
+        let mut pre = Vec::new();
+        let mut post: Vec<Requirement> = group.lanes.iter().map(|l| Requirement::Lane(l.stmt)).collect();
+        if self.needs_shared {
+            pre.push(shared);
+        }
+        if self.needs_fact {
+            pre.push(index_fact(self.at));
+        }
+        if self.proves {
+            post.push(index_fact(self.at));
+        }
+        let reads = self.needs_shared.then_some(self.at);
+        vec![Candidate { pre, post, cost: self.cost, emitter: Box::new(ElementReadingShared(group.shared[self.element], reads)) }]
+    }
+}
+
+/// `x` read first (checked `0 <= x < 4` when `checked`), then `groups`
+/// independent sorts of two elements.
+fn sorts_after_x(groups: usize, checked: bool) -> (IRGraph, StmtId) {
+    let mut b = IRBuilder::new();
+    let x = b.ir_read_integer(InputPath::new("x", vec![]), false);
+    if checked {
+        let four = b.ir_constant_int(4);
+        b.ir_assert_u128_lt(&x, &four);
+    }
+    for g in 0..groups {
+        let elements: Arc<[Value]> =
+            (0..2).map(|j| b.ir_read_integer(InputPath::new(format!("a{g}_{j}"), vec![]), false)).collect();
+        let out = b.ir_sorted(&elements, 0, false);
+        b.ir_expose_public_i(&out);
+    }
+    (b.export_ir_graph(), x.stmt_id().expect("a statement"))
+}
+
+/// Two groups, each reading a shared value of `x` (built by either group's
+/// lane-less producer, 40) for 10, or not at all for 35. Together the value
+/// pays (60 < 70); alone it does not (50 > 35).
+#[test]
+fn locally_a_shared_value_is_paid_by_each_group() {
+    let (graph, x) = sorts_after_x(2, false);
+    let mut constructions: Vec<OnGroup> = Vec::new();
+    for g in 0..2 {
+        constructions.push(OnGroup { needs_shared: true, ..OnGroup::new("test: reads shared", g, 1, 10, x) });
+        constructions.push(OnGroup { producer: true, ..OnGroup::new("test: shared producer", g, 0, 40, x) });
+        constructions.push(OnGroup::new("test: alone", g, 0, 35, x));
+    }
+    let all: Vec<&dyn Construction> = constructions.iter().map(|c| c as &dyn Construction).collect();
+    assert_eq!(challenged_groups(&lower_opts(&graph, Target::Halo2Base, &all, &joint())), 2, "the shared value pays together");
+    assert_eq!(challenged_groups(&lower_opts(&graph, Target::Halo2Base, &all, &local())), 0, "alone it does not");
+}
+
+/// The program checks `0 <= x < 4` (8). Each of two groups lowers plainly
+/// (4, element 0) or by a node that also proves the check (10, element 1).
+/// Together one proving node pays (10 + 4 < 4 + 4 + 8) and drops the check
+/// for both. Alone, each group counts the check against its own plain node
+/// (4 + 8 > 10), so both take the proving node; the check is dropped once.
+#[test]
+fn locally_each_group_counts_a_program_check_it_could_discharge() {
+    let (graph, x) = sorts_after_x(2, true);
+    let mut constructions: Vec<OnGroup> = Vec::new();
+    for g in 0..2 {
+        constructions.push(OnGroup::new("test: plain", g, 0, 4, x));
+        constructions.push(OnGroup { proves: true, ..OnGroup::new("test: proving", g, 1, 10, x) });
+    }
+    let all: Vec<&dyn Construction> = constructions.iter().map(|c| c as &dyn Construction).collect();
+    let joint_lowered = lower_opts(&graph, Target::Halo2Base, &all, &joint());
+    assert_eq!((challenged_groups(&joint_lowered), index_checks(&joint_lowered)), (1, 0));
+    let local_lowered = lower_opts(&graph, Target::Halo2Base, &all, &local());
+    assert_eq!((challenged_groups(&local_lowered), index_checks(&local_lowered)), (2, 0));
+}
+
+/// Group 0 offers a plain node (1) and one that also exposes a shared value
+/// (3); group 1 reads that value (1) or lowers alone (10). When the exposing
+/// node is a variant of the plain one (the same construction), group 1 takes
+/// it at its full price (4 < 10) and it replaces the plain node; when it is
+/// another construction, group 0's decision stands and group 1 lowers alone.
+#[test]
+fn locally_a_later_group_may_only_extend_an_earlier_decision() {
+    struct Exposing(&'static str, StmtId);
+    impl Construction for Exposing {
+        fn name(&self) -> &'static str {
+            self.0
+        }
+        fn candidates(&self, group: &Group, _cx: &Context) -> Vec<Candidate> {
+            if group.id != 0 {
+                return Vec::new();
+            }
+            let mut post: Vec<Requirement> = group.lanes.iter().map(|l| Requirement::Lane(l.stmt)).collect();
+            post.push(Requirement::SharedAt { at: self.1, name: SHARED });
+            vec![Candidate { pre: Vec::new(), post, cost: 3, emitter: Box::new(ExposingEmitter(group.shared[1])) }]
+        }
+    }
+    struct ExposingEmitter(StmtId);
+    impl Emitter for ExposingEmitter {
+        fn lane(&mut self, _b: &mut IRBuilder, cx: &mut EmitCx, _lane: &Lane) -> Value {
+            cx.value(self.0)
+        }
+        fn shared_at(&mut self, _b: &mut IRBuilder, _cx: &mut EmitCx, _at: StmtId, _name: &'static str) -> Rc<dyn Any> {
+            Rc::new(())
+        }
+    }
+    let (graph, x) = sorts_after_x(2, false);
+    let plain = OnGroup::new("test: group 0", 0, 0, 1, x);
+    let reading = OnGroup { needs_shared: true, ..OnGroup::new("test: group 1", 1, 1, 1, x) };
+    let alone = OnGroup::new("test: group 1 alone", 1, 0, 10, x);
+    let variant = Exposing("test: group 0", x);
+    let other = Exposing("test: group 0 exposing", x);
+    let with_variant: [&dyn Construction; 4] = [&plain, &variant, &reading, &alone];
+    assert_eq!(challenged_groups(&lower_opts(&graph, Target::Halo2Base, &with_variant, &local())), 2);
+    let with_other: [&dyn Construction; 4] = [&plain, &other, &reading, &alone];
+    assert_eq!(challenged_groups(&lower_opts(&graph, Target::Halo2Base, &with_other, &joint())), 2);
+    assert_eq!(challenged_groups(&lower_opts(&graph, Target::Halo2Base, &with_other, &local())), 0);
+}
+
+/// A node offered for group 0 that also produces group 1's lane (as the RAM
+/// trace of a written array produces its reads), for `cost`, against each
+/// group's own node (4). Together it pays from 8 down; group 0 alone takes it
+/// only below 4, and then it decides group 1 too.
+#[test]
+fn locally_a_node_producing_two_groups_lanes_decides_both() {
+    struct Both(u64);
+    impl Construction for Both {
+        fn name(&self) -> &'static str {
+            "test: both groups"
+        }
+        fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+            if group.id != 0 {
+                return Vec::new();
+            }
+            let second: std::collections::HashMap<StmtId, StmtId> =
+                cx.groups.iter().flat_map(|g| g.lanes.iter().map(move |l| (l.stmt, g.shared[1]))).collect();
+            let post = second.keys().map(|&s| Requirement::Lane(s)).collect();
+            vec![Candidate { pre: Vec::new(), post, cost: self.0, emitter: Box::new(SecondEmitter(second)) }]
+        }
+    }
+    struct SecondEmitter(std::collections::HashMap<StmtId, StmtId>);
+    impl Emitter for SecondEmitter {
+        fn lane(&mut self, _b: &mut IRBuilder, cx: &mut EmitCx, lane: &Lane) -> Value {
+            cx.value(self.0[&lane.stmt])
+        }
+    }
+    let (graph, x) = sorts_after_x(2, false);
+    let own: Vec<OnGroup> = (0..2).map(|g| OnGroup::new("test: own", g, 0, 4, x)).collect();
+    for (cost, joint_groups, local_groups) in [(5, 2, 0), (3, 2, 2)] {
+        let both = Both(cost);
+        let all: [&dyn Construction; 3] = [&own[0], &own[1], &both];
+        assert_eq!(challenged_groups(&lower_opts(&graph, Target::Halo2Base, &all, &joint())), joint_groups);
+        assert_eq!(challenged_groups(&lower_opts(&graph, Target::Halo2Base, &all, &local())), local_groups, "cost {cost}");
+    }
+}
+
+// ── Fixed constructions (measurement only, `ZINNIA_FORCE_CONSTRUCTION`) ─
+
+fn forced(names: &[&str]) -> super::emit::Options {
+    super::emit::Options { forcing: super::forcing::Forcing::of(names), ..Default::default() }
+}
+
+/// A forced construction is used even where it costs more; one that cannot
+/// be selected (a challenge on Noir) is released for its group, which is
+/// then lowered as usual.
+#[test]
+fn a_forced_construction_is_used_where_it_can_be_selected() {
+    let c = super::challenge::HALO2_BASE_CHALLENGE_COST;
+    let plain = ElementAt { element: 0, cost: c / 10, challenged: false };
+    let challenged = ElementAt { element: 1, cost: c / 10, challenged: true };
+    let graph = independent_sorts(2);
+    let lowered = |target, options: &super::emit::Options| lower_opts(&graph, target, &[&plain, &challenged], options);
+    assert_eq!(challenged_groups(&lowered(Target::Halo2Base, &joint())), 0);
+    assert_eq!(challenged_groups(&lowered(Target::Halo2Base, &forced(&["test: challenged"]))), 2);
+    assert_eq!(challenged_groups(&lowered(Target::Noir, &forced(&["test: challenged"]))), 0, "released on Noir");
+}
+
+/// A construction applies to a group only when its candidates produce every
+/// lane; the configurations expand to registered constructions; an unknown
+/// name is refused.
+#[test]
+fn forcing_names_and_configurations() {
+    use super::forcing::{Forcing, CONFIGURATIONS};
+    let names: Vec<&str> = super::registry().iter().map(|c| c.name()).collect();
+    for (configuration, families) in CONFIGURATIONS {
+        for (family, listed) in *families {
+            assert!(listed.iter().all(|name| names.contains(name)), "{listed:?}");
+            assert!(Forcing::parse(&format!("@{configuration}")).fixes_family(family));
+        }
+    }
+    let mixed = Forcing::parse("@delegate, sort: network");
+    assert_eq!(mixed.names().last().map(String::as_str), Some("sort: network"));
+    assert!(!mixed.fixes_family("sort"));
+    assert!(std::panic::catch_unwind(|| Forcing::parse("@nothing")).is_err());
+    assert!(std::panic::catch_unwind(|| Forcing::parse("sort: no such")).is_err());
+    assert!(Forcing::keeps("memory: element by index bits", "memory: index bits"));
+    assert!(!Forcing::keeps("memory: element by table read", "memory: index bits"));
 }
