@@ -42,6 +42,20 @@ pub const OPTIMIZER_RESOLVER_RLIMIT: u32 = 5_000_000;
 /// million steps (0.1–0.25 s on an idle machine).
 pub const PROVE_RLIMIT: u32 = 10_000_000;
 
+/// Steps for all value-reasoning queries of one compilation together (every
+/// query except the construction selection). Each query is bounded by its own
+/// limit above, but a program can issue thousands of them: Pythran `ccopy`
+/// issues ~1,000 bound queries during IR generation, two thirds of which use
+/// their whole million steps and answer `Unknown`, so the compilation spent
+/// minutes learning nothing. Once a compilation has used this many steps, every
+/// further reasoning query answers `Unknown` without calling Z3, exactly as
+/// under [`smt_ablated`]: the callers' fallbacks (intervals, a check emitted in
+/// the circuit) take over, so the circuit stays sound and the compilation's
+/// cost is bounded. The count is per compilation thread and the queries come in
+/// a deterministic order, so whether and where the budget runs out is the same
+/// on every run. Override with `ZINNIA_SMT_TOTAL_RLIMIT` (measurement).
+pub const TOTAL_REASONING_RLIMIT: u64 = 200_000_000;
+
 /// Steps for one construction-selection problem (`lower::select`); it
 /// replaced a 10 s timeout. On the performance set the costliest takes about
 /// 5.8 million steps (0.3–0.5 s).
@@ -82,42 +96,69 @@ pub fn smt_ablated() -> bool {
     *ABLATED.get_or_init(|| std::env::var("ZINNIA_ABLATE_SMT").is_ok_and(|v| v.trim() == "1"))
 }
 
-/// `solver.check()`, traced (see [`traced`]); `Unknown` under [`smt_ablated`].
-pub fn check(site: &str, solver: &Solver) -> SatResult {
+fn total_reasoning_rlimit() -> u64 {
+    static LIMIT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *LIMIT.get_or_init(|| {
+        std::env::var("ZINNIA_SMT_TOTAL_RLIMIT").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(TOTAL_REASONING_RLIMIT)
+    })
+}
+
+thread_local! {
+    /// Steps the reasoning queries of this thread's compilation have used.
+    static REASONING_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Run a value-reasoning query: `Unknown` without calling Z3 under
+/// [`smt_ablated`] or once this compilation's [`TOTAL_REASONING_RLIMIT`] is
+/// spent; otherwise the query (traced), with its steps charged to the budget.
+fn reasoning(site: &str, stats: impl Fn() -> Statistics, check: impl FnOnce() -> SatResult) -> SatResult {
     if smt_ablated() {
         return SatResult::Unknown;
     }
-    traced(site, || solver.get_statistics(), || solver.check())
+    let spent = REASONING_STEPS.with(|s| s.get());
+    if spent >= total_reasoning_rlimit() {
+        if std::env::var_os("ZINNIA_Z3_TRACE").is_some() {
+            eprintln!("[zinnia-z3] site={site} result=Unknown rlimit=0 ms=0 (compilation budget spent)");
+        }
+        return SatResult::Unknown;
+    }
+    let before = step_count(&stats());
+    let result = traced(site, &stats, check);
+    let used = step_count(&stats()).saturating_sub(before);
+    REASONING_STEPS.with(|s| s.set(spent.saturating_add(used)));
+    result
+}
+
+/// `solver.check()`, traced (see [`traced`]); `Unknown` under [`smt_ablated`]
+/// or once the compilation's reasoning budget is spent.
+pub fn check(site: &str, solver: &Solver) -> SatResult {
+    reasoning(site, || solver.get_statistics(), || solver.check())
 }
 
 /// `solver.check_assumptions(assumptions)`, traced (see [`traced`]);
-/// `Unknown` under [`smt_ablated`].
+/// `Unknown` under [`smt_ablated`] or once the compilation's reasoning budget
+/// is spent.
 pub fn check_assuming(site: &str, solver: &Solver, assumptions: &[Bool]) -> SatResult {
-    if smt_ablated() {
-        return SatResult::Unknown;
-    }
-    traced(site, || solver.get_statistics(), || solver.check_assumptions(assumptions))
+    reasoning(site, || solver.get_statistics(), || solver.check_assumptions(assumptions))
 }
 
 /// `opt.check(&[])` for a bound query (the extreme of a value), traced (see
-/// [`traced`]); `Unknown` under [`smt_ablated`].
+/// [`traced`]); `Unknown` under [`smt_ablated`] or once the compilation's
+/// reasoning budget is spent.
 pub fn check_optimize(site: &str, opt: &Optimize) -> SatResult {
-    if smt_ablated() {
-        return SatResult::Unknown;
-    }
-    traced(site, || opt.get_statistics(), || opt.check(&[]))
+    reasoning(site, || opt.get_statistics(), || opt.check(&[]))
 }
 
 /// `opt.check(&[])` for the construction selection (`lower::select`), traced
 /// (see [`traced`]). Not reasoning about values, so [`smt_ablated`] leaves it on.
 pub fn check_selection(site: &str, opt: &Optimize) -> SatResult {
-    traced(site, || opt.get_statistics(), || opt.check(&[]))
+    traced(site, &|| opt.get_statistics(), || opt.check(&[]))
 }
 
 /// Run `check`. With `ZINNIA_Z3_TRACE` set, also print one stderr line: the
 /// call site, the answer, the steps the check used and its wall time. This is
 /// how the limits above are calibrated; it has no effect on the answers.
-fn traced(site: &str, stats: impl Fn() -> Statistics, check: impl FnOnce() -> SatResult) -> SatResult {
+fn traced(site: &str, stats: &impl Fn() -> Statistics, check: impl FnOnce() -> SatResult) -> SatResult {
     if std::env::var_os("ZINNIA_Z3_TRACE").is_none() {
         return check();
     }
