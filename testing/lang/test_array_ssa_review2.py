@@ -599,19 +599,32 @@ def test_fuzz_a_multidimensional_merge_of_different_shapes_is_rejected(name):
         compile_kernel(FUZZ_SHAPES[name])
 
 
-def test_fuzz_a_branch_only_name_bound_again_in_a_guarded_loop_is_rejected():
-    with pytest.raises(ZinniaException, match="bound in one branch"):
-        compile_kernel(FUZZ_BRANCH_ONLY)
+def test_fuzz_a_branch_only_name_bound_again_in_a_guarded_loop_is_never_wrong():
+    # Review 3 (FR1) replaced the compile error: the name records where its
+    # assignments ran (B4). With x[0] > 2 the loop breaks before binding
+    # `a1`: Python raises where c is false and returns the branch's value
+    # where c is true, which Zinnia dropped at the branch join, so neither
+    # input has a proof (sound, not complete). Where the loop binds `a1`,
+    # the value is the loop's.
+    for c in (False, True):
+        satisfied, _, _ = run_mock_layout(compile_kernel(FUZZ_BRANCH_ONLY), FUZZ_X, FUZZ_M, 1, c)
+        assert not satisfied
+        assert_all_backends_match_numpy(FUZZ_BRANCH_ONLY, -FUZZ_X, FUZZ_M, 1, c)
 
 
 @pytest.mark.parametrize("name", list(FUZZ_PROGRAMS))
-def test_fuzz_program_is_rejected_or_correct(name):
+def test_fuzz_program_is_never_wrong(name):
+    # Rejected at compile time, without a proof (#405: the B4 assertion
+    # where Python keeps a value Zinnia dropped, see the test above), or
+    # NumPy's values on every backend.
     source, scalars = FUZZ_PROGRAMS[name]
     try:
-        compile_kernel(source)
+        program = compile_kernel(source)
     except ZinniaException:
         return
-    assert_all_backends_match_numpy(source, FUZZ_X, FUZZ_M, *scalars)
+    satisfied, _, _ = run_mock_layout(program, FUZZ_X, FUZZ_M, *scalars)
+    if satisfied:
+        assert_all_backends_match_numpy(source, FUZZ_X, FUZZ_M, *scalars)
 
 
 def test_swapping_two_arrays_in_a_loop_that_may_stop_compiles_quickly():
