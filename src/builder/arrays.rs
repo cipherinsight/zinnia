@@ -5,11 +5,13 @@
 //! needs to forward memory:
 //!
 //! 1. `read(ArrayInit(c), k)` with a constant address `k` is `c[k]`;
-//! 2. `read(write(v, j, x, p), k)` with constant addresses `k != j` is
-//!    `read(v, k)`;
-//! 3. `read(write(v, j, x, p), j)` (the same constant address, or the same
-//!    access map at the same index statements) is `x` when `p` is the
-//!    constant true, else `select(p, x, read(v, j))`;
+//! 2. `read(write(v, j, x, p), k)` is `read(v, k)` when no cell `k` can
+//!    name is one `j` can name (different constant addresses, or lines of
+//!    cells that do not meet: `a[r, i]` and `a[s, j]` for rows `r != s`);
+//! 3. `read(write(v, j, x, true), j)` (the same constant address, or the
+//!    same access map at the same index statements) is `x` (under a runtime
+//!    predicate the read stays: `select(p, x, read(v, j))` would read an
+//!    older version after the write, which one memory cannot);
 //! 4. `write(v, j, x, false)` is `v`.
 //!
 //! Each is the operations' semantics, valid on every path (both sides have
@@ -47,14 +49,19 @@ fn same_cell(a: &ArrayAccess, a_positions: &[Value], b: &ArrayAccess, b_position
     }
 }
 
+/// Whether no cell one access can name is a cell the other can name
+/// (`ArrayAccess::disjoint_from`, constant positions by their values).
+fn disjoint(a: &ArrayAccess, a_positions: &[Value], b: &ArrayAccess, b_positions: &[Value]) -> bool {
+    let constants = |positions: &[Value]| positions.iter().map(Value::int_val).collect::<Vec<_>>();
+    a.disjoint_from(&constants(a_positions), b, &constants(b_positions))
+}
+
 /// What a read learns from the version it reads.
 enum Step {
     /// The value read.
     Value(Value),
     /// Read this (earlier) version instead.
     Earlier(Value),
-    /// The read is `select(p, x, read(earlier))`.
-    Hit { predicate: Value, written: Value, earlier: Value },
     /// Nothing: build the read.
     Opaque,
 }
@@ -110,10 +117,6 @@ impl IRBuilder {
             match self.read_step(&version, &access, positions) {
                 Step::Value(v) => return v,
                 Step::Earlier(earlier) => version = earlier,
-                Step::Hit { predicate, written, earlier } => {
-                    let old = self.ir_array_read(&earlier, access.clone(), positions);
-                    return self.select_cell(access.elem, &predicate, &written, &old);
-                }
                 Step::Opaque => break,
             }
         }
@@ -139,35 +142,16 @@ impl IRBuilder {
                 if same_cell(access, positions, w_access, w.positions) {
                     return match constant_truth(w.predicate) {
                         Some(true) => Step::Value(w.value.clone()),
-                        _ => Step::Hit { predicate: w.predicate.clone(), written: w.value.clone(), earlier: w.version.clone() },
+                        _ => Step::Opaque,
                     };
                 }
-                let disjoint = matches!(
-                    (constant_address(access, positions), constant_address(w_access, w.positions)),
-                    (Some(r), Some(j)) if r != j
-                );
-                if disjoint {
+                if disjoint(access, positions, w_access, w.positions) {
                     Step::Earlier(w.version.clone())
                 } else {
                     Step::Opaque
                 }
             }
             _ => Step::Opaque,
-        }
-    }
-
-    /// `select(p, x, old)` of two cells of an array of `elem`, a NumPy bool
-    /// when both are.
-    fn select_cell(&mut self, elem: ArrayElem, p: &Value, x: &Value, old: &Value) -> Value {
-        match elem {
-            ArrayElem::Float => self.ir_select_f(p, x, old),
-            ArrayElem::Int => {
-                let out = self.ir_select_i(p, x, old);
-                if self.is_bool_cell(x) && self.is_bool_cell(old) {
-                    self.record_bool_cell(&out);
-                }
-                out
-            }
         }
     }
 
@@ -232,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn a_read_at_the_index_of_a_predicated_write_selects() {
+    fn a_read_at_the_index_of_a_predicated_write_stays_a_read() {
         let mut b = IRBuilder::new();
         let cells = int_cells(&mut b, 4);
         let v0 = b.ir_array_init(&cells, ArrayElem::Int);
@@ -241,12 +225,14 @@ mod tests {
         let p = b.ir_read_integer(crate::circuit_input::InputPath::new("p", vec![]), false);
         let flat = ArrayAccess::new(4, ArrayElem::Int, 0, vec![AccessAxis { len: 4, stride: 1 }]);
         let v1 = b.ir_array_write(&v0, flat.clone(), std::slice::from_ref(&i), &x, &p);
-        let before = b.stmts.len();
-        let y = b.ir_array_read(&v1, flat, std::slice::from_ref(&i));
-        // select(p, x, read(v0, i)): one read of v0 and one select.
-        let new: Vec<&IR> = b.stmts[before..].iter().map(|s| &s.ir).collect();
-        assert!(matches!(new.as_slice(), [IR::ArrayRead(_), IR::SelectI]), "{new:?}");
-        assert_eq!(b.stmts[y.stmt_id().unwrap() as usize].arguments[1], x.stmt_id().unwrap());
+        let y = b.ir_array_read(&v1, flat.clone(), std::slice::from_ref(&i));
+        // A read of `v1` (not of `v0` behind a select: one memory could not
+        // read `v0` after the write).
+        assert_eq!(b.stmts[y.stmt_id().unwrap() as usize].arguments[0], v1.stmt_id().unwrap());
+        // Under a constant true predicate it is the value written.
+        let yes = b.ir_constant_bool(true);
+        let v2 = b.ir_array_write(&v1, flat.clone(), std::slice::from_ref(&i), &x, &yes);
+        assert_eq!(b.ir_array_read(&v2, flat, std::slice::from_ref(&i)).stmt_id(), x.stmt_id());
     }
 
     #[test]
@@ -258,5 +244,40 @@ mod tests {
         let x = b.ir_constant_int(7);
         let v1 = b.ir_array_write(&v0, ArrayAccess::constant(2, ArrayElem::Int, 0), &[], &x, &no);
         assert_eq!(v1.stmt_id(), v0.stmt_id());
+    }
+
+    #[test]
+    fn a_read_skips_writes_to_lines_it_cannot_meet() {
+        // A 3x4 array: writes through a runtime column `c` of rows 0 and 1
+        // (lines {0..3}, {4..7}), and through a runtime row `r` of column 2
+        // (the line {2, 6, 10}).
+        let mut b = IRBuilder::new();
+        let cells = int_cells(&mut b, 12);
+        let v0 = b.ir_array_init(&cells, ArrayElem::Int);
+        let input = |b: &mut IRBuilder, name: &str| b.ir_read_integer(crate::circuit_input::InputPath::new(name, vec![]), false);
+        let (c, r, x, y) = (input(&mut b, "c"), input(&mut b, "r"), input(&mut b, "x"), input(&mut b, "y"));
+        let yes = b.ir_constant_bool(true);
+        let row = |k: u32| ArrayAccess::new(12, ArrayElem::Int, 4 * k, vec![AccessAxis { len: 4, stride: 1 }]);
+        let column = |k: u32| ArrayAccess::new(12, ArrayElem::Int, k, vec![AccessAxis { len: 3, stride: 4 }]);
+        let v1 = b.ir_array_write(&v0, row(0), std::slice::from_ref(&c), &x, &yes);
+        let v2 = b.ir_array_write(&v1, row(1), std::slice::from_ref(&c), &y, &yes);
+        // Row 0 at `c` after the write to row 1: the write to row 0.
+        let read = b.ir_array_read(&v2, row(0), std::slice::from_ref(&c));
+        assert_eq!(read.stmt_id(), x.stmt_id());
+        // Row 2 never met a write: a read of the init.
+        let read = b.ir_array_read(&v2, row(2), std::slice::from_ref(&c));
+        assert_eq!(b.stmts[read.stmt_id().unwrap() as usize].arguments[0], v0.stmt_id().unwrap());
+        // Column 2 meets both rows: no fold.
+        let read = b.ir_array_read(&v2, column(2), std::slice::from_ref(&r));
+        assert_eq!(b.stmts[read.stmt_id().unwrap() as usize].arguments[0], v2.stmt_id().unwrap());
+        // Columns 1 and 3 of one stride: a column-1 write is skipped by a
+        // column-3 read and by the constant cell 11, not by the cell 5.
+        let v3 = b.ir_array_write(&v2, column(1), std::slice::from_ref(&r), &x, &yes);
+        let read = b.ir_array_read(&v3, column(3), std::slice::from_ref(&r));
+        assert_eq!(b.stmts[read.stmt_id().unwrap() as usize].arguments[0], v2.stmt_id().unwrap());
+        let read = b.ir_array_read(&v3, ArrayAccess::constant(12, ArrayElem::Int, 11), &[]);
+        assert_eq!(read.int_val(), Some(110));
+        let read = b.ir_array_read(&v3, ArrayAccess::constant(12, ArrayElem::Int, 5), &[]);
+        assert_eq!(b.stmts[read.stmt_id().unwrap() as usize].arguments[0], v3.stmt_id().unwrap());
     }
 }

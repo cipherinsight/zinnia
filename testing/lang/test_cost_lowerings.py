@@ -466,11 +466,11 @@ def test_argwhere_and_nonzero_2d_match_numpy(body, envelope):
 
 
 def test_nonzero_has_no_runtime_address_writes():
+    # The compaction writes every output cell at a constant address: no
+    # array is left for a backend memory.
     program = compile_kernel('def kernel(x: Integer[Array, "9"]):\n    return np.nonzero(x)[0]\n')
-    stmts = program.get_ir_stmts()
-    constant = {s["stmt_id"] for s in stmts if s["ir_instance"]["__class__"] == "ConstantIntIR"}
-    writes = [s for s in stmts if s["ir_instance"]["__class__"] == "WriteMemoryIR"]
-    assert writes and all(w["arguments"][0] in constant for w in writes)
+    classes = {s["ir_instance"]["__class__"] for s in program.get_ir_stmts()}
+    assert not classes & {"RamInitIR", "RamWriteIR", "RamReadIR", "ArrayWriteIR"}
 
 
 def test_nonzero_halo2_base_matches_mock():

@@ -17,19 +17,16 @@
 //!   stride-0 axes for broadcast dimensions. No `materialize_to_shape` is
 //!   needed — broadcasting happens via the per-cell address arithmetic.
 //!
-//! Output caching: every fresh output is built via
-//! [`build_static_array_from_flat`], which writes the flat payload into a new
-//! segment AND populates `IRBuilder::static_array_payload` so static-index
-//! reads on the result remain free.
+//! Outputs: every fresh output is built via [`build_static_array_from_flat`],
+//! a new storage holding the computed cells, so static-index reads of the
+//! result are free.
 //!
 //! Constant folding: when each input cell carries a compile-time
 //! `static_val`, the per-cell `ir_*` op preserves it (this is true for the
-//! existing scalar dispatch in `apply_scalar_binary_op`). The cached payload
-//! therefore holds the folded values, which the boundary shim returns to
-//! legacy callers when they materialise via `to_value_list`.
+//! existing scalar dispatch in `apply_scalar_binary_op`), so the storage
+//! holds the folded values.
 
 use crate::builder::{IRBuilder, StaticArrayProductProvenance};
-use crate::ops::dyn_ndarray::value_to_scalar_i64;
 use crate::types::{NumberType, Value};
 
 use super::super::broadcast::broadcast_shapes;
@@ -41,108 +38,27 @@ use super::base::{build_static_array_from_flat, build_static_array_product_prove
 // Cell helpers
 // ────────────────────────────────────────────────────────────────────────
 
-/// Pull the flat payload of a `Value::StaticArray` as a `Vec<Value>`. Reuses
-/// the cached wires when present; otherwise emits one `ir_read_memory` per
-/// cell. Caller passes the visible shape (so we know how many cells the
-/// view sees).
+/// The elements of a `Value::StaticArray` (any view) in logical row-major
+/// order: the known cells (no IR), or reads of the storage's current
+/// version.
 pub fn payload_cells(b: &mut IRBuilder, arr: &Value) -> Vec<Value> {
-    let (dtype, shape, segment_id, strides, offset, imag_seg) = match arr {
-        Value::StaticArray {
-            dtype,
-            shape,
-            segment_id,
-            strides,
-            offset,
-            imag_segment_id,
-            value_id: _,
-        } => (
-            *dtype,
-            shape.clone(),
-            *segment_id,
-            strides.clone(),
-            *offset,
-            *imag_segment_id,
-        ),
-        _ => panic!("payload_cells: expected Value::StaticArray"),
+    let Value::StaticArray { dtype, shape, segment_id, strides, offset, .. } = arr else {
+        panic!("payload_cells: expected Value::StaticArray")
     };
     let total: usize = shape.iter().product();
-    if b.static_array_product_provenance.contains_key(&segment_id) {
-        super::base::force_static_array_product_provenance(b, segment_id);
+    let logical_strides = row_major_strides(shape);
+    let addresses = (0..total).map(|flat| {
+        let coords = decode_coords(flat, shape, &logical_strides);
+        offset + coords.iter().zip(strides).map(|(c, s)| c * s).sum::<usize>()
+    });
+    match b.known_cells(*segment_id) {
+        Some(cells) => addresses.map(|a| cells[a].clone()).collect(),
+        None => addresses
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|a| super::base::element_at(b, *segment_id, a, *dtype))
+            .collect(),
     }
-    let contiguous = strides == row_major_strides(&shape);
-    if let Some(cached) = b.static_array_payload.get(&segment_id) {
-        if contiguous {
-            // Fast path: cached cells lie row-major from `offset`.
-            return cached.iter().skip(offset).take(total).cloned().collect();
-        }
-        // Non-contiguous view: walk logical row-major coords, compute the
-        // segment-relative index via the view's strides/offset, gather from
-        // the cache by that absolute index. This handles transpose /
-        // swapaxes / moveaxis lazy views without materialising.
-        let logical_strides = row_major_strides(&shape);
-        let mut out: Vec<Value> = Vec::with_capacity(total);
-        for flat in 0..total {
-            let coords = decode_coords(flat, &shape, &logical_strides);
-            let mut abs: usize = offset;
-            for (ax, &c) in coords.iter().enumerate() {
-                abs += c * strides[ax];
-            }
-            out.push(cached[abs].clone());
-        }
-        return out;
-    }
-    // Fallback: read every cell from the segment via strides/offset.
-    if dtype == NumberType::Complex {
-        let im_seg = imag_seg.expect("Complex StaticArray missing imag_segment_id");
-        let mut tmp = Vec::with_capacity(total);
-        if contiguous {
-            for i in 0..total {
-                tmp.push(crate::helpers::static_array::read::read_complex_leaf(
-                    b,
-                    segment_id,
-                    im_seg,
-                    offset + i,
-                ));
-            }
-        } else {
-            let logical_strides = row_major_strides(&shape);
-            for flat in 0..total {
-                let coords = decode_coords(flat, &shape, &logical_strides);
-                let mut abs: usize = offset;
-                for (ax, &c) in coords.iter().enumerate() {
-                    abs += c * strides[ax];
-                }
-                tmp.push(crate::helpers::static_array::read::read_complex_leaf(
-                    b, segment_id, im_seg, abs,
-                ));
-            }
-        }
-        return tmp;
-    }
-    super::base::materialize_static_array_segment(b, segment_id, dtype);
-    let mut tmp = Vec::with_capacity(total);
-    if contiguous {
-        for i in 0..total {
-            let addr = b.ir_constant_int((offset + i) as i64);
-            let raw = b.ir_read_memory(segment_id, &addr);
-            let sv = value_to_scalar_i64(&raw);
-            tmp.push(crate::ops::dyn_ndarray::scalar_i64_to_value(&sv, dtype));
-        }
-    } else {
-        let logical_strides = row_major_strides(&shape);
-        for flat in 0..total {
-            let coords = decode_coords(flat, &shape, &logical_strides);
-            let mut abs: usize = offset;
-            for (ax, &c) in coords.iter().enumerate() {
-                abs += c * strides[ax];
-            }
-            let addr = b.ir_constant_int(abs as i64);
-            let raw = b.ir_read_memory(segment_id, &addr);
-            let sv = value_to_scalar_i64(&raw);
-            tmp.push(crate::ops::dyn_ndarray::scalar_i64_to_value(&sv, dtype));
-        }
-    }
-    tmp
 }
 
 pub fn product_provenance_payload_cells(
@@ -779,13 +695,12 @@ mod tests {
             _ => panic!("expected StaticArray"),
         };
         assert!(b.static_array_product_provenance.contains_key(&segment_id));
-        assert!(b.static_array_payload.get(&segment_id).is_none());
 
         let cells = payload_cells(&mut b, &out);
         let folded: Vec<Option<i64>> = cells.iter().map(|v| v.int_val()).collect();
         assert_eq!(folded, vec![Some(10), Some(40), Some(90)]);
         assert!(b.static_array_product_provenance.get(&segment_id).is_none());
-        assert!(b.static_array_payload.get(&segment_id).is_some());
+        assert!(b.knows_cells(segment_id));
 
         let cells_again = payload_cells(&mut b, &out);
         let folded_again: Vec<Option<i64>> = cells_again.iter().map(|v| v.int_val()).collect();

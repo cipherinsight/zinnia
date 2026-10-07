@@ -51,20 +51,34 @@ impl IRPass for ArrayLowering {
     /// overlay's versions, a sort's reads at hinted ranks), which the next
     /// round lowers with every other element read.
     fn exec(&self, graph: IRGraph) -> IRGraph {
-        let mut graph = graph;
-        for _ in 0..MAX_ROUNDS {
-            let Some(lowered) = lower(&graph, self.target, &super::registry()) else {
-                return graph;
-            };
-            let simplified = crate::optim::PatternMatchOptim.exec(lowered);
-            let deduplicated = crate::optim::DuplicateCodeElimination.exec(simplified);
-            graph = crate::optim::DeadCodeElimination.exec(deduplicated);
-            if !has_array_operations(&graph) {
-                return graph;
-            }
-        }
-        panic!("array lowering: array operations left after {MAX_ROUNDS} rounds");
+        lower_rounds(graph, self.target, &super::registry())
     }
+}
+
+/// Lower `graph` in rounds until no placeholder or array read is left: the
+/// first round with `first` (every construction in production; one under
+/// test in the layer's tests), the later ones, which lower the reads the
+/// emitters leave for them, with the whole registry. After each round the
+/// emitted code is simplified, deduplicated and pruned.
+///
+/// # Panics
+/// When array operations are left after `MAX_ROUNDS` rounds.
+pub fn lower_rounds(graph: IRGraph, target: Target, first: &[&dyn Construction]) -> IRGraph {
+    let registry = super::registry();
+    let mut graph = graph;
+    for round in 0..MAX_ROUNDS {
+        let constructions = if round == 0 { first } else { &registry };
+        let Some(lowered) = lower(&graph, target, constructions) else {
+            return graph;
+        };
+        let simplified = crate::optim::PatternMatchOptim.exec(lowered);
+        let deduplicated = crate::optim::DuplicateCodeElimination.exec(simplified);
+        graph = crate::optim::DeadCodeElimination.exec(deduplicated);
+        if !has_array_operations(&graph) {
+            return graph;
+        }
+    }
+    panic!("array lowering: array operations left after {MAX_ROUNDS} rounds");
 }
 
 /// The most lowering rounds a program may need (an overlay's reads, then a
@@ -211,11 +225,14 @@ fn collect_groups(graph: &IRGraph) -> (Vec<Group>, HashMap<StmtId, StmtId>) {
                 add_lane((op.kind, stmt.arguments[..shared].to_vec(), None), lane);
             }
             IR::ArrayRead(access) => match super::arrays::element_read(&graph.stmts, stmt.stmt_id) {
-                Some(super::arrays::ElementRead { line, index: Some(index) }) => {
+                // A line of one cell is that cell: its position is 0
+                // wherever the read runs (the program checks it), and
+                // nothing else reads it.
+                Some(super::arrays::ElementRead { line, index: Some(index) }) if line.len() > 1 => {
                     let lane = Lane { stmt: stmt.stmt_id, output: 0, position: None, own: vec![index] };
                     add_lane((super::OpKind::Element, line, None), lane);
                 }
-                Some(super::arrays::ElementRead { line, index: None }) => {
+                Some(super::arrays::ElementRead { line, .. }) => {
                     direct.insert(stmt.stmt_id, line[0]);
                 }
                 // A read of a written version: its tree's (`trees`).
@@ -647,6 +664,7 @@ fn emit(
         })
         .collect();
     let mut starts: Vec<usize> = Vec::new();
+    let mut version_inputs: HashMap<usize, Vec<StmtId>> = HashMap::new();
     for (i, entry) in nodes.into_iter().enumerate() {
         if !selected_set.contains(&i) {
             continue;
@@ -675,6 +693,18 @@ fn emit(
             })
             .collect();
         state.checks_for.insert(i, needed);
+        // A version's cells (`SharedAt { at: version }`) are built from its
+        // write's operands: the node that reads them starts after those.
+        let versions: Vec<StmtId> = entry
+            .node
+            .pre
+            .iter()
+            .filter_map(|r| match r {
+                Requirement::SharedAt { at, .. } => Some(*at),
+                _ => None,
+            })
+            .collect();
+        version_inputs.insert(i, versions);
         if let NodeKind::Offered(emitter) = entry.kind {
             if entry.node.post.iter().any(|r| matches!(r, Requirement::Lane(_))) {
                 starts.push(i);
@@ -684,15 +714,20 @@ fn emit(
     }
 
     let lanes: HashMap<StmtId, &Lane> = groups.iter().flat_map(|g| g.lanes.iter().map(|l| (l.stmt, l))).collect();
-    let check_inputs: HashMap<usize, Vec<StmtId>> = state
+    // What each node's start waits for besides the shared operands of the
+    // groups it produces lanes of: the subjects of the checks it needs and
+    // the versions whose cells it reads.
+    let start_inputs: HashMap<usize, Vec<StmtId>> = state
         .checks_for
         .iter()
-        .map(|(&node, facts)| (node, facts.iter().flat_map(Fact::subjects).collect()))
+        .map(|(&node, facts)| {
+            let subjects = facts.iter().flat_map(Fact::subjects);
+            (node, subjects.chain(version_inputs.get(&node).into_iter().flatten().copied()).collect())
+        })
         .collect();
-    let order = emission_order(graph, groups, &lane_producer, &starts, &check_inputs);
+    let order = emission_order(graph, groups, &lane_producer, &starts, &start_inputs);
 
     let mut b = IRBuilder::new();
-    b.reserve_segment_ids_below(next_free_segment_id(graph));
     let mut lookup: HashMap<StmtId, Value> = HashMap::new();
     for unit in order {
         match unit {
@@ -729,7 +764,7 @@ fn emission_order(
     groups: &[Group],
     lane_producer: &HashMap<StmtId, usize>,
     starts: &[usize],
-    check_inputs: &HashMap<usize, Vec<StmtId>>,
+    start_inputs: &HashMap<usize, Vec<StmtId>>,
 ) -> Vec<Unit> {
     let position: HashMap<StmtId, usize> = graph.stmts.iter().enumerate().map(|(i, s)| (s.stmt_id, i)).collect();
     let mut deps: HashMap<Unit, Vec<Unit>> = HashMap::new();
@@ -751,10 +786,8 @@ fn emission_order(
         for (lane, _) in lane_producer.iter().filter(|(_, &p)| p == node) {
             let group = group_of[lane];
             inputs.extend(group.shared.iter().map(|s| Unit::Stmt(*s)));
-            // A written version's cells are built from its write's operands.
-            inputs.extend(group.version.iter().map(|line| Unit::Stmt(line.version)));
         }
-        inputs.extend(check_inputs.get(&node).into_iter().flatten().map(|s| Unit::Stmt(*s)));
+        inputs.extend(start_inputs.get(&node).into_iter().flatten().map(|s| Unit::Stmt(*s)));
         inputs.sort_unstable();
         inputs.dedup();
         deps.insert(Unit::Start(node), inputs);
@@ -785,23 +818,4 @@ fn emission_order(
     }
     assert_eq!(order.len(), deps.len(), "array lowering: the emission order has a cycle");
     order
-}
-
-/// One above the largest memory segment id `graph` uses.
-fn next_free_segment_id(graph: &IRGraph) -> u32 {
-    graph
-        .stmts
-        .iter()
-        .filter_map(|s| match s.ir {
-            IR::AllocateMemory { segment_id, .. }
-            | IR::WriteMemory { segment_id }
-            | IR::ReadMemory { segment_id }
-            | IR::ReadTable { segment_id }
-            | IR::MemoryTraceEmit { segment_id, .. }
-            | IR::DynamicNDArrayGetItem { segment_id, .. }
-            | IR::DynamicNDArraySetItem { segment_id, .. } => Some(segment_id + 1),
-            _ => None,
-        })
-        .max()
-        .unwrap_or(0)
 }

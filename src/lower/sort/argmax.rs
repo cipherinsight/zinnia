@@ -16,8 +16,7 @@
 //! The pass [`ArgmaxQueries`] finds `r` as the gather family's argmax lane
 //! (`OpKind::ArgmaxOfFlags` over `h`) or as a first-True select chain
 //! (`select(h_0, 0, select(h_1, 1, .. select(h_{n-1}, n-1, 0)))`), views a
-//! statement built from reads at `r` (`ArrayRead`s of known cells, or reads
-//! of known segments) by
+//! statement built from reads at `r` (`ArrayRead`s of known cells) by
 //! equality tests, `and`, `or` and `not` as `B[r]` (or `not B[r]`) for a
 //! vector `B` of statements the program has, and replaces it by `any(h)`
 //! (or its negation) when `B` is `h`. Everything it relies on is a
@@ -80,11 +79,8 @@ impl IRPass for ArgmaxQueries {
             };
             lookup.insert(stmt.stmt_id, out);
         }
-        // The reads the rewrite left unused, and the segments no longer
-        // read, go with the dead statements.
-        let live = crate::optim::DeadCodeElimination.exec(b.export_ir_graph());
-        let pruned = crate::optim::UnreadMemoryEliminator.exec(live);
-        crate::optim::DeadCodeElimination.exec(pruned)
+        // The reads the rewrite left unused go with the dead statements.
+        crate::optim::DeadCodeElimination.exec(b.export_ir_graph())
     }
 }
 
@@ -117,9 +113,6 @@ struct Gathered {
 
 struct Facts<'a> {
     graph: &'a IRGraph,
-    /// Each segment's slots, when every slot was written once at a constant
-    /// address (the statement written).
-    segments: HashMap<u32, Vec<StmtId>>,
     /// Statements by (operation, operands), for finding the elementwise
     /// comparisons and conjunctions the program has.
     by_operands: HashMap<(std::mem::Discriminant<IR>, Vec<StmtId>), StmtId>,
@@ -154,42 +147,13 @@ fn answers(graph: &IRGraph) -> HashMap<StmtId, Answer> {
 
 impl<'a> Facts<'a> {
     fn new(graph: &'a IRGraph) -> Facts<'a> {
-        let mut slots: HashMap<u32, Vec<Option<StmtId>>> = HashMap::new();
-        let mut spoiled: Vec<u32> = Vec::new();
-        let mut read: Vec<u32> = Vec::new();
         let mut by_operands = HashMap::new();
         for stmt in &graph.stmts {
-            match stmt.ir {
-                IR::AllocateMemory { segment_id, size, .. } => {
-                    slots.insert(segment_id, vec![None; size as usize]);
-                }
-                IR::ReadMemory { segment_id } => read.push(segment_id),
-                // A write after a read: the segment's contents depend on
-                // when it is read.
-                IR::WriteMemory { segment_id } if read.contains(&segment_id) => spoiled.push(segment_id),
-                IR::WriteMemory { segment_id } => {
-                    let address = match graph.stmts[stmt.arguments[0] as usize].ir {
-                        IR::ConstantInt { value } => usize::try_from(value).ok(),
-                        _ => None,
-                    };
-                    match slots.get_mut(&segment_id).zip(address).and_then(|(s, a)| s.get_mut(a)) {
-                        Some(slot @ None) => *slot = Some(stmt.arguments[1]),
-                        _ => spoiled.push(segment_id),
-                    }
-                }
-                IR::DynamicNDArraySetItem { segment_id, .. } => spoiled.push(segment_id),
-                IR::EqI | IR::LogicalAnd => {
-                    by_operands.insert((std::mem::discriminant(&stmt.ir), stmt.arguments.clone()), stmt.stmt_id);
-                }
-                _ => {}
+            if matches!(stmt.ir, IR::EqI | IR::LogicalAnd) {
+                by_operands.insert((std::mem::discriminant(&stmt.ir), stmt.arguments.clone()), stmt.stmt_id);
             }
         }
-        let segments = slots
-            .into_iter()
-            .filter(|(s, _)| !spoiled.contains(s))
-            .filter_map(|(s, slots)| Some((s, slots.into_iter().collect::<Option<Vec<_>>>()?)))
-            .collect();
-        Facts { graph, segments, by_operands }
+        Facts { graph, by_operands }
     }
 
     fn stmt(&self, id: StmtId) -> &crate::ir::IRStatement {
@@ -243,13 +207,12 @@ impl<'a> Facts<'a> {
         }
     }
 
-    /// The cells `stmt` reads (an element lane's shared cells, or a known
-    /// segment's slots), when it reads at the same runtime index as the
-    /// rest of the view.
+    /// The cells `stmt` reads (a read of known cells: `ArrayRead` of an
+    /// `ArrayInit`), when it reads at the same runtime index as the rest of
+    /// the view.
     fn read_at(&self, stmt: StmtId, index: &mut Option<StmtId>) -> Option<Vec<StmtId>> {
         let st = self.stmt(stmt);
         let (cells, at) = match &st.ir {
-            IR::ReadMemory { segment_id } => (self.segments.get(segment_id)?.clone(), st.arguments[0]),
             IR::ArrayRead(_) => {
                 let read = crate::lower::arrays::element_read(&self.graph.stmts, stmt)?;
                 (read.line, read.index?)
@@ -349,14 +312,9 @@ mod tests {
         b.ir_expose_public_i(&result);
         let graph = b.export_ir_graph();
         let graph = if rewrite { ArgmaxQueries.exec(graph) } else { graph };
-        let elements = graph.stmts.iter().filter(|s| matches!(&s.ir, IR::ArrayRead(_))).count();
-        assert_eq!(elements == 0, rewrite || !placeholders, "element lanes die exactly when rewritten");
-        if placeholders {
-            let lowered = crate::lower::emit::lower(&graph, crate::lower::Target::Halo2Base, &crate::lower::registry());
-            lowered.unwrap_or(graph)
-        } else {
-            graph
-        }
+        let reads = graph.stmts.iter().filter(|s| matches!(&s.ir, IR::ArrayRead(_))).count();
+        assert_eq!(reads == 0, rewrite, "the reads die exactly when rewritten");
+        crate::lower::emit::lower_rounds(graph, crate::lower::Target::Halo2Base, &crate::lower::registry())
     }
 
     #[test]
@@ -364,10 +322,6 @@ mod tests {
         for placeholders in [false, true] {
             let rewritten = first_match_with(true, placeholders);
             let original = first_match_with(false, placeholders);
-            let reads = |g: &IRGraph| g.stmts.iter().filter(|s| matches!(s.ir, IR::ReadMemory { .. })).count();
-            if !placeholders {
-                assert_eq!(reads(&rewritten), 0, "reads gone");
-            }
             assert_first_matches(&rewritten, &original);
         }
     }

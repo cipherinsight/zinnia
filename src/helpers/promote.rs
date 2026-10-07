@@ -77,10 +77,6 @@ pub fn promote_static_to_dynamic_with_extents(b: &mut IRBuilder, val: &Value) ->
     {
         if *sa_strides == row_major_strides(sa_shape) && *sa_dtype != NumberType::Complex {
             if let Some(ext_vids) = b.provenance.runtime_extents_of(*segment_id).cloned() {
-                // The dyn wrapper reads the segment directly — a lazily
-                // backed StaticArray must materialise its deferred writes
-                // first or every read sees the init value.
-                super::static_array::base::materialize_static_array_if_lazy(b, val);
                 if ext_vids.len() == sa_shape.len() {
                     let mut ext_vals: Vec<Value> = Vec::with_capacity(ext_vids.len());
                     let mut ok = true;

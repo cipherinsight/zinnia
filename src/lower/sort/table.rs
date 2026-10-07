@@ -1,23 +1,23 @@
 //! Reads of a constant affine table at a runtime index, in closed form.
 //!
-//! A segment whose every slot holds a compile-time constant written once
-//! (`ys = np.arange(1, n + 1) / n`) and whose codes are an affine
-//! progression (`search::AffineForm`: `Y_k = floor((A k + B) / C)`, checked
-//! against every entry) is read at a runtime index `x` by evaluating the
-//! form at `x`: one multiplication and one constant division, instead of a
-//! selection over the `n` slots (halo2-base: about 8 to 17 cells per slot;
-//! Noir: the table built once and a native read). The pass rewrites a read
-//! when the program bounds its index (`AssertU128Lt(x, k)` with `k <= n`,
-//! the bounds check every runtime index gets) and the closed form is the
-//! cheaper on the target.
+//! A read of known cells (`ArrayRead` of an `ArrayInit`, `crate::ir_array`)
+//! whose cells along its axis are compile-time constants
+//! (`ys = np.arange(1, n + 1) / n`) with codes in an affine progression
+//! (`search::AffineForm`: `Y_k = floor((A k + B) / C)`, checked against every
+//! entry) is evaluated at its runtime position `x` in closed form: one
+//! multiplication and one constant division, instead of a selection over the
+//! `n` cells (halo2-base: about 8 to 17 cells per cell; Noir: the table built
+//! once and a native read). The pass rewrites a read when the program bounds
+//! its position (`AssertU128Lt(x, k)` with `k <= n`, the bounds check every
+//! runtime index gets) and the closed form is the cheaper on the target.
 //!
-//! Soundness: for `x` in `[0, n)` the form equals the slot's constant
-//! exactly (checked for every slot at compile time), and the program's
-//! own assertion keeps `x` there; the division is exact integer arithmetic
-//! on the window (the form is bounded at both ends of the table, see
+//! Soundness: for `x` in `[0, n)` the form equals the cell's constant
+//! exactly (checked for every cell at compile time), and the program's own
+//! assertion keeps `x` there; the division is exact integer arithmetic on
+//! the window (the form is bounded at both ends of the table, see
 //! `AffineForm::with`). No hint.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 
 use crate::builder::IRBuilder;
 use crate::ir::IRGraph;
@@ -33,7 +33,7 @@ pub struct ConstantTableReads {
     pub target: Target,
 }
 
-/// A constant segment: its slots' codes and whether they are floats.
+/// A line of constant cells: their codes and whether they are floats.
 struct Table {
     codes: Vec<i64>,
     float: bool,
@@ -42,8 +42,7 @@ struct Table {
 
 impl IRPass for ConstantTableReads {
     fn exec(&self, graph: IRGraph) -> IRGraph {
-        let tables = affine_tables(&graph);
-        let rewrites = closed_form_reads(&graph, &tables, self.target);
+        let rewrites = closed_form_reads(&graph, self.target);
         if rewrites.is_empty() {
             return graph;
         }
@@ -52,9 +51,8 @@ impl IRPass for ConstantTableReads {
         for stmt in graph.get_topological_order(false) {
             let args: Vec<Value> = stmt.arguments.iter().map(|a| lookup[a].clone()).collect();
             let out = match rewrites.get(&stmt.stmt_id) {
-                Some(&(segment, _)) => {
-                    let table = &tables[&segment];
-                    let code = table.form.emit_at(&mut b, &args[0], 0);
+                Some(table) => {
+                    let code = table.form.emit_at(&mut b, &args[1], 0);
                     if table.float {
                         Value::Float(ScalarValue::new(None, code.stmt_id()))
                     } else {
@@ -65,17 +63,14 @@ impl IRPass for ConstantTableReads {
             };
             lookup.insert(stmt.stmt_id, out);
         }
-        // The reads the rewrite left unused, and the segments no longer
-        // read, go with the dead statements.
-        let live = crate::optim::DeadCodeElimination.exec(b.export_ir_graph());
-        let pruned = crate::optim::UnreadMemoryEliminator.exec(live);
-        crate::optim::DeadCodeElimination.exec(pruned)
+        // The cells no longer read go with the dead statements.
+        crate::optim::DeadCodeElimination.exec(b.export_ir_graph())
     }
 }
 
-/// Segments whose every slot is one constant written once at a constant
-/// address, never written at a runtime address, with affine codes.
-fn affine_tables(graph: &IRGraph) -> HashMap<u32, Table> {
+/// The line of constant cells a read of known cells at one runtime position
+/// reads, with affine codes; `None` for any other statement.
+fn affine_line(graph: &IRGraph, stmt: StmtId) -> Option<Table> {
     let precision = crate::prove::types::ProvingParams::default().precision_bits;
     let constant = |id: StmtId| match graph.stmts[id as usize].ir {
         IR::ConstantInt { value } => Some((value, false)),
@@ -84,64 +79,21 @@ fn affine_tables(graph: &IRGraph) -> HashMap<u32, Table> {
         }
         _ => None,
     };
-    let mut slots: HashMap<u32, Vec<Option<(i64, bool)>>> = HashMap::new();
-    let mut spoiled: HashSet<u32> = HashSet::new();
-    let mut read: HashSet<u32> = HashSet::new();
-    for stmt in &graph.stmts {
-        match stmt.ir {
-            IR::AllocateMemory { segment_id, size, .. } => {
-                slots.insert(segment_id, vec![None; size as usize]);
-            }
-            IR::ReadMemory { segment_id } => {
-                read.insert(segment_id);
-            }
-            // A write after a read (in statement order) would make the
-            // table's contents depend on when it is read.
-            IR::WriteMemory { segment_id } if read.contains(&segment_id) => {
-                spoiled.insert(segment_id);
-            }
-            IR::WriteMemory { segment_id } => {
-                let address = constant(stmt.arguments[0]).filter(|&(_, float)| !float);
-                let value = constant(stmt.arguments[1]);
-                let slot = slots.get_mut(&segment_id).zip(address).and_then(|(s, (a, _))| {
-                    usize::try_from(a).ok().and_then(|a| s.get_mut(a))
-                });
-                match (slot, value) {
-                    (Some(slot @ None), Some(value)) => *slot = Some(value),
-                    _ => {
-                        spoiled.insert(segment_id);
-                    }
-                }
-            }
-            IR::DynamicNDArraySetItem { segment_id, .. } | IR::MemoryTraceEmit { segment_id, .. } => {
-                spoiled.insert(segment_id);
-            }
-            _ => {}
-        }
+    let read = crate::lower::arrays::element_read(&graph.stmts, stmt)?;
+    read.index?;
+    let cells: Vec<(i64, bool)> = read.line.iter().map(|&c| constant(c)).collect::<Option<_>>()?;
+    let float = cells.first()?.1;
+    if cells.iter().any(|&(_, f)| f != float) {
+        return None;
     }
-    slots
-        .into_iter()
-        .filter(|(segment, _)| !spoiled.contains(segment))
-        .filter_map(|(segment, slots)| {
-            let slots: Vec<(i64, bool)> = slots.into_iter().collect::<Option<_>>()?;
-            let float = slots.iter().any(|&(_, f)| f);
-            if slots.iter().any(|&(_, f)| f != float) {
-                return None;
-            }
-            let codes: Vec<i64> = slots.iter().map(|&(c, _)| c).collect();
-            let form = AffineForm::find(&codes)?;
-            Some((segment, Table { codes, float, form }))
-        })
-        .collect()
+    let codes: Vec<i64> = cells.iter().map(|&(c, _)| c).collect();
+    let form = AffineForm::find(&codes)?;
+    Some(Table { codes, float, form })
 }
 
-/// The runtime-index reads of the tables to rewrite: (segment, length) by
-/// read statement.
-fn closed_form_reads(graph: &IRGraph, tables: &HashMap<u32, Table>, target: Target) -> HashMap<StmtId, (u32, usize)> {
-    if tables.is_empty() {
-        return HashMap::new();
-    }
-    // Indices the program bounds: `AssertU128Lt(x, k)` with a constant `k`.
+/// The reads to rewrite, with their tables.
+fn closed_form_reads(graph: &IRGraph, target: Target) -> HashMap<StmtId, Table> {
+    // Positions the program bounds: `AssertU128Lt(x, k)` with a constant `k`.
     let mut bounded: HashMap<StmtId, i64> = HashMap::new();
     for stmt in &graph.stmts {
         if let (IR::AssertU128Lt, [x, k]) = (&stmt.ir, &stmt.arguments[..]) {
@@ -151,23 +103,20 @@ fn closed_form_reads(graph: &IRGraph, tables: &HashMap<u32, Table>, target: Targ
             }
         }
     }
-    let mut reads: HashMap<u32, Vec<StmtId>> = HashMap::new();
+    // The reads of each line (its array and access), in statement order.
+    let mut reads: BTreeMap<(StmtId, String), Vec<(StmtId, Table)>> = BTreeMap::new();
     for stmt in &graph.stmts {
-        let IR::ReadMemory { segment_id } = stmt.ir else { continue };
-        let Some(table) = tables.get(&segment_id) else { continue };
-        let index = stmt.arguments[0];
-        let constant_index = matches!(graph.stmts[index as usize].ir, IR::ConstantInt { .. });
-        if !constant_index && bounded.get(&index).is_some_and(|&k| k <= table.codes.len() as i64) {
-            reads.entry(segment_id).or_default().push(stmt.stmt_id);
+        let IR::ArrayRead(access) = &stmt.ir else { continue };
+        let Some(table) = affine_line(graph, stmt.stmt_id) else { continue };
+        let position = stmt.arguments[1];
+        if bounded.get(&position).is_some_and(|&k| k <= table.codes.len() as i64) {
+            reads.entry((stmt.arguments[0], access.describe())).or_default().push((stmt.stmt_id, table));
         }
     }
     reads
-        .into_iter()
-        .filter(|(segment, stmts)| closed_form_is_cheaper(tables[segment].codes.len(), stmts.len(), target))
-        .flat_map(|(segment, stmts)| {
-            let n = tables[&segment].codes.len();
-            stmts.into_iter().map(move |s| (s, (segment, n)))
-        })
+        .into_values()
+        .filter(|line| closed_form_is_cheaper(line[0].1.codes.len(), line.len(), target))
+        .flatten()
         .collect()
 }
 
@@ -190,7 +139,7 @@ mod tests {
     use crate::circuit_input::InputPath;
     use crate::lower::sort::test_support::mock_run;
 
-    /// A table written to a segment, read at the input `i` (bounded), the
+    /// A table in an array storage, read at the input `i` (bounded), the
     /// read exposed; rewritten when `rewrite`.
     fn table_read(table: &[f64], float: bool, rewrite: bool) -> IRGraph {
         let mut b = IRBuilder::new();
@@ -221,7 +170,7 @@ mod tests {
         let ints: Vec<f64> = (0..12).map(|k| (7 * k - 30) as f64).collect();
         for (table, float) in [(ecdf, true), (ints, false)] {
             let graph = table_read(&table, float, true);
-            assert!(!graph.stmts.iter().any(|s| matches!(s.ir, IR::ReadMemory { .. })), "read rewritten");
+            assert!(!graph.stmts.iter().any(|s| matches!(s.ir, IR::ArrayRead(_))), "read rewritten");
             let reference = table_read(&table, float, false);
             for i in 0..table.len() as i64 {
                 let inputs = vec![("i".to_string(), i)];
@@ -239,6 +188,6 @@ mod tests {
     fn other_tables_keep_their_reads() {
         let squares: Vec<f64> = (0..20).map(|k| (k * k) as f64).collect();
         let graph = table_read(&squares, false, true);
-        assert!(graph.stmts.iter().any(|s| matches!(s.ir, IR::ReadMemory { .. })));
+        assert!(graph.stmts.iter().any(|s| matches!(s.ir, IR::ArrayRead(_))));
     }
 }

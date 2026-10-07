@@ -72,6 +72,12 @@ pub(crate) struct GuardCaches {
     /// (predicate, operand, safe value) → the guarded operand, so repeated
     /// accesses through one index in one statement share a select.
     operands: HashMap<(StmtId, StmtId, i64), Value>,
+    /// (execution predicate, index, axis length) → NumPy's checked position
+    /// of the index on such an axis (`helpers::static_array::base::
+    /// checked_axis_index`): every access through one index on one axis
+    /// length under one predicate uses one position, so the array folds
+    /// see the same cell (`builder/arrays.rs`).
+    positions: HashMap<(Option<StmtId>, StmtId, usize), Value>,
 }
 
 /// The compile-time truth of a Boolean-like value, if known.
@@ -437,6 +443,33 @@ impl IRBuilder {
     /// implicit domain (a memory address, a range decomposition, an
     /// exponent's bit width) or to a check that must pass where the code
     /// does not run; `safe` must lie inside that domain.
+    /// The key of a checked position of `idx` on an axis of `len` under the
+    /// current execution predicate (`None` where the code never runs or
+    /// `idx` has no statement).
+    fn position_key(&self, idx: &Value, len: usize) -> Option<(Option<StmtId>, StmtId, usize)> {
+        let predicate = match self.execution() {
+            Execution::Always => None,
+            Execution::Never => return None,
+            Execution::When(p) => Some(p.stmt_id()?),
+        };
+        Some((predicate, idx.stmt_id()?, len))
+    }
+
+    /// The checked position of `idx` on an axis of `len` built earlier under
+    /// the current execution predicate, if any.
+    pub(crate) fn checked_position(&self, idx: &Value, len: usize) -> Option<Value> {
+        let key = self.position_key(idx, len)?;
+        self.guard_caches.positions.get(&key).cloned()
+    }
+
+    /// Record `position`, the checked position of `idx` on an axis of `len`
+    /// under the current execution predicate.
+    pub(crate) fn remember_checked_position(&mut self, idx: &Value, len: usize, position: &Value) {
+        if let Some(key) = self.position_key(idx, len) {
+            self.guard_caches.positions.insert(key, position.clone());
+        }
+    }
+
     pub(crate) fn guard_operand(&mut self, v: &Value, safe: i64) -> Value {
         let (Some(v_sid), None) = (v.stmt_id(), v.int_val()) else {
             return v.clone();
@@ -790,13 +823,15 @@ mod tests {
     #[test]
     fn dynamic_address_is_in_its_segment_where_the_code_does_not_run() {
         let mut b = IRBuilder::new();
-        b.ir_allocate_memory(0, 4, 0);
+        let zero = b.ir_constant_int(0);
+        let storage = b.alloc_storage(vec![zero; 4], crate::types::NumberType::Integer);
         let p = opaque_bool(&mut b, false);
         b.swap_write_predicate(Some(p.clone()));
         let addr = opaque_int(&mut b, 9);
-        b.ir_read_memory(0, &addr);
+        b.ir_read_memory(storage, &addr);
         let read = b.stmts.last().unwrap().clone();
-        let guarded = &b.stmts[read.arguments[0] as usize];
+        assert!(matches!(read.ir, IR::ArrayRead(_)));
+        let guarded = &b.stmts[read.arguments[1] as usize];
         assert!(matches!(guarded.ir, IR::SelectI));
         assert_eq!(guarded.arguments[0], p.stmt_id().unwrap());
         assert_eq!(guarded.arguments[1], addr.stmt_id().unwrap());

@@ -15,8 +15,9 @@ use crate::lower::{Construction, Target};
 use crate::prove::types::ProvingParams;
 use crate::types::{NumberType, Value};
 
+use crate::lower::memory::ElementByTable;
 use super::constructions::{
-    ElementByIndicators, ElementByMemory, ElementByOneHot, ElementBySelectChain, ElementOfWrite, ScanByRunningProducts,
+    ElementByIndicators, ElementByOneHot, ElementBySelectChain, ElementOfWrite, ScanByRunningProducts,
     ScanBySelectChain, WindowShift,
 };
 use super::encoding::IndexEncoding;
@@ -362,8 +363,8 @@ fn argmax_read_placeholders(n: usize) -> IRGraph {
 fn argmax_read_placeholders_match_numpy_under_every_construction_choice() {
     let choices: [&[&dyn Construction]; 3] = [
         &[&ScanByRunningProducts, &ElementByOneHot],
-        &[&ScanBySelectChain, &ElementByMemory],
-        &[&ScanByRunningProducts, &ElementByMemory],
+        &[&ScanBySelectChain, &ElementByTable],
+        &[&ScanByRunningProducts, &ElementByTable],
     ];
     for n in 1..=5 {
         let graph = argmax_read_placeholders(n);
@@ -415,12 +416,12 @@ fn checked_reads_match_numpy_under_every_construction_choice() {
     let choices: [&[&dyn Construction]; 8] = [
         &[&ElementBySelectChain, &WrapByPinnedSign],
         &[&ElementByIndicators, &WrapByPinnedSign],
-        &[&ElementByMemory, &WrapByPinnedSign],
-        &[&ElementOfWrite, &ElementByOneHot, &ElementBySelectChain, &ElementByIndicators, &ElementByMemory, &WrapByPinnedSign],
+        &[&ElementByTable, &WrapByPinnedSign],
+        &[&ElementOfWrite, &ElementByOneHot, &ElementBySelectChain, &ElementByIndicators, &ElementByTable, &WrapByPinnedSign],
         &[&ElementBySelectChain, &WrapByPositionHits],
         &[&ElementByIndicators, &WrapByPositionHits],
         &[&ElementByOneHot, &ElementByIndicators, &WrapByPositionHits],
-        &[&ElementOfWrite, &ElementByOneHot, &ElementBySelectChain, &ElementByIndicators, &ElementByMemory, &WrapByPositionHits],
+        &[&ElementOfWrite, &ElementByOneHot, &ElementBySelectChain, &ElementByIndicators, &ElementByTable, &WrapByPositionHits],
     ];
     for n in 1..=5usize {
         let graph = checked_reads(n);
@@ -597,7 +598,7 @@ fn inverse_permutation_gather_placeholders(n: usize) -> IRGraph {
 fn inverse_permutation_and_gathers_by_it_match_numpy_under_every_construction_choice() {
     let choices: [&[&dyn Construction]; 2] = [
         &[&super::constructions::ScatterByHits, &ElementByOneHot],
-        &[&super::constructions::ScatterByHits, &ElementByMemory],
+        &[&super::constructions::ScatterByHits, &ElementByTable],
     ];
     for n in 1..=4 {
         let graph = inverse_permutation_gather_placeholders(n);

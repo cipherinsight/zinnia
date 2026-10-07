@@ -262,6 +262,7 @@ impl IRGenerator {
                     if let Some(out) = crate::helpers::static_array::shape::try_apply_flatten(
                         &mut self.builder,
                         &val_orig,
+                        true,
                     ) {
                         return Some(out);
                     }
@@ -359,6 +360,7 @@ impl IRGenerator {
                     if let Some(out) = crate::helpers::static_array::shape::try_apply_flatten(
                         &mut self.builder,
                         &val_orig,
+                        false,
                     ) {
                         return Some(out);
                     }

@@ -212,14 +212,18 @@ fn routed_plan_is_offered_on_halo2_base_only_and_from_two_elements() {
 /// within 5% of the cheapest of the plans it weighs (Batcher's networks,
 /// the adjacent-swap network, rank selectors, the permutation check, the
 /// routed network), and the routed plan is picked only where it measures
-/// cheaper than every other. Cells are advice + lookup at lookup width 8.
+/// cheaper than every other. Cells are advice + lookup at lookup width 8,
+/// plus a table group's fixed columns when the reads at hinted ranks became
+/// table reads (the price the layer weighs them at, `memory::cost::table`;
+/// advice cells alone do not see a table's columns).
 #[cfg(feature = "halo2-base-backend")]
 #[test]
 fn halo2_base_cost_rule_picks_a_measured_cheapest_plan() {
     let cells = |values: &[i64], outputs: &[Output], forced: Forced| {
         let sort = sort_graph(values, outputs, forced);
         let stats = crate::prove::halo2_base::cell_stats(&sort.graph, 8, 32).expect("cells");
-        stats.advice + stats.lookup
+        let tables = sort.graph.stmts.iter().any(|s| matches!(s.ir, crate::ir_defs::IR::RomInit { .. }));
+        stats.advice + stats.lookup + if tables { crate::lower::memory::cost::TABLE_GROUP_CELLS as usize } else { 0 }
     };
     for n in [2usize, 3, 4, 5, 8, 16, 32, 64] {
         let values: Vec<i64> = (0..n as i64).map(|j| (j * 37 + 11) % 13 - 6).collect();

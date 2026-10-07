@@ -37,4 +37,4 @@ mod versions_tests;
 #[cfg(test)]
 pub(crate) mod test_support;
 
-pub use constructions::{constructions, ElementByIndexBits};
+pub use constructions::{constructions, ElementByIndexBits, ElementByTable};

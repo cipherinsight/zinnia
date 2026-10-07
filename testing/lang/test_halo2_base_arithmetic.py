@@ -100,7 +100,11 @@ def test_trigonometry_matches_mock_and_numpy():
 
 
 def test_constant_write_after_dynamic_write_wins():
-    """`x[i] = 7; x[0] = 9; return x[0]` with i = 0 proved 7 before (M3)."""
+    """`x[i] = 7; x[0] = 9; return x[0]` with i = 0 proved 7 before (M3).
+
+    The compiler now resolves `x[0]` to the constant 9 (the last write to
+    that cell), so the read at a runtime position `j` exercises the order of
+    the two writes in the circuit."""
 
     @zk_circuit
     def overwrite(x: Integer[Array, "1100"], i: Integer) -> Integer:
@@ -108,20 +112,43 @@ def test_constant_write_after_dynamic_write_wins():
         x[0] = 9
         return x[0]
 
-    compiled = ZKCircuit.from_method(overwrite).compile()
-    keys = compiled.setup(params={"k": 10, "lookup_bits": 8, "precision_bits": 32})
+    assert [e.get("Int") for e in ZKCircuit.from_method(overwrite).compile().get_elided_publics()] == [9]
+
+    @zk_circuit
+    def overwrite_read(x: Integer[Array, "1100"], i: Integer, j: Integer) -> Integer:
+        x[i] = 7
+        x[0] = 9
+        return x[j]
+
+    compiled = ZKCircuit.from_method(overwrite_read).compile()
+    # The array's 1,100 cells and its three accesses are rows of the RAM
+    # trace (`circuit/ram.rs`), which needs k = 11.
+    keys = compiled.setup(params={"k": 11, "lookup_bits": 8, "precision_bits": 32})
     data = np.arange(1100)
-    for i in (0, 5):
-        out = compiled.prove_with_keys(keys, data, i)
+    for i, j, expected in ((0, 0, 9), (5, 5, 7), (5, 0, 9), (0, 5, 5)):
+        out = compiled.prove_with_keys(keys, data, i, j)
         assert compiled.verify_with_keys(keys, out)
-        assert _decode(out["public_values"][-1]) == _mock_raw(compiled, data, i) == 9
-    # 1,100 constants used to overflow the constants' columns at k=7: the
-    # layout now reserves the blinding rows in every column.
+        assert _decode(out["public_values"][-1]) == _mock_raw(compiled, data, i, j) == expected
+    # A layout that cannot fit (the trace needs more rows than k has) is an
+    # error naming k, not a panic.
+    with pytest.raises(RuntimeError, match="k=10"):
+        compiled.setup(params={"k": 10, "lookup_bits": 8, "precision_bits": 32})
+
+
+def test_many_constants_fit_the_constants_columns_at_a_small_k():
+    """1,100 constants used to overflow the constants' columns at k=7: the
+    layout reserves the blinding rows in every column."""
+
+    @zk_circuit
+    def weighted(x: Integer[Array, "1100"]) -> Integer:
+        return np.dot(x, np.arange(1100) * 3 + 1)
+
+    compiled = ZKCircuit.from_method(weighted).compile()
     small = compiled.setup(params={"k": 7, "lookup_bits": 6, "precision_bits": 32})
-    out = compiled.prove_with_keys(small, data, 0)
+    data = np.arange(1100) % 7
+    out = compiled.prove_with_keys(small, data)
     assert compiled.verify_with_keys(small, out)
-    # A layout that cannot fit (the lookup table needs more rows than k
-    # has) is an error naming k, not a panic.
+    assert _decode(out["public_values"][-1]) == _mock_raw(compiled, data) == int(np.dot(data, np.arange(1100) * 3 + 1))
     with pytest.raises(RuntimeError, match="k=6"):
         compiled.setup(params={"k": 6, "lookup_bits": 8, "precision_bits": 32})
 

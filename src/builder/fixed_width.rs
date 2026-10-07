@@ -410,6 +410,57 @@ impl IRBuilder {
         }
     }
 
+    /// Register the cells a new array storage holds (`builder/store.rs`): an
+    /// array filled with 0 holds nothing yet (0 is a value of every type),
+    /// any other one what its cells hold.
+    pub(super) fn track_storage_alloc(&mut self, storage: u32, cells: &[Value], zero_filled: bool) {
+        if !self.fixed_width.active {
+            return;
+        }
+        let content = if zero_filled {
+            Content::Fresh
+        } else {
+            cells.iter().fold(Content::Fresh, |content, cell| after_write(content, self.fixed_width.of(cell), true))
+        };
+        self.fixed_width.segments.insert(storage, content);
+    }
+
+    /// A value stored into `storage`: a compile error when the storage holds
+    /// fixed-width values and `value` is not one of their type (as NumPy
+    /// converts it, which Zinnia does not); otherwise the storage's content
+    /// is updated.
+    pub(super) fn track_storage_write(&mut self, storage: u32, value: &Value) {
+        let state = &self.fixed_width;
+        if !state.active {
+            return;
+        }
+        let content = after_write(state.content(storage), state.of(value), state.suspended);
+        self.fixed_width.segments.insert(storage, content);
+    }
+
+    /// A value read from `storage`, tracked as the storage's fixed-width
+    /// type when it holds one: a read statement is tracked as such; a known
+    /// cell of another tracking is read as a fresh copy (the cell itself may
+    /// be shared, e.g. a constant).
+    pub(super) fn track_storage_read(&mut self, storage: u32, value: Value) -> Value {
+        let state = &self.fixed_width;
+        if !state.active {
+            return value;
+        }
+        let Content::Tracked(t) = state.content(storage) else { return value };
+        if state.of(&value) == Some(t) {
+            return value;
+        }
+        let Some(stmt) = value.stmt_id() else { return value };
+        let read = if matches!(self.stmts.get(stmt as usize).map(|s| &s.ir), Some(IR::ArrayRead(_))) {
+            value
+        } else {
+            self.fresh_copy(&value)
+        };
+        self.fixed_width.values.insert(read.stmt_id().expect("a statement"), t);
+        read
+    }
+
     /// Register the cells of a static array built over `segment` from a
     /// compile-time payload (no memory write records them).
     pub(crate) fn note_static_array_cells(&mut self, segment: u32, cells: &[Value]) {
@@ -539,11 +590,15 @@ mod tests {
     fn memory_holds_the_type_of_what_was_written() {
         let mut b = IRBuilder::new();
         let v = tracked_constant(&mut b, 200);
-        let segment = b.alloc_segment_id();
-        b.ir_allocate_memory(segment, 2, 0);
+        let zero = b.ir_constant_int(0);
+        let segment = b.alloc_filled(2, &zero, crate::types::NumberType::Integer);
         let address = b.ir_constant_int(0);
         b.ir_write_memory(segment, &address, &v);
         let read = b.ir_read_memory(segment, &address);
+        assert_eq!(b.fixed_width.of(&read), Some(FixedWidth::Exactly(UINT8)));
+        // A read at a runtime address too.
+        let i = b.ir_read_integer(crate::circuit_input::InputPath::new("i", vec![]), false);
+        let read = b.ir_read_memory(segment, &i);
         assert_eq!(b.fixed_width.of(&read), Some(FixedWidth::Exactly(UINT8)));
     }
 
@@ -552,8 +607,8 @@ mod tests {
     fn storing_an_int64_value_into_fixed_width_memory_is_rejected() {
         let mut b = IRBuilder::new();
         let v = tracked_constant(&mut b, 200);
-        let segment = b.alloc_segment_id();
-        b.ir_allocate_memory(segment, 2, 0);
+        let zero = b.ir_constant_int(0);
+        let segment = b.alloc_filled(2, &zero, crate::types::NumberType::Integer);
         let (first, second) = (b.ir_constant_int(0), b.ir_constant_int(1));
         b.ir_write_memory(segment, &first, &v);
         let plain = b.ir_constant_int(300);

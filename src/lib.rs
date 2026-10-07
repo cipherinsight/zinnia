@@ -26,10 +26,8 @@ use lower::{ArrayLowering, Target};
 use optim::{
     AlwaysSatisfiedElimination, AssertSubsumption, AssertedEqualityConstantPropagation,
     ConstantFold, DeadCodeElimination, DoubleNotElimination, DuplicateCodeElimination,
-    DynamicNDArrayMemoryLowering, DynamicNDArrayMetaAssertInjection, ExternalCallRemover, IRPass,
-    MemoryTraceInjection, PatternMatchOptim, PredicatedSimplification, SelectChainForwarding,
-    ConstantMemoryForwarding, SelectMerge,
-    UnreadMemoryEliminator,
+    DynamicNDArrayMetaAssertInjection, ExternalCallRemover, IRPass, PatternMatchOptim,
+    PredicatedSimplification, SelectChainForwarding, SelectMerge,
 };
 
 /// Opaque handle holding a compiled IR graph.
@@ -105,7 +103,7 @@ fn resolve_public_layout(
     })
 }
 
-fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32, target: Target) -> Option<IRGraph> {
+fn apply_pass(graph: IRGraph, pass_name: &str, target: Target) -> Option<IRGraph> {
     // Passes rebuild the graph via `IRGraph::new`, which starts with an
     // empty elided-publics list; carry the IRGen-recorded claim across.
     let elided = graph.elided_publics.clone();
@@ -129,19 +127,13 @@ fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32, target: Targe
         "DoubleNotElimination" => DoubleNotElimination.exec(graph),
         "AlwaysSatisfiedElimination" => AlwaysSatisfiedElimination.exec(graph),
         "AssertedEqualityConstantPropagation" => AssertedEqualityConstantPropagation.exec(graph),
-        "UnreadMemoryEliminator" => UnreadMemoryEliminator.exec(graph),
         "ConstantFold" => ConstantFold.exec(graph),
         "DuplicateCodeElimination" => DuplicateCodeElimination.exec(graph),
         "AssertSubsumption" => AssertSubsumption.exec(graph),
-        "DynamicNDArrayMemoryLowering" => {
-            DynamicNDArrayMemoryLowering::new(mux_threshold).exec(graph)
-        }
         "DynamicNDArrayMetaAssertInjection" => DynamicNDArrayMetaAssertInjection.exec(graph),
-        "MemoryTraceInjection" => MemoryTraceInjection.exec(graph),
         "PatternMatchOptim" => PatternMatchOptim.exec(graph),
         "SelectChainForwarding" => SelectChainForwarding.exec(graph),
         "PredicatedSimplification" => PredicatedSimplification.exec(graph),
-        "ConstantMemoryForwarding" => ConstantMemoryForwarding.exec(graph),
         "SelectMerge" => SelectMerge.exec(graph),
         "ArrayLowering" => ArrayLowering { target }.exec(graph),
         "SortCountQueries" => lower::sort::SortCountQueries.exec(graph),
@@ -210,7 +202,6 @@ fn panic_payload_to_string(payload: Box<dyn std::any::Any + Send>) -> String {
 fn run_pass_pipeline(
     graph: IRGraph,
     passes: &[&str],
-    mux_threshold: u32,
     target: Target,
     trace_phases: bool,
 ) -> IRGraph {
@@ -224,7 +215,7 @@ fn run_pass_pipeline(
     let mut g = graph;
     for pass_name in passes {
         let pass_started = std::time::Instant::now();
-        match apply_pass(g, pass_name, mux_threshold, target) {
+        match apply_pass(g, pass_name, target) {
             Some(mut result) => {
                 if let Some(t) = astgen.as_ref() {
                     result.set_astgen_telemetry(std::sync::Arc::clone(t));
@@ -359,11 +350,6 @@ fn compile_circuit_impl(
     let enable_dynamic_ndarray_meta_assertions = config["enable_dynamic_ndarray_meta_assertions"]
         .as_bool()
         .unwrap_or(false);
-    let mux_threshold = config
-        .get("mux_threshold")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(100) as u32;
-
     let optim = &config["optimization"];
     let shortcut_optimization = optim["shortcut_optimization"].as_bool().unwrap_or(true);
     let constant_fold = optim["constant_fold"].as_bool().unwrap_or(true);
@@ -439,21 +425,16 @@ fn compile_circuit_impl(
         // Needs equal conditions to be one statement (after the pass above);
         // the DCE below removes the selects it bypasses.
         passes.push("SelectChainForwarding");
-    }
-    // `argwhere/nonzero` bbox kernels can materialize coordinate segments
-    // that later min/max fast paths never read. Drop those memory ops late
-    // in the scalar-optimization phase, then run DCE once more to clean up
-    // their now-dead address/value arithmetic.
-    passes.push("UnreadMemoryEliminator");
-    if dead_code_elimination {
-        passes.push("DeadCodeElimination");
-        // Eliding a segment's writes leaves the reads that fed them dead;
-        // DCE above removes their pure consumers, which exposes the reads
-        // themselves (and possibly further segments) to a second
-        // unread-memory round. One extra pair reaches the fixpoint for
-        // slice-of-slice view composition chains.
-        passes.push("UnreadMemoryEliminator");
-        passes.push("DeadCodeElimination");
+        if constant_fold {
+            // Accesses of an array through equal index expressions are one
+            // statement now: the array folds (`builder/arrays.rs`) resolve
+            // a read of a cell an earlier write named, and dead-code
+            // elimination removes the writes no read reaches.
+            passes.push("ConstantFold");
+            if dead_code_elimination {
+                passes.push("DeadCodeElimination");
+            }
+        }
     }
     // Comparisons with sorted values answered from counts the program has
     // (`lower::sort::counts`), so the values no longer read are not lowered.
@@ -473,12 +454,8 @@ fn compile_circuit_impl(
     // then what that leaves unread removed.
     passes.push("PredicatedSimplification");
     passes.push("DeadCodeElimination");
-    // Reads at constant memory addresses forwarded to the values stored
-    // there, stores no read observes dropped (`optim/constant_memory_forwarding.rs`),
-    // so selects see the values their branches merge; then selects whose
-    // branches agree wherever the other is taken collapsed (`optim/select_merge.rs`).
-    passes.push("ConstantMemoryForwarding");
-    passes.push("DeadCodeElimination");
+    // Selects whose branches agree wherever the other is taken collapsed
+    // (`optim/select_merge.rs`).
     passes.push("SelectMerge");
     passes.push("DeadCodeElimination");
     // Collapse `AssertU128Lt(stride_k + base, hi)` chains to the tightest
@@ -487,24 +464,23 @@ fn compile_circuit_impl(
     if check_elimination {
         passes.push("AssertSubsumption");
     }
-    if backend == "halo2" && enable_memory_consistency {
-        passes.push("DynamicNDArrayMemoryLowering");
-        passes.push("DynamicNDArrayMetaAssertInjection");
-        passes.push("MemoryTraceInjection");
-    } else if enable_dynamic_ndarray_meta_assertions {
+    // The runtime shapes of dynamic-array inputs checked against their
+    // envelopes. (`enable_memory_consistency` selected this together with
+    // the retired memory-trace passes; arrays are values now, whose
+    // representation the array lowering layer chooses.)
+    if (backend == "halo2" && enable_memory_consistency) || enable_dynamic_ndarray_meta_assertions {
         passes.push("DynamicNDArrayMetaAssertInjection");
     }
 
     let target = Target::from_backend(backend);
     let optimized_graph =
-        run_pass_pipeline(base_graph, &passes, mux_threshold, target, trace_phases);
+        run_pass_pipeline(base_graph, &passes, target, trace_phases);
     // Inputs nothing reads need no domain check (`ir_gen::input_domain`);
     // dropping it lets dead-code elimination remove the read again.
     let optimized_graph = ir_gen::input_domain::drop_checks_of_unread_inputs(optimized_graph);
     let optimized_graph = run_pass_pipeline(
         optimized_graph,
         &["DeadCodeElimination"],
-        mux_threshold,
         target,
         trace_phases,
     );

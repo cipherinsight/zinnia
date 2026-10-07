@@ -460,8 +460,8 @@ pub(crate) fn search_graph(table: &[f64], float: bool, right: bool, t: i64, by_p
     let lane = b.ir_array_op(op, &entries, &[query]);
     b.ir_expose_public_i(&lane);
     let construction: &dyn Construction = if by_position { &SearchByPosition } else { &SearchByCount };
-    let graph = crate::lower::emit::lower(&b.export_ir_graph(), Target::Halo2Base, &[construction])
-        .expect("a placeholder to lower");
+    // The search's table reads are lowered in a later round.
+    let graph = crate::lower::emit::lower_rounds(b.export_ir_graph(), Target::Halo2Base, &[construction]);
     let code = |v: f64| if float { crate::prove::field::quantize(v, precision) as i64 } else { v as i64 };
     let expected = table.iter().filter(|&&v| if right { code(v) <= t } else { code(v) < t }).count() as i64;
     SearchGraph { graph, inputs: vec![("t".to_string(), t)], expected }

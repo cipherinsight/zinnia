@@ -37,12 +37,12 @@ prefer a clean design."
 
 | step | what | state |
 |---|---|---|
-| 0 | inventory, census, base measurements, this document | done |
-| 1 | IR: `ArrayInit`/`ArrayWrite`/`ArrayRead` with mock semantics, export/import, DCE, folding | todo |
-| 2 | frontend store: segments become storages; every access through the store | todo |
-| 3 | layer: memory groups (overlay, RAM), reads of `ArrayInit` as element groups, rounds | todo |
-| 4 | backends: `RomInit/RomRead`, `RamInit/RamWrite/RamRead`; old memory code deleted | todo |
-| 5 | delete segments, passes, old ops; rename; tests | todo |
+| 0 | inventory, census, base measurements, this document | done (1e8e0095) |
+| 1 | IR ops `ArrayInit/Write/Read`, `Rom*/Ram*`: export/import, mock, folds, backends | done (c1a06b78) |
+| 2 | layer, read side: element groups from `ArrayRead(ArrayInit)`, rounds, `Rom*` | done (8724bc75) |
+| 3 | store behind the builder memory API; memory groups (overlay, RAM trace, native RAM) | done |
+| 4 | frontend families onto the store API (writes at runtime positions are `ArrayWrite`s); B1-B9 | done |
+| 5 | delete old ops, passes, backend memory code; rename | todo |
 | 6 | validation and per-case cost table | todo |
 
 (Updated as steps land; see "Status log" at the end.)
@@ -249,19 +249,28 @@ the proof **unsatisfied** (not a synthesis error). It checks the RAM discipline.
 interprets the pre-lowering ops too, the layer can be tested against it construction by
 construction, and the IR can be checked before and after lowering against NumPy.
 
-### 2.4 Folds (in `ConstantFold`, i.e. before lowering)
+### 2.4 Folds (in the builder, so at IR generation and in `ConstantFold`)
 
 With `w = ArrayWrite(v, j, x, p)` and positions compared as constants or as the same statement:
 
 1. `ArrayRead(ArrayInit(c), k)` with a constant address `k` → `c[k]`.
-2. `ArrayRead(w, k)` with the address of `k` a constant different from `j`'s constant address →
-   `ArrayRead(v, k)`.
-3. `ArrayRead(w, j)` (same index statements, same access map) → `x` when `p` is the constant
-   true, else `select(p, x, ArrayRead(v, j))`.
+2. `ArrayRead(w, k)` → `ArrayRead(v, k)` when no cell `k` can name is one `j` can name: two
+   different constant addresses, or lines of cells that do not meet (`a[r, i]` and `a[s, j]`
+   for rows `r != s`; an access with at most one runtime position names an arithmetic
+   progression of cells, `ArrayAccess::disjoint_from`).
+3. `ArrayRead(w, j)` (same constant address, or same index statements and access map) → `x`
+   when `p` is the constant true. Under a runtime `p` the read stays: the rewrite
+   `select(p, x, ArrayRead(v, j))` would read an older version after the write, which one
+   memory (the RAM constructions) cannot serve, and it is not cheaper for the overlay.
 4. `ArrayWrite(v, j, x, false)` → `v`.
 
 Each is the definition of the ops; they replace `ConstantMemoryForwarding` and the memory part of
-`SelectChainForwarding`, and keep the costs those passes saved.
+`SelectChainForwarding`. Two frontend rules make them apply: one index on axes of one length
+under one execution predicate has one checked position (`IRBuilder::checked_position`, so a read
+and a write through `a[i]` name the same statement), and `ConstantFold` runs again after
+`DuplicateCodeElimination` (equal index expressions written twice, `a[c - 1] *= m` then
+`a[c - 1]`, become one statement there), followed by dead-code elimination of the writes no read
+reaches.
 
 ### 2.5 Facts and ranges
 
@@ -380,13 +389,18 @@ its reads and writes):
 | construction | applies | emits | halo2-base cost | Noir cost |
 |---|---|---|---|---|
 | **overlay** | always | per write, per cell the write may reach (pruned by the index's range), `select(hit ∧ p, x, cell)`, hits per axis by equality tests (shared per index), the `Wrap` hits, or the pinned position one-hot (`scatter::position`); per runtime read an `ArrayRead(ArrayInit(line cells of its version))` for the next round; per constant read the cell | selects + hits (calibrated units of `scatter/write.rs`, `gather/cost.rs`) + per read the cheapest element construction for its line | same, Noir units |
-| **zero-write chain** | every write writes the constant 0 through one runtime axis (`scatter::write::ZeroWrites`) | products of `1 - h` | as today | as today |
-| **RAM trace** | halo2-base; the tree is a chain whose reads respect the RAM discipline | `RamInit`, `RamWrite` (predicated as in 2.2), `RamRead` | ≈ 8 cells per access + 8 per slot (measured, `layer-memory.md` 1.2); **pre**: `Program{RAM}` | — |
+| **zero writes** (`ZeroWrites`) | every write stores the constant 0 through one runtime position, unconditionally | per cell `x · Π keep`, a keep bit `Π (1 - h)` per (axis, coordinate) shared by the cells there | 4 cells per product | 1 gate per product |
+| **RAM trace** | halo2-base; the tree is a chain whose reads respect the RAM discipline (a read of an older version is allowed when no later write before it can change its cell: fold 2 left it there) | `RamInit`, `RamWrite` (predicated as in 2.2), `RamRead` | ≈ 8 cells per access + 8 per slot (measured, `layer-memory.md` 1.2); **pre**: `Program{RAM}` | — |
 | **native RAM** | Noir; same chain condition | same ops (Noir: `let mut` array, `array_index`) | — | measured per access/slot (1.2) |
 
-Preconditions: every index's fact `0 <= i_k < len_k` (justified by the program's check, as for
-element reads). Postconditions: the lanes; RAM also proves `0 <= a < len` for the flat address
-(not the per-axis facts, which the program's checks keep).
+Preconditions: none beyond the overlay's hit bits (the `Wrap` encodings). Every position is in
+its axis on every path of an accepted witness by the frontend's contract (its check or proof,
+and the guard where the code does not run; `crate::ir_array`), so no construction lists the
+per-axis facts. Postconditions: the lanes (and the cells of the versions read at runtime
+positions, for the element constructions). The overlay's cost counts a select storing the
+constant 0 as one product. The position one-hot wrap (`WrapByPositionHits`) also states
+`-n <= i < n` for the raw index, as the scatter family's index writes did, so a check it implies
+is dropped.
 
 Soundness: overlay — each new cell is NumPy's after the write, a function of its inputs (no
 hint), because exactly the cell at the write's address is selected when `p` holds and every other
@@ -484,3 +498,29 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
 
 - 2026-10-07: inventory, census (`census_base.jsonl`), base costs (`costs_base.json`, 178 cases ×
   2 targets, no errors), bugs B1-B6 confirmed on the mock, this design.
+- Steps 1-2 (c1a06b78, 8724bc75): the ops, mock, backends' `Rom*`/`Ram*`; element reads as
+  `ArrayRead(ArrayInit)`; costs identical to the base.
+- Steps 3-4 (one commit): the store (`builder/store.rs`) is the only copy of every array's cells;
+  the payload cache, lazy segments and materialization are gone; every write at a runtime
+  position is an `ArrayWrite` (the frontend overlays, `OpKind::IndexWrite` and its one-hot and
+  zero-chain constructions are deleted; the memory group's overlay, zero writes, RAM trace and
+  native RAM decide the representation); `ElementByMemory`, `UnreadMemoryEliminator`,
+  `ConstantMemoryForwarding`, `MemoryTraceInjection`, `DynamicNDArrayMemoryLowering` deleted.
+  Fixed: B1 (in-place outputs by the store's write clock), B2/B3 (mask writes through view
+  strides), B4 (runtime row of a view through every stride), B5 (`flatten` copies), B6 (reshape
+  of a contiguous view at an offset is a view), B7/B8 (a typed store keeps the real fill cells),
+  B9 (complex `out=` writes both parts), and a cycle in the layer's emission order (a node's
+  start waited for every version its lanes read; now only for the versions whose cells it
+  reads, so a RAM serving a read-modify-write chain lowers). Costs against `costs_base6ff.json`
+  (`costs_step4d.json`): 334 of 356 unchanged, 19 cheaper (0381 halo2 -2,007; insertion_sort
+  halo2 -10,075 at the base's k, Noir -1,031; periodic_dist -9,237 / -729; lu, make_decision,
+  projection_simplex, clip, 0450, 0383, 0298, value_index), 3 costlier on halo2 by 15-17 cells
+  (0345, 0346, 0347: reads of a column at a runtime index, see "Open").
+
+### Open
+
+- 0345-0347 (+15, +17, +17 halo2 cells): the selection now prices the column reads alone (the
+  writes fold away) and prefers the pinned-sign wrap with select chains (estimate 198) over the
+  position one-hot with recorded one-hot reads (estimate 210); emitted, the second is 15-17 cells
+  cheaper (forcing it reproduces the base exactly). A calibration of the gather costs, not of
+  this design.

@@ -1779,6 +1779,7 @@ impl IRGenerator {
                     crate::helpers::static_array::shape::try_apply_flatten(
                         &mut self.builder,
                         &val_orig,
+                        false,
                     )
                     .unwrap_or(val_orig)
                 } else {

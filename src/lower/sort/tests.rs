@@ -275,16 +275,18 @@ fn cost_rule_picks_by_target_and_live_outputs() {
     let halo2 = unit_costs(Target::Halo2Base);
     let noir = unit_costs(Target::Noir);
     let every: Vec<usize> = (0..100).collect();
-    // A full argsort of 100: hinted keys checked by a grand product on
-    // halo2-base, even paying the challenge's one-time cost (a read is a
-    // one-hot selection over 100 slots, a comparator network has 1,077
-    // comparisons, the routed network 573 switches), the permutation check
-    // on Noir.
+    // A full argsort of 100: hinted keys pinned by their links on
+    // halo2-base, every key read from one table (a cell per slot, three per
+    // read and a table group's columns: less than the grand product with
+    // the challenge's one-time cost, a comparator network's 1,077
+    // comparisons or the routed network's 573 switches; 0381 measures it),
+    // the permutation check on Noir.
     let full = demand(100, &[], &every, 0);
-    assert_eq!(choose_plan(&full, &halo2).0, Plan::GrandProduct);
-    // With the sorted values live too: the same, carrying the values.
+    let keys = Plan::Hinted { runs: vec![Run { first: 0, last: 99, pin: Pin::Keys }] };
+    assert_eq!(choose_plan(&full, &halo2).0, keys);
+    // With the sorted values live too: the same.
     let both = demand(100, &every, &every, 0);
-    assert_eq!(choose_plan(&both, &halo2).0, Plan::GrandProduct);
+    assert_eq!(choose_plan(&both, &halo2).0, keys);
     assert_eq!(
         choose_plan(&full, &noir).0,
         Plan::Hinted { runs: vec![Run { first: 0, last: 99, pin: Pin::Keys }] }
@@ -482,4 +484,3 @@ fn masked_order_statistics_reject_every_other_value() {
         }
     }
 }
-

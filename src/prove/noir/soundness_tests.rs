@@ -1362,7 +1362,7 @@ fn select_chains_and_or_chains_use_the_cheaper_forms() {
 #[test]
 fn index_write_hints_are_pinned_in_noir() {
     use crate::lower::scatter::test_support::{hints_as_inputs, with_hints, zero_row_graph};
-    use crate::lower::scatter::OneHotWrite;
+    use crate::lower::memory::{versions::ZeroWrites, wrap::WrapByPositionHits};
     if !toolchain_present(false) {
         return;
     }
@@ -1371,7 +1371,7 @@ fn index_write_hints_are_pinned_in_noir() {
         witness(&named)
     };
     for index in [-3, -1, 0, 2, 3] {
-        let case = zero_row_graph(3, 2, index, &OneHotWrite);
+        let case = zero_row_graph(3, 2, index, &[&WrapByPositionHits, &ZeroWrites]);
         let (graph, sites) = hints_as_inputs(&case);
         let honest: Vec<i64> = sites.iter().map(|s| s.honest).collect();
         let run = execute(&graph, &as_witness(&with_hints(&case, &sites, &honest)));

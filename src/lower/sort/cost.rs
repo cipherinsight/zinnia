@@ -68,6 +68,9 @@ pub(crate) struct UnitCosts {
     /// Making `n` values readable at runtime addresses, per slot, once per
     /// segment (Noir builds an array; halo2-base reads by selection).
     segment_per_slot: u32,
+    /// A table read's cells per read when the target has table reads that
+    /// may beat `read` (halo2-base), `None` otherwise.
+    table_read: Option<u64>,
     /// An asserted key comparison (consecutive keys of a run).
     key_link: u32,
     /// One term of a count of the keys below or above a key.
@@ -157,9 +160,13 @@ const HALO2_BASE: UnitCosts = UnitCosts {
     rank_selector_products: 8,
     rank_selector_test: 7,
     selected_term: 4,
-    key_read_fixed: 20,
-    key_read_per_slot: 8,
+    // The read is an element read the layer lowers in a later round:
+    // measured against the forced plans of `routed_tests` (permutation
+    // argsorts of 4 to 16, about 22 + 6n cells per read).
+    key_read_fixed: 22,
+    key_read_per_slot: 6,
     segment_per_slot: 0,
+    table_read: Some(3),
     key_link: 55,
     key_count_term: 59,
     rank_count_term: 50,
@@ -213,6 +220,7 @@ const NOIR: UnitCosts = UnitCosts {
     key_read_fixed: 7,
     key_read_per_slot: 0,
     segment_per_slot: 3,
+    table_read: None,
     key_link: 6,
     key_count_term: 10,
     rank_count_term: 9,
@@ -367,13 +375,21 @@ impl UnitCosts {
         u64::from(self.key_read_fixed) + n as u64 * u64::from(self.key_read_per_slot)
     }
 
-    /// `count` reads of one segment of `n` values, with the segment (none
-    /// when `count` is 0).
+    /// `count` reads of one line of `n` values at runtime positions, with
+    /// the line made readable (none when `count` is 0). The layer lowers
+    /// them in a later round by the cheapest element construction; on
+    /// halo2-base a table read (`memory::ElementByTable`: a cell per slot,
+    /// three per read, a table group's columns) wins for many reads of a
+    /// long line, which this estimate weighs against the per-read cost.
     fn reads(&self, n: usize, count: usize) -> u64 {
         if count == 0 {
             return 0;
         }
-        n as u64 * u64::from(self.segment_per_slot) + count as u64 * self.read(n)
+        let each = n as u64 * u64::from(self.segment_per_slot) + count as u64 * self.read(n);
+        match self.table_read {
+            Some(per_read) => each.min(n as u64 + per_read * count as u64 + crate::lower::memory::cost::TABLE_GROUP_CELLS),
+            None => each,
+        }
     }
 
     /// One compare-exchange of a network that tracks indices or packed

@@ -5,13 +5,10 @@ mod constant_fold;
 mod dead_code_elimination;
 mod double_not_elimination;
 mod duplicate_code_elimination;
-mod dyn_ndarray_memory_lowering;
 mod dyn_ndarray_meta_assert;
 mod external_call_remover;
-mod memory_trace_injection;
 mod pattern_match_optim;
 mod predicated_simplification;
-mod constant_memory_forwarding;
 mod select_merge;
 mod select_chain_forwarding;
 pub mod predicates;
@@ -22,7 +19,6 @@ pub mod smt_encoding;
 pub mod strategy;
 pub mod telemetry;
 pub mod z3_budget;
-mod unread_memory_elimination;
 
 #[cfg(test)]
 mod tests;
@@ -34,13 +30,10 @@ pub use constant_fold::ConstantFold;
 pub use dead_code_elimination::DeadCodeElimination;
 pub use double_not_elimination::DoubleNotElimination;
 pub use duplicate_code_elimination::DuplicateCodeElimination;
-pub use dyn_ndarray_memory_lowering::DynamicNDArrayMemoryLowering;
 pub use dyn_ndarray_meta_assert::DynamicNDArrayMetaAssertInjection;
 pub use external_call_remover::ExternalCallRemover;
-pub use memory_trace_injection::MemoryTraceInjection;
 pub use pattern_match_optim::PatternMatchOptim;
 pub use predicated_simplification::PredicatedSimplification;
-pub use constant_memory_forwarding::ConstantMemoryForwarding;
 pub use select_merge::SelectMerge;
 pub use select_chain_forwarding::SelectChainForwarding;
 pub use range::{IntInterval, RangeResolver};
@@ -55,7 +48,6 @@ pub use telemetry::{
     discharge_event, now_unix_ns, strategy_dispatch_event, SmtTelemetry, TelemetryEvent,
     TelemetrySink,
 };
-pub use unread_memory_elimination::UnreadMemoryEliminator;
 
 use crate::ir::IRGraph;
 

@@ -21,10 +21,8 @@
 //! preserve `static_val` when both inputs carry one. So `np.sum([1, 2, 3])`
 //! returns a `Value::Integer` whose `static_val == Some(6)`.
 //!
-//! Cache awareness: every reduction reads via `payload_cells`, which uses
-//! the `IRBuilder::static_array_payload` cache when present and falls back
-//! to N `ir_read_memory` ops if the cache was invalidated by a P3 dynamic
-//! write.
+//! Every reduction reads via `payload_cells` (the known cells, or reads of
+//! the storage after a write at a runtime position).
 
 use crate::builder::IRBuilder;
 use crate::types::{NumberType, Value};
@@ -301,7 +299,6 @@ fn multi_axis_reduce(
                         provenance,
                         axes,
                         keepdims,
-                        *segment_id,
                     );
                 }
             }
@@ -366,15 +363,12 @@ fn multi_axis_reduce_product_sum_provenance(
     provenance: crate::builder::StaticArrayProductProvenance,
     axes: &[usize],
     keepdims: bool,
-    source_segment_id: u32,
 ) -> Value {
     let shape = provenance.out_shape.clone();
     let dtype = provenance.dtype;
     let rank = shape.len();
     if rank == 0 {
         let cells = product_provenance_payload_cells(b, &provenance);
-        b.static_array_payload
-            .insert(source_segment_id, cells.clone());
         return reduce_cells(b, "sum", &cells);
     }
 
@@ -1143,8 +1137,7 @@ fn input_param_name_of_static_array(b: &IRBuilder, arr: &Value) -> Option<String
         Value::StaticArray { segment_id, .. } => *segment_id,
         _ => return None,
     };
-    let cached = b.static_array_payload.get(&seg)?;
-    let first = cached.first()?;
+    let first = b.known_cell_now(seg, 0)?;
     let stmt_id = first.value_id().and_then(|_| first.stmt_id())?;
     let stmt = b.stmts.get(stmt_id as usize)?;
     let path = match &stmt.ir {
@@ -1738,7 +1731,6 @@ mod tests {
         assert!(b
             .static_array_product_provenance
             .contains_key(&product_segment));
-        assert!(b.static_array_payload.get(&product_segment).is_none());
         assert!(!b.stmts.iter().any(|stmt| matches!(stmt.ir, IR::MulF)));
         let product_sum_stmt = b
             .stmts

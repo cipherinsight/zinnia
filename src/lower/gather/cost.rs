@@ -186,37 +186,3 @@ pub(super) fn one_hot_check(n: u64, target: Target) -> u64 {
 pub(super) fn permutation_scatter(n: u64, target: Target) -> u64 {
     n * n * units(target).mul_add
 }
-
-/// `reads` reads of `n` cells through memory at the distinct indices
-/// `index_reads` (for each, the number of element reads at that index in the
-/// whole program, which share its check): halo2-base builds the indicators
-/// of each distinct index and an inner product per read; Noir reads a native
-/// array, checking each index once (measured on 0319: 3 gates per read at a
-/// checked index, 3 per array element, about 8 per index check).
-pub(super) fn element_by_memory(n: u64, reads: u64, index_reads: &[u64], target: Target) -> u64 {
-    let u = element_units(target);
-    match target {
-        // Per index read at most twice the backend's multiplexer (its selects
-        // and the index bits), else the shared equality tests and an inner
-        // product per read (`synthesizer/memory.rs`).
-        Target::Halo2Base => {
-            let _ = reads;
-            let width = u64::from(u64::BITS - n.saturating_sub(1).leading_zeros());
-            index_reads
-                .iter()
-                .map(|&r| {
-                    let r = r.max(1);
-                    if r <= 2 {
-                        r * n.saturating_sub(1) * u.select_var + 4 + 7 * width
-                    } else {
-                        n * u.eq_const + r * n * u.mul_add
-                    }
-                })
-                .sum()
-        }
-        Target::Noir => {
-            let checks: u64 = index_reads.iter().map(|&r| u.native_index.div_ceil(r.max(1))).sum();
-            n * u.native_element + reads * u.native_read + checks
-        }
-    }
-}

@@ -201,37 +201,35 @@ pub(crate) fn selects(graph: &IRGraph) -> usize {
 }
 
 /// `a[i, :] = 0` on a `rows x cols` array of inputs `a{r}_{c}` with the
-/// input index `i`: `OpKind::IndexWrite` lanes lowered by
-/// `construction` alone, every cell exposed. `expected`: NumPy's result,
-/// `None` for an index outside `[-rows, rows)`.
-pub(crate) fn zero_row_graph(rows: usize, cols: usize, index: i64, construction: &dyn Construction) -> ScatterGraph {
-    use crate::lower::scatter::write::{OLD, WRITTEN};
+/// input index `i` (NumPy's position by the frontend's wrap, then one
+/// `ArrayWrite` per column), lowered by `constructions` alone, every cell
+/// exposed. `expected`: NumPy's result, `None` for an index outside
+/// `[-rows, rows)`.
+pub(crate) fn zero_row_graph(rows: usize, cols: usize, index: i64, constructions: &[&dyn Construction]) -> ScatterGraph {
+    use crate::ir_array::{AccessAxis, ArrayAccess, ArrayElem};
     let mut b = IRBuilder::new();
     let mut inputs = Vec::new();
     let cells: Vec<Value> = (0..rows * cols)
         .map(|k| read(&mut b, &mut inputs, format!("a{}_{}", k / cols, k % cols), 10 + k as i64))
         .collect();
     let i = read(&mut b, &mut inputs, "i".into(), index);
-    let shared: Arc<[Value]> = Arc::from(vec![i]);
-    let zero = b.ir_constant_int(0);
-    for (k, cell) in cells.iter().enumerate() {
-        let op = ArrayOp {
-            kind: OpKind::IndexWrite { axis_len: rows as u32 },
-            shared: 1,
-            output: 0,
-            position: Some((k / cols) as u32),
-        };
-        let mut own = vec![Value::None; 2];
-        own[OLD] = cell.clone();
-        own[WRITTEN] = zero.clone();
-        let out = b.ir_array_op(op, &shared, &own);
-        b.ir_expose_public_i(&out);
+    let position = crate::helpers::static_array::base::checked_axis_index(&mut b, &i, 0, rows, "test");
+    let (zero, yes) = (b.ir_constant_int(0), b.ir_constant_bool(true));
+    let n = (rows * cols) as u32;
+    let mut version = b.ir_array_init(&cells, ArrayElem::Int);
+    for col in 0..cols as u32 {
+        let access = ArrayAccess::new(n, ArrayElem::Int, col, vec![AccessAxis { len: rows as u32, stride: cols as u32 }]);
+        version = b.ir_array_write(&version, access, std::slice::from_ref(&position), &zero, &yes);
+    }
+    for k in 0..n {
+        let cell = b.ir_array_read(&version, ArrayAccess::constant(n, ArrayElem::Int, k), &[]);
+        b.ir_expose_public_i(&cell);
     }
     let expected = numpy_position(index, rows, Positions::Element).map(|row| {
         (0..rows * cols).map(|k| if k / cols == row { 0 } else { 10 + k as i64 }).collect()
     });
     let graph = b.export_ir_graph();
-    let lowered = crate::lower::emit::lower(&graph, Target::Halo2Base, &[construction]).expect("a write to lower");
+    let lowered = crate::lower::emit::lower(&graph, Target::Halo2Base, constructions).expect("a write to lower");
     ScatterGraph { graph: optimized(lowered), inputs, expected }
 }
 

@@ -1873,15 +1873,9 @@ mod sorted_short_circuit_tests {
         b.facts.insert_for(arr_vid, fact);
     }
 
-    /// Count the number of `IR::ReadMemory` statements in `b.stmts`.
-    /// Short-circuit emits exactly one read (the constant-index slot read);
-    /// the loop path reads all N elements via `segment::read_all` (one
-    /// `ir_read_memory` per slot).
-    fn count_read_memory(b: &IRBuilder) -> usize {
-        b.stmts
-            .iter()
-            .filter(|s| matches!(s.ir, IR::ReadMemory { .. }))
-            .count()
+    /// The number of `IR::ArrayRead` statements in `b.stmts`.
+    fn count_array_reads(b: &IRBuilder) -> usize {
+        b.stmts.iter().filter(|s| matches!(s.ir, IR::ArrayRead(_))).count()
     }
 
     /// Count `IR::SelectI` statements — the select-chain signature of the
@@ -1895,82 +1889,28 @@ mod sorted_short_circuit_tests {
 
     #[test]
     fn dyn_max_on_sorted_short_circuits_to_last_slot_read() {
-        // is_sorted ascending ⇒ max == arr[len - 1]. Plant the fact, run
-        // dyn_aggregate_all(Max), and confirm:
-        // (a) the result statement is an IR::ReadMemory (single-slot read),
-        // (b) total ReadMemory count is exactly 1 (no segment::read_all loop).
+        // is_sorted ascending ⇒ max == arr[len - 1]: the last cell, read
+        // from the array's storage (known here: no IR), with no select
+        // chain over the cells.
         let mut b = IRBuilder::new();
         let data = make_1d_unbounded(&mut b, vec![1, 2, 3, 4, 5]);
         plant_is_sorted(&mut b, data.value_id);
-
         let result = dyn_aggregate_all(&mut b, &data, DynAggKind::Max);
-        let target = result.stmt_id().expect("max result has stmt_id");
-
-        let final_stmt = b
-            .stmts
-            .iter()
-            .find(|s| s.stmt_id == target)
-            .expect("target stmt present");
-        assert!(
-            matches!(final_stmt.ir, IR::ReadMemory { .. }),
-            "short-circuit max should be a single ReadMemory, got {:?}",
-            final_stmt.ir
-        );
-        assert_eq!(
-            count_read_memory(&b),
-            1,
-            "short-circuit max should emit exactly one ReadMemory"
-        );
-        assert_eq!(
-            count_select_i(&b),
-            0,
-            "short-circuit max must not emit any SelectI (no select-chain)"
-        );
+        assert_eq!(result.int_val(), Some(5), "max of a sorted array is its last cell");
+        assert_eq!(count_array_reads(&b), 0, "a known cell needs no read");
+        assert_eq!(count_select_i(&b), 0, "short-circuit max must not emit any SelectI (no select-chain)");
     }
 
     #[test]
     fn dyn_min_on_sorted_short_circuits_to_first_slot_read() {
-        // is_sorted ascending ⇒ min == arr[0]. Plant the fact; confirm
-        // the result is a ReadMemory whose address is constant 0.
+        // is_sorted ascending ⇒ min == arr[0].
         let mut b = IRBuilder::new();
         let data = make_1d_unbounded(&mut b, vec![1, 2, 3, 4, 5]);
         plant_is_sorted(&mut b, data.value_id);
-
         let result = dyn_aggregate_all(&mut b, &data, DynAggKind::Min);
-        let target = result.stmt_id().expect("min result has stmt_id");
-
-        let final_stmt = b
-            .stmts
-            .iter()
-            .find(|s| s.stmt_id == target)
-            .expect("target stmt present");
-        assert!(
-            matches!(final_stmt.ir, IR::ReadMemory { .. }),
-            "short-circuit min should be a single ReadMemory, got {:?}",
-            final_stmt.ir
-        );
-        // The address argument should be a ConstantInt(0).
-        let addr_id = final_stmt.arguments[0];
-        let addr_stmt = b
-            .stmts
-            .iter()
-            .find(|s| s.stmt_id == addr_id)
-            .expect("address stmt present");
-        assert!(
-            matches!(addr_stmt.ir, IR::ConstantInt { value: 0 }),
-            "short-circuit min should read at address ConstantInt(0), got {:?}",
-            addr_stmt.ir
-        );
-        assert_eq!(
-            count_read_memory(&b),
-            1,
-            "short-circuit min should emit exactly one ReadMemory"
-        );
-        assert_eq!(
-            count_select_i(&b),
-            0,
-            "short-circuit min must not emit any SelectI"
-        );
+        assert_eq!(result.int_val(), Some(1), "min of a sorted array is its first cell");
+        assert_eq!(count_array_reads(&b), 0, "a known cell needs no read");
+        assert_eq!(count_select_i(&b), 0, "short-circuit min must not emit any SelectI");
     }
 
     #[test]
@@ -2015,9 +1955,9 @@ mod sorted_short_circuit_tests {
         // No memory reads either: argmax/argmin return the index, not the
         // element.
         assert_eq!(
-            count_read_memory(&b),
+            count_array_reads(&b),
             0,
-            "short-circuit argmax must not emit any ReadMemory"
+            "short-circuit argmax must not read the array"
         );
     }
 
@@ -2048,9 +1988,9 @@ mod sorted_short_circuit_tests {
             "short-circuit argmin must not emit any SelectI"
         );
         assert_eq!(
-            count_read_memory(&b),
+            count_array_reads(&b),
             0,
-            "short-circuit argmin must not emit any ReadMemory"
+            "short-circuit argmin must not read the array"
         );
     }
 

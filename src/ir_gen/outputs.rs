@@ -27,7 +27,6 @@
 //! before the layout existed: the layout describes the public vector, it
 //! does not change it.
 
-use std::collections::BTreeSet;
 
 use serde_json::{json, Value as Json};
 
@@ -324,7 +323,7 @@ impl IRGenerator {
                 }
             }
         }
-        self.in_place_body_start = self.builder.stmts.len();
+        self.in_place_body_start = self.builder.storage_write_clock();
     }
 
     /// Whether `segment` holds an array argument of an in-place kernel.
@@ -337,33 +336,27 @@ impl IRGenerator {
     /// The outputs of an in-place kernel: every array argument the body
     /// wrote, in parameter order, with its final contents.
     ///
-    /// The caller's array lives in the argument's memory segment for the
-    /// whole run: every in-place update of it (subscript and slice
-    /// assignment, `op=` via [`Self::update_in_place`], `out=`, writes through
-    /// views, aliases and helpers) writes into that segment, under the write
-    /// predicate of the statement that makes it (see
-    /// [`Self::write_back_if_shared`] for updates that produce a new array
-    /// value). Rebinding the parameter name (`A = A + 1`, or swapping two
-    /// names) makes the name denote another object and leaves the caller's
-    /// array alone, as in Python. So an argument is written exactly when a
-    /// memory write into its segment was emitted after circuit entry, and its
-    /// output is the segment's final contents read with the argument's
-    /// original shape. An argument whose segment was marked stale (a write
-    /// through a copy that NumPy would treat as a view) is rejected.
+    /// The caller's array lives in the argument's storage for the whole
+    /// run: every in-place update of it (subscript and slice assignment at
+    /// constant or runtime positions, `op=` via [`Self::update_in_place`],
+    /// `out=`, writes through views, aliases and helpers) writes into that
+    /// storage, under the write predicate of the statement that makes it
+    /// (see [`Self::write_back_if_shared`] for updates that produce a new
+    /// array value). Rebinding the parameter name (`A = A + 1`, or swapping
+    /// two names) makes the name denote another object and leaves the
+    /// caller's array alone, as in Python. So an argument is written exactly
+    /// when its storage was written after circuit entry (the store's write
+    /// clock), and its output is the storage's final contents read with the
+    /// argument's original shape. An argument whose storage was marked stale
+    /// (a write through a copy that NumPy would treat as a view) is rejected.
     pub(crate) fn in_place_outputs(&mut self) -> Vec<(OutputSource, Value)> {
-        let written_segments: BTreeSet<u32> = self.builder.stmts[self.in_place_body_start..]
-            .iter()
-            .filter_map(|stmt| match stmt.ir {
-                IR::WriteMemory { segment_id } => Some(segment_id),
-                _ => None,
-            })
-            .collect();
+        let entry = self.in_place_body_start;
         let mut outputs = Vec::new();
         for arg in std::mem::take(&mut self.in_place_arguments) {
             self.check_not_stale(&arg.name, &arg.initial);
             let written = array_segments(&arg.initial)
                 .iter()
-                .any(|s| written_segments.contains(s));
+                .any(|&s| self.builder.storage_written_since(s, entry));
             if written {
                 outputs.push((OutputSource::Argument { name: arg.name }, arg.initial));
             }

@@ -17,30 +17,28 @@ NumPy, or accepted a witness violating a fact the compiler relied on:
 - A precondition the circuit cannot enforce (`cycle_count`, an unsupported
   operator) was kept as a fact without any check; it is now a compile error.
 """
-import re
-
 import numpy as np
 import pytest
 
 from zinnia import NDArray, Float, Integer, ZinniaException, requires, zk_circuit
 from zinnia.api.zk_circuit import ZKCircuit
+from testing.lang.mock_outputs import run_mock
 from zinnia.spec.predicates import cycle_count, fixed_point_count, forall, in_range, max_run, nnz
 
 
 def prove(fn, *args):
-    """(satisfied, publics in exposure order) on the mock backend."""
-    proof = ZKCircuit.from_method(fn).compile().prove(*args, backend="mock")
-    entries = sorted(proof.public_values, key=lambda e: int(re.search(r"_(\d+)=", e).group(1)))
-    return proof.proof_bytes_hex == "mock_satisfied", [int(e.split("=")[1]) for e in entries]
+    """(satisfied, outputs in return order) on the mock backend, with the
+    constants the compiler left out of the public vector put back."""
+    return run_mock(ZKCircuit.from_method(fn).compile(), *args)
 
 
 def dynamic_output(fn, *args):
     """Satisfied flag and the runtime prefix of a 1-D dynamic output
     (layout: runtime length, which is also its only dim, then the padded
     payload)."""
-    satisfied, publics = prove(fn, *args)
-    length = publics[0]
-    return satisfied, length, publics[1:1 + max(length, 0)]
+    satisfied, outputs = prove(fn, *args)
+    length = outputs[0]
+    return satisfied, length, outputs[1:1 + max(length, 0)]
 
 
 @zk_circuit

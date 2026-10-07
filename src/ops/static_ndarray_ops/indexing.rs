@@ -436,7 +436,7 @@ pub fn np_nonzero(b: &mut IRBuilder, args: &[Value]) -> Value {
         // (e.g. `flatnonzero().min() / .max()` for the bbox-crop family
         // 0507/0509/0510) discharge their slice bounds from facts instead
         // of emitting u128 bound asserts.
-        b.segment_default_bounds.insert(seg, (0, shape[axis] as i64 - 1));
+        b.set_storage_cell_bounds(seg, (0, shape[axis] as i64 - 1));
         found.record(b, seg, 0, axis);
         segment_ids.push(seg);
     }

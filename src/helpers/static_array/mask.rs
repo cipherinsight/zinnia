@@ -310,15 +310,16 @@ pub fn try_apply_boolean_mask_write(
         );
     }
 
-    // This write drops the payload cache at the end but only stores the
-    // VIEW's cells. A lazily-backed segment must be fully materialised
-    // first or every cell outside the view silently reverts to the
-    // segment init value (clobbered row-0 in the 0490 zip-view pattern).
-    super::base::materialize_static_array_if_lazy(b, arr);
-
     let arr_cells = payload_cells(b, arr);
     let mask_cells = payload_cells(b, mask);
     let total: usize = arr_shape.iter().product();
+    // The storage address of the view's element `i` (row-major): the view's
+    // offset and strides (a transposed or column view is not contiguous).
+    let logical_strides = crate::helpers::shape_arith::row_major_strides(&arr_shape);
+    let address_of = |i: usize| -> usize {
+        let coords = crate::helpers::shape_arith::decode_coords(i, &arr_shape, &logical_strides);
+        arr_offset + coords.iter().zip(&arr_strides).map(|(c, s)| c * s).sum::<usize>()
+    };
 
     // Resolve RHS into a flat Vec<Value>. Two shapes are accepted:
     //   - scalar (one element, broadcast across all true positions)
@@ -434,8 +435,7 @@ pub fn try_apply_boolean_mask_write(
         let imag_seg = imag_seg.expect("Complex StaticArray missing imag_segment_id");
         let mut rhs_idx_static: usize = 0;
         for i in 0..total {
-            let abs = arr_offset + i;
-            let addr = b.ir_constant_int(abs as i64);
+            let addr = b.ir_constant_int(address_of(i) as i64);
             let mask_val = &mask_cells[i];
             let mask_bool = ensure_bool(b, mask_val);
             // Determine the per-cell new value.
@@ -468,23 +468,19 @@ pub fn try_apply_boolean_mask_write(
             b.ir_write_memory(arr_seg, &addr, &sel_re);
             b.ir_write_memory(imag_seg, &addr, &sel_im);
         }
-        b.static_array_payload.remove(&arr_seg);
         return Some(arr.clone());
     }
 
     // Non-Complex (Integer / Float) per-cell select + write. Every cell of
-    // the (contiguous) view is written at its constant address, so a cached
-    // payload stays exact with the new cells in place: later reads see the
+    // the view is written at its constant address, so later reads see the
     // written values directly (a chain of masked writes over one cell is
     // then visible to the scatter family's lowering).
-    let mut payload = b.static_array_payload.remove(&arr_seg);
     let mut rhs_idx_static: usize = 0;
     // Running count of true mask cells before position i — the packed-RHS
     // read pointer. Constant-folds away entirely for static masks.
     let mut prefix = b.ir_constant_int(0);
     for i in 0..total {
-        let abs = arr_offset + i;
-        let addr = b.ir_constant_int(abs as i64);
+        let addr = b.ir_constant_int(address_of(i) as i64);
         let mask_val = &mask_cells[i];
         let mask_bool = ensure_bool(b, mask_val);
         let new_raw: Value = match &rhs {
@@ -541,23 +537,12 @@ pub fn try_apply_boolean_mask_write(
             mask_write_lane(b, &cur_cast, &new_cast, &mask_bool)
         };
         // Under a runtime execution predicate (`if c: arr[mask] = v`) the
-        // stored value is `select(c, selected, old)`: the cache must hold
-        // that, not `selected` (which applied the write on every path).
-        let stored = b.ir_write_memory(arr_seg, &addr, &selected);
-        if let Some(cells) = payload.as_mut() {
-            match cells.get_mut(abs) {
-                Some(cell) => *cell = stored,
-                None => payload = None,
-            }
-        }
+        // store keeps `select(c, selected, old)`.
+        b.ir_write_memory(arr_seg, &addr, &selected);
         if matches!(rhs, Rhs::Compacted(_)) && !static_mask {
             let m_i = b.ir_int_cast(&mask_bool);
             prefix = b.ir_add_i(&prefix, &m_i);
         }
-    }
-    let contiguous = arr_strides == crate::helpers::shape_arith::row_major_strides(&arr_shape);
-    if let (Some(cells), true) = (payload, contiguous) {
-        b.static_array_payload.insert(arr_seg, cells);
     }
     Some(arr.clone())
 }

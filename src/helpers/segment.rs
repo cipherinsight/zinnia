@@ -1,72 +1,46 @@
-//! ZKRAM segment helpers for dynamic ndarrays.
+//! Typed access to array storages (`builder/store.rs`) for the array
+//! representations that address their cells by number: dynamic ndarrays
+//! (every one owns a storage of its capacity) and the static arrays' memory
+//! paths.
 //!
-//! Every `DynamicNDArrayData` is backed by a ZKRAM segment. Constructors
-//! allocate a segment and write initial values via [`alloc_and_write`].
-//! Reads go through `b.ir_read_memory(segment_id, addr)`.
+//! A complex array is a float storage of (real, imaginary) pairs: element
+//! `a` is the cells `2a` and `2a + 1`.
 
 use crate::builder::IRBuilder;
-use crate::ops::dyn_ndarray::{
-    complex_parts_to_value, scalar_i64_to_value, value_to_complex_parts, value_to_scalar_i64,
-};
+use crate::ops::dyn_ndarray::scalar_i64_to_value;
 use crate::types::{NumberType, ScalarValue, Value};
 
-/// Allocate a fresh ZKRAM segment and write `values` into it. Returns the
-/// segment ID. Used by constructors and producing ops to create the backing
-/// store for a new `DynamicNDArrayData`.
+/// A new storage holding `values` (the legacy `ScalarValue<i64>` cells of a
+/// dynamic ndarray, of `dtype`). Returns its id.
 pub fn alloc_and_write(b: &mut IRBuilder, values: &[ScalarValue<i64>], dtype: NumberType) -> u32 {
-    let seg = b.alloc_segment_id();
-    let storage_len = match dtype {
-        NumberType::Complex => values.len().saturating_mul(2),
-        NumberType::Integer | NumberType::Float => values.len(),
-    };
-    b.ir_allocate_memory(seg, storage_len as u32, 0);
     let values: Vec<Value> = values.iter().map(|elem| scalar_i64_to_value(elem, dtype)).collect();
-    for (i, val) in values.iter().enumerate() {
-        let addr = b.ir_constant_int(i as i64);
-        write_typed(b, seg, &addr, val, dtype);
-    }
-    b.note_segment_cells(seg, &values);
-    seg
+    alloc_and_write_values(b, &values, dtype)
 }
 
+/// A new storage holding `values` (of `dtype`). Returns its id.
 pub fn alloc_and_write_values(b: &mut IRBuilder, values: &[Value], dtype: NumberType) -> u32 {
-    let seg = b.alloc_segment_id();
-    let storage_len = match dtype {
-        NumberType::Complex => values.len().saturating_mul(2),
-        NumberType::Integer | NumberType::Float => values.len(),
+    let cells: Vec<Value> = match dtype {
+        NumberType::Complex => values
+            .iter()
+            .flat_map(|v| {
+                let (re, im) = crate::helpers::value_ops::unpack_value_to_complex_parts(b, v);
+                [re, im]
+            })
+            .collect(),
+        NumberType::Integer | NumberType::Float => values.to_vec(),
     };
-    b.ir_allocate_memory(seg, storage_len as u32, 0);
-    // Bound-fact capture for downstream fact-aware reads happens inside
-    // `b.ir_write_memory` (the chokepoint that sees both `addr.int_val()`
-    // and the value's facts). No per-cell capture needed here.
-    for (i, val) in values.iter().enumerate() {
-        let addr = b.ir_constant_int(i as i64);
-        write_typed(b, seg, &addr, val, dtype);
-    }
-    b.note_segment_cells(seg, values);
-    seg
+    let storage = b.alloc_storage(cells, dtype);
+    b.note_segment_cells(storage, values);
+    storage
 }
 
-#[allow(dead_code)]
-pub fn alloc_and_write_complex(b: &mut IRBuilder, values: &[crate::types::Value]) -> u32 {
-    alloc_and_write_values(b, values, NumberType::Complex)
-}
-
-/// Read all `max_len` elements from a segment as `Value`s.
+/// Read all `max_len` cells of a storage.
 pub fn read_all(b: &mut IRBuilder, segment_id: u32, max_len: usize) -> Vec<Value> {
-    (0..max_len)
-        .map(|i| {
-            let addr = b.ir_constant_int(i as i64);
-            b.ir_read_memory(segment_id, &addr)
-        })
-        .collect()
+    (0..max_len).map(|i| b.storage_read(segment_id, i)).collect()
 }
 
-/// Read one segment element and tag it with the logical element dtype.
-///
-/// `IR::ReadMemory` is storage-typed as an integer field cell. Dynamic array
-/// callers must restore the array element dtype at the IR value layer so later
-/// float arithmetic does not depend on backend `FloatCast` guessing.
+/// Read one element of a storage as a value of `dtype` (a complex element is
+/// two cells).
 pub fn read_typed(b: &mut IRBuilder, segment_id: u32, address: &Value, dtype: NumberType) -> Value {
     if dtype == NumberType::Complex {
         let two = b.ir_constant_int(2);
@@ -75,62 +49,33 @@ pub fn read_typed(b: &mut IRBuilder, segment_id: u32, address: &Value, dtype: Nu
         let imag_addr = b.ir_add_i(&real_addr, &one);
         let real_raw = b.ir_read_memory(segment_id, &real_addr);
         let imag_raw = b.ir_read_memory(segment_id, &imag_addr);
-        let real = value_to_scalar_i64(&real_raw);
-        let imag = value_to_scalar_i64(&imag_raw);
-        return complex_parts_to_value(&real, &imag);
+        let real = crate::ops::dyn_ndarray::retag(&real_raw, NumberType::Float);
+        let imag = crate::ops::dyn_ndarray::retag(&imag_raw, NumberType::Float);
+        return crate::helpers::value_ops::pack_complex_value(real, imag);
     }
     let raw = b.ir_read_memory(segment_id, address);
-    scalar_i64_to_value(&crate::ops::dyn_ndarray::value_to_scalar_i64(&raw), dtype)
+    crate::ops::dyn_ndarray::retag(&raw, dtype)
 }
 
-/// [`read_typed`] as a table read (`IR::ReadTable`) of a non-complex
-/// segment.
-pub fn read_table_typed(b: &mut IRBuilder, segment_id: u32, address: &Value, dtype: NumberType) -> Value {
-    assert!(dtype != NumberType::Complex, "table reads of complex segments are not built");
-    let raw = b.ir_read_table(segment_id, address);
-    scalar_i64_to_value(&crate::ops::dyn_ndarray::value_to_scalar_i64(&raw), dtype)
-}
-
-pub fn write_typed(
-    b: &mut IRBuilder,
-    segment_id: u32,
-    address: &Value,
-    value: &Value,
-    dtype: NumberType,
-) {
+/// Write one element of a storage (a complex element is two cells).
+pub fn write_typed(b: &mut IRBuilder, segment_id: u32, address: &Value, value: &Value, dtype: NumberType) {
     if dtype == NumberType::Complex {
         let two = b.ir_constant_int(2);
         let one = b.ir_constant_int(1);
         let real_addr = b.ir_mul_i(address, &two);
         let imag_addr = b.ir_add_i(&real_addr, &one);
-        let (real, imag) = value_to_complex_parts(value);
-        b.ir_write_memory(
-            segment_id,
-            &real_addr,
-            &scalar_i64_to_value(&real, NumberType::Float),
-        );
-        b.ir_write_memory(
-            segment_id,
-            &imag_addr,
-            &scalar_i64_to_value(&imag, NumberType::Float),
-        );
+        let (real, imag) = crate::helpers::value_ops::unpack_value_to_complex_parts(b, value);
+        b.ir_write_memory(segment_id, &real_addr, &real);
+        b.ir_write_memory(segment_id, &imag_addr, &imag);
         return;
     }
     b.ir_write_memory(segment_id, address, value);
 }
 
-/// Read all `max_len` elements from a segment and tag each value with dtype.
-///
-/// Reads in **segment storage order** (`addr = 0..max_len`). Callers that
-/// need logical-row-major order on a possibly-non-contiguous view (e.g. a
-/// stride-permuted transpose view that reuses the source segment) should
-/// use [`read_all_logical_typed`] instead.
-pub fn read_all_typed(
-    b: &mut IRBuilder,
-    segment_id: u32,
-    max_len: usize,
-    dtype: NumberType,
-) -> Vec<Value> {
+/// Read all `max_len` elements of a storage as values of `dtype`, in
+/// storage order. A possibly non-contiguous view reads in logical order
+/// with [`read_all_logical_typed`].
+pub fn read_all_typed(b: &mut IRBuilder, segment_id: u32, max_len: usize, dtype: NumberType) -> Vec<Value> {
     (0..max_len)
         .map(|i| {
             let addr = b.ir_constant_int(i as i64);
@@ -139,18 +84,9 @@ pub fn read_all_typed(
         .collect()
 }
 
-/// Read all `total = product(logical_shape)` elements of a possibly-non-
-/// contiguous DynamicNDArray view in **logical-row-major order**.
-///
-/// For a contiguous source (logical_strides == row_major_strides(logical_shape)
-/// and logical_offset == 0), behaves identically to [`read_all_typed`] over
-/// the first `total` segment slots, but accepts the larger `storage_len` so
-/// non-contiguous views with the same segment but different total<max_len
-/// still work.
-///
-/// For a non-contiguous view (e.g. stride-permuted transpose), walks the
-/// logical row-major iteration order and computes the segment address for
-/// each cell via `logical_offset + sum(coords[i] * logical_strides[i])`.
+/// Read all `product(logical_shape)` elements of a possibly non-contiguous
+/// view of a storage in logical row-major order: element `coords` is the
+/// cell `logical_offset + Σ coords[i] · logical_strides[i]`.
 pub fn read_all_logical_typed(
     b: &mut IRBuilder,
     segment_id: u32,
@@ -162,34 +98,18 @@ pub fn read_all_logical_typed(
     let total: usize = logical_shape.iter().product();
     let row_major = crate::helpers::shape_arith::row_major_strides(logical_shape);
     if logical_offset == 0 && logical_strides == row_major.as_slice() {
-        // Fast path: contiguous from offset 0.
         return read_all_typed(b, segment_id, total, dtype);
     }
-    let logical_row_strides = row_major;
-    let mut out = Vec::with_capacity(total);
-    for flat in 0..total {
-        let coords =
-            crate::helpers::shape_arith::decode_coords(flat, logical_shape, &logical_row_strides);
-        let mut abs: usize = logical_offset;
-        for (ax, &c) in coords.iter().enumerate() {
-            abs += c * logical_strides[ax];
-        }
-        let addr = b.ir_constant_int(abs as i64);
-        out.push(read_typed(b, segment_id, &addr, dtype));
-    }
-    out
-}
-
-pub fn read_all_complex_typed(
-    b: &mut IRBuilder,
-    segment_id: u32,
-    _imag_segment_id: u32,
-    max_len: usize,
-) -> Vec<Value> {
-    (0..max_len)
-        .map(|i| {
-            let addr = b.ir_constant_int(i as i64);
-            read_typed(b, segment_id, &addr, NumberType::Complex)
+    (0..total)
+        .map(|flat| {
+            let coords = crate::helpers::shape_arith::decode_coords(flat, logical_shape, &row_major);
+            let abs: usize = logical_offset + coords.iter().zip(logical_strides).map(|(c, s)| c * s).sum::<usize>();
+            let addr = b.ir_constant_int(abs as i64);
+            read_typed(b, segment_id, &addr, dtype)
         })
         .collect()
+}
+
+pub fn read_all_complex_typed(b: &mut IRBuilder, segment_id: u32, _imag_segment_id: u32, max_len: usize) -> Vec<Value> {
+    read_all_typed(b, segment_id, max_len, NumberType::Complex)
 }

@@ -2295,11 +2295,11 @@ fn root_preconditions_are_proven_by_the_root() {
 #[test]
 fn index_write_hints_are_pinned() {
     use crate::lower::scatter::test_support::{witness, zero_row_graph};
-    use crate::lower::scatter::OneHotWrite;
+    use crate::lower::memory::{versions::ZeroWrites, wrap::WrapByPositionHits};
     let mut shifts: Vec<Fp> = vec![int(1), int(-1), int(2)];
     shifts.extend(deltas(&[]));
     for index in -4..=4 {
-        let case = zero_row_graph(3, 2, index, &OneHotWrite);
+        let case = zero_row_graph(3, 2, index, &[&WrapByPositionHits, &ZeroWrites]);
         let w = witness(&case.inputs);
         let honest = synthesize_graph(&case.graph, &w, &[]);
         let Some(expected) = &case.expected else {

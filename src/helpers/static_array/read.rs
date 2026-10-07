@@ -3,10 +3,9 @@
 //! P2 of `compiler.epic-segment-native-static-arrays`: reads (element,
 //! row/column view, multi-dim element, slice, for-loop iteration) operate
 //! directly on the segment-backed representation without first materialising
-//! the array via `to_value_list`. Static-index reads prefer the cached wire
-//! held in `IRBuilder::static_array_payload` (free); dynamic-index reads emit
-//! a single `ir_read_memory` op (O(1) constraint cost vs the legacy O(N) mux
-//! chain in `dynamic_list_subscript`). View vs copy policy:
+//! the array via `to_value_list`. Static-index reads of known cells are free
+//! (`builder/store.rs`); runtime-index reads are element reads of the
+//! array's storage, which the lowering layer constructs. View vs copy policy:
 //!
 //! - **Single-axis-0 indexing** producing a (D-1)-rank slice (`arr[i]` on a
 //!   ≥2-D array): view — same segment, adjusted offset, dropped axis-0
@@ -19,13 +18,11 @@
 //! - **Dynamic slice** (`arr[a:b]` with runtime `a` / `b`): always
 //!   materialise (mirrors `dyn_slice_axis`).
 //!
-//! Cache policy: views produced by this module DO inherit the original cache
-//! entry's segment_id — so reads via `static_array_payload.get(segment_id)`
-//! still return the original wires. The `offset` field of the view shifts
-//! the cache lookup window correctly.
+//! Views share the storage of the array they view: a read through a view
+//! addresses the storage with the view's offset and strides.
 
 use crate::builder::IRBuilder;
-use crate::ops::dyn_ndarray::{scalar_i64_to_value, value_to_scalar_i64};
+use crate::ops::dyn_ndarray::value_to_scalar_i64;
 use crate::types::{NumberType, SliceIndex, Value, ValueId};
 
 use super::super::shape_arith::{decode_coords, row_major_strides};
@@ -34,10 +31,8 @@ use super::super::shape_arith::{decode_coords, row_major_strides};
 // Element / row helpers
 // ────────────────────────────────────────────────────────────────────────
 
-/// Read a single leaf from a `Value::StaticArray` at the given flat (linear)
-/// offset relative to `offset` (i.e. element `flat_idx` of the logical
-/// array). Prefers the cached original wire; falls back to a single
-/// `ir_read_memory` if no cache entry exists.
+/// The element at `base_offset + flat_idx` of a static array's storage
+/// (`base::element_at`).
 fn read_leaf_at_flat(
     b: &mut IRBuilder,
     segment_id: u32,
@@ -45,56 +40,24 @@ fn read_leaf_at_flat(
     flat_idx: usize,
     dtype: NumberType,
 ) -> Value {
-    let abs = base_offset + flat_idx;
-    if let Some(cached) = b.static_array_payload.get(&segment_id) {
-        if abs < cached.len() {
-            return cached[abs].clone();
-        }
-    }
-    if dtype != NumberType::Complex {
-        super::base::materialize_static_array_segment(b, segment_id, dtype);
-    }
-    let addr = b.ir_constant_int(abs as i64);
-    let raw = b.ir_read_memory(segment_id, &addr);
-    scalar_i64_to_value(&value_to_scalar_i64(&raw), dtype)
+    super::base::element_at(b, segment_id, base_offset + flat_idx, dtype)
 }
 
-/// Read a single leaf at a runtime address. Emits one `ir_read_memory` op
-/// and no bounds check: the caller must have bounds-checked every index
-/// the address is built from (`checked_axis_index`), or otherwise proved
-/// that the address lies inside the array.
-fn read_leaf_at_checked_address(
+/// Read a single leaf at `offset + Σ_k positions[k] · stride_k` (`axes[k] =
+/// (len_k, stride_k)`), every position checked into `[0, len_k)` by the
+/// caller (`checked_axis_index`) where the read runs and in range elsewhere:
+/// an element read of the array's storage along the runtime positions' axes
+/// (`IRBuilder::storage_read_positions`).
+fn read_leaf_at_positions(
     b: &mut IRBuilder,
     segment_id: u32,
-    addr: &Value,
+    offset: usize,
+    axes: &[(usize, usize)],
+    positions: &[Value],
     dtype: NumberType,
 ) -> Value {
-    if dtype != NumberType::Complex {
-        super::base::materialize_static_array_segment(b, segment_id, dtype);
-    }
-    let raw = b.ir_read_memory(segment_id, addr);
-    scalar_i64_to_value(&value_to_scalar_i64(&raw), dtype)
-}
-
-/// Read a runtime-addressed leaf whose original address is valid only under
-/// `guard_condition`. When the guard is false, select a known-valid fallback
-/// address before the memory read so the skipped witness is not hiding an
-/// unconditional out-of-range access.
-fn read_leaf_at_dynamic_with_guarded_safe_fallback_addr(
-    b: &mut IRBuilder,
-    segment_id: u32,
-    addr: &Value,
-    fallback_addr: i64,
-    guard_condition: &Value,
-    dtype: NumberType,
-) -> Value {
-    let fallback = b.ir_constant_int(fallback_addr);
-    let safe_addr = b.ir_select_i(guard_condition, addr, &fallback);
-    if dtype != NumberType::Complex {
-        super::base::materialize_static_array_segment(b, segment_id, dtype);
-    }
-    let raw = b.ir_read_memory(segment_id, &safe_addr);
-    scalar_i64_to_value(&value_to_scalar_i64(&raw), dtype)
+    let raw = b.storage_read_positions(segment_id, offset, axes, positions);
+    crate::ops::dyn_ndarray::retag(&raw, dtype)
 }
 
 /// A read at checked indices of which exactly one is runtime and is a
@@ -125,11 +88,11 @@ fn read_at_scan_result(
         .map(|k| read_leaf_at_flat(b, segment_id, base_offset, fixed + k * strides[axis], dtype))
         .collect();
     let out = crate::lower::gather::element_lane(b, &cells, index)?;
-    Some(scalar_i64_to_value(&value_to_scalar_i64(&out), dtype))
+    Some(crate::ops::dyn_ndarray::retag(&out, dtype))
 }
 
 /// A read at checked indices of which one or more are runtime, from an array
-/// whose cells are known values (`IRBuilder::static_array_payload`): see
+/// whose cells are known values (`IRBuilder::known_cells`): see
 /// [`read_cells`]. `None` otherwise (the caller reads through the segment).
 fn read_line(
     b: &mut IRBuilder,
@@ -188,10 +151,7 @@ fn read_cells(
     if runtime.len() > 1 && count > MAX_MULTI_INDEX_CELLS {
         return None;
     }
-    if b.static_array_product_provenance.contains_key(&segment_id) {
-        super::base::force_static_array_product_provenance(b, segment_id);
-    }
-    let cells = b.static_array_payload.get(&segment_id)?;
+    let cells = b.known_cells(segment_id)?;
     let picked: Vec<Value> = (0..count)
         .map(|flat| {
             let mut rest = flat;
@@ -221,7 +181,7 @@ fn read_cells(
     if b.is_bool_segment(segment_id) {
         b.record_bool_cell(&out);
     }
-    Some(scalar_i64_to_value(&value_to_scalar_i64(&out), dtype))
+    Some(crate::ops::dyn_ndarray::retag(&out, dtype))
 }
 
 /// Build a runtime address from `offset + sum_k(idx[k] * strides[k])`.
@@ -257,22 +217,6 @@ fn compute_addr(
 
 const SMALL_DYNAMIC_SINGLE_READ_SELECT_LIMIT: usize = 1024;
 
-fn select_typed(
-    b: &mut IRBuilder,
-    dtype: NumberType,
-    cond: &Value,
-    true_val: &Value,
-    false_val: &Value,
-) -> Value {
-    match dtype {
-        NumberType::Float => b.ir_select_f(cond, true_val, false_val),
-        NumberType::Integer => b.ir_select_i(cond, true_val, false_val),
-        NumberType::Complex => {
-            panic!("select_typed does not handle Complex StaticArray reads")
-        }
-    }
-}
-
 use super::base::checked_axis_index;
 
 /// One runtime index axis of a [`PayloadGather`]: the index, already
@@ -285,7 +229,7 @@ struct GatherAxis {
 }
 
 /// Runtime-index reads of a static array whose cells are known values
-/// (`IRBuilder::static_array_payload`), as element reads over those cells
+/// (`IRBuilder::known_cells`), as element reads over those cells
 /// instead of a memory read.
 ///
 /// `cells[base + sum_k i_k * stride_k]` is selected one index axis at a
@@ -315,10 +259,7 @@ impl PayloadGather {
         if dtype == NumberType::Complex {
             return None;
         }
-        if b.static_array_product_provenance.contains_key(&segment_id) {
-            super::base::force_static_array_product_provenance(b, segment_id);
-        }
-        let cells = b.static_array_payload.get(&segment_id)?.clone();
+        let cells = b.known_cells(segment_id)?;
         Some(Self {
             cells,
             planes: std::collections::HashMap::new(),
@@ -410,7 +351,7 @@ fn sorted_output_of_segment(
     len: usize,
     index: &Value,
 ) -> Option<Value> {
-    let cells = b.static_array_payload.get(&segment_id)?.clone();
+    let cells = b.known_cells(segment_id)?;
     sorted_output_at_index(b, &cells, offset, stride, len, index)
 }
 
@@ -728,7 +669,7 @@ fn try_fancy_subscript(
         if let (1, Some((axis, index)), false) = (dynamic_parts.len(), &dynamic_index, dtype == NumberType::Complex) {
             // One runtime index that is an argsort lane: the gathered line is
             // a payload carried by that sort (`lower::sort::payload`).
-            let line: Option<Vec<Value>> = b.static_array_payload.get(&segment_id).and_then(|cells| {
+            let line: Option<Vec<Value>> = b.known_cells(segment_id).and_then(|cells| {
                 (0..shape[*axis])
                     .map(|j| cells.get(static_addr as usize + j * strides[*axis]).cloned())
                     .collect()
@@ -747,7 +688,7 @@ fn try_fancy_subscript(
                     .map(|k| read_leaf_at_flat(b, segment_id, 0, static_addr as usize + k * strides[axis], dtype))
                     .collect();
                 if let Some(out) = crate::lower::gather::element_lane(b, &cells, index) {
-                    leaves.push(scalar_i64_to_value(&value_to_scalar_i64(&out), dtype));
+                    leaves.push(crate::ops::dyn_ndarray::retag(&out, dtype));
                     continue;
                 }
             }
@@ -762,17 +703,17 @@ fn try_fancy_subscript(
             }
         } else if let Some(read) = read_cells(b, segment_id, static_addr as usize, &runtime_indices, strides, shape, dtype) {
             leaves.push(read);
-        } else {
+        } else if dtype == NumberType::Complex {
             let mut addr = b.ir_constant_int(static_addr);
             for part in &dynamic_parts {
                 addr = b.ir_add_i(&addr, part);
             }
-            if dtype == NumberType::Complex {
-                let im = imag_seg.expect("Complex StaticArray missing imag_segment_id");
-                leaves.push(read_complex_leaf_dynamic(b, segment_id, im, &addr));
-            } else {
-                leaves.push(read_leaf_at_checked_address(b, segment_id, &addr, dtype));
-            }
+            let im = imag_seg.expect("Complex StaticArray missing imag_segment_id");
+            leaves.push(read_complex_leaf_dynamic(b, segment_id, im, &addr));
+        } else {
+            let axes: Vec<(usize, usize)> = runtime_indices.iter().map(|(ax, _)| (shape[*ax], strides[*ax])).collect();
+            let positions: Vec<Value> = runtime_indices.iter().map(|(_, v)| v.clone()).collect();
+            leaves.push(read_leaf_at_positions(b, segment_id, static_addr as usize, &axes, &positions, dtype));
         }
     }
 
@@ -1046,8 +987,8 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
                 return out;
             }
         }
-        let addr = compute_addr(b, offset, &strides, &idx_vals, &shape);
         if dtype == NumberType::Complex {
+            let addr = compute_addr(b, offset, &strides, &idx_vals, &shape);
             return read_complex_leaf_dynamic(
                 b,
                 segment_id,
@@ -1055,7 +996,8 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
                 &addr,
             );
         }
-        return read_leaf_at_checked_address(b, segment_id, &addr, dtype);
+        let axes: Vec<(usize, usize)> = shape.iter().copied().zip(strides.iter().copied()).collect();
+        return read_leaf_at_positions(b, segment_id, offset, &axes, &idx_vals, dtype);
     }
 
     // ── Single-index, ndim==1 → leaf or panic
@@ -1089,11 +1031,11 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
                         return out;
                     }
                 }
-                let off_val = b.ir_constant_int(offset as i64);
-                let stride_val = b.ir_constant_int(strides[0] as i64);
-                let scaled = b.ir_mul_i(&i, &stride_val);
-                let addr = b.ir_add_i(&off_val, &scaled);
                 if dtype == NumberType::Complex {
+                    let off_val = b.ir_constant_int(offset as i64);
+                    let stride_val = b.ir_constant_int(strides[0] as i64);
+                    let scaled = b.ir_mul_i(&i, &stride_val);
+                    let addr = b.ir_add_i(&off_val, &scaled);
                     return read_complex_leaf_dynamic(
                         b,
                         segment_id,
@@ -1101,7 +1043,7 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
                         &addr,
                     );
                 }
-                return read_leaf_at_checked_address(b, segment_id, &addr, dtype);
+                return read_leaf_at_positions(b, segment_id, offset, &[(shape[0], strides[0])], &[i], dtype);
             }
             SliceIndex::Range(s, e, st) => {
                 return slice_axis_static_or_dynamic_1d(
@@ -1207,13 +1149,7 @@ pub(crate) fn static_array_subscript_with_preproved_index_bounds(
                 if dtype == NumberType::Complex {
                     return static_array_subscript(b, val, indices);
                 }
-                let off_val = b.ir_constant_int(offset as i64);
-                let stride_val = b.ir_constant_int(strides[0] as i64);
-                let scaled = b.ir_mul_i(v, &stride_val);
-                let addr = b.ir_add_i(&off_val, &scaled);
-                return read_leaf_at_checked_address(
-                    b, segment_id, &addr, dtype,
-                );
+                return read_leaf_at_positions(b, segment_id, offset, &[(shape[0], strides[0])], std::slice::from_ref(v), dtype);
             }
         }
     }
@@ -1255,18 +1191,12 @@ pub(crate) fn static_array_subscript_with_path_conditioned_preproved_index_bound
                 if dtype == NumberType::Complex {
                     return static_array_subscript(b, val, indices);
                 }
-                let off_val = b.ir_constant_int(offset as i64);
-                let stride_val = b.ir_constant_int(strides[0] as i64);
-                let scaled = b.ir_mul_i(v, &stride_val);
-                let addr = b.ir_add_i(&off_val, &scaled);
-                return read_leaf_at_dynamic_with_guarded_safe_fallback_addr(
-                    b,
-                    segment_id,
-                    &addr,
-                    offset as i64,
-                    guard_condition,
-                    dtype,
-                );
+                // Valid only under `guard_condition`: elsewhere the read
+                // takes position 0, so no witness hides an out-of-range
+                // access where the guard is false.
+                let zero = b.ir_constant_int(0);
+                let position = b.ir_select_i(guard_condition, v, &zero);
+                return read_leaf_at_positions(b, segment_id, offset, &[(shape[0], strides[0])], &[position], dtype);
             }
         }
     }
@@ -1455,9 +1385,6 @@ fn materialise_dynamic_1d_slice(
 ) -> Value {
     let max_out_len = len;
 
-    if dtype != NumberType::Complex {
-        super::base::materialize_static_array_segment(b, segment_id, dtype);
-    }
 
     // Python's slice semantics: any integer bound is valid; negative bounds
     // count from the end and every bound is clamped into the axis.
@@ -1548,7 +1475,7 @@ fn materialise_dynamic_1d_slice(
         } else {
             b.ir_select_i(&in_bounds, &elem, &default_val)
         };
-        leaves.push(scalar_i64_to_value(&value_to_scalar_i64(&masked), dtype));
+        leaves.push(crate::ops::dyn_ndarray::retag(&masked, dtype));
     }
 
     // Compute the slice's actual runtime length so downstream ops (reshape,
@@ -1844,9 +1771,6 @@ fn materialise_dynamic_axis_slice(
     let axis_len = shape[axis];
     let max_axis = axis_len;
 
-    if dtype != NumberType::Complex {
-        super::base::materialize_static_array_segment(b, segment_id, dtype);
-    }
 
     // Python's slice semantics (see `materialise_dynamic_1d_slice`).
     let (start_ir, stop_ir, step_ir, step_positive) = python_bounds(b, start, stop, step, axis_len);
@@ -2014,7 +1938,7 @@ fn materialise_dynamic_axis_slice(
                 }
             }
         };
-        leaves.push(scalar_i64_to_value(&value_to_scalar_i64(&masked), dtype));
+        leaves.push(crate::ops::dyn_ndarray::retag(&masked, dtype));
     }
     let out = super::base::build_static_array_from_flat(b, leaves, new_shape, dtype);
     // Runtime-extents provenance (padded layout: content sits in the
@@ -2089,9 +2013,6 @@ fn materialise_dynamic_multi_axis_slice(
     axis_specs: &[(usize, usize, Option<Value>, Option<Value>, Option<Value>)],
     out_shape: &[usize],
 ) -> Value {
-    if dtype != NumberType::Complex {
-        super::base::materialize_static_array_segment(b, segment_id, dtype);
-    }
 
     // Per dynamic axis: (src_axis_idx, out_axis_idx, start_ir, stop_ir,
     // step_ir, fast, step sign), the bounds by Python's slice semantics
@@ -2243,7 +2164,7 @@ fn materialise_dynamic_multi_axis_slice(
                     }
                 }
             };
-            leaves.push(scalar_i64_to_value(&value_to_scalar_i64(&masked), dtype));
+            leaves.push(crate::ops::dyn_ndarray::retag(&masked, dtype));
         }
     }
     if dtype == NumberType::Complex {
@@ -2375,7 +2296,7 @@ fn window_gather(
         .collect();
     let bounds: Vec<(Value, Value)> = axes.iter().map(|(_, _, start, stop, _, _, _)| (start.clone(), stop.clone())).collect();
     let lanes = crate::lower::gather::window_lanes(b, &cells, shape, &bounds)?;
-    Some(lanes.iter().map(|v| scalar_i64_to_value(&value_to_scalar_i64(v), dtype)).collect())
+    Some(lanes.iter().map(|v| crate::ops::dyn_ndarray::retag(v, dtype)).collect())
 }
 
 fn provable_nonneg(b: &IRBuilder, v: &Value) -> bool {
@@ -2419,50 +2340,35 @@ fn materialise_axis0_dynamic_row(
     offset: usize,
     idx: &Value,
 ) -> Value {
-    let row_stride = strides[0];
+    // Element `(idx, c_1, ..., c_k)` of the view for every coordinate of the
+    // row, through the view's strides on every axis (a row of a transposed
+    // view is not contiguous).
     let row_shape = shape[1..].to_vec();
     let row_total: usize = row_shape.iter().product();
-    let stride_val = b.ir_constant_int(row_stride as i64);
-    let offset_val = b.ir_constant_int(offset as i64);
-    let base = b.ir_mul_i(idx, &stride_val);
-    let base = b.ir_add_i(&offset_val, &base);
-
+    let row_strides = row_major_strides(&row_shape);
+    let axes: Vec<(usize, usize)> = shape.iter().copied().zip(strides.iter().copied()).collect();
+    let positions = |b: &mut IRBuilder, j: usize| -> Vec<Value> {
+        std::iter::once(idx.clone())
+            .chain(decode_coords(j, &row_shape, &row_strides).into_iter().map(|c| b.ir_constant_int(c as i64)))
+            .collect()
+    };
     if dtype == NumberType::Complex {
         let imag_seg = imag_seg.expect("Complex StaticArray missing imag_segment_id");
-        super::base::materialize_static_array_segment(b, segment_id, NumberType::Float);
-        super::base::materialize_static_array_segment(b, imag_seg, NumberType::Float);
         let mut real_leaves: Vec<Value> = Vec::with_capacity(row_total);
         let mut imag_leaves: Vec<Value> = Vec::with_capacity(row_total);
         for j in 0..row_total {
-            let off2 = b.ir_constant_int(j as i64);
-            let addr = b.ir_add_i(&base, &off2);
-            let r = b.ir_read_memory(segment_id, &addr);
-            let im = b.ir_read_memory(imag_seg, &addr);
-            real_leaves.push(scalar_i64_to_value(
-                &value_to_scalar_i64(&r),
-                NumberType::Float,
-            ));
-            imag_leaves.push(scalar_i64_to_value(
-                &value_to_scalar_i64(&im),
-                NumberType::Float,
-            ));
+            let at = positions(b, j);
+            real_leaves.push(read_leaf_at_positions(b, segment_id, offset, &axes, &at, NumberType::Float));
+            imag_leaves.push(read_leaf_at_positions(b, imag_seg, offset, &axes, &at, NumberType::Float));
         }
-        return super::base::build_static_array_from_flat_complex(
-            b,
-            real_leaves,
-            imag_leaves,
-            row_shape,
-        );
+        return super::base::build_static_array_from_flat_complex(b, real_leaves, imag_leaves, row_shape);
     }
-
-    super::base::materialize_static_array_segment(b, segment_id, dtype);
-    let mut leaves: Vec<Value> = Vec::with_capacity(row_total);
-    for j in 0..row_total {
-        let off2 = b.ir_constant_int(j as i64);
-        let addr = b.ir_add_i(&base, &off2);
-        let elem = b.ir_read_memory(segment_id, &addr);
-        leaves.push(scalar_i64_to_value(&value_to_scalar_i64(&elem), dtype));
-    }
+    let leaves: Vec<Value> = (0..row_total)
+        .map(|j| {
+            let at = positions(b, j);
+            read_leaf_at_positions(b, segment_id, offset, &axes, &at, dtype)
+        })
+        .collect();
     super::base::build_static_array_from_flat(b, leaves, row_shape, dtype)
 }
 
@@ -2783,18 +2689,18 @@ fn multidim_subscript_static_array(
             }
         } else if let Some(v) = gather.as_mut().and_then(|g| g.read(b, src_flat, &gather_axes)) {
             leaves.push(v);
-        } else {
+        } else if dtype == NumberType::Complex {
             let static_part = b.ir_constant_int(src_flat);
             let mut acc = static_part;
             for p in &dynamic_parts {
                 acc = b.ir_add_i(&acc, p);
             }
-            if dtype == NumberType::Complex {
-                let im = imag_seg.expect("Complex StaticArray missing imag_segment_id");
-                leaves.push(read_complex_leaf_dynamic(b, segment_id, im, &acc));
-            } else {
-                leaves.push(read_leaf_at_checked_address(b, segment_id, &acc, dtype));
-            }
+            let im = imag_seg.expect("Complex StaticArray missing imag_segment_id");
+            leaves.push(read_complex_leaf_dynamic(b, segment_id, im, &acc));
+        } else {
+            let axes: Vec<(usize, usize)> = dynamic_single_axes.iter().map(|(ax, _)| (shape[*ax], strides[*ax])).collect();
+            let positions: Vec<Value> = dynamic_single_axes.iter().map(|(_, v)| v.clone()).collect();
+            leaves.push(read_leaf_at_positions(b, segment_id, src_flat as usize, &axes, &positions, dtype));
         }
     }
     if dtype == NumberType::Complex {
@@ -2876,37 +2782,15 @@ pub fn iter_element(b: &mut IRBuilder, arr: &Value, i: usize) -> Value {
     }
 }
 
-/// Read a single Complex element from a dual-segment Complex StaticArray at
-/// the given absolute flat offset. Prefers cached Value::Complex wires.
+/// The complex element at the absolute address `abs_offset` of a complex
+/// static array (its paired real and imaginary storages).
 pub fn read_complex_leaf(
     b: &mut IRBuilder,
     real_seg: u32,
-    imag_seg: u32,
+    _imag_seg: u32,
     abs_offset: usize,
 ) -> Value {
-    if let Some(cached) = b.static_array_payload.get(&real_seg) {
-        if abs_offset < cached.len() {
-            // Cache (rep A) holds Value::Complex directly.
-            return cached[abs_offset].clone();
-        }
-    }
-    let addr = b.ir_constant_int(abs_offset as i64);
-    super::base::materialize_static_array_segment(b, real_seg, NumberType::Float);
-    super::base::materialize_static_array_segment(b, imag_seg, NumberType::Float);
-    let real_raw = b.ir_read_memory(real_seg, &addr);
-    let imag_raw = b.ir_read_memory(imag_seg, &addr);
-    let real_sv = match scalar_i64_to_value(&value_to_scalar_i64(&real_raw), NumberType::Float) {
-        Value::Float(s) => s,
-        _ => unreachable!(),
-    };
-    let imag_sv = match scalar_i64_to_value(&value_to_scalar_i64(&imag_raw), NumberType::Float) {
-        Value::Float(s) => s,
-        _ => unreachable!(),
-    };
-    Value::Complex {
-        real: real_sv,
-        imag: imag_sv,
-    }
+    super::base::element_at(b, real_seg, abs_offset, NumberType::Complex)
 }
 
 /// Read a Complex element at a runtime address (sum of `offset + sum_k(idx*stride)`).
@@ -2916,15 +2800,13 @@ pub fn read_complex_leaf_dynamic(
     imag_seg: u32,
     addr: &Value,
 ) -> Value {
-    super::base::materialize_static_array_segment(b, real_seg, NumberType::Float);
-    super::base::materialize_static_array_segment(b, imag_seg, NumberType::Float);
     let real_raw = b.ir_read_memory(real_seg, addr);
     let imag_raw = b.ir_read_memory(imag_seg, addr);
-    let real_sv = match scalar_i64_to_value(&value_to_scalar_i64(&real_raw), NumberType::Float) {
+    let real_sv = match crate::ops::dyn_ndarray::retag(&real_raw, NumberType::Float) {
         Value::Float(s) => s,
         _ => unreachable!(),
     };
-    let imag_sv = match scalar_i64_to_value(&value_to_scalar_i64(&imag_raw), NumberType::Float) {
+    let imag_sv = match crate::ops::dyn_ndarray::retag(&imag_raw, NumberType::Float) {
         Value::Float(s) => s,
         _ => unreachable!(),
     };

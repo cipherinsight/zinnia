@@ -157,8 +157,9 @@ pub struct IRGenerator {
     /// The array arguments of an in-place kernel (one that returns no
     /// value), as bound at entry; empty otherwise.
     pub(crate) in_place_arguments: Vec<outputs::ArgumentArray>,
-    /// Index of the first IR statement of the entry function's body.
-    pub(crate) in_place_body_start: usize,
+    /// The array store's write clock at the entry function's body (an
+    /// argument written after it is an output of an in-place kernel).
+    pub(crate) in_place_body_start: u64,
     /// Nesting depth of expression-level guards (comprehension filters,
     /// conditional-expression arms; see `iteration::with_guard`), whose
     /// bindings do not escape.

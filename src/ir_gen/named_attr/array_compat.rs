@@ -90,7 +90,7 @@ pub(super) fn write_output(b: &mut IRBuilder, result: &Value, target: &Value, ma
         other => other,
     };
     if matches!(target, Value::None) { return result.clone(); }
-    let Value::StaticArray { shape, strides, offset, segment_id, dtype, .. } = target else {
+    let Value::StaticArray { shape, strides, offset, segment_id, dtype, imag_segment_id, .. } = target else {
         panic!("out must be a statically shaped ndarray");
     };
     let result = if let Some(mask) = mask {
@@ -101,15 +101,20 @@ pub(super) fn write_output(b: &mut IRBuilder, result: &Value, target: &Value, ma
     let cells = crate::helpers::composite::flatten_composite_with_builder(b, &result);
     assert!(!cells.iter().any(|v| matches!(v, Value::Float(_))) || *dtype == crate::types::NumberType::Float,
             "cannot cast real results to an integer out array");
-    crate::helpers::static_array::base::materialize_static_array_if_lazy(b, target);
-    if b.static_array_product_provenance.contains_key(segment_id) {
-        crate::helpers::static_array::base::force_static_array_product_provenance(b, *segment_id);
-    }
     let logical_strides = crate::helpers::shape_arith::row_major_strides(shape);
     for (i, cell) in cells.iter().enumerate() {
         let coordinates = crate::helpers::shape_arith::decode_coords(i, shape, &logical_strides);
         let addr = offset + coordinates.iter().zip(strides).map(|(i,s)| i*s).sum::<usize>();
         let addr = b.ir_constant_int(addr as i64);
+        if *dtype == crate::types::NumberType::Complex {
+            // A complex static array is two storages, real and imaginary
+            // parts at the same address.
+            let imag_segment = imag_segment_id.expect("a complex array has an imaginary storage");
+            let (real, imag) = crate::helpers::value_ops::unpack_value_to_complex_parts(b, cell);
+            b.ir_write_memory(*segment_id, &addr, &real);
+            b.ir_write_memory(imag_segment, &addr, &imag);
+            continue;
+        }
         let value = if *dtype == crate::types::NumberType::Float {
             crate::helpers::value_ops::ensure_float(b, cell)
         } else if b.is_bool_segment(*segment_id) {
@@ -120,7 +125,6 @@ pub(super) fn write_output(b: &mut IRBuilder, result: &Value, target: &Value, ma
         };
         crate::helpers::segment::write_typed(b, *segment_id, &addr, &value, *dtype);
     }
-    b.static_array_payload.remove(segment_id);
     target.clone()
 }
 
@@ -311,7 +315,7 @@ pub(super) fn median(b:&mut IRBuilder,args:&[Value],kwargs:&HashMap<String,Value
         return crate::ops::static_ndarray_ops::runtime_shaped_median(b, data);
     }
     let axis = if axis_arg.is_none() || matches!(axis_arg,Some(Value::None)) {
-        input=crate::helpers::static_array::shape::try_apply_flatten(b,&input).expect("median requires numeric array");0
+        input=crate::helpers::static_array::shape::try_apply_flatten(b,&input,false).expect("median requires numeric array");0
     } else {
         let rank=crate::helpers::composite::get_composite_shape(&input).len() as i64;
         let axis=axis_arg.unwrap().int_val().expect("median axis must be static");

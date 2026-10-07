@@ -51,7 +51,6 @@ pub fn constructions() -> Vec<&'static dyn Construction> {
         &ElementByOneHot,
         &ElementBySelectChain,
         &ElementByIndicators,
-        &ElementByMemory,
     ]
 }
 
@@ -489,11 +488,6 @@ pub struct ElementBySelectChain;
 /// `cost::element_by_indicators`.
 pub struct ElementByIndicators;
 
-/// Every read of the group through a memory segment holding the cells (the
-/// backends' dynamic read: a one-hot gather on halo2-base, a native array
-/// read on Noir). Cost `cost::element_by_memory`.
-pub struct ElementByMemory;
-
 impl Construction for ElementByOneHot {
     fn name(&self) -> &'static str {
         "gather: element by a recorded one-hot"
@@ -679,28 +673,6 @@ impl Emitter for IndexedReadEmitter {
     }
 }
 
-impl Construction for ElementByMemory {
-    fn name(&self) -> &'static str {
-        "gather: element through memory"
-    }
-
-    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
-        if group.kind != OpKind::Element {
-            return Vec::new();
-        }
-        let reads = group.lanes.len() as u64;
-        let mut indices: Vec<StmtId> = group.lanes.iter().filter_map(|l| l.own.first().copied()).collect();
-        indices.sort_unstable();
-        indices.dedup();
-        vec![Candidate {
-            pre: Vec::new(),
-            post: lanes(group).collect(),
-            cost: cost::element_by_memory(group.line_len() as u64, reads, &index_reads(cx, &indices), cx.target),
-            emitter: Box::new(MemoryReadEmitter { cells: group.cells(), segment: None }),
-        }]
-    }
-}
-
 /// For each index, the number of element reads at it over every element
 /// group of the program (reads at one index share its check).
 fn index_reads(cx: &Context, indices: &[StmtId]) -> Vec<u64> {
@@ -715,25 +687,6 @@ fn index_reads(cx: &Context, indices: &[StmtId]) -> Vec<u64> {
                 .count() as u64
         })
         .collect()
-}
-
-struct MemoryReadEmitter {
-    cells: CellSource,
-    segment: Option<(u32, NumberType)>,
-}
-
-impl Emitter for MemoryReadEmitter {
-    fn begin(&mut self, b: &mut IRBuilder, cx: &mut EmitCx) {
-        let cells = cx.cells(b, &self.cells);
-        let dtype = dtype_of(&cells);
-        self.segment = Some((crate::helpers::segment::alloc_and_write_values(b, &cells, dtype), dtype));
-    }
-
-    fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, lane: &Lane) -> Value {
-        let (segment, dtype) = self.segment.expect("started");
-        let index = cx.value(lane.own[0]);
-        crate::helpers::segment::read_typed(b, segment, &index, dtype)
-    }
 }
 
 fn dtype_of(cells: &[Value]) -> NumberType {

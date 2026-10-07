@@ -201,9 +201,8 @@ pub(crate) fn sort_graph(values: &[i64], outputs: &[Output], forced: Forced) -> 
         }
     }
     let forced = ForcedPlan(forced);
-    let graph = crate::lower::emit::lower(&b.export_ir_graph(), Target::Halo2Base, &[&forced as &dyn Construction])
-        .expect("a graph with a sort");
-    let graph = crate::optim::IRPass::exec(&crate::optim::DeadCodeElimination, graph);
+    // The sort's reads at hinted ranks are lowered in a later round.
+    let graph = crate::lower::emit::lower_rounds(b.export_ir_graph(), Target::Halo2Base, &[&forced as &dyn Construction]);
     SortGraph { graph, inputs, expected }
 }
 

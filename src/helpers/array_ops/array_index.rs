@@ -181,10 +181,7 @@ mod tests {
         let mask = crate::helpers::static_array::base::to_static_array(&mut b, &list(flags)).unwrap();
         assert_eq!(array_index_kind(&b, &mask), Some(ArrayIndexKind::Mask));
 
-        // Cells read back from the bool segment (no cached payload) are
-        // integers in the IR but still bools.
-        let Value::StaticArray { segment_id, .. } = &mask else { unreachable!() };
-        b.static_array_payload.remove(segment_id);
+        // Cells read back from the bool array's storage are still bools.
         let reread = crate::helpers::static_array::base::to_value_list(&mut b, &mask);
         assert_eq!(array_index_kind(&b, &reread), Some(ArrayIndexKind::Mask));
         let copy = crate::helpers::static_array::base::to_static_array(&mut b, &reread).unwrap();
@@ -210,12 +207,10 @@ mod tests {
         let zero = b.ir_constant_int(0);
         let flag = b.ir_less_than_i(&x, &zero);
         let mask = crate::helpers::static_array::base::to_static_array(&mut b, &list(vec![flag.clone(); 2])).unwrap();
-        let Value::StaticArray { segment_id, .. } = &mask else { unreachable!() };
-        b.static_array_payload.remove(segment_id);
-        // Cells read back from memory: integers in the IR, bools in NumPy.
+        // Cells read back from the storage: bools.
         let reread = crate::helpers::static_array::base::to_value_list(&mut b, &mask);
         let cells = crate::helpers::composite::flatten_composite(&reread);
-        assert!(cells.iter().all(|c| matches!(c, Value::Integer(_)) && b.is_bool_cell(c)));
+        assert!(cells.iter().all(|c| b.is_bool_cell(c)));
         // `astype(int)` of them lists positions.
         let ints: Vec<Value> = cells.iter().map(|c| b.int_dtype_cell(c)).collect();
         assert_eq!(array_index_kind(&b, &list(ints)), Some(ArrayIndexKind::Positions));

@@ -97,14 +97,6 @@ pub enum OpKind {
     /// cells, row-major by slice. A position outside `[-rows, rows]` has no
     /// proof (NumPy raises).
     Insert { rows: u32, lanes: u32 },
-    /// The cells of an array after `a[..., i, ...] = v` at a runtime index
-    /// `i` on an axis of length `axis_len` (the other axes static). Shared
-    /// operand: the index (guarded by the write's execution predicate). Each
-    /// lane is one cell the write may touch: own operands `[old, written]`,
-    /// then the execution predicate when the write is conditional; its
-    /// position is the cell's coordinate on the indexed axis. An index
-    /// outside `[-axis_len, axis_len)` has no proof (NumPy raises).
-    IndexWrite { axis_len: u32 },
     /// The cells of an array after a masked write `a[mask] = v`: no shared
     /// operand; each lane is one cell, own operands `[old, written, mask]`
     /// (the mask bit of that cell). Every masked write of the program is one
@@ -152,7 +144,6 @@ impl OpKind {
             | OpKind::Element
             | OpKind::PermutationScatter => &super::gather::GatherSemantics,
             OpKind::Insert { .. } => &super::scatter::InsertSemantics,
-            OpKind::IndexWrite { .. } => &super::scatter::IndexWriteSemantics,
             OpKind::MaskWrite => &super::scatter::MaskWriteSemantics,
             OpKind::Correlation { .. } | OpKind::MatMul { .. } => &super::linear::LinearSemantics,
             OpKind::IsPermutation => &super::permutation::IsPermutationSemantics,
@@ -175,7 +166,6 @@ impl OpKind {
             OpKind::Element => "element",
             OpKind::PermutationScatter => "permutation_scatter",
             OpKind::Insert { .. } => "insert",
-            OpKind::IndexWrite { .. } => "index_write",
             OpKind::MaskWrite => "mask_write",
             OpKind::Correlation { .. } => "correlation",
             OpKind::MatMul { .. } => "matmul",

@@ -162,27 +162,10 @@ mod tests {
         b.facts.insert_for(data.value_id, is_sorted_fact);
 
         let result = dyn_aggregate_all(&mut b, &data, DynAggKind::Max);
-        let target = result.stmt_id().expect("max result has stmt_id");
-        let final_stmt = b
-            .stmts
-            .iter()
-            .find(|s| s.stmt_id == target)
-            .expect("target stmt present");
-        assert!(
-            matches!(final_stmt.ir, IR::ReadMemory { .. }),
-            "refactored max-on-sorted should still emit a single ReadMemory, got {:?}",
-            final_stmt.ir
-        );
-
-        let read_count = b
-            .stmts
-            .iter()
-            .filter(|s| matches!(s.ir, IR::ReadMemory { .. }))
-            .count();
-        assert_eq!(
-            read_count, 1,
-            "refactored max-on-sorted should emit exactly one ReadMemory"
-        );
+        // The last cell, read from the array's storage (known: no IR).
+        assert_eq!(result.int_val(), Some(5), "max of a sorted array is its last cell");
+        let read_count = b.stmts.iter().filter(|s| matches!(s.ir, IR::ArrayRead(_))).count();
+        assert_eq!(read_count, 0, "a known cell needs no read");
 
         let select_count = b
             .stmts

@@ -152,6 +152,56 @@ impl ArrayAccess {
         let axes: Vec<String> = self.axes.iter().map(|a| format!("{}x{}", a.len, a.stride)).collect();
         format!("{}][{:?}][{}][{}", self.len, self.elem, self.offset, axes.join(","))
     }
+
+    /// The cells the access can name with the positions `constants` (a
+    /// constant position fixed, `None` a runtime one), as `(first, last,
+    /// stride, count)` when they form one arithmetic progression (at most
+    /// one runtime position); a constant position outside its axis names
+    /// nothing (`count` 0).
+    fn progression(&self, constants: &[Option<i64>]) -> Option<(usize, usize, usize, usize)> {
+        let mut first = self.offset as usize;
+        let mut runtime = None;
+        for (axis, p) in self.axes.iter().zip(constants) {
+            match *p {
+                Some(c) if c < 0 || c >= i64::from(axis.len) => return Some((first, first, 1, 0)),
+                Some(c) => first += c as usize * axis.stride as usize,
+                None if runtime.is_some() => return None,
+                None => runtime = Some(axis),
+            }
+        }
+        Some(match runtime {
+            None => (first, first, 1, 1),
+            Some(axis) if axis.stride == 0 || axis.len == 1 => (first, first, 1, 1),
+            Some(axis) => {
+                let (stride, count) = (axis.stride as usize, axis.len as usize);
+                (first, first + (count - 1) * stride, stride, count)
+            }
+        })
+    }
+
+    /// Whether no cell this access can name at `constants` is a cell
+    /// `other` can name at `other_constants` (positions as for
+    /// `progression`): decided for accesses with at most one runtime
+    /// position each (lines of cells, or single cells), `false` (unknown)
+    /// otherwise.
+    pub fn disjoint_from(&self, constants: &[Option<i64>], other: &ArrayAccess, other_constants: &[Option<i64>]) -> bool {
+        let (Some((a0, a1, sa, na)), Some((b0, b1, sb, nb))) = (self.progression(constants), other.progression(other_constants))
+        else {
+            return false;
+        };
+        if na == 0 || nb == 0 || a1 < b0 || b1 < a0 {
+            return true;
+        }
+        // The spans overlap: a single cell lies inside the other's span.
+        match (na, nb) {
+            (1, _) => (a0 - b0) % sb != 0,
+            (_, 1) => (b0 - a0) % sa != 0,
+            // Two progressions of one stride meet only when their starts
+            // agree modulo it.
+            _ if sa == sb => a0.abs_diff(b0) % sa != 0,
+            _ => false,
+        }
+    }
 }
 
 /// The operands of an `ArrayWrite`: `[version, positions..., value, predicate]`.

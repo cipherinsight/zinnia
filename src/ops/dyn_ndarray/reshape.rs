@@ -176,8 +176,10 @@ fn dyn_transpose_runtime_strided(
     let len_static_full = data.meta.runtime_length.static_val == Some(total as i64);
 
     let default_val = super::metadata::dyn_default_value(b, data.dtype);
-    let out_seg = b.alloc_segment_id();
-    b.ir_allocate_memory(out_seg, total as u32, 0);
+    // A complex element is two cells (`helpers::segment`).
+    let cells = if data.dtype == crate::types::NumberType::Complex { 2 * total } else { total };
+    let zero = b.ir_constant_int(0);
+    let out_seg = b.alloc_filled(cells, &zero, data.dtype);
 
     // Walk storage positions with an incremental mixed-radix carry chain
     // (eq/select/add only — a per-cell div/mod decode fires the

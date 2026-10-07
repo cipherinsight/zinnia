@@ -1347,7 +1347,7 @@ fn static_array_read_stmt_count(graph: &crate::ir::IRGraph) -> usize {
     graph
         .stmts
         .iter()
-        .filter(|stmt| matches!(stmt.ir, IR::ReadMemory { .. }))
+        .filter(|stmt| matches!(stmt.ir, IR::ArrayRead(_)))
         .count()
 }
 
@@ -1550,10 +1550,10 @@ fn matching_guard_rhs_static_array_read_uses_guarded_safe_fallback_address() {
     );
 
     let has_guarded_safe_read = graph.stmts.iter().any(|stmt| {
-        if !matches!(stmt.ir, IR::ReadMemory { .. }) || stmt.arguments.len() != 1 {
+        if !matches!(stmt.ir, IR::ArrayRead(_)) || stmt.arguments.len() != 2 {
             return false;
         }
-        let addr_stmt = &graph.stmts[stmt.arguments[0] as usize];
+        let addr_stmt = &graph.stmts[stmt.arguments[1] as usize];
         if !matches!(addr_stmt.ir, IR::SelectI) || addr_stmt.arguments.len() != 3 {
             return false;
         }

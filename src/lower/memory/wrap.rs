@@ -9,8 +9,9 @@
 //! `Wrap { len: n }` group over the shared operand `i`:
 //!
 //! * output 0, position 0: the position `w`;
-//! * output 1, position `k` (`k < n`): the bit `[w == k]` (what reads and
-//!   writes at `w` compare against, `index_equals_coord`).
+//! * output 1, position `k` (`k < n`): the bit `[w == k]` (no producer
+//!   since the frontend's overlays moved into the layer, which reads the
+//!   bits from the wrap's `ENCODING`; removed with the old memory code).
 //!
 //! and the program's check `0 <= w < n` (`AssertU128Lt(w, n)`). Every
 //! construction produces NumPy's position for `i` in `[-n, n)`; for any other
@@ -53,27 +54,6 @@ pub fn wrap_lane(b: &mut IRBuilder, idx: &Value, n: usize) -> Value {
     let shared: Arc<[Value]> = Arc::from(vec![b.ensure_ptr(idx)]);
     let op = ArrayOp { kind: OpKind::Wrap { len: n as u32 }, shared: 1, output: POSITION, position: Some(0) };
     b.ir_array_op(op, &shared, &[])
-}
-
-/// `[w == k]` for the position `w` a [`wrap_lane`] placeholder `position`
-/// stands for, or `None` when `position` is not one.
-pub fn hit_lane(b: &mut IRBuilder, position: &Value, k: usize) -> Option<Value> {
-    let p = b.array_op_placeholder_of(position)?;
-    let OpKind::Wrap { len } = p.op.kind else { return None };
-    if p.op.output != POSITION || k >= len as usize {
-        return None;
-    }
-    let op = ArrayOp { kind: p.op.kind, shared: 1, output: HIT, position: Some(k as u32) };
-    let shared = p.shared.clone();
-    // A bit, typed as the Boolean an equality test gives.
-    match b.ir_array_op(op, &shared, &[]) {
-        Value::Integer(bit) => Some(Value::Boolean(crate::types::ScalarValue {
-            static_val: bit.static_val.map(|v| v != 0),
-            stmt_id: bit.stmt_id,
-            value_id: bit.value_id,
-        })),
-        other => Some(other),
-    }
 }
 
 /// What passes may know about a wrap lane before it is lowered.
@@ -221,8 +201,8 @@ impl Emitter for SignEmitter {
 ///
 /// **Preconditions.** None.
 ///
-/// **Postconditions.** Every lane; `0 <= w < n`; the one-hot `ENCODING` of
-/// `w` (with its thermometer).
+/// **Postconditions.** Every lane; `0 <= w < n`; `-n <= i < n`; the one-hot
+/// `ENCODING` of `w` (with its thermometer).
 ///
 /// **Soundness and completeness.** `position_one_hot`'s lemma: the hinted
 /// bits are pinned to NumPy's position of `i`, and there is no witness for
@@ -244,7 +224,14 @@ impl Construction for WrapByPositionHits {
         let bound = group.lanes.iter().filter(|l| l.output == POSITION).map(|l| {
             Requirement::Fact(Fact { claim: Claim::InRange { x: l.stmt, lo: 0, hi: Bound::Const(n as i64) }, scope: Scope::Everywhere })
         });
-        let post = lanes(group).chain(bound).chain([Requirement::Shared { group: group.id, name: ENCODING }]);
+        // The one-hot also pins the index itself: no witness for `i`
+        // outside `[-n, n)` (NumPy's window), as the scatter family's
+        // writes through it state.
+        let window = Requirement::Fact(Fact {
+            claim: Claim::InRange { x: group.shared[0], lo: -(n as i64), hi: Bound::Const(n as i64) },
+            scope: Scope::Everywhere,
+        });
+        let post = lanes(group).chain(bound).chain([window, Requirement::Shared { group: group.id, name: ENCODING }]);
         vec![Candidate {
             pre: Vec::new(),
             post: post.collect(),

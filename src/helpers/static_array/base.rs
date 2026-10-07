@@ -13,13 +13,10 @@
 //! constructor entry point.
 
 use crate::builder::{IRBuilder, StaticArrayProductProvenance};
-use crate::ops::dyn_ndarray::{scalar_i64_to_value, value_to_scalar_i64};
-use crate::types::{CompositeData, NumberType, ScalarValue, Value, ValueId, ZinniaType};
+use crate::types::{CompositeData, NumberType, Value, ValueId, ZinniaType};
 
 use super::super::composite::{flatten_composite, get_composite_shape};
-use super::super::segment::alloc_and_write;
 use super::super::shape_arith::row_major_strides;
-use super::elementwise::product_provenance_payload_cells;
 
 /// Determine whether a value is a (possibly-nested) composite of purely
 /// numeric leaves (Integer / Float / Boolean / Complex — P5a admits Complex).
@@ -49,30 +46,17 @@ fn infer_numeric_dtype(val: &Value) -> NumberType {
 }
 
 /// Build a `Value::StaticArray` for a precomputed flat numeric payload and
-/// shape. Used by constructors that already have the raw cells.
-///
-/// The flat payload `Value`s are also recorded in the builder's
-/// `static_array_payload` cache so the boundary shim
-/// ([`to_value_list`]) can return the original wires without issuing N
-/// `ir_read_memory` ops per call. The segment is still written so dynamic
-/// indexing (P2/P3) and the proving backend see the populated zkRAM cells.
-///
-/// Constant-fill optimisation: if every cell carries the same compile-time
-/// value, the segment is allocated with that value as the `init_value` and
-/// the per-cell `ir_write_memory` ops are skipped. Saves O(N) IR for
-/// `np.zeros((n, n))`-style constructors on large shapes.
+/// shape: a new array storage holding the cells (`builder/store.rs`; no IR).
 pub fn build_static_array_from_flat(
     b: &mut IRBuilder,
     flat: Vec<Value>,
     shape: Vec<usize>,
     dtype: NumberType,
 ) -> Value {
-    let cells: Vec<ScalarValue<i64>> = flat.iter().map(value_to_scalar_i64).collect();
-    let segment_id = build_segment_for_payload(b, &cells, dtype);
+    let segment_id = b.alloc_storage(flat.clone(), dtype);
     let strides = row_major_strides(&shape);
     b.note_static_array_cells(segment_id, &flat);
     b.note_segment_cells(segment_id, &flat);
-    b.static_array_payload.insert(segment_id, flat);
     Value::StaticArray {
         dtype,
         shape,
@@ -84,14 +68,16 @@ pub fn build_static_array_from_flat(
     }
 }
 
+/// A static array whose cells are the deferred product `provenance`: a
+/// storage whose cells are computed when first accessed (a fused consumer
+/// may read the factors instead).
 pub fn build_static_array_product_provenance(
     b: &mut IRBuilder,
     provenance: StaticArrayProductProvenance,
 ) -> Value {
     let total: usize = provenance.out_shape.iter().product();
-    let segment_id = b.alloc_segment_id();
-    b.ir_allocate_memory(segment_id, total as u32, 0);
-    b.lazy_static_array_segments.insert(segment_id);
+    let zero = b.ir_constant_int(0);
+    let segment_id = b.alloc_filled(total, &zero, provenance.dtype);
     let strides = row_major_strides(&provenance.out_shape);
     let dtype = provenance.dtype;
     let shape = provenance.out_shape.clone();
@@ -109,9 +95,8 @@ pub fn build_static_array_product_provenance(
 }
 
 /// Build a Complex `Value::StaticArray` from precomputed flat real and imag
-/// payloads (same length) and shape. Allocates two parallel segments and
-/// caches the original Complex wires under the *real* segment id (cache
-/// representation A — see P5a card / segarr-complex-dtype README).
+/// payloads (same length) and shape: two paired float storages (the known
+/// cells of the real one are the complex values).
 pub fn build_static_array_from_flat_complex(
     b: &mut IRBuilder,
     real_flat: Vec<Value>,
@@ -119,47 +104,10 @@ pub fn build_static_array_from_flat_complex(
     shape: Vec<usize>,
 ) -> Value {
     assert_eq!(real_flat.len(), imag_flat.len());
-    let real_cells: Vec<ScalarValue<i64>> = real_flat.iter().map(value_to_scalar_i64).collect();
-    let imag_cells: Vec<ScalarValue<i64>> = imag_flat.iter().map(value_to_scalar_i64).collect();
-    let real_seg = build_segment_for_payload_eager(b, &real_cells, NumberType::Float);
-    let imag_seg = build_segment_for_payload_eager(b, &imag_cells, NumberType::Float);
+    let real_seg = b.alloc_storage(real_flat, NumberType::Float);
+    let imag_seg = b.alloc_storage(imag_flat, NumberType::Float);
+    b.pair_complex_storages(real_seg, imag_seg);
     let strides = row_major_strides(&shape);
-
-    // Cache representation (A): one entry keyed on the *real* segment_id,
-    // holding `Vec<Value::Complex>` so payload_cells / to_value_list lookups
-    // see the original Complex scalars.
-    let complex_cells: Vec<Value> = real_flat
-        .iter()
-        .zip(imag_flat.iter())
-        .map(|(re, im)| {
-            let r_sv = match re {
-                Value::Float(s) => s.clone(),
-                _ => {
-                    let f = b.ir_float_cast(re);
-                    match f {
-                        Value::Float(s) => s,
-                        _ => unreachable!(),
-                    }
-                }
-            };
-            let i_sv = match im {
-                Value::Float(s) => s.clone(),
-                _ => {
-                    let f = b.ir_float_cast(im);
-                    match f {
-                        Value::Float(s) => s,
-                        _ => unreachable!(),
-                    }
-                }
-            };
-            Value::Complex {
-                real: r_sv,
-                imag: i_sv,
-            }
-        })
-        .collect();
-    b.static_array_payload.insert(real_seg, complex_cells);
-
     Value::StaticArray {
         dtype: NumberType::Complex,
         shape,
@@ -168,128 +116,6 @@ pub fn build_static_array_from_flat_complex(
         offset: 0,
         imag_segment_id: Some(imag_seg),
         value_id: ValueId::next(),
-    }
-}
-
-/// Allocate a segment for a fixed payload, taking advantage of
-/// `ir_allocate_memory`'s `init_value` to skip per-cell writes when every
-/// cell shares the same compile-time constant. Falls back to
-/// `alloc_and_write` for non-uniform payloads.
-fn build_segment_for_payload(
-    b: &mut IRBuilder,
-    cells: &[ScalarValue<i64>],
-    _dtype: NumberType,
-) -> u32 {
-    // All-equal-known-constant fast path. Encoding nuance: `init_value` is
-    // an `i64`. For Float arrays we re-interpret the static_val of each
-    // cell back to its i64 representation; if the payload is non-uniform
-    // we fall through.
-    if !cells.is_empty() {
-        if let Some(first_val) = cells[0].static_val {
-            let all_match = cells.iter().all(|c| c.static_val == Some(first_val));
-            if all_match {
-                let seg = b.alloc_segment_id();
-                b.ir_allocate_memory(seg, cells.len() as u32, first_val);
-                return seg;
-            }
-        }
-    }
-    let seg = b.alloc_segment_id();
-    b.ir_allocate_memory(seg, cells.len() as u32, 0);
-    b.lazy_static_array_segments.insert(seg);
-    seg
-}
-
-fn build_segment_for_payload_eager(
-    b: &mut IRBuilder,
-    cells: &[ScalarValue<i64>],
-    dtype: NumberType,
-) -> u32 {
-    if !cells.is_empty() {
-        if let Some(first_val) = cells[0].static_val {
-            let all_match = cells.iter().all(|c| c.static_val == Some(first_val));
-            if all_match {
-                let seg = b.alloc_segment_id();
-                b.ir_allocate_memory(seg, cells.len() as u32, first_val);
-                return seg;
-            }
-        }
-    }
-    alloc_and_write(b, cells, dtype)
-}
-
-/// Emit deferred writes for a lazily-backed StaticArray segment. Static
-/// cache consumers do not need this; memory-backed reads/writes call it
-/// before touching the segment so semantics stay identical to eager writes.
-pub fn materialize_static_array_segment(b: &mut IRBuilder, segment_id: u32, dtype: NumberType) {
-    if b.static_array_product_provenance.contains_key(&segment_id) {
-        force_static_array_product_provenance(b, segment_id);
-    }
-    if !b.lazy_static_array_segments.remove(&segment_id) {
-        return;
-    }
-    let Some(cached) = b.static_array_payload.get(&segment_id).cloned() else {
-        return;
-    };
-    // Materialization reconstructs the segment's KNOWN logical content —
-    // it is infrastructure, not a user mutation. Any conditionality is
-    // already baked into the cached cells (overlay selects carry their
-    // own predicates), so these writes must bypass the conditional-write
-    // predicate: predicating them on the branch that merely *triggered*
-    // materialization would lock cells to that branch's path condition
-    // (binding-audit finding: 0374's ecdf table read inside an `elif`).
-    // For the same reason, the segment's runtime-extents provenance
-    // survives: the content is unchanged, only its storage realises.
-    let saved_extents = b.provenance.runtime_extents_of(segment_id).cloned();
-    let prev_wp = b.swap_write_predicate(None);
-    for (i, elem) in cached.iter().enumerate() {
-        let val = match dtype {
-            NumberType::Float => match elem {
-                Value::Float(_) => elem.clone(),
-                _ => b.ir_float_cast(elem),
-            },
-            NumberType::Integer => match elem {
-                Value::Integer(_) | Value::Boolean(_) => elem.clone(),
-                _ => b.ir_int_cast(elem),
-            },
-            NumberType::Complex => {
-                panic!("materialize_static_array_segment does not materialize Complex segments")
-            }
-        };
-        let addr = b.ir_constant_int(i as i64);
-        b.ir_write_memory(segment_id, &addr, &val);
-    }
-    b.swap_write_predicate(prev_wp);
-    if let Some(exts) = saved_extents {
-        b.provenance.set_runtime_extents(segment_id, exts);
-    }
-}
-
-pub fn force_static_array_product_provenance(b: &mut IRBuilder, segment_id: u32) {
-    let Some(provenance) = b.static_array_product_provenance.remove(&segment_id) else {
-        return;
-    };
-    let payload = product_provenance_payload_cells(b, &provenance);
-    b.static_array_payload.insert(segment_id, payload);
-}
-
-pub fn materialize_static_array_if_lazy(b: &mut IRBuilder, val: &Value) {
-    if let Value::StaticArray {
-        dtype,
-        segment_id,
-        imag_segment_id,
-        ..
-    } = val
-    {
-        match dtype {
-            NumberType::Complex => {
-                materialize_static_array_segment(b, *segment_id, NumberType::Float);
-                if let Some(imag) = imag_segment_id {
-                    materialize_static_array_segment(b, *imag, NumberType::Float);
-                }
-            }
-            _ => materialize_static_array_segment(b, *segment_id, *dtype),
-        }
     }
 }
 
@@ -394,89 +220,36 @@ fn contains_static_array(val: &Value) -> bool {
     }
 }
 
-/// Read the segment payload of a `Value::StaticArray` and rebuild a nested
-/// `Value::List` that matches the legacy numeric-array representation.
-/// No-op for non-`StaticArray` values (returned as-is).
-///
-/// Lossy on segment IR pointers: each leaf is materialised as a fresh
-/// `ScalarValue` (`static_val` carries through, `ptr` is the segment-read
-/// statement). Legacy ops reading the resulting list see the same compile-
-/// time constants they would have seen if the array had been built as a
-/// `Value::List` to begin with.
+/// The element at the absolute address `abs` of a static array's storage
+/// (`segment_id`; for a complex array its real-part storage, paired with the
+/// imaginary one): the known cell (no IR), or a read of the storage's
+/// current version.
+pub(crate) fn element_at(b: &mut IRBuilder, segment_id: u32, abs: usize, dtype: NumberType) -> Value {
+    if let Some(cell) = b.known_cell(segment_id, abs) {
+        return cell;
+    }
+    match b.imag_storage(segment_id) {
+        Some(imag) => {
+            let real = b.storage_read(segment_id, abs);
+            let imag = b.storage_read(imag, abs);
+            let real = crate::ops::dyn_ndarray::retag(&real, NumberType::Float);
+            let imag = crate::ops::dyn_ndarray::retag(&imag, NumberType::Float);
+            crate::helpers::value_ops::pack_complex_value(real, imag)
+        }
+        None => {
+            let cell = b.storage_read(segment_id, abs);
+            crate::ops::dyn_ndarray::retag(&cell, dtype)
+        }
+    }
+}
+
+/// The elements of a `Value::StaticArray` in logical row-major order as a
+/// nested `Value::List` (the legacy numeric-array representation): the
+/// known cells, or reads of the storage. No-op for other values.
 pub fn to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
-    let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
-        Value::StaticArray {
-            dtype,
-            shape,
-            segment_id,
-            strides,
-            offset,
-            imag_segment_id,
-            value_id: _,
-        } => (
-            *dtype,
-            shape.clone(),
-            *segment_id,
-            strides.clone(),
-            *offset,
-            *imag_segment_id,
-        ),
-        _ => return val.clone(),
-    };
-    let total: usize = shape.iter().product();
-    if b.static_array_product_provenance.contains_key(&segment_id) {
-        force_static_array_product_provenance(b, segment_id);
-    }
-    // A stride-permuted view (transpose / moveaxis / non-contiguous
-    // slice) must materialise in LOGICAL row-major order — the naive
-    // cache slice below reads SOURCE order and silently un-transposes
-    // the view (`l @ l.T` computed `l @ l`).
-    let contiguous = strides == crate::helpers::shape_arith::row_major_strides(&shape);
-    if !contiguous {
-        let leaves = crate::helpers::static_array::elementwise::payload_cells(b, val);
-        let leaf_types: Vec<ZinniaType> = leaves.iter().map(|v| v.zinnia_type()).collect();
-        if shape.len() <= 1 {
-            return Value::List(CompositeData {
-                elements_type: leaf_types,
-                values: leaves,
-                value_id: ValueId::next(),
-            });
-        }
-        return super::super::composite::build_nested_value(leaves, leaf_types, &shape);
-    }
-    // P1 fast-path: if the segment payload is cached (always true for arrays
-    // built via `build_static_array_from_flat`), reuse the original wires
-    // instead of issuing N segment reads. This keeps the boundary cheap so
-    // benchmarks with heavy indexing don't pay quadratic IR growth.
-    let leaves: Vec<Value> = if let Some(cached) = b.static_array_payload.get(&segment_id) {
-        cached.iter().skip(offset).take(total).cloned().collect()
-    } else if dtype == NumberType::Complex {
-        // P5a: dual-segment fallback for Complex when cache was invalidated.
-        let im_seg = imag_seg.expect("Complex StaticArray missing imag_segment_id");
-        let mut tmp = Vec::with_capacity(total);
-        for i in 0..total {
-            tmp.push(super::read::read_complex_leaf(
-                b,
-                segment_id,
-                im_seg,
-                offset + i,
-            ));
-        }
-        tmp
-    } else {
-        // Fallback: materialise via segment reads (only relevant for
-        // StaticArrays created without cache registration).
-        materialize_static_array_segment(b, segment_id, dtype);
-        let mut tmp = Vec::with_capacity(total);
-        for i in 0..total {
-            let addr = b.ir_constant_int((offset + i) as i64);
-            let raw = b.ir_read_memory(segment_id, &addr);
-            let sv = value_to_scalar_i64(&raw);
-            let leaf = scalar_i64_to_value(&sv, dtype);
-            tmp.push(leaf);
-        }
-        tmp
-    };
+    let Value::StaticArray { shape, .. } = val else { return val.clone() };
+    let shape = shape.clone();
+    let leaves = crate::helpers::static_array::elementwise::payload_cells(b, val);
     let leaf_types: Vec<ZinniaType> = leaves.iter().map(|v| v.zinnia_type()).collect();
     if shape.len() <= 1 {
         return Value::List(CompositeData {
@@ -499,11 +272,8 @@ pub fn to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
 /// index (per `ask_bounds`) passes through unchanged so we don't emit a
 /// needless `select` wire.
 ///
-/// This is the single canonical wrap used by both the read and write static
-/// array paths. The read path normalizes its dynamic `Single` index once at
-/// plan-build time so the flat address (`dynamic_parts`) and the per-candidate
-/// `index_equals_coord` match agree; the write path's `compute_addr` fallback
-/// normalizes here before forming the address. See C12c.
+/// This is the single canonical wrap of the static array paths (reads and
+/// writes, through [`checked_axis_index`]).
 pub(crate) fn normalize_dynamic_index(b: &mut IRBuilder, idx: &Value, axis_len: usize) -> Value {
     if idx.int_val().is_some() {
         return idx.clone();
@@ -576,6 +346,10 @@ fn wrap_by_pinned_sign(b: &mut IRBuilder, idx: &Value, axis_len: usize) -> Value
 /// code does not run, and the returned index stays in range where it does
 /// not run.
 ///
+/// One index on axes of one length under one execution predicate has one
+/// checked position (the first access builds it and its check; later ones
+/// reuse it), so accesses through it name the same cells.
+///
 /// Every index axis must be checked on its own. A check on the flat
 /// address alone accepts `a[0, 5]` on a 4x4 array (flat address 5 is in
 /// range) and reads `a[1, 1]`; checking each axis makes every address
@@ -597,37 +371,13 @@ pub(crate) fn checked_axis_index(
         }
         return if i < 0 { b.ir_constant_int(i + len) } else { idx.clone() };
     }
+    if let Some(position) = b.checked_position(idx, axis_len) {
+        return position;
+    }
     let wrapped = normalize_dynamic_index(b, idx, axis_len);
-    crate::optim::resolver::discharge_index_in_range(b, &wrapped, 0, len, op_name)
-}
-
-/// Build the boolean "this runtime index selects coordinate `coord`" condition.
-///
-/// This is the single canonical copy shared by the read and write overlay /
-/// candidate-select paths (C12c unified the previously-divergent read and write
-/// twins — the read copy compared *unwrapped*, so a mixed `Single+Range` read
-/// with a negative dynamic index matched no candidate and returned garbage).
-///
-/// It numpy-wraps the index internally, so callers may pass a raw
-/// (possibly-negative) index. Passing an already-`normalize_dynamic_index`-d
-/// value is idempotent (the wrap predicate is statically false / pruned for a
-/// non-negative value).
-pub(crate) fn index_equals_coord(
-    b: &mut IRBuilder,
-    idx: &Value,
-    coord: usize,
-    axis_len: usize,
-) -> Value {
-    if let Some(i) = idx.int_val() {
-        let i = if i < 0 { axis_len as i64 + i } else { i };
-        return b.ir_constant_bool(i == coord as i64);
-    }
-    let normalized = normalize_dynamic_index(b, idx, axis_len);
-    if let Some(hit) = crate::lower::memory::wrap::hit_lane(b, &normalized, coord) {
-        return hit;
-    }
-    let coord_v = b.ir_constant_int(coord as i64);
-    b.ir_equal_i(&normalized, &coord_v)
+    let position = crate::optim::resolver::discharge_index_in_range(b, &wrapped, 0, len, op_name);
+    b.remember_checked_position(idx, axis_len, &position);
+    position
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -725,36 +475,19 @@ mod tests {
     }
 
     #[test]
-    fn non_uniform_static_array_payload_is_lazy_until_memory_access() {
+    fn a_static_arrays_cells_are_in_its_storage_without_ir() {
         let mut b = IRBuilder::new();
         let lst = list_of((0..4).map(|i| int_value(&mut b, i)).collect());
+        let before = b.stmts.len();
         let sa = to_static_array(&mut b, &lst).unwrap();
         let segment_id = match &sa {
             Value::StaticArray { segment_id, .. } => *segment_id,
             _ => panic!("expected StaticArray"),
         };
-        assert!(b.lazy_static_array_segments.contains(&segment_id));
-        assert!(!b
-            .stmts
-            .iter()
-            .any(|s| matches!(s.ir, crate::ir_defs::IR::WriteMemory { .. })));
-
-        let back = to_value_list(&mut b, &sa);
-        assert!(matches!(back, Value::List(_)));
-        assert!(b.lazy_static_array_segments.contains(&segment_id));
-        assert!(!b
-            .stmts
-            .iter()
-            .any(|s| matches!(s.ir, crate::ir_defs::IR::WriteMemory { .. })));
-
-        materialize_static_array_if_lazy(&mut b, &sa);
-        assert!(!b.lazy_static_array_segments.contains(&segment_id));
-        let writes = b
-            .stmts
-            .iter()
-            .filter(|s| matches!(s.ir, crate::ir_defs::IR::WriteMemory { .. }))
-            .count();
-        assert_eq!(writes, 4);
+        assert_eq!(b.stmts.len(), before, "no IR for known cells");
+        let cells = b.storage_cells(segment_id);
+        assert_eq!(cells.iter().map(Value::int_val).collect::<Vec<_>>(), vec![Some(0), Some(1), Some(2), Some(3)]);
+        assert_eq!(b.stmts.len(), before, "reading known cells needs no IR");
     }
 
     #[test]

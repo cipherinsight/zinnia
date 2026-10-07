@@ -140,21 +140,19 @@ def test_runtime_percentile_matches_numpy_with_ties(target):
 
 # ── Which lowering each target picks ────────────────────────────────────
 
-def test_full_argsort_is_a_grand_product_on_halo2_and_hinted_on_noir():
+def test_full_argsort_is_hinted_with_table_reads():
     source = 'def kernel(a: Float[Array, "100"]):\n    return np.argsort(a)\n'
-    halo2 = ir_classes(compile_for(source, "halo2"))
-    noir = ir_classes(compile_for(source, "noir"))
-    # Hinted sorted packed keys checked by a grand product at a verifier
-    # challenge (lower/sort/grand_product.rs): 100 hints, one multiset
-    # check, 99 asserted increases (the routed network would hint 573 switch
-    # bits, Batcher's network compare 1,077 times).
-    assert halo2.count("HintIR") == 100 and halo2.count("IdentityCheckIR") == 1
-    assert "AssertBitIR" not in halo2
-    assert halo2.count("PackedKeyLessIR") == 99
-    assert halo2.count("PackKeyIR") == 100 and halo2.count("PackedKeyIndexIR") == 100
-    # One hinted index per rank, 99 key comparisons, one native read each.
-    assert noir.count("HintIR") == 100 and noir.count("KeyLessIR") == 99
-    assert noir.count("ReadMemoryIR") == 100
+    # One hinted index per rank, 99 key comparisons, one table read of the
+    # keys each (a ROM: a lookup table on halo2-base, a native array on
+    # Noir). On halo2-base this is 11,958 cells; the grand product of
+    # hinted packed keys (lower/sort/grand_product.rs) is 13,965, the routed
+    # network 21,826 (array-ssa step 3, measured with
+    # `ZINNIA_FORCE_CONSTRUCTION`).
+    for target in ("halo2", "noir"):
+        classes = ir_classes(compile_for(source, target))
+        assert classes.count("HintIR") == 100 and classes.count("KeyLessIR") == 99
+        assert classes.count("RomInitIR") == 1 and classes.count("RomReadIR") == 100
+        assert "IdentityCheckIR" not in classes and "AssertBitIR" not in classes
 
 
 @pytest.mark.parametrize("target", TARGETS)

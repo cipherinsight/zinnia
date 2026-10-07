@@ -1,6 +1,5 @@
 """Static-array coverage for np.argwhere / np.nonzero dynamic outputs."""
 
-from collections import Counter, defaultdict
 
 from zinnia import *
 from zinnia.api.zk_circuit import ZKCircuit
@@ -42,22 +41,11 @@ def test_two_axis_dynamic_slice_fuses_without_fullsize_intermediate_segment():
         return A[ystart:ystop, xstart:xstop]
 
     stmts = ZKCircuit.from_method(foo).compile().get_ir_stmts()
-    per_seg = defaultdict(Counter)
-    for stmt in stmts:
-        inst = stmt.get("ir_instance", {})
-        cls = inst.get("__class__")
-        if cls in ("AllocateMemoryIR", "WriteMemoryIR", "ReadMemoryIR"):
-            seg = inst["ir_data"]["segment_id"]
-            per_seg[seg][cls] += 1
-
-    # No 4x4 intermediate is built in memory between the two sliced axes
-    # (the window gather shifts rows, then columns, as values). Full-size
-    # segments are at most the source and the slice result (a
-    # runtime-shaped array whose 16 cells the output contract reads back;
-    # those reads are at constant addresses, so `ConstantMemoryForwarding`
-    # replaces them by the written cells and only the 16 writes remain).
-    fullsize_segments = [seg for seg, counts in per_seg.items() if counts["WriteMemoryIR"] == 16]
-    assert 1 <= len(fullsize_segments) <= 2
+    # No 4x4 intermediate is kept as an array between the two sliced axes
+    # (the window gather shifts rows, then columns, as values): no table or
+    # memory reaches the backends.
+    classes = {stmt["ir_instance"]["__class__"] for stmt in stmts}
+    assert not {c for c in classes if c.startswith(("Rom", "Ram", "Array"))}
 
 
 def test_two_axis_dynamic_slice_public_layout_is_top_left_packed():

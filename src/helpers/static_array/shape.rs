@@ -29,12 +29,10 @@
 //!   P2's "materialise on non-contiguous slice" policy), materialise into a
 //!   fresh segment.
 //!
-//! Cache awareness: every op reads via the `payload_cells` helper from the
-//! P4a module, which uses `IRBuilder::static_array_payload` when present and
-//! falls back to `ir_read_memory` if the cache was invalidated by a P3
-//! dynamic write. New outputs go through `build_static_array_from_flat`,
-//! which populates the cache with the per-cell wires that carry through
-//! constant folding.
+//! Every op reads via `payload_cells` (the known cells, or reads of the
+//! storage after a write at a runtime position); new outputs go through
+//! `build_static_array_from_flat`, a storage of the per-cell values that
+//! carry through constant folding.
 
 use std::collections::HashMap;
 
@@ -63,89 +61,20 @@ fn shape_of(val: &Value) -> Vec<usize> {
     }
 }
 
-/// Is this StaticArray a contiguous row-major view of its segment? If so we
-/// can do reshape / flatten as pure metadata; otherwise we must materialise.
+/// Whether a StaticArray is a contiguous row-major view of its storage (at
+/// any offset): reshape and ravel of it are views (NumPy), with the same
+/// offset.
 fn is_contiguous(val: &Value) -> bool {
     match val {
-        Value::StaticArray {
-            shape,
-            strides,
-            offset,
-            ..
-        } => *offset == 0 && *strides == row_major_strides(shape),
+        Value::StaticArray { shape, strides, .. } => *strides == row_major_strides(shape),
         _ => false,
     }
 }
 
-/// Materialise a (possibly non-contiguous) StaticArray view into a fresh
-/// contiguous payload (a `Vec<Value>` flat in row-major order over the
-/// view's `shape`). Reuses cached wires when the source has no offset and
-/// the strides match contiguous; otherwise walks via `strides`/`offset` and
-/// rebuilds. The returned vector has length `prod(shape)` and is suitable
-/// for handing to `build_static_array_from_flat`.
+/// The elements of a (possibly non-contiguous) StaticArray view in
+/// row-major order over its `shape`, for a fresh contiguous array.
 fn materialise_to_flat(b: &mut IRBuilder, val: &Value) -> Vec<Value> {
-    // payload_cells handles both contiguous and (less common) non-contiguous
-    // cases — but it walks over `offset..offset+total` linearly, which is
-    // only correct for contiguous views. Compute strided cell reads by hand
-    // when the view is non-contiguous.
-    let (shape, strides, offset, _segment_id, dtype) = match val {
-        Value::StaticArray {
-            shape,
-            strides,
-            offset,
-            segment_id,
-            dtype,
-            ..
-        } => (shape.clone(), strides.clone(), *offset, *segment_id, *dtype),
-        _ => panic!("materialise_to_flat: expected StaticArray"),
-    };
-    let _ = dtype;
-    if is_contiguous(val) || offset == 0 && strides == row_major_strides(&shape) {
-        return payload_cells(b, val);
-    }
-    // Non-contiguous view: walk shape in row-major order, using strides to
-    // recover the absolute payload index.
-    let total: usize = shape.iter().product();
-    let logical_strides = row_major_strides(&shape);
-    let mut out: Vec<Value> = Vec::with_capacity(total);
-    for flat in 0..total {
-        let coords = decode_coords(flat, &shape, &logical_strides);
-        let mut abs: usize = offset;
-        for (ax, &c) in coords.iter().enumerate() {
-            abs += c * strides[ax];
-        }
-        // Reuse payload_cells via a synthetic single-cell view: but the
-        // simplest is to read the cached value at `abs` directly.
-        let segment_id = match val {
-            Value::StaticArray { segment_id, .. } => *segment_id,
-            _ => unreachable!(),
-        };
-        let cell = if let Some(cached) = b.static_array_payload.get(&segment_id) {
-            if abs < cached.len() {
-                cached[abs].clone()
-            } else {
-                super::base::materialize_static_array_segment(b, segment_id, dtype_of(val));
-                let addr = b.ir_constant_int(abs as i64);
-                let raw = b.ir_read_memory(segment_id, &addr);
-                let dtype = dtype_of(val);
-                crate::ops::dyn_ndarray::scalar_i64_to_value(
-                    &crate::ops::dyn_ndarray::value_to_scalar_i64(&raw),
-                    dtype,
-                )
-            }
-        } else {
-            super::base::materialize_static_array_segment(b, segment_id, dtype_of(val));
-            let addr = b.ir_constant_int(abs as i64);
-            let raw = b.ir_read_memory(segment_id, &addr);
-            let dtype = dtype_of(val);
-            crate::ops::dyn_ndarray::scalar_i64_to_value(
-                &crate::ops::dyn_ndarray::value_to_scalar_i64(&raw),
-                dtype,
-            )
-        };
-        out.push(cell);
-    }
-    out
+    payload_cells(b, val)
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -665,32 +594,7 @@ pub fn try_apply_squeeze(
     }
     let out = if new_shape.is_empty() {
         // 0-D scalar — read the single cell from the cache or segment.
-        let cached = _b.static_array_payload.get(&segment_id).and_then(|c| {
-            if offset < c.len() {
-                Some(c[offset].clone())
-            } else {
-                None
-            }
-        });
-        match cached {
-            Some(v) => v,
-            None => {
-                if dtype == NumberType::Complex {
-                    let im = imag_seg.expect("Complex StaticArray missing imag_segment_id");
-                    crate::helpers::static_array::read::read_complex_leaf(
-                        _b, segment_id, im, offset,
-                    )
-                } else {
-                    super::base::materialize_static_array_segment(_b, segment_id, dtype);
-                    let addr = _b.ir_constant_int(offset as i64);
-                    let raw = _b.ir_read_memory(segment_id, &addr);
-                    crate::ops::dyn_ndarray::scalar_i64_to_value(
-                        &crate::ops::dyn_ndarray::value_to_scalar_i64(&raw),
-                        dtype,
-                    )
-                }
-            }
-        }
+        super::base::element_at(_b, segment_id, offset, dtype)
     } else {
         Value::StaticArray {
             dtype,
@@ -710,7 +614,7 @@ pub fn try_apply_squeeze(
 
 /// Try to apply `flatten` / `ravel` natively. For contiguous source: pure
 /// metadata. For non-contiguous: materialise.
-pub fn try_apply_flatten(b: &mut IRBuilder, val: &Value) -> Option<Value> {
+pub fn try_apply_flatten(b: &mut IRBuilder, val: &Value, copy: bool) -> Option<Value> {
     let (dtype, shape, segment_id, _strides, offset, imag_seg) = match val {
         Value::StaticArray {
             dtype,
@@ -731,7 +635,9 @@ pub fn try_apply_flatten(b: &mut IRBuilder, val: &Value) -> Option<Value> {
         _ => return None,
     };
     let total: usize = shape.iter().product();
-    let out = if is_contiguous(val) {
+    // `ravel` (and `.flat`) of a contiguous array is a view of it; `flatten`
+    // always copies (NumPy).
+    let out = if is_contiguous(val) && !copy {
         Value::StaticArray {
             dtype,
             shape: vec![total],
@@ -1410,7 +1316,7 @@ mod tests {
     fn flatten_metadata_on_contiguous() {
         let mut b = IRBuilder::new();
         let a = make_2d_int(&mut b, &[&[1, 2, 3], &[4, 5, 6]]);
-        let out = try_apply_flatten(&mut b, &a).expect("native");
+        let out = try_apply_flatten(&mut b, &a, false).expect("native");
         match (&a, &out) {
             (
                 Value::StaticArray {

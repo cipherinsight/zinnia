@@ -7,6 +7,7 @@ use crate::optim::resolver::{Resolver, StaticOnlyResolver};
 use crate::types::{NumberType, ScalarValue, StmtId, StringValue, Value};
 
 mod arrays;
+mod store;
 mod fixed_width;
 mod bool_dtype;
 mod same_value;
@@ -146,17 +147,8 @@ pub struct IRBuilder {
     /// Memo tables of the checks-under-the-execution-predicate machinery
     /// (`builder/guard.rs`).
     guard_caches: guard::GuardCaches,
-    /// Number of cells of every allocated memory segment, and of every
-    /// dynamic ndarray's buffer (by array id): the range a dynamic address
-    /// must stay in (see `guard_address`).
-    segment_capacity: HashMap<u32, u32>,
-    dyn_array_capacity: HashMap<u32, u32>,
-    /// Segments allocated while a given predicate (by stmt id) was
-    /// active — branch-local storage whose writes under that same
-    /// predicate skip predication (see `ir_allocate_memory`).
-    predicate_exempt_segments: HashMap<u32, StmtId>,
-    /// Next available memory segment ID for dynamic array allocations.
-    next_segment_id: u32,
+    /// Every array's cells (`builder/store.rs`).
+    store: store::ArrayStore,
     /// The `IR::ArrayOp` placeholders at constant positions this builder
     /// emitted, by statement (see [`IRBuilder::array_op_placeholder_of`]).
     array_op_placeholders: HashMap<StmtId, ArrayOpPlaceholder>,
@@ -166,13 +158,6 @@ pub struct IRBuilder {
     /// envelopes. Lives once per compilation; all envelopes refer to vars
     /// in this single namespace.
     pub dim_table: crate::types::DimTable,
-    /// P1 segarr-foundation: side cache mapping a `Value::StaticArray`'s
-    /// `segment_id` to the original payload wires written into it. The
-    /// `to_value_list` shim looks values up here instead of issuing N
-    /// `ir_read_memory` ops per lookup, which keeps the boundary cheap
-    /// while ops are still being migrated. Once P6 lands and the legacy
-    /// path goes away, this cache (and the shim) go with it.
-    pub static_array_payload: HashMap<u32, Vec<Value>>,
     /// Index tuples produced by `np.nonzero` / one-argument `np.where`,
     /// keyed by the tuple's `ValueId`, mapped to a snapshot of the boolean
     /// mask they enumerate (taken when the tuple was built, so later writes
@@ -187,11 +172,6 @@ pub struct IRBuilder {
     /// concrete payload can be reconstructed exactly, but may be consumed by
     /// a fused lowering before materializing every intermediate cell.
     pub static_array_product_provenance: HashMap<u32, StaticArrayProductProvenance>,
-    /// Segment-backed StaticArrays whose logical payload is available in
-    /// `static_array_payload` but whose per-cell memory writes have not yet
-    /// been emitted. Static reads can use the cache directly; dynamic reads
-    /// and writes must materialize first.
-    pub lazy_static_array_segments: HashSet<u32>,
     /// Structural-provenance table (see `src/provenance.rs` for the
     /// record types and the five invariants). Owns what used to be the
     /// ad-hoc `slice_views` cache; transferred onto the `IRGraph` at
@@ -222,28 +202,6 @@ pub struct IRBuilder {
     /// builder clones and helper threads, and `Send + Sync` via the
     /// inner `Mutex<File>`.
     pub telemetry: Option<std::sync::Arc<crate::optim::telemetry::TelemetrySink>>,
-    /// Per-segment, per-cell bound facts captured at write time. When a
-    /// `Value` whose `ask_bounds` is `Some((min, max))` is written into a
-    /// segment via `alloc_and_write_values` / `write_typed`, the bounds
-    /// are recorded here. When a downstream `ir_read_memory` reads the
-    /// cell at a statically-pinned address, the stored bounds are
-    /// republished as a `vid >= min AND vid < max+1` fact on the read
-    /// output's value_id.
-    ///
-    /// Closes the segment-storage fact-laundering gap that otherwise
-    /// loses structurally-bounded values (e.g. argwhere bbox bounds
-    /// emitted by `dyn_aggregate_axis`'s fast path) when downstream
-    /// kernels do `B.min(0)[0]`-style tuple-unpack extraction — the
-    /// extraction emits `IR::ReadMemory` which mints a fresh value_id
-    /// for the cell, and the original `acc_idx` fact never propagates.
-    pub segment_cell_bounds: HashMap<u32, HashMap<usize, (i64, i64)>>,
-    /// Segment-wide bound, used when every cell of a segment is
-    /// structurally in the same `(min, max)` range. Set by producers
-    /// like `np_nonzero` that write at runtime addresses (where the
-    /// per-cell `segment_cell_bounds` capture in `ir_write_memory` can't
-    /// fire — the address has no `int_val`). Consumed by `ir_read_memory`
-    /// as a fallback when per-cell bounds aren't available.
-    pub segment_default_bounds: HashMap<u32, (i64, i64)>,
     /// Bound facts on scalar SSA values that downstream discharge can
     /// consult but other passes do not see. Used when publishing a paired
     /// `(Ge, Le)` fact into the FactStack would trigger an unwanted
@@ -283,18 +241,13 @@ impl IRBuilder {
             elided_before_exposure: Vec::new(),
             write_predicate: None,
             guard_caches: guard::GuardCaches::default(),
-            segment_capacity: HashMap::new(),
-            dyn_array_capacity: HashMap::new(),
-            predicate_exempt_segments: HashMap::new(),
-            next_segment_id: 0,
+            store: store::ArrayStore::default(),
             array_op_placeholders: HashMap::new(),
             next_array_id: 0,
             dim_table: crate::types::DimTable::new(),
-            static_array_payload: HashMap::new(),
             nonzero_index_masks: HashMap::new(),
             known_permutations: Vec::new(),
             static_array_product_provenance: HashMap::new(),
-            lazy_static_array_segments: HashSet::new(),
             provenance: crate::provenance::ProvenanceTable::new(),
             resolver: Box::new(StaticOnlyResolver::new()),
             facts: crate::optim::predicates::FactStack::new(),
@@ -305,8 +258,6 @@ impl IRBuilder {
             // up the change, but the tests scope the env var around the
             // builder construction so this matches the desired semantics.
             telemetry: crate::optim::telemetry::TelemetrySink::from_env(),
-            segment_cell_bounds: HashMap::new(),
-            segment_default_bounds: HashMap::new(),
             scalar_value_bounds: HashMap::new(),
             fixed_width: fixed_width::FixedWidthValues::default(),
             bool_segments: HashSet::new(),
@@ -539,12 +490,9 @@ impl IRBuilder {
 
     /// Deep IR-walk bound estimator used as the last fallback in
     /// [`ask_bounds`]. Walks the SSA DAG, combining intervals via
-    /// arithmetic and (for `SelectI`) union of branches. Consults
-    /// [`Self::segment_cell_bounds`] / [`Self::segment_default_bounds`]
-    /// on `ReadMemory` so values that originate from a bounded segment
-    /// carry through chains the range resolver doesn't model (e.g. the
-    /// Min/Max `SelectI` reduction of `flatnonzero` outputs feeding a
-    /// `bbox.max() + 1` slice bound on 0507/0509/0510).
+    /// arithmetic and (for `SelectI`) union of branches. A read of an
+    /// array whose cells have a known bound carries it as facts
+    /// (`builder/store.rs`), which take precedence below.
     ///
     /// Per-call memoization keeps cost O(stmts visited) instead of
     /// exponential on `SelectI` chains. Bounded recursion depth caps
@@ -587,27 +535,6 @@ impl IRBuilder {
             IR::ConstantInt { value } => Some((*value, *value)),
             IR::ConstantBool { value } => {
                 Some((if *value { 1 } else { 0 }, if *value { 1 } else { 0 }))
-            }
-            IR::ReadMemory { segment_id } => {
-                // Try per-cell bound if the address is statically pinned;
-                // otherwise fall through to segment-wide default.
-                let addr_stmt_id = *stmt.arguments.first()?;
-                let addr_stmt = self.stmts.get(addr_stmt_id as usize)?;
-                let addr_val = if let IR::ConstantInt { value } = &addr_stmt.ir {
-                    Some(*value)
-                } else {
-                    None
-                };
-                if let Some(addr_i) = addr_val {
-                    if let Some(b) = self
-                        .segment_cell_bounds
-                        .get(segment_id)
-                        .and_then(|m| m.get(&(addr_i as usize)))
-                    {
-                        return Some(*b);
-                    }
-                }
-                self.segment_default_bounds.get(segment_id).copied()
             }
             IR::AddI if stmt.arguments.len() == 2 => {
                 let a = self.deep_bounds_walk_stmt(stmt.arguments[0], cache, depth + 1)?;
@@ -1186,13 +1113,6 @@ impl IRBuilder {
                 value_id,
             }),
         }
-    }
-
-    /// Allocate a unique memory segment ID.
-    pub fn alloc_segment_id(&mut self) -> u32 {
-        let id = self.next_segment_id;
-        self.next_segment_id += 1;
-        id
     }
 
     /// Allocate a unique array metadata ID.
@@ -2701,30 +2621,7 @@ impl IRBuilder {
         )
     }
 
-    // ── Memory ────────────────────────────────────────────────────────
-
-    pub fn ir_allocate_memory(&mut self, segment_id: u32, size: u32, init_value: i64) -> Value {
-        // A segment allocated while a conditional-write predicate is
-        // active is branch-local: its contents are unobservable on the
-        // not-taken path (it only escapes through a cond-gated merge), so
-        // writes to it under the SAME predicate skip the read+select
-        // predication. Keyed by the predicate's stmt identity — a nested
-        // branch has a different (composed) predicate and still pays.
-        if let Some(p) = &self.write_predicate {
-            if let Some(pid) = p.stmt_id() {
-                self.predicate_exempt_segments.insert(segment_id, pid);
-            }
-        }
-        self.segment_capacity.insert(segment_id, size);
-        self.create_ir(
-            &IR::AllocateMemory {
-                segment_id,
-                size,
-                init_value,
-            },
-            &[],
-        )
-    }
+    // ── Memory (the array store, `builder/store.rs`) ──────────────────
 
     /// Current conditional-write predicate (`None` = unconditional).
     pub fn write_predicate(&self) -> Option<&Value> {
@@ -2746,215 +2643,28 @@ impl IRBuilder {
         previous
     }
 
-    /// Resolve the write predicate to `Some(static bool)` when it's a
-    /// compile-time constant, `None` when it's a runtime value.
-    fn write_predicate_static(&self) -> Option<bool> {
-        match &self.write_predicate {
-            None => Some(true),
-            Some(p) => p.bool_val().or_else(|| p.int_val().map(|v| v != 0)),
-        }
-    }
-
-    /// Apply the conditional-write predicate to a value about to be stored
-    /// at `(segment_id, address)`: returns `select(p, new, old)` (typed to
-    /// match `value`), or `None` when the write is statically dead.
-    fn apply_write_predicate(
-        &mut self,
-        segment_id: u32,
-        address: &Value,
-        value: &Value,
-    ) -> Option<Value> {
-        match self.write_predicate_static() {
-            Some(true) => Some(value.clone()),
-            Some(false) => None,
-            None => {
-                let p = self.write_predicate.clone().unwrap();
-                // Branch-local segment under its own predicate: writes
-                // are unobservable on the not-taken path; skip the
-                // read+select.
-                if p.stmt_id().is_some()
-                    && self.predicate_exempt_segments.get(&segment_id) == p.stmt_id().as_ref()
-                {
-                    return Some(value.clone());
-                }
-                let old_raw = self.ir_read_memory(segment_id, address);
-                Some(match value {
-                    Value::Float(_) => {
-                        // Storage cells are integer-typed at the IR layer;
-                        // re-tag the old cell as Float so the select keeps
-                        // float semantics (mirrors `segment::read_typed`).
-                        let old_f = Value::Float(crate::types::ScalarValue::new(
-                            None,
-                            old_raw.stmt_id(),
-                        ));
-                        self.ir_select_f(&p, value, &old_f)
-                    }
-                    _ => {
-                        let stored = self.ir_select_i(&p, value, &old_raw);
-                        // A bool written into a bool array stays a bool.
-                        if self.is_bool_cell(value) && self.is_bool_cell(&old_raw) {
-                            self.record_bool_cell(&stored);
-                        }
-                        stored
-                    }
-                })
-            }
-        }
-    }
-
-    /// Write a value into a memory segment. Returns the value actually
-    /// stored — equal to `value` for unconditional writes, or the
-    /// predicated `select(p, value, old)` under a conditional-write
-    /// predicate. Callers that mirror writes into compile-time caches
-    /// (`static_array_payload`) must cache the RETURNED value, not the
-    /// input, or the cached view diverges from the segment on the
-    /// not-taken path.
-    pub fn ir_write_memory(&mut self, segment_id: u32, address: &Value, value: &Value) -> Value {
-        let capacity = self.segment_capacity.get(&segment_id).copied();
-        let address = &self.guard_address(address, capacity);
-        let Some(stored) = self.apply_write_predicate(segment_id, address, value) else {
-            // Statically-false predicate: the write can never happen.
-            return value.clone();
-        };
-        let value = &stored;
-        // A write invalidates slice views of this segment and any views
-        // reading through it as their base, and bumps the segment's
-        // write version (provenance invariant #4). The invalidation now
-        // lives in `deposit_provenance`'s `WriteMemory | …SetItem` arm —
-        // the chokepoint that sees every write-shaped op — so the
-        // `create_ir` call below triggers it. (Done there, not here, so
-        // `ir_dynamic_ndarray_set_item` gets the same invalidation.)
-        //
-        // Per-cell bound invalidation (provenance invariant #4 applied to
-        // the builder-owned `segment_cell_bounds` / `segment_default_bounds`
-        // maps, which `on_segment_write` can't reach): a static-addr write
-        // must drop the OLD cell's bound before the conditional re-capture
-        // below (otherwise a re-write that doesn't re-capture leaves the
-        // stale bound, and a later static read republishes it as a fact
-        // about the NEW value). A dynamic-addr write could land on any
-        // cell, so it clears the whole per-cell map and the segment-wide
-        // default bound.
+    /// Store `value` in the array `storage` at `address` (a constant, or a
+    /// runtime flat address the caller checked), under the write predicate.
+    /// Returns the value the cell holds afterwards for a constant address
+    /// (callers that cache cells must cache it: it is `select(p, value,
+    /// old)` under a runtime predicate), `value` otherwise.
+    pub fn ir_write_memory(&mut self, storage: u32, address: &Value, value: &Value) -> Value {
         match address.int_val() {
-            Some(addr_i) => {
-                if let Some(cells) = self.segment_cell_bounds.get_mut(&segment_id) {
-                    cells.remove(&(addr_i as usize));
-                }
-            }
+            Some(a) => self.storage_write(storage, usize::try_from(a).expect("a non-negative address"), value),
             None => {
-                self.segment_cell_bounds.remove(&segment_id);
-                self.segment_default_bounds.remove(&segment_id);
+                self.storage_write_at(storage, address, value);
+                value.clone()
             }
         }
-        // Capture per-cell bound facts at write time so a downstream
-        // static-addr `ir_read_memory` of this cell can republish them on
-        // the read output. Fires only for statically-pinned addresses
-        // (e.g. `alloc_and_write_values` always uses constant addresses;
-        // `np_nonzero` writes each cell at the runtime `true_count`
-        // address, which doesn't have a static address and is skipped).
-        // Fast gate: only call the (potentially-expensive) `ask_bounds`
-        // when there's a plausible source of a fact-derived bound —
-        // either a direct fact on `val.value_id()`, or `val` is an
-        // `AddI`/`SubI` whose non-constant operand has a fact (the
-        // `read + 1` pattern downstream of fact-aware reads). Avoids the
-        // resolver walk on every cell of a 20K-cell array write (e.g.
-        // patch-reshape 0390 on Float[100,200]).
-        // Not under a runtime execution predicate: a bound learned there may
-        // hold only where the code runs, while the captured cell bound is
-        // republished to every later reader.
-        let runs_everywhere = matches!(self.execution(), guard::Execution::Always);
-        if let Some(addr_i) = address.int_val().filter(|_| runs_everywhere) {
-            let should_capture = value.value_id().is_some_and(|vid| {
-                if self.facts.has_facts_for(vid) {
-                    return true;
-                }
-                if let Some(stmt_id) = value.stmt_id() {
-                    if let Some(stmt) = self.stmts.get(stmt_id as usize) {
-                        use crate::ir_defs::IR;
-                        if matches!(stmt.ir, IR::AddI | IR::SubI) && stmt.arg_values.len() == 2 {
-                            for &arg_vid in &stmt.arg_values {
-                                if self.facts.has_facts_for(arg_vid) {
-                                    return true;
-                                }
-                            }
-                        }
-                    }
-                }
-                false
-            });
-            if should_capture {
-                if let Some(bounds) = self.ask_bounds(value) {
-                    self.segment_cell_bounds
-                        .entry(segment_id)
-                        .or_default()
-                        .insert(addr_i as usize, bounds);
-                }
-            }
-        }
-        self.create_ir(
-            &IR::WriteMemory { segment_id },
-            &[address.clone(), value.clone()],
-        );
-        stored
     }
 
-    /// Read a memory cell. Under a runtime execution predicate a dynamic
-    /// address that is not in the segment on every path is guarded (see
-    /// `guard_address`): where the code does not run it reads cell 0.
-    /// `IR::ReadTable`: the segment's slot at `address`, with no witness for
-    /// an address outside the segment (the caller passes an index that is in
-    /// range wherever the read does not run, as the frontend's guarded
-    /// indices are). The segment must not be written afterwards.
-    pub fn ir_read_table(&mut self, segment_id: u32, address: &Value) -> Value {
-        let out = self.create_ir(&IR::ReadTable { segment_id }, &[address.clone()]);
-        if self.is_bool_segment(segment_id) {
-            self.record_bool_cell(&out);
+    /// The cell of the array `storage` at `address` (a constant, or a
+    /// runtime flat address the caller checked).
+    pub fn ir_read_memory(&mut self, storage: u32, address: &Value) -> Value {
+        match address.int_val() {
+            Some(a) => self.storage_read(storage, usize::try_from(a).expect("a non-negative address")),
+            None => self.storage_read_at(storage, address),
         }
-        out
-    }
-
-    pub fn ir_read_memory(&mut self, segment_id: u32, address: &Value) -> Value {
-        let capacity = self.segment_capacity.get(&segment_id).copied();
-        let address = &self.guard_address(address, capacity);
-        let out = self.create_ir(&IR::ReadMemory { segment_id }, &[address.clone()]);
-        if self.is_bool_segment(segment_id) {
-            self.record_bool_cell(&out);
-        }
-        // Republish cell-bound facts captured at write time. Only fires for
-        // statically-pinned addresses (the typical `B.min(0)[0]` pattern,
-        // where the tuple-unpack index is a literal); dynamic reads keep
-        // discharging via the existing bound-assert path.
-        if let Some(addr_i) = address.int_val() {
-            let cell_bound = self
-                .segment_cell_bounds
-                .get(&segment_id)
-                .and_then(|m| m.get(&(addr_i as usize)))
-                .copied();
-            let default_bound = self.segment_default_bounds.get(&segment_id).copied();
-            if let Some((lo, hi)) = cell_bound.or(default_bound) {
-                if let Some(out_vid) = out.value_id() {
-                    use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
-                    // Publish as two separate Cmp facts, not a combined
-                    // BoolComb(And, ...). `derive_bounds_from_facts` only
-                    // reads single Cmp shapes — a combined And-of-Cmps
-                    // wouldn't match its pattern and the bound would be
-                    // invisible. Mirrors how the registered contract
-                    // ensures lists deposit one fact per formula.
-                    let lo_fact = ContractTerm::Cmp {
-                        op: CmpOp::Ge,
-                        lhs: Box::new(ContractTerm::Var(ContractVar::Value(out_vid))),
-                        rhs: Box::new(ContractTerm::LitInt(lo)),
-                    };
-                    let hi_fact = ContractTerm::Cmp {
-                        op: CmpOp::Le,
-                        lhs: Box::new(ContractTerm::Var(ContractVar::Value(out_vid))),
-                        rhs: Box::new(ContractTerm::LitInt(hi)),
-                    };
-                    self.facts.insert_for(out_vid, lo_fact);
-                    self.facts.insert_for(out_vid, hi_fact);
-                }
-            }
-        }
-        out
     }
 
     // ── Dynamic NDArray ───────────────────────────────────────────────
@@ -2967,7 +2677,6 @@ impl IRBuilder {
         max_rank: u32,
         max_shape: Vec<u32>,
     ) -> Value {
-        self.dyn_array_capacity.insert(array_id, max_length);
         self.create_ir(
             &IR::AllocateDynamicNDArrayMeta {
                 array_id,
@@ -2995,56 +2704,6 @@ impl IRBuilder {
             },
             args,
         )
-    }
-
-    pub fn ir_dynamic_ndarray_get_item(
-        &mut self,
-        array_id: u32,
-        segment_id: u32,
-        address: &Value,
-    ) -> Value {
-        let capacity = self.dyn_array_capacity.get(&array_id).copied();
-        let address = self.guard_address(address, capacity);
-        self.create_ir(
-            &IR::DynamicNDArrayGetItem {
-                array_id,
-                segment_id,
-            },
-            &[address],
-        )
-    }
-
-    pub fn ir_dynamic_ndarray_set_item(
-        &mut self,
-        array_id: u32,
-        segment_id: u32,
-        address: &Value,
-        value: &Value,
-    ) -> Value {
-        // Same conditional-write semantics as `ir_write_memory`.
-        let capacity = self.dyn_array_capacity.get(&array_id).copied();
-        let address = &self.guard_address(address, capacity);
-        let Some(stored) = self.apply_write_predicate(segment_id, address, value) else {
-            return value.clone();
-        };
-        // Invalidate the builder-owned per-cell bound maps. A set_item is a
-        // mutation that can change the addressed cell's value; we never
-        // capture per-cell bounds for set_item, so the safe move is to drop
-        // the whole segment's per-cell map and its default bound (otherwise
-        // a later static read republishes a pre-set_item bound as a fact
-        // about the post-set_item value — the `value_ops.rs` swap-and-read
-        // shape). Segment-version / slice / mask-read invalidation is
-        // handled by `deposit_provenance` when `create_ir` builds the op.
-        self.segment_cell_bounds.remove(&segment_id);
-        self.segment_default_bounds.remove(&segment_id);
-        self.create_ir(
-            &IR::DynamicNDArraySetItem {
-                array_id,
-                segment_id,
-            },
-            &[address.clone(), stored.clone()],
-        );
-        stored
     }
 
     // ── External calls ────────────────────────────────────────────────
@@ -3198,11 +2857,6 @@ impl IRBuilder {
         self.create_ir(&IR::RescaleRawF, std::slice::from_ref(raw))
     }
 
-    /// Start allocating memory segment ids at `next` (a pass that rebuilds a
-    /// graph and adds segments must not reuse the graph's ids).
-    pub fn reserve_segment_ids_below(&mut self, next: u32) {
-        self.next_segment_id = self.next_segment_id.max(next);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3978,133 +3632,91 @@ mod tests {
         crate::optim::resolver::derive_bounds_from_facts(&b.facts, vid)
     }
 
-    /// Mint a fresh, dynamic (non-constant, fact-free) integer value with a
-    /// real stmt_id — a read from a throwaway scratch segment. Used where a
-    /// test needs an unbounded runtime scalar (a dynamic address, or a
-    /// written value that must NOT trigger per-cell bound capture).
+    /// A fresh runtime integer with no fact (a private input).
     fn fresh_dynamic_int(b: &mut IRBuilder) -> Value {
-        let scratch = b.alloc_segment_id();
-        b.ir_allocate_memory(scratch, 1, 0);
-        let z = b.ir_constant_int(0);
-        b.ir_read_memory(scratch, &z)
+        b.ir_read_integer(crate::circuit_input::InputPath::new(format!("in{}", b.stmts.len()), vec![]), false)
     }
 
-    /// C06 hole 2 regression — the `value_ops.rs:1175` swap-and-read shape.
-    /// Write bounded cells statically, overwrite one via dynamic set_item,
-    /// then read every cell back. The read of the overwritten cell must NOT
-    /// republish the pre-set_item cell bound as a fact about the new value.
-    /// At `4b69c08` (before this fix) `set_item` invalidated nothing, so the
-    /// overwritten cell's stale `(7, 7)` bound survived and was republished.
+    /// A read of a cell after a write at a runtime address that may hit it
+    /// carries no fact of the cell's old value (`value_ops.rs`'s
+    /// swap-and-read shape): the read is the written version's, not the
+    /// constant 7.
     #[test]
-    fn test_set_item_invalidates_stale_cell_bound() {
+    fn a_read_after_a_runtime_write_has_no_stale_bound() {
         let mut b = IRBuilder::new();
-        let seg = b.alloc_segment_id();
-        let arr = b.alloc_array_id();
-        b.ir_allocate_memory(seg, 2, 0);
-
-        // Write constant 7 @ cell 0 and constant 3 @ cell 1. Constants
-        // carry an `Eq` fact, so the per-cell bound capture fires.
         let v7 = b.ir_constant_int(7);
-        let a0 = b.ir_constant_int(0);
-        b.ir_write_memory(seg, &a0, &v7);
         let v3 = b.ir_constant_int(3);
-        let a1 = b.ir_constant_int(1);
-        b.ir_write_memory(seg, &a1, &v3);
-
-        // Sanity: before any overwrite, a static read republishes (7, 7).
-        {
-            let mut probe = IRBuilder::new();
-            let pseg = probe.alloc_segment_id();
-            probe.ir_allocate_memory(pseg, 1, 0);
-            let pv = probe.ir_constant_int(7);
-            let pa = probe.ir_constant_int(0);
-            probe.ir_write_memory(pseg, &pa, &pv);
-            let pr = probe.ir_read_memory(pseg, &pa);
-            assert_eq!(
-                read_bound_fact(&probe, &pr),
-                Some((7, 7)),
-                "baseline: static write+read should republish the cell bound"
-            );
-        }
-
-        // Overwrite cell 0 via dynamic set_item with a value whose runtime
-        // address is not statically pinned (a fresh dynamic scalar).
+        let storage = b.alloc_storage(vec![v7, v3], crate::types::NumberType::Integer);
+        let a0 = b.ir_constant_int(0);
+        let before = b.ir_read_memory(storage, &a0);
+        assert_eq!(before.int_val(), Some(7), "a known cell reads as itself");
         let idx = fresh_dynamic_int(&mut b);
         let v99 = b.ir_constant_int(99);
-        b.ir_dynamic_ndarray_set_item(arr, seg, &idx, &v99);
-
-        // Read cell 0 back. The stale (7, 7) bound must be gone.
-        let r0 = b.ir_read_memory(seg, &a0);
-        assert_eq!(
-            read_bound_fact(&b, &r0),
-            None,
-            "set_item must invalidate the stale per-cell bound; \
-             republishing (7,7) here is a fact about the new value 99"
-        );
+        b.ir_write_memory(storage, &idx, &v99);
+        let after = b.ir_read_memory(storage, &a0);
+        assert_eq!(after.int_val(), None);
+        assert_eq!(read_bound_fact(&b, &after), None, "a stale (7, 7) bound would be a fact about 99");
     }
 
-    /// C06 hole 2 regression, static-write variant: a later static write to
-    /// a cell whose new value does NOT trigger capture must still drop the
-    /// previous cell's stale bound (unconditional remove before re-capture).
+    /// A constant write replaces the cell: the read is the written value,
+    /// with its own facts (none for a fresh input).
     #[test]
-    fn test_restatic_write_drops_stale_cell_bound() {
+    fn a_constant_write_replaces_the_cell() {
         let mut b = IRBuilder::new();
-        let seg = b.alloc_segment_id();
-        b.ir_allocate_memory(seg, 1, 0);
-
-        // First write: constant 7 captures bound (7, 7).
         let v7 = b.ir_constant_int(7);
+        let storage = b.alloc_storage(vec![v7], crate::types::NumberType::Integer);
         let a0 = b.ir_constant_int(0);
-        b.ir_write_memory(seg, &a0, &v7);
-
-        // Second write of a value with NO fact-derived bound: a fresh
-        // dynamic scalar. `should_capture` is false, so nothing re-captures;
-        // the unconditional remove must clear the old (7, 7).
         let fresh = fresh_dynamic_int(&mut b);
-        b.ir_write_memory(seg, &a0, &fresh);
-
-        let r0 = b.ir_read_memory(seg, &a0);
-        assert_eq!(
-            read_bound_fact(&b, &r0),
-            None,
-            "re-writing a cell with an unbounded value must drop its stale bound"
-        );
+        b.ir_write_memory(storage, &a0, &fresh);
+        let r0 = b.ir_read_memory(storage, &a0);
+        assert_eq!(r0.stmt_id(), fresh.stmt_id());
+        assert_eq!(read_bound_fact(&b, &r0), None);
     }
 
-    /// C06 hole 1 regression — `set_item` must trigger the segment-version /
-    /// slice-view invalidation that previously only `ir_write_memory` did.
-    /// We deposit a `MaskReadView` (the `mask.rs` after-write deposit), then
-    /// mutate the segment via `set_item`; the view must be dropped.
+    /// Every write to a storage drops the records derived from its old
+    /// contents (provenance invariant #4), a runtime one included.
     #[test]
-    fn test_set_item_invalidates_mask_read_view() {
+    fn a_runtime_write_invalidates_the_mask_read_view() {
         use crate::provenance::MaskReadView;
         let mut b = IRBuilder::new();
-        let seg = b.alloc_segment_id();
-        let arr = b.alloc_array_id();
-        b.ir_allocate_memory(seg, 2, 0);
-        let v = b.ir_constant_int(1);
-        let a0 = b.ir_constant_int(0);
-        b.ir_write_memory(seg, &a0, &v);
-
-        // Deposit a mask-read view (mirrors mask.rs depositing AFTER the
-        // alloc writes).
-        b.provenance.set_mask_read_view(
-            seg,
-            MaskReadView {
-                mask_cells: vec![],
-                sources: vec![],
-                count_stmt: None,
-            },
-        );
-        assert!(b.provenance.mask_read_view(seg).is_some());
-
-        // A set_item mutation must invalidate it (was a no-op at 4b69c08).
+        let zero = b.ir_constant_int(0);
+        let storage = b.alloc_storage(vec![zero.clone(), zero], crate::types::NumberType::Integer);
+        b.provenance.set_mask_read_view(storage, MaskReadView { mask_cells: vec![], sources: vec![], count_stmt: None });
+        assert!(b.provenance.mask_read_view(storage).is_some());
         let idx = fresh_dynamic_int(&mut b);
         let nv = b.ir_constant_int(5);
-        b.ir_dynamic_ndarray_set_item(arr, seg, &idx, &nv);
-        assert!(
-            b.provenance.mask_read_view(seg).is_none(),
-            "set_item must drop the segment's mask-read view (hole 1)"
-        );
+        b.ir_write_memory(storage, &idx, &nv);
+        assert!(b.provenance.mask_read_view(storage).is_none(), "a runtime write must drop the mask-read view");
     }
+
+    /// A write in a branch not taken changes nothing: under a runtime
+    /// predicate a constant write stores `select(p, new, old)`, a runtime one
+    /// is an `ArrayWrite` predicated by `p`; under a constant false one
+    /// nothing is written.
+    #[test]
+    fn writes_are_predicated_by_the_branch() {
+        let mut b = IRBuilder::new();
+        let (one, two) = (b.ir_constant_int(1), b.ir_constant_int(2));
+        let storage = b.alloc_storage(vec![one.clone(), two.clone()], crate::types::NumberType::Integer);
+        let p = fresh_dynamic_int(&mut b);
+        let previous = b.swap_write_predicate(Some(p.clone()));
+        let a0 = b.ir_constant_int(0);
+        let nine = b.ir_constant_int(9);
+        let stored = b.ir_write_memory(storage, &a0, &nine);
+        let stmt = &b.stmts[stored.stmt_id().unwrap() as usize];
+        assert!(matches!(stmt.ir, IR::SelectI));
+        assert_eq!(stmt.arguments, vec![p.stmt_id().unwrap(), nine.stmt_id().unwrap(), one.stmt_id().unwrap()]);
+        let idx = fresh_dynamic_int(&mut b);
+        b.ir_write_memory(storage, &idx, &nine);
+        let write = b.stmts.iter().rev().find(|s| matches!(s.ir, IR::ArrayWrite(_))).expect("an array write");
+        assert_eq!(*write.arguments.last().unwrap(), p.stmt_id().unwrap());
+        let no = b.ir_constant_bool(false);
+        b.swap_write_predicate(Some(no));
+        let a1 = b.ir_constant_int(1);
+        let before = b.stmts.len();
+        b.ir_write_memory(storage, &a1, &nine);
+        assert!(b.stmts[before..].iter().all(|s| !matches!(s.ir, IR::ArrayWrite(_) | IR::SelectI)));
+        b.swap_write_predicate(previous);
+    }
+
 }

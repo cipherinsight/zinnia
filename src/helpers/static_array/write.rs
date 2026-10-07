@@ -11,19 +11,15 @@
 //! that loop with dynamic-index writes, this turns "compile timed out" into
 //! "compiles in seconds".
 //!
-//! Cache policy (`IRBuilder::static_array_payload`):
+//! The cells live in the array's storage (`builder/store.rs`):
 //!
-//! - **Element write at static index**: the cache cell at the written offset
-//!   is updated to the new wire (option (b) from the card). Other cached
-//!   cells stay valid; static-index reads after the write continue to land
-//!   as cheap cached lookups.
-//! - **Small element/slice writes at dynamic indices**: the cache is updated
-//!   as a symbolic overlay (`select(idx == coord, new, old)`) and the segment
-//!   is marked lazy. Static consumers keep using direct wires; a future
-//!   memory-backed dynamic read/write flushes the overlay through
-//!   `materialize_static_array_segment`.
-//! - **Large or unsupported writes**: the segment is materialised and the
-//!   cache entry is removed, preserving the existing zkRAM fallback.
+//! - **Element write at a static index**: a write of that cell (the store
+//!   applies the write predicate).
+//! - **Small element/slice writes at runtime indices**: a compile-time
+//!   overlay of the known cells (`select(idx == coord ∧ p, new, old)` per
+//!   cell, `IRBuilder::overlay_known_cells`).
+//! - **Larger or unsupported writes**: writes at runtime positions of the
+//!   storage (`ArrayWrite`), which the lowering layer constructs.
 //!
 //! View-write fidelity: `Value::StaticArray` views (e.g. `arr[i]` for ≥2-D
 //! `arr`, or `arr[a:b]` static contiguous slices from P2) inherit the
@@ -39,19 +35,6 @@ use super::super::shape_arith::{decode_coords, row_major_strides};
 // ────────────────────────────────────────────────────────────────────────
 // Helpers
 // ────────────────────────────────────────────────────────────────────────
-
-/// Conditional memory writes read the previous physical cell. A lazy
-/// StaticArray keeps that content only in its cached payload until forced;
-/// without this boundary, skipped writes select allocation zeros instead.
-/// Unconditional static writes still update the cache without forcing it.
-fn materialize_before_predicated_write(b: &mut IRBuilder, val: &Value) {
-    let conditional = b
-        .write_predicate()
-        .is_some_and(|p| p.bool_val().or_else(|| p.int_val().map(|v| v != 0)) != Some(true));
-    if conditional {
-        super::base::materialize_static_array_if_lazy(b, val);
-    }
-}
 
 /// `v` converted to the dtype of the array stored in `segment_id` before it
 /// is stored there (NumPy converts an assigned value to the array's dtype).
@@ -110,128 +93,24 @@ fn cast_to_dtype(b: &mut IRBuilder, v: &Value, dtype: NumberType) -> Value {
     }
 }
 
-/// Update the payload cache cell at the given absolute offset to the new
-/// wire. Used after a static-index write so cached-wire reads stay coherent.
-fn cache_set_cell(b: &mut IRBuilder, segment_id: u32, abs_offset: usize, new_val: Value) {
-    if b.static_array_product_provenance.contains_key(&segment_id) {
-        super::base::force_static_array_product_provenance(b, segment_id);
-    }
-    if let Some(cells) = b.static_array_payload.get_mut(&segment_id) {
-        if abs_offset < cells.len() {
-            cells[abs_offset] = new_val;
-        }
-    }
+/// NumPy's positions for the indices `idx_vals` of an element write (one
+/// per axis, constant or runtime): each wrapped (a negative index counts
+/// from the end) and checked into its axis where the write runs (NumPy's
+/// `IndexError`; `base::checked_axis_index`), and in range everywhere.
+fn checked_positions(b: &mut IRBuilder, shape: &[usize], idx_vals: &[Value]) -> Vec<Value> {
+    idx_vals
+        .iter()
+        .enumerate()
+        .map(|(ax, idx)| super::base::checked_axis_index(b, idx, ax, shape[ax], "setitem"))
+        .collect()
 }
 
-/// Invalidate (drop) the payload cache for a segment after a write whose
-/// destination cell isn't statically known. Subsequent reads via
-/// `to_value_list` or `read_leaf_at_flat` will fall through to issuing
-/// `ir_read_memory` ops, which see the up-to-date post-write zkRAM state.
-fn cache_invalidate(b: &mut IRBuilder, segment_id: u32) {
-    if b.static_array_product_provenance.contains_key(&segment_id) {
-        super::base::force_static_array_product_provenance(b, segment_id);
-    }
-    b.static_array_payload.remove(&segment_id);
+/// The `(len, stride)` of each axis of a view, as the store addresses it.
+fn view_axes(shape: &[usize], strides: &[usize]) -> Vec<(usize, usize)> {
+    shape.iter().copied().zip(strides.iter().copied()).collect()
 }
 
-const SMALL_DYNAMIC_WRITE_OVERLAY_LIMIT: usize = 1024;
-
-fn select_typed(
-    b: &mut IRBuilder,
-    dtype: NumberType,
-    cond: &Value,
-    true_val: &Value,
-    false_val: &Value,
-) -> Value {
-    match dtype {
-        NumberType::Float => b.ir_select_f(cond, true_val, false_val),
-        NumberType::Integer => {
-            let out = b.ir_select_i(cond, true_val, false_val);
-            // A choice between two NumPy bools is a bool (a write into a
-            // bool array keeps its cached cells bool cells).
-            if b.is_bool_cell(true_val) && b.is_bool_cell(false_val) {
-                b.record_bool_cell(&out);
-            }
-            out
-        }
-        NumberType::Complex => {
-            panic!("select_typed does not handle Complex StaticArray overlays")
-        }
-    }
-}
-
-use super::base::{index_equals_coord, normalize_dynamic_index};
-
-/// Bounds chokepoint for the dynamic-index write paths. For every runtime
-/// (non-literal) index axis, discharge numpy's validity contract
-/// `-axis_len <= i < axis_len` through the Phase-E resolver — the write-side
-/// analogue of the read chokepoints (`read.rs:82-88, 254-260, 531-564`).
-///
-/// This is load-bearing soundness: without it an out-of-range dynamic write
-/// silently no-ops on the overlay path (the per-cell `index_equals_coord`
-/// matches nothing) or writes an unconstrained address on the memory-write
-/// fallback; the read path has discharged at its chokepoint all along.
-///
-/// We discharge against the *raw* index (no normalize wire) rather than the
-/// numpy-wrapped value: `-n <= i < n` is exactly the numpy validity window,
-/// and discharging it directly anchors on the input wire's `value_id` while
-/// avoiding the `to_signed`/select normalization fan-out per element (which
-/// would balloon scatter cases like 0318 that recurse here per index). When
-/// the index is provably non-negative (`ask_bounds`), we tighten to `[0, n)`
-/// so the `AssertU128Lt` interval hook (`builder.rs`) can deposit the same
-/// `[0, n)` interval the read side relies on. The actual write address is
-/// numpy-wrapped downstream — `index_equals_coord` (overlay) and
-/// `normalize_for_address` (memory-write fallback) both handle the negative
-/// wrap — so the discharged window and the written address agree.
-fn discharge_dynamic_write_indices(b: &mut IRBuilder, shape: &[usize], idx_vals: &[Value]) {
-    for (ax, idx) in idx_vals.iter().enumerate() {
-        discharge_write_index(b, idx, shape[ax]);
-    }
-}
-
-/// Discharge NumPy's validity window for one index of a write into an axis
-/// of length `axis_len` (see [`discharge_dynamic_write_indices`]). Literal
-/// indices are compile-time checked against the `[-n, n)` window; a runtime
-/// index is checked in-circuit (under the execution predicate, see
-/// `builder/guard.rs`) unless the facts prove it.
-fn discharge_write_index(b: &mut IRBuilder, idx: &Value, axis_len: usize) {
-    let axis_len = axis_len as i64;
-    let non_negative = idx
-        .int_val()
-        .map(|v| v >= 0)
-        .or_else(|| b.ask_bounds(idx).map(|(min, _)| min >= 0))
-        .unwrap_or(false);
-    let lo = if non_negative { 0 } else { -axis_len };
-    crate::optim::resolver::discharge_index_in_range(b, idx, lo, axis_len, "static_array_setitem");
-}
-
-/// A slice assignment `a[..., i, ...] = v` with a runtime integer `i` on
-/// some axes raises `IndexError` in NumPy unless `-n <= i < n`. Every
-/// slice-assignment lowering selects the written cells by `i == coord`,
-/// which matches nothing for an out-of-range `i`; without this check such
-/// an `i` would prove the unchanged array.
-fn discharge_runtime_single_indices(b: &mut IRBuilder, shape: &[usize], indices: &[SliceIndex]) {
-    for (ax, idx) in indices.iter().enumerate() {
-        if let SliceIndex::Single(v) = idx {
-            if v.int_val().is_none() {
-                discharge_write_index(b, v, shape[ax]);
-            }
-        }
-    }
-}
-
-/// Numpy-wrap a runtime index for use in an address computation: negative
-/// indices become `i + axis_len`. Statically-non-negative indices pass
-/// through. Used on the memory-write fallback where `compute_addr` consumes
-/// the index directly (unlike the overlay, whose `index_equals_coord` wraps
-/// internally).
-fn normalize_for_address(b: &mut IRBuilder, idx: &Value, axis_len: usize) -> Value {
-    if idx.int_val().is_some() {
-        return idx.clone();
-    }
-    normalize_dynamic_index(b, idx, axis_len)
-}
-
+/// The conjunction of `parts` (true when empty).
 fn and_all(b: &mut IRBuilder, parts: Vec<Value>) -> Value {
     let mut it = parts.into_iter();
     let Some(mut acc) = it.next() else {
@@ -241,6 +120,22 @@ fn and_all(b: &mut IRBuilder, parts: Vec<Value>) -> Value {
         acc = b.ir_logical_and(&acc, &part);
     }
     acc
+}
+
+/// A slice assignment of a complex array (`complex_slice_setitem_via_list`)
+/// with a runtime integer index raises `IndexError` in NumPy unless `-n <=
+/// i < n`: checked where the write runs.
+fn discharge_runtime_single_indices(b: &mut IRBuilder, shape: &[usize], indices: &[SliceIndex]) {
+    for (ax, idx) in indices.iter().enumerate() {
+        if let SliceIndex::Single(v) = idx {
+            if v.int_val().is_none() {
+                let n = shape[ax] as i64;
+                let non_negative = b.ask_bounds(v).is_some_and(|(min, _)| min >= 0);
+                let lo = if non_negative { 0 } else { -n };
+                crate::optim::resolver::discharge_index_in_range(b, v, lo, n, "static_array_setitem");
+            }
+        }
+    }
 }
 
 /// The offset of the element at the compile-time indices `idx_vals` (one
@@ -265,45 +160,6 @@ fn constant_element_offset(
             i * strides[ax]
         })
         .sum()
-}
-
-fn abs_offset_for_coords(offset: usize, strides: &[usize], coords: &[usize]) -> usize {
-    let mut abs = offset;
-    for (ax, coord) in coords.iter().enumerate() {
-        abs += *coord * strides[ax];
-    }
-    abs
-}
-
-/// Compute a runtime address from `offset + sum_k(idx[k] * strides[k])`.
-fn compute_addr(
-    b: &mut IRBuilder,
-    base_offset: usize,
-    strides: &[usize],
-    indices: &[Value],
-    shape: &[usize],
-) -> Value {
-    let mut static_sum: i64 = base_offset as i64;
-    let mut dynamic_parts: Vec<Value> = Vec::new();
-    for (ax, idx) in indices.iter().enumerate() {
-        let stride = strides[ax] as i64;
-        if let Some(i) = idx.int_val() {
-            let i = if i < 0 { shape[ax] as i64 + i } else { i };
-            static_sum += i * stride;
-        } else {
-            let stride_val = b.ir_constant_int(stride);
-            dynamic_parts.push(b.ir_mul_i(idx, &stride_val));
-        }
-    }
-    if dynamic_parts.is_empty() {
-        b.ir_constant_int(static_sum)
-    } else {
-        let mut acc = b.ir_constant_int(static_sum);
-        for p in &dynamic_parts {
-            acc = b.ir_add_i(&acc, p);
-        }
-        acc
-    }
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -445,11 +301,8 @@ pub fn static_array_setitem(
         // `a[:, :] = b` on a 40x40 `a` made `2 * a` repeat the list, and
         // large arrays with runtime bounds had them resolved to the full
         // axis, so `a[i:i + 2] = 5.0` wrote all of `a`.)
-        // A runtime single index (`a[i, :] = v`) is checked here: both
-        // lowerings below select the written cells by `i == coord`, which
-        // matches nothing for an out-of-range `i`.
-        discharge_runtime_single_indices(b, &shape, indices);
         if dtype == NumberType::Complex {
+            discharge_runtime_single_indices(b, &shape, indices);
             return complex_slice_setitem_via_list(b, val, &shape, indices, value);
         }
         return static_array_slice_setitem(
@@ -530,38 +383,17 @@ fn complex_element_setitem(
     // Static fast path: known offset → both component writes are direct.
     let all_static = idx_vals.iter().all(|v| v.int_val().is_some());
     if all_static {
-        materialize_before_predicated_write(b, val);
         let flat = (offset + constant_element_offset(b, shape, strides, &idx_vals)) as i64;
         let addr = b.ir_constant_int(flat);
-        // Cache the values actually stored (under a conditional-write
-        // predicate these are `select(p, new, old)`, not the raw inputs).
-        let re_s = b.ir_write_memory(real_seg, &addr, &re_v);
-        let im_s = b.ir_write_memory(imag_seg, &addr, &im_v);
-        let abs = flat as usize;
-        let new_complex = match (&re_s, &im_s) {
-            (Value::Float(r), Value::Float(im)) => Value::Complex {
-                real: r.clone(),
-                imag: im.clone(),
-            },
-            _ => unreachable!(),
-        };
-        cache_set_cell(b, real_seg, abs, new_complex);
+        b.ir_write_memory(real_seg, &addr, &re_v);
+        b.ir_write_memory(imag_seg, &addr, &im_v);
         return val.clone();
     }
-    // Dynamic: check the indices (`-n <= i < n` where the write runs), drop
-    // the cache, then issue two parallel ir_write_memory ops at the wrapped
-    // address. (The address used to be formed from the raw indices, so a
-    // negative or out-of-range index wrote outside the array.)
-    discharge_dynamic_write_indices(b, shape, &idx_vals);
-    let wrapped: Vec<Value> = idx_vals
-        .iter()
-        .enumerate()
-        .map(|(ax, idx)| normalize_for_address(b, idx, shape[ax]))
-        .collect();
-    let addr = compute_addr(b, offset, strides, &wrapped, shape);
-    b.ir_write_memory(real_seg, &addr, &re_v);
-    b.ir_write_memory(imag_seg, &addr, &im_v);
-    cache_invalidate(b, real_seg);
+    // A runtime index: the same checked positions in both storages.
+    let positions = checked_positions(b, shape, &idx_vals);
+    let axes = view_axes(shape, strides);
+    b.storage_write_positions(real_seg, offset, &axes, &positions, &re_v);
+    b.storage_write_positions(imag_seg, offset, &axes, &positions, &im_v);
     val.clone()
 }
 
@@ -1086,101 +918,17 @@ fn static_array_element_setitem(
     // All-static path: use the cached-wire-update strategy.
     let all_static = idx_vals.iter().all(|v| v.int_val().is_some());
     if all_static {
-        materialize_before_predicated_write(b, val);
         let abs_offset = offset + constant_element_offset(b, shape, strides, &idx_vals);
         let addr = b.ir_constant_int(abs_offset as i64);
-        // Cache what was actually stored (predicated under a branch).
-        let stored = b.ir_write_memory(segment_id, &addr, &cast_val);
-        cache_set_cell(b, segment_id, abs_offset, stored);
+        b.ir_write_memory(segment_id, &addr, &cast_val);
         return val.clone();
     }
 
-    // Dynamic-index write chokepoint. Discharge numpy's validity window
-    // `-n <= i < n` per axis BEFORE any of the three dynamic write paths
-    // (overlay, memory-write fallback, fancy scatter — which recurses back
-    // through here). Without this, an OOB dynamic write silently no-ops on
-    // the overlay path or writes an unconstrained address on the memory-write
-    // fallback; the read path has discharged at its chokepoint all along.
-    // See C09.
-    discharge_dynamic_write_indices(b, shape, &idx_vals);
-
-    // Overlay path: `index_equals_coord` numpy-wraps each index internally,
-    // so it consumes the raw (possibly-negative) indices directly.
-    if try_overlay_dynamic_element_setitem(
-        b, dtype, shape, segment_id, strides, offset, &idx_vals, &cast_val,
-    ) {
-        return val.clone();
-    }
-
-    // At least one dynamic index → invalidate cache, single segment write.
-    // The memory-write `compute_addr` does NOT wrap dynamic indices, so we
-    // numpy-wrap each axis here before forming the address.
-    super::base::materialize_static_array_if_lazy(b, val);
-    let wrapped: Vec<Value> = idx_vals
-        .iter()
-        .enumerate()
-        .map(|(ax, idx)| normalize_for_address(b, idx, shape[ax]))
-        .collect();
-    let addr = compute_addr(b, offset, strides, &wrapped, shape);
-    b.ir_write_memory(segment_id, &addr, &cast_val);
-    cache_invalidate(b, segment_id);
+    // A runtime index: a write at checked positions of the storage, which
+    // the lowering layer builds (an overlay of selects, or a RAM).
+    let positions = checked_positions(b, shape, &idx_vals);
+    b.storage_write_positions(segment_id, offset, &view_axes(shape, strides), &positions, &cast_val);
     val.clone()
-}
-
-fn try_overlay_dynamic_element_setitem(
-    b: &mut IRBuilder,
-    dtype: NumberType,
-    shape: &[usize],
-    segment_id: u32,
-    strides: &[usize],
-    offset: usize,
-    idx_vals: &[Value],
-    cast_val: &Value,
-) -> bool {
-    if dtype == NumberType::Complex {
-        return false;
-    }
-    let total: usize = shape.iter().product();
-    if total > SMALL_DYNAMIC_WRITE_OVERLAY_LIMIT {
-        return false;
-    }
-    if b.static_array_product_provenance.contains_key(&segment_id) {
-        super::base::force_static_array_product_provenance(b, segment_id);
-    }
-    let Some(mut cells) = b.static_array_payload.get(&segment_id).cloned() else {
-        return false;
-    };
-    let logical_strides = row_major_strides(shape);
-    for flat in 0..total {
-        let coords = decode_coords(flat, shape, &logical_strides);
-        let abs = abs_offset_for_coords(offset, strides, &coords);
-        if abs >= cells.len() {
-            return false;
-        }
-        let mut conds = Vec::with_capacity(idx_vals.len());
-        for (ax, idx) in idx_vals.iter().enumerate() {
-            conds.push(index_equals_coord(b, idx, coords[ax], shape[ax]));
-        }
-        // This path mutates only the compile-time overlay (no
-        // ir_write_memory until lazy materialisation, which may happen
-        // outside the branch), so the conditional-write predicate must
-        // be folded into the per-cell select here.
-        if let Some(p) = b.write_predicate().cloned() {
-            let static_true = p
-                .bool_val()
-                .or_else(|| p.int_val().map(|v| v != 0))
-                .unwrap_or(false);
-            if !static_true {
-                conds.push(p);
-            }
-        }
-        let cond = and_all(b, conds);
-        let old = cells[abs].clone();
-        cells[abs] = select_typed(b, dtype, &cond, cast_val, &old);
-    }
-    b.static_array_payload.insert(segment_id, cells);
-    b.lazy_static_array_segments.insert(segment_id);
-    true
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -1332,370 +1080,83 @@ fn static_array_slice_setitem(
     let value_total: usize = value_shape.iter().product();
     let value_strides = row_major_strides(&value_shape);
 
-    if !has_dynamic_range {
-        let has_dynamic_single = axis_specs
-            .iter()
-            .any(|(_, s)| matches!(s, AxisCoords::Single(v) if v.int_val().is_none()));
-        if has_dynamic_single
-            && try_overlay_dynamic_single_slice_setitem(
-                b,
-                dtype,
-                shape,
-                segment_id,
-                strides,
-                offset,
-                &axis_specs,
-                &value_shape,
-                &value_strides,
-                value_is_scalar,
-                value,
-                &value_elements,
-            )
-        {
-            return val.clone();
+    // Each element of the region is one write at the positions it names: a
+    // constant coordinate on a slice axis, the checked position of an
+    // integer index (NumPy's `IndexError` where the write runs); a slice
+    // with runtime bounds writes its largest extent, each position only
+    // when it lies in the slice.
+    let axes = view_axes(shape, strides);
+    let singles: Vec<Option<Value>> = axis_specs
+        .iter()
+        .map(|(axis, spec)| match spec {
+            AxisCoords::Single(v) => Some(super::base::checked_axis_index(b, v, *axis, shape[*axis], "setitem")),
+            _ => None,
+        })
+        .collect();
+    for val_flat in 0..value_total {
+        let val_coords = decode_coords(val_flat, &value_shape, &value_strides);
+        let mut positions: Vec<Value> = Vec::with_capacity(axis_specs.len());
+        let mut in_slice: Vec<Value> = Vec::new();
+        let mut val_coord_idx = 0;
+        for ((_, spec), single) in axis_specs.iter().zip(&singles) {
+            match spec {
+                AxisCoords::Single(_) => positions.push(single.clone().expect("checked above")),
+                AxisCoords::Static(coords) => {
+                    positions.push(b.ir_constant_int(coords[val_coords[val_coord_idx]] as i64));
+                    val_coord_idx += 1;
+                }
+                AxisCoords::Dynamic { start, stop, step, axis_len } => {
+                    let (position, inside) =
+                        runtime_slice_position(b, start, stop, step, *axis_len, val_coords[val_coord_idx]);
+                    positions.push(position);
+                    in_slice.push(inside);
+                    val_coord_idx += 1;
+                }
+            }
         }
-        if has_dynamic_single {
-            super::base::materialize_static_array_if_lazy(b, val);
+        let write_val = if value_is_scalar {
+            cast_for_segment(b, segment_id, value, dtype)
         } else {
-            materialize_before_predicated_write(b, val);
-        }
-
-        // All static bounds: iterate over target positions and emit
-        // constant-address writes. This is also the fast / contiguous-view
-        // path mentioned in the card decisions: each LHS cell is written
-        // with a single segment write to the underlying segment, so a slice
-        // write into a contiguous-view target writes through with no
-        // intermediate segment.
-        for val_flat in 0..value_total {
-            let val_coords = decode_coords(val_flat, &value_shape, &value_strides);
-            let mut addr_static: i64 = offset as i64;
-            let mut val_coord_idx = 0;
-            let mut had_dynamic_single = false;
-            let mut dynamic_addr_parts: Vec<Value> = Vec::new();
-
-            for (src_axis, spec) in &axis_specs {
-                let stride = strides[*src_axis] as i64;
-                match spec {
-                    AxisCoords::Single(v) => {
-                        if let Some(i) = v.int_val() {
-                            let i = if i < 0 {
-                                shape[*src_axis] as i64 + i
-                            } else {
-                                i
-                            };
-                            addr_static += i * stride;
-                        } else {
-                            had_dynamic_single = true;
-                            let stride_val = b.ir_constant_int(stride);
-                            dynamic_addr_parts.push(b.ir_mul_i(v, &stride_val));
-                        }
-                    }
-                    AxisCoords::Static(coords) => {
-                        let coord = coords[val_coords[val_coord_idx]];
-                        addr_static += coord as i64 * stride;
-                        val_coord_idx += 1;
-                    }
-                    AxisCoords::Dynamic { .. } => unreachable!("checked above"),
-                }
-            }
-
-            let addr = if had_dynamic_single {
-                let mut acc = b.ir_constant_int(addr_static);
-                for p in &dynamic_addr_parts {
-                    acc = b.ir_add_i(&acc, p);
-                }
-                acc
-            } else {
-                b.ir_constant_int(addr_static)
-            };
-
-            let write_val = if value_is_scalar {
-                cast_for_segment(b, segment_id, value, dtype)
-            } else {
-                cast_for_segment(b, segment_id, &value_elements[val_flat], dtype)
-            };
-            // Cache what was actually stored (predicated under a branch).
-            let stored = b.ir_write_memory(segment_id, &addr, &write_val);
-
-            if !had_dynamic_single {
-                cache_set_cell(b, segment_id, addr_static as usize, stored);
-            }
-        }
-        if axis_specs
-            .iter()
-            .any(|(_, s)| matches!(s, AxisCoords::Single(v) if v.int_val().is_none()))
-        {
-            // A dynamic Single index made addresses runtime-only.
-            cache_invalidate(b, segment_id);
-        }
-    } else {
-        super::base::materialize_static_array_if_lazy(b, val);
-        // Has dynamic Range bounds: iterate over max positions, mask out
-        // out-of-bounds writes by reading-then-selecting-then-writing.
-        for val_flat in 0..value_total {
-            let val_coords = decode_coords(val_flat, &value_shape, &value_strides);
-
-            let mut addr_parts_static: i64 = offset as i64;
-            let mut addr_parts_dynamic: Vec<Value> = Vec::new();
-            let mut in_bounds_parts: Vec<Value> = Vec::new();
-            let mut val_coord_idx = 0;
-
-            for (src_axis, spec) in &axis_specs {
-                let stride = strides[*src_axis] as i64;
-                match spec {
-                    AxisCoords::Single(v) => {
-                        if let Some(i) = v.int_val() {
-                            let i = if i < 0 {
-                                shape[*src_axis] as i64 + i
-                            } else {
-                                i
-                            };
-                            addr_parts_static += i * stride;
-                        } else {
-                            let stride_val = b.ir_constant_int(stride);
-                            addr_parts_dynamic.push(b.ir_mul_i(v, &stride_val));
-                        }
-                    }
-                    AxisCoords::Static(coords) => {
-                        let coord = coords[val_coords[val_coord_idx]];
-                        addr_parts_static += coord as i64 * stride;
-                        val_coord_idx += 1;
-                    }
-                    AxisCoords::Dynamic {
-                        start,
-                        stop,
-                        step,
-                        axis_len,
-                    } => {
-                        let idx_in_slice = val_coords[val_coord_idx] as i64;
-                        let idx_const = b.ir_constant_int(idx_in_slice);
-                        let off2 = b.ir_mul_i(&idx_const, step);
-                        let src_idx = b.ir_add_i(start, &off2);
-
-                        let zero = b.ir_constant_int(0);
-                        let len_val = b.ir_constant_int(*axis_len as i64);
-                        let ge_zero = b.ir_greater_than_or_equal_i(&src_idx, &zero);
-                        let lt_len = b.ir_less_than_i(&src_idx, &len_val);
-                        let in_range = b.ir_logical_and(&ge_zero, &lt_len);
-                        let step_pos = b.ir_greater_than_i(step, &zero);
-                        let lt_stop = b.ir_less_than_i(&src_idx, stop);
-                        let gt_stop = b.ir_greater_than_i(&src_idx, stop);
-                        let stop_ok = b.ir_select_i(&step_pos, &lt_stop, &gt_stop);
-                        let stop_bool = b.ir_bool_cast(&stop_ok);
-                        let in_bounds = b.ir_logical_and(&in_range, &stop_bool);
-                        in_bounds_parts.push(in_bounds);
-
-                        let max_idx = b.ir_constant_int(*axis_len as i64 - 1);
-                        let is_neg = b.ir_less_than_i(&src_idx, &zero);
-                        let is_over = b.ir_greater_than_i(&src_idx, &max_idx);
-                        let clamped_hi = b.ir_select_i(&is_over, &max_idx, &src_idx);
-                        let clamped = b.ir_select_i(&is_neg, &zero, &clamped_hi);
-
-                        let stride_val = b.ir_constant_int(stride);
-                        addr_parts_dynamic.push(b.ir_mul_i(&clamped, &stride_val));
-                        val_coord_idx += 1;
-                    }
-                }
-            }
-
-            let mut addr = b.ir_constant_int(addr_parts_static);
-            for part in &addr_parts_dynamic {
-                addr = b.ir_add_i(&addr, part);
-            }
-
-            let in_bounds = if in_bounds_parts.is_empty() {
-                b.ir_constant_bool(true)
-            } else {
-                let mut acc = in_bounds_parts[0].clone();
-                for ib in &in_bounds_parts[1..] {
-                    acc = b.ir_logical_and(&acc, ib);
-                }
-                acc
-            };
-
-            let current = b.ir_read_memory(segment_id, &addr);
-            let write_val = if value_is_scalar {
-                cast_for_segment(b, segment_id, value, dtype)
-            } else {
-                cast_for_segment(b, segment_id, &value_elements[val_flat], dtype)
-            };
-            let selected = if dtype == NumberType::Float {
-                b.ir_select_f(&in_bounds, &write_val, &current)
-            } else {
-                b.ir_select_i(&in_bounds, &write_val, &current)
-            };
-            b.ir_write_memory(segment_id, &addr, &selected);
-        }
-        cache_invalidate(b, segment_id);
+            cast_for_segment(b, segment_id, &value_elements[val_flat], dtype)
+        };
+        let condition = (!in_slice.is_empty()).then(|| and_all(b, in_slice));
+        b.storage_write_positions_if(segment_id, offset, &axes, &positions, &write_val, condition.as_ref());
     }
-
     val.clone()
 }
 
-#[allow(clippy::too_many_arguments)]
-/// A slice write of a constant through exactly one runtime index (`a[i, :]
-/// = 0`; the other axes static), lowered by the scatter family: every cell
-/// it may touch becomes an `OpKind::IndexWrite` lane over the index's
-/// pinned one-hot (`lower::scatter::write`), which also proves `-n <= i <
-/// n`. Integer and float arrays. A computed value keeps the per-cell
-/// equality tests, which a read of the same cells through the same index
-/// shares (`a[:, i] *= m`).
-struct OneHotWriteAxis {
-    axis: usize,
-    shared: std::sync::Arc<[Value]>,
-    kind: crate::lower::OpKind,
-    /// The write's execution predicate, when it is a runtime value.
-    predicate: Option<Value>,
-}
-
-impl OneHotWriteAxis {
-    fn of(b: &mut IRBuilder, dtype: NumberType, shape: &[usize], axis_specs: &[(usize, AxisCoords)]) -> Option<Self> {
-        if !matches!(dtype, NumberType::Integer | NumberType::Float) {
-            return None;
-        }
-        let mut runtime = axis_specs.iter().filter_map(|(axis, spec)| match spec {
-            AxisCoords::Single(v) if v.int_val().is_none() => Some((*axis, v)),
-            _ => None,
-        });
-        let (axis, index) = runtime.next()?;
-        if runtime.next().is_some() || axis_specs.iter().any(|(_, s)| matches!(s, AxisCoords::Dynamic { .. })) {
-            return None;
-        }
-        let predicate = b.write_predicate().cloned().filter(|p| {
-            p.bool_val().or_else(|| p.int_val().map(|v| v != 0)) != Some(true)
-        });
-        let index = b.guard_operand(index, 0);
-        let index = b.ensure_ptr(&index);
-        let kind = crate::lower::OpKind::IndexWrite { axis_len: shape[axis] as u32 };
-        Some(OneHotWriteAxis { axis, shared: std::sync::Arc::from(vec![index]), kind, predicate })
-    }
-
-    /// The new value of the cell at `coords` (holding `old`).
-    fn cell(&self, b: &mut IRBuilder, coords: &[usize], old: &Value, written: &Value) -> Value {
-        let mut own = vec![old.clone(), written.clone()];
-        if let Some(p) = &self.predicate {
-            own.push(p.clone());
-        }
-        let op = crate::lower::ArrayOp {
-            kind: self.kind,
-            shared: 1,
-            output: 0,
-            position: Some(coords[self.axis] as u32),
-        };
-        b.ir_array_op(op, &self.shared, &own)
-    }
-}
-
-fn try_overlay_dynamic_single_slice_setitem(
+/// Element `k` of a slice `start:stop:step` with runtime bounds of an axis
+/// of `axis_len`: its position (clamped into the axis) and whether it lies
+/// in the slice (`0 <= start + k·step < axis_len` and before `stop` in the
+/// step's direction).
+fn runtime_slice_position(
     b: &mut IRBuilder,
-    dtype: NumberType,
-    shape: &[usize],
-    segment_id: u32,
-    strides: &[usize],
-    offset: usize,
-    axis_specs: &[(usize, AxisCoords)],
-    value_shape: &[usize],
-    value_strides: &[usize],
-    value_is_scalar: bool,
-    value: &Value,
-    value_elements: &[Value],
-) -> bool {
-    if dtype == NumberType::Complex {
-        return false;
-    }
-    let total: usize = shape.iter().product();
-    if total > SMALL_DYNAMIC_WRITE_OVERLAY_LIMIT {
-        return false;
-    }
-    if b.static_array_product_provenance.contains_key(&segment_id) {
-        super::base::force_static_array_product_provenance(b, segment_id);
-    }
-    let Some(mut cells) = b.static_array_payload.get(&segment_id).cloned() else {
-        return false;
-    };
-    let logical_strides = row_major_strides(shape);
-    let constant_value = value_is_scalar && (value.int_val().is_some() || value.float_val().is_some());
-    let one_hot_write = constant_value.then(|| OneHotWriteAxis::of(b, dtype, shape, axis_specs)).flatten();
-    for flat in 0..total {
-        let coords = decode_coords(flat, shape, &logical_strides);
-        let abs = abs_offset_for_coords(offset, strides, &coords);
-        if abs >= cells.len() {
-            return false;
-        }
-
-        let mut conds: Vec<Value> = Vec::new();
-        let mut rhs_coords: Vec<usize> = Vec::with_capacity(value_shape.len());
-        let mut targeted = true;
-        for (src_axis, spec) in axis_specs {
-            match spec {
-                // The one-hot write tests its runtime index itself.
-                AxisCoords::Single(_) if one_hot_write.as_ref().is_some_and(|w| w.axis == *src_axis) => {}
-                AxisCoords::Single(v) => {
-                    conds.push(index_equals_coord(
-                        b,
-                        v,
-                        coords[*src_axis],
-                        shape[*src_axis],
-                    ));
-                }
-                AxisCoords::Static(valid_coords) => {
-                    if let Some(pos) = valid_coords.iter().position(|c| *c == coords[*src_axis]) {
-                        rhs_coords.push(pos);
-                    } else {
-                        targeted = false;
-                        break;
-                    }
-                }
-                AxisCoords::Dynamic { .. } => return false,
-            }
-        }
-        if !targeted {
-            continue;
-        }
-        if let Some(axis) = &one_hot_write {
-            // The other indices are constants here: their tests are known.
-            if conds.iter().any(|c| c.bool_val() == Some(false)) {
-                continue;
-            }
-            let raw_write = if value_is_scalar {
-                value.clone()
-            } else {
-                let rhs_flat: usize = rhs_coords.iter().zip(value_strides).map(|(c, s)| c * s).sum();
-                value_elements[rhs_flat].clone()
-            };
-            let write_val = cast_for_segment(b, segment_id, &raw_write, dtype);
-            cells[abs] = axis.cell(b, &coords, &cells[abs], &write_val);
-            continue;
-        }
-        // Compile-time-overlay-only path: fold the conditional-write
-        // predicate into the per-cell select (same as
-        // `try_overlay_dynamic_element_setitem`).
-        if let Some(p) = b.write_predicate().cloned() {
-            let static_true = p
-                .bool_val()
-                .or_else(|| p.int_val().map(|v| v != 0))
-                .unwrap_or(false);
-            if !static_true {
-                conds.push(p);
-            }
-        }
-        let cond = and_all(b, conds);
-        let raw_write = if value_is_scalar {
-            value.clone()
-        } else {
-            let mut rhs_flat = 0usize;
-            for (ax, coord) in rhs_coords.iter().enumerate() {
-                rhs_flat += *coord * value_strides[ax];
-            }
-            value_elements[rhs_flat].clone()
-        };
-        let write_val = cast_for_segment(b, segment_id, &raw_write, dtype);
-        let old = cells[abs].clone();
-        cells[abs] = select_typed(b, dtype, &cond, &write_val, &old);
-    }
-    b.static_array_payload.insert(segment_id, cells);
-    b.lazy_static_array_segments.insert(segment_id);
-    true
+    start: &Value,
+    stop: &Value,
+    step: &Value,
+    axis_len: usize,
+    k: usize,
+) -> (Value, Value) {
+    let k = b.ir_constant_int(k as i64);
+    let off = b.ir_mul_i(&k, step);
+    let src_idx = b.ir_add_i(start, &off);
+    let zero = b.ir_constant_int(0);
+    let len_val = b.ir_constant_int(axis_len as i64);
+    let ge_zero = b.ir_greater_than_or_equal_i(&src_idx, &zero);
+    let lt_len = b.ir_less_than_i(&src_idx, &len_val);
+    let in_range = b.ir_logical_and(&ge_zero, &lt_len);
+    let step_pos = b.ir_greater_than_i(step, &zero);
+    let lt_stop = b.ir_less_than_i(&src_idx, stop);
+    let gt_stop = b.ir_greater_than_i(&src_idx, stop);
+    let stop_ok = b.ir_select_i(&step_pos, &lt_stop, &gt_stop);
+    let stop_bool = b.ir_bool_cast(&stop_ok);
+    let in_bounds = b.ir_logical_and(&in_range, &stop_bool);
+    let max_idx = b.ir_constant_int(axis_len as i64 - 1);
+    let is_neg = b.ir_less_than_i(&src_idx, &zero);
+    let is_over = b.ir_greater_than_i(&src_idx, &max_idx);
+    let clamped_hi = b.ir_select_i(&is_over, &max_idx, &src_idx);
+    let clamped = b.ir_select_i(&is_neg, &zero, &clamped_hi);
+    (clamped, in_bounds)
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -1744,22 +1205,21 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_index_write_keeps_overlay_cache() {
+    fn a_runtime_index_write_is_an_array_write() {
         let mut b = IRBuilder::new();
         let arr = make_1d(&mut b, &[10, 20, 30, 40]);
         let segment_id = match &arr {
             Value::StaticArray { segment_id, .. } => *segment_id,
             _ => panic!(),
         };
-        // simulate a runtime index — fresh wire with no static_val
-        let runtime_idx =
-            b.ir_read_integer(crate::circuit_input::InputPath::new("j", vec![]), true);
+        let runtime_idx = b.ir_read_integer(crate::circuit_input::InputPath::new("j", vec![]), true);
         let new_val = b.ir_constant_int(77);
-        let indices = vec![SliceIndex::Single(runtime_idx)];
-        static_array_setitem(&mut b, &arr, &indices, &new_val);
-        // Small dynamic writes stay as a logical overlay so static consumers
-        // can avoid memory reads; a later dynamic memory access will flush it.
-        assert!(b.static_array_payload.get(&segment_id).is_some());
-        assert!(b.lazy_static_array_segments.contains(&segment_id));
+        static_array_setitem(&mut b, &arr, &[SliceIndex::Single(runtime_idx)], &new_val);
+        // The cells are no longer known: the storage is the written version,
+        // and its constant cells are reads of it, which the layer builds.
+        assert!(!b.knows_cells(segment_id));
+        assert_eq!(b.stmts.iter().filter(|s| matches!(s.ir, crate::ir_defs::IR::ArrayWrite(_))).count(), 1);
+        let cell = b.storage_read(segment_id, 2);
+        assert!(matches!(b.stmts[cell.stmt_id().unwrap() as usize].ir, crate::ir_defs::IR::ArrayRead(_)));
     }
 }

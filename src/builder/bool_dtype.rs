@@ -26,10 +26,9 @@
 //!   (NumPy converts the assigned value to the array's dtype:
 //!   [`IRBuilder::bool_dtype_cell`] for a bool array).
 //!
-//! The cells of a bool array are bool cells however they are read: from
-//! memory (`ir_read_memory` records them) or from the compile-time cache
-//! (`static_array_payload`, kept in bool cells by
-//! [`IRBuilder::mark_bool_segment`] and by the writes). A conversion to an
+//! The cells of a bool array are bool cells however they are read: reads of
+//! its storage record them, and its known cells are kept bool cells by
+//! [`IRBuilder::mark_bool_segment`] and by the writes. A conversion to an
 //! integer dtype makes integer cells ([`IRBuilder::int_dtype_cell`]).
 //!
 //! Recording a dtype emits no IR; it only decides how an array used as an
@@ -93,20 +92,13 @@ impl IRBuilder {
     /// so it is only for cells whose NumPy dtype is bool.
     pub fn mark_bool_segment(&mut self, segment_id: u32) {
         self.bool_segments.insert(segment_id);
-        let Some(cells) = self.static_array_payload.get(&segment_id).cloned() else {
-            return;
-        };
-        let cells = cells
-            .iter()
-            .map(|cell| match self.boolean_of_view(cell) {
-                Some(boolean) => boolean,
-                None => {
-                    self.record_bool_cell(cell);
-                    cell.clone()
-                }
-            })
-            .collect();
-        self.static_array_payload.insert(segment_id, cells);
+        self.reread_known_cells(segment_id, |b, cell| match b.boolean_of_view(cell) {
+            Some(boolean) => boolean,
+            None => {
+                b.record_bool_cell(cell);
+                cell.clone()
+            }
+        });
     }
 
     /// Record that the array `v` (static or runtime-shaped) is a NumPy bool

@@ -157,8 +157,32 @@ pub fn value_to_scalar_i64(val: &Value) -> ScalarValue<i64> {
         Value::Boolean(sv) => {
             ScalarValue::new(sv.static_val.map(|b| if b { 1 } else { 0 }), sv.stmt_id)
         }
-        Value::Float(sv) => ScalarValue::new(sv.static_val.map(|f| f as i64), sv.stmt_id),
+        // The compile-time value survives only when it is an integer: a
+        // truncated one would claim a constant the statement does not hold
+        // (2.5 read back as the float 2.0).
+        Value::Float(sv) => ScalarValue::new(
+            sv.static_val.filter(|f| f.fract() == 0.0 && f.abs() < 9.0e15).map(|f| f as i64),
+            sv.stmt_id,
+        ),
         _ => ScalarValue::new(None, None),
+    }
+}
+
+/// `v` as a value of `dtype` without IR: the same statement under the other
+/// type. A value of the same type is itself, and so is a bool read as an
+/// integer (a cell of a NumPy bool array stays a bool cell,
+/// `builder/bool_dtype.rs`); any other reading keeps no compile-time value
+/// except zero (whose field element is the same in every encoding), so no
+/// reading invents a constant the statement does not hold.
+pub fn retag(v: &Value, dtype: NumberType) -> Value {
+    match (dtype, v) {
+        (NumberType::Integer, Value::Integer(_) | Value::Boolean(_)) | (NumberType::Float, Value::Float(_)) => v.clone(),
+        (NumberType::Integer, Value::Float(s)) => {
+            Value::Integer(ScalarValue::new(s.static_val.filter(|f| *f == 0.0).map(|_| 0), s.stmt_id))
+        }
+        (NumberType::Float, Value::Integer(s)) => Value::Float(ScalarValue::new(s.static_val.filter(|i| *i == 0).map(|_| 0.0), s.stmt_id)),
+        (NumberType::Float, Value::Boolean(s)) => Value::Float(ScalarValue::new(s.static_val.filter(|b| !*b).map(|_| 0.0), s.stmt_id)),
+        _ => scalar_i64_to_value(&value_to_scalar_i64(v), dtype),
     }
 }
 
@@ -178,23 +202,16 @@ pub fn scalar_i64_to_value(elem: &ScalarValue<i64>, dtype: NumberType) -> Value 
 }
 
 pub fn value_to_complex_parts(val: &Value) -> (ScalarValue<i64>, ScalarValue<i64>) {
+    // A float part keeps its compile-time value only when it is an integer
+    // (as `value_to_scalar_i64`); the imaginary part of a real number is the
+    // constant 0 (no statement: `ensure_ptr` makes the constant).
+    let part = |s: &ScalarValue<f64>| value_to_scalar_i64(&Value::Float(s.clone()));
+    let zero = || ScalarValue::new(Some(0), None);
     match val {
-        Value::Complex { real, imag } => (
-            ScalarValue::new(real.static_val.map(|f| f as i64), real.stmt_id),
-            ScalarValue::new(imag.static_val.map(|f| f as i64), imag.stmt_id),
-        ),
-        Value::Float(sv) => (
-            ScalarValue::new(sv.static_val.map(|f| f as i64), sv.stmt_id),
-            ScalarValue::new(Some(0), sv.stmt_id),
-        ),
-        Value::Integer(sv) => (
-            ScalarValue::new(sv.static_val.map(|v| v as i64), sv.stmt_id),
-            ScalarValue::new(Some(0), sv.stmt_id),
-        ),
-        Value::Boolean(sv) => (
-            ScalarValue::new(sv.static_val.map(|v| i64::from(v)), sv.stmt_id),
-            ScalarValue::new(Some(0), sv.stmt_id),
-        ),
+        Value::Complex { real, imag } => (part(real), part(imag)),
+        Value::Float(sv) => (part(sv), zero()),
+        Value::Integer(sv) => (sv.clone(), zero()),
+        Value::Boolean(sv) => (ScalarValue::new(sv.static_val.map(i64::from), sv.stmt_id), zero()),
         _ => (ScalarValue::new(None, None), ScalarValue::new(None, None)),
     }
 }

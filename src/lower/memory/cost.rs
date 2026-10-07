@@ -52,7 +52,7 @@ pub fn index_bits(n: u64, target: Target) -> u64 {
 /// polynomials, about 5 committed polynomials of 2^k rows, at the `k = 9` of
 /// the programs this construction pays on (`estimate_params` prices a
 /// committed polynomial as 2^k cells).
-const TABLE_GROUP_CELLS: u64 = 5 * 512;
+pub const TABLE_GROUP_CELLS: u64 = 5 * 512;
 
 /// Table rows a group holds at `k = 9` (`circuit::table_rows(9)` less the
 /// free row).
