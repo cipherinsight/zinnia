@@ -331,35 +331,7 @@ fn prove_atomic_with_facts(term: &ContractTerm, facts: &[&Fact], paths: &[&Fact]
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(z3_budget::PROVE_RLIMIT);
 
-    let outcome = if check_unsat(facts, paths, term, floats, Query::Negated, rlimit) == Some(true) {
-        ProveOutcome::Proved
-    } else if check_unsat(facts, paths, term, floats, Query::Asserted, rlimit) == Some(true) {
-        ProveOutcome::Disproved
-    } else {
-        return ProveOutcome::Unknown;
-    };
-    // Unsatisfiable facts entail and contradict everything. Facts the
-    // circuit enforces are never contradictory where the code runs, so a
-    // contradiction here means the code is unreachable or a fact is stated
-    // wrongly (as `%` by a negative divisor once was: a check was dropped on
-    // the strength of it). Either way the answer says nothing about the
-    // query: trust it only when the facts alone have a model.
-    if check_unsat(facts, paths, term, floats, Query::FactsOnly, rlimit) != Some(false) {
-        PROVE_VACUOUS_COUNT.fetch_add(1, Ordering::Relaxed);
-        return ProveOutcome::Unknown;
-    }
-    outcome
-}
-
-/// What [`check_unsat`] asserts next to the facts.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Query {
-    /// `¬term`: unsat means the facts entail the term.
-    Negated,
-    /// `term`: unsat means the facts contradict the term.
-    Asserted,
-    /// Nothing: unsat means the facts contradict each other.
-    FactsOnly,
+    decide(facts, paths, term, floats, rlimit)
 }
 
 /// Walk `term`. Succeeds (returns `Some(atoms)`) iff every leaf is a
@@ -598,20 +570,21 @@ pub fn maximize_shape_param(
 // Internals
 // ---------------------------------------------------------------------------
 
-/// Assert `facts ∧ paths` and what `query` says on a fresh solver and check
-/// sat (see [`Query`]); `term` also takes part in typing the variables, so
-/// the three queries of one prove use the same symbols.
+/// The Z3 part of an atomic prove: one solver holding the facts and path
+/// conditions, asked under assumptions whether `¬term` (then `term`) is
+/// unsatisfiable with them.
 ///
-/// Returns `Some(true)` if unsat (the chosen relation held), `Some(false)`
-/// if sat, `None` if Z3 returned Unknown (typically the step budget ran out).
-fn check_unsat(
-    facts: &[&Fact],
-    paths: &[&Fact],
-    term: &ContractTerm,
-    floats: Floats,
-    query: Query,
-    rlimit: u32,
-) -> Option<bool> {
+/// Unsatisfiable facts entail and contradict everything. Facts the circuit
+/// enforces are never contradictory where the code runs, so a contradiction
+/// means the code is unreachable or a fact is stated wrongly (as `%` by a
+/// negative divisor once was: a check was dropped on the strength of it).
+/// Either way it says nothing about the query, so `Proved` and `Disproved`
+/// stand only when the same solver finds the facts alone satisfiable; an
+/// unsatisfiable or undecided fact set gives `Unknown`.
+///
+/// Every check is bounded by `rlimit` steps (`z3_budget`), so the outcome is
+/// deterministic.
+fn decide(facts: &[&Fact], paths: &[&Fact], term: &ContractTerm, floats: Floats, rlimit: u32) -> ProveOutcome {
     PROVE_Z3_INVOCATIONS.fetch_add(1, Ordering::Relaxed);
     // One symbol per Input / Value(vid) / shape parameter the assembled
     // formula references, shared by every assertion.
@@ -619,44 +592,40 @@ fn check_unsat(
     let subst = substitution_for(&terms, &floats.among(&terms));
 
     let solver = z3_budget::solver(rlimit);
-
     for f in facts.iter().chain(paths.iter()) {
-        match formula::lower_bool(f, &subst) {
-            Ok(out) => {
-                solver.assert(&out.term);
-                for (_, meta) in &out.meta_fact_sets {
-                    for m in meta {
-                        solver.assert(m);
-                    }
+        // A fact that does not lower (malformed template, unbound formal)
+        // contributes no information; the others still apply.
+        if let Ok(out) = formula::lower_bool(f, &subst) {
+            solver.assert(&out.term);
+            for (_, meta) in &out.meta_fact_sets {
+                for m in meta {
+                    solver.assert(m);
                 }
-            }
-            Err(_) => {
-                // Drop facts that don't lower (malformed templates, unbound
-                // formals, etc.). They contribute no info; the prove still
-                // proceeds against the remaining facts.
-                continue;
             }
         }
     }
+    // A query term that cannot be lowered decides nothing.
+    let Ok(lowered) = formula::lower_bool(term, &subst) else { return ProveOutcome::Unknown };
+    let query = lowered.term;
+    // Assumption literals `e => not term` and `c => term` (Z3 assumes
+    // literals only).
+    let entails = Bool::fresh_const("prove_entails");
+    let contradicts = Bool::fresh_const("prove_contradicts");
+    solver.assert(&entails.implies(&query.not()));
+    solver.assert(&contradicts.implies(&query));
 
-    if query != Query::FactsOnly {
-        let lowered_term = match formula::lower_bool(term, &subst) {
-            Ok(out) => out.term,
-            Err(_) => {
-                // Query term itself can't be lowered — soundly Unknown.
-                return None;
-            }
-        };
-        let target: Bool = if query == Query::Negated { lowered_term.not() } else { lowered_term };
-        solver.assert(&target);
+    let outcome = if z3_budget::check_assuming("prove.entails", &solver, &[entails]) == z3::SatResult::Unsat {
+        ProveOutcome::Proved
+    } else if z3_budget::check_assuming("prove.entails", &solver, &[contradicts]) == z3::SatResult::Unsat {
+        ProveOutcome::Disproved
+    } else {
+        return ProveOutcome::Unknown;
+    };
+    if z3_budget::check("prove.facts_sat", &solver) != z3::SatResult::Sat {
+        PROVE_VACUOUS_COUNT.fetch_add(1, Ordering::Relaxed);
+        return ProveOutcome::Unknown;
     }
-
-    let site = if query == Query::FactsOnly { "prove.facts_sat" } else { "prove.entails" };
-    match z3_budget::check(site, &solver) {
-        z3::SatResult::Unsat => Some(true),
-        z3::SatResult::Sat => Some(false),
-        z3::SatResult::Unknown => None,
-    }
+    outcome
 }
 
 fn optimize_shape_param(
