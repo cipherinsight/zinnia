@@ -75,9 +75,9 @@ pub(crate) struct ArrayStore {
     next_id: u32,
     /// Writes so far (every write to any storage ticks it).
     write_clock: u64,
-    /// Detached pairs `(copy, base, why)`: storages Python would share and
-    /// Zinnia keeps apart (`builder/stale.rs`).
-    pub(super) links: Vec<(u32, u32, &'static str)>,
+    /// Detached pairs: storages Python would share and Zinnia keeps apart
+    /// (`builder/stale.rs`).
+    pub(super) links: Vec<super::stale::Link>,
     /// Reads of stale storages allowed (inside `IRBuilder::with_stale_reads`).
     pub(super) stale_reads_allowed: u32,
 }

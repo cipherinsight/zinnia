@@ -257,9 +257,24 @@ impl IRGenerator {
                         })
                     };
                 }
-                current
+                // The write used to be dropped silently here.
+                panic!(
+                    "assignment to an element of a {} with this index is not supported",
+                    if is_tuple { "tuple" } else { "list" }
+                )
             }
-            _ => current,
+            // An array inside a list: a merge of two arrays of different
+            // shapes is a list of rows, and `m[i, j] = v` writes row `i`.
+            // (The write used to be dropped silently.)
+            Value::StaticArray { .. } => self.static_array_setitem(&current, indices, value),
+            Value::DynamicNDArray(data) => {
+                let data = data.clone();
+                self.dynamic_array_setitem(&data, indices, &value)
+            }
+            other => panic!(
+                "TypeError: '{:?}' object does not support item assignment",
+                other.zinnia_type()
+            ),
         }
     }
 

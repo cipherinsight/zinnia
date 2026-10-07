@@ -860,6 +860,8 @@ impl IRGenerator {
                     if self.ctx.exists(&name) {
                         let val = one.value.clone();
                         self.ctx.set(&name, val);
+                    } else {
+                        self.ctx.mark_branch_only_binding(&name);
                     }
                 }
                 (None, None) => unreachable!(),
@@ -2032,6 +2034,26 @@ impl IRGenerator {
                 let should_merge = self.ctx.exists(&t.name)
                     && conditional_select
                     && self.ctx.has_nontrivial_condition();
+                // A first binding in a loop body under a condition (after a
+                // `break`, `continue` or `return`, with no `if` around the
+                // loop to drop it at its join) stays bound after the loop on
+                // every path. That is wrong where the name holds the value
+                // of an earlier `if` arm, which the join dropped: on the
+                // paths that skip this assignment, Python keeps that value.
+                if !should_merge
+                    && conditional_select
+                    && self.ctx.in_loop_body_outside_branches()
+                    && self.ctx.has_nontrivial_condition()
+                    && self.ctx.is_branch_only_binding(&t.name)
+                {
+                    panic!(
+                        "`{}` is bound in one branch of a runtime condition and then assigned \
+                         again in a loop that may stop before the assignment; Zinnia does not \
+                         keep the first binding, so on the paths that skip the second one the \
+                         value would be wrong. Bind `{}` before the condition.",
+                        t.name, t.name
+                    );
+                }
                 if should_merge {
                     let orig = self.ctx.get(&t.name).unwrap();
                     let cond = self.ctx.get_condition_value(&mut self.builder);
@@ -2298,13 +2320,14 @@ impl IRGenerator {
             }
         };
         self.note_array_write(&current);
+        self.note_array_moved(&current, &updated);
         self.note_array_write(&updated);
         self.rebind_subscript_target(var_name, &current, updated);
     }
 
     /// Write into a segment-backed static array (element, multi-dim, slice,
     /// boolean-mask, integer index array). Returns the array value to rebind.
-    fn static_array_setitem(&mut self, current: &Value, indices: &[SliceIndex], value: Value) -> Value {
+    pub(super) fn static_array_setitem(&mut self, current: &Value, indices: &[SliceIndex], value: Value) -> Value {
         use crate::helpers::array_ops::ArrayIndexKind;
         // A single index array, by its dtype: a boolean mask, or the
         // positions of a runtime-shaped index array. (Static index arrays
@@ -2380,7 +2403,7 @@ impl IRGenerator {
     }
 
     /// Write into a bounded-dynamic array (boolean mask, slice or element).
-    fn dynamic_array_setitem(
+    pub(super) fn dynamic_array_setitem(
         &mut self,
         data: &crate::types::DynamicNDArrayData,
         indices: &[SliceIndex],

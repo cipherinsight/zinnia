@@ -47,6 +47,45 @@ pub const COPIED_VIEW: &str = "it is linked by NumPy view semantics to an array 
 /// A Boolean statement, or its negation (`false`).
 type Literal = (StmtId, bool);
 
+/// A set of paths: those where a conjunction of literals holds, or those
+/// where it does not.
+#[derive(Clone, Debug)]
+enum Paths {
+    Where(Vec<Literal>),
+    WhereNot(Vec<Literal>),
+}
+
+impl Paths {
+    /// The paths of `path` that are also in `self`, as a conjunction, or
+    /// `None` when there are none. `path` and `not (l1 and l2 ...)` is not a
+    /// conjunction unless the negated one has a single literal; it is
+    /// over-approximated by `path`, unless `path` implies the negated
+    /// conjunction (then there are none).
+    fn within(&self, path: &[Literal]) -> Option<Vec<Literal>> {
+        match self {
+            Paths::Where(conjunction) => conjoin(path, conjunction),
+            Paths::WhereNot(conjunction) => match conjunction.as_slice() {
+                [] => None,
+                [(s, positive)] => conjoin(path, &[(*s, !positive)]),
+                _ if conjunction.iter().all(|l| path.binary_search(l).is_ok()) => None,
+                _ => Some(path.to_vec()),
+            },
+        }
+    }
+}
+
+/// Two storages Python would share and Zinnia keeps apart: `copy` holds
+/// what NumPy would make the same memory as `base` on the paths `when`. A
+/// view's copy is the base everywhere; a merge `select(c, a, b)` is `a`
+/// where `c` holds and `b` where it does not.
+#[derive(Clone, Debug)]
+pub(crate) struct Link {
+    copy: u32,
+    base: u32,
+    why: &'static str,
+    when: Paths,
+}
+
 /// Where a storage is stale: the reason, and the paths (conjunctions of
 /// literals, sorted; empty: every path).
 #[derive(Clone, Debug, Default)]
@@ -91,9 +130,29 @@ impl IRBuilder {
     /// `base`, for the reason `why`: from then on a write to either one
     /// makes the other one stale. Links are transitive.
     pub fn link_storages(&mut self, copy: u32, base: u32, why: &'static str) {
+        self.add_link(copy, base, why, Paths::Where(Vec::new()));
+    }
+
+    /// Record that `merged`, a merge `select(cond, a, b)` of arrays a name
+    /// was bound to on different paths, is `source` where `cond` holds
+    /// (`taken`: `source` is `a`) or where it does not (`source` is `b`). A
+    /// write to either one then makes the other stale on those paths only.
+    pub fn link_merged_storage(&mut self, merged: u32, source: u32, why: &'static str, cond: &Value, taken: bool) {
+        let Some(literals) = self.path_of(Some(cond)) else {
+            // `cond` is the constant false: `merged` is `b` everywhere.
+            if !taken {
+                self.add_link(merged, source, why, Paths::Where(Vec::new()));
+            }
+            return;
+        };
+        let when = if taken { Paths::Where(literals) } else { Paths::WhereNot(literals) };
+        self.add_link(merged, source, why, when);
+    }
+
+    fn add_link(&mut self, copy: u32, base: u32, why: &'static str, when: Paths) {
         let (copy, base) = (self.storage_owner(copy), self.storage_owner(base));
         if copy != base {
-            self.store.links.push((copy, base, why));
+            self.store.links.push(Link { copy, base, why, when });
         }
     }
 
@@ -103,6 +162,33 @@ impl IRBuilder {
     /// the storages linked to it are stale, as after a write.
     pub fn note_storage_replaced(&mut self, storage: u32) {
         self.propagate_write_to_links(storage);
+    }
+
+    /// The array of `old` now lives in `new` (an update that builds the new
+    /// contents in another storage and rebinds the name to it): `new` takes
+    /// over `old`'s links, so a later write through a linked copy makes it
+    /// stale, as it would `old`.
+    pub fn move_links(&mut self, old: u32, new: u32) {
+        let (old, new) = (self.storage_owner(old), self.storage_owner(new));
+        if old == new {
+            return;
+        }
+        let moved: Vec<Link> = self
+            .store
+            .links
+            .iter()
+            .filter(|link| link.copy == old || link.base == old)
+            .map(|link| {
+                let mut link = link.clone();
+                if link.copy == old {
+                    link.copy = new;
+                } else {
+                    link.base = new;
+                }
+                link
+            })
+            .collect();
+        self.store.links.extend(moved);
     }
 
     /// Why some array in `value` (an array, or a list or tuple holding
@@ -155,17 +241,12 @@ impl IRBuilder {
     /// `fv`'s under `not cond`.
     pub fn carry_merge_staleness(&mut self, cond: &Value, tv: &Value, fv: &Value, out: &Value) {
         let Some(taken) = self.path_of(Some(cond)) else { return };
-        // `not cond` as a conjunction when `cond` is one literal (otherwise
-        // its negation is a disjunction; no literal is added).
-        let not_taken: Vec<Literal> = match taken.as_slice() {
-            [(s, positive)] => vec![(*s, !positive)],
-            _ => Vec::new(),
-        };
+        let (where_taken, where_not) = (Paths::Where(taken.clone()), Paths::WhereNot(taken));
         let mut carried: Vec<(&'static str, Vec<Literal>)> = Vec::new();
-        for (side, condition) in [(tv, &taken), (fv, &not_taken)] {
+        for (side, paths) in [(tv, &where_taken), (fv, &where_not)] {
             for stale in self.stalenesses_in(side) {
                 let why = stale.why.expect("a stale storage has a reason");
-                carried.extend(stale.paths.iter().filter_map(|p| conjoin(p, condition)).map(|p| (why, p)));
+                carried.extend(stale.paths.iter().filter_map(|p| paths.within(p)).map(|p| (why, p)));
             }
         }
         for (why, path) in carried {
@@ -199,33 +280,40 @@ impl IRBuilder {
     }
 
     /// A write to `storage` (under the current execution predicate) makes
-    /// every storage linked to it stale on the write's path.
+    /// every storage linked to it stale on the write's path, conjoined with
+    /// the paths on which each link along the way shares the memory.
     pub(super) fn propagate_write_to_links(&mut self, storage: u32) {
         if self.store.links.is_empty() {
             return;
         }
         let Some(path) = self.current_path() else { return };
         let start = self.storage_owner(storage);
-        let mut seen = BTreeSet::from([start]);
-        let mut frontier = vec![start];
-        let mut reached: Vec<(u32, &'static str)> = Vec::new();
-        while let Some(current) = frontier.pop() {
-            for &(copy, base, why) in &self.store.links {
-                let other = if copy == current {
-                    base
-                } else if base == current {
-                    copy
+        // (storage, path) pairs: a storage reached on two paths is stale on
+        // both. Paths only grow, so this terminates.
+        let mut seen = BTreeSet::from([(start, path.clone())]);
+        let mut frontier = vec![(start, path)];
+        let mut reached: Vec<(u32, &'static str, Vec<Literal>)> = Vec::new();
+        while let Some((current, path)) = frontier.pop() {
+            for link in &self.store.links {
+                let other = if link.copy == current {
+                    link.base
+                } else if link.base == current {
+                    link.copy
                 } else {
                     continue;
                 };
-                if seen.insert(other) {
-                    reached.push((other, why));
-                    frontier.push(other);
+                if other == start {
+                    continue;
+                }
+                let Some(shared) = link.when.within(&path) else { continue };
+                if seen.insert((other, shared.clone())) {
+                    reached.push((other, link.why, shared.clone()));
+                    frontier.push((other, shared));
                 }
             }
         }
-        for (other, why) in reached {
-            self.storage_mut(other).stale.add(why, path.clone());
+        for (other, why, path) in reached {
+            self.storage_mut(other).stale.add(why, path);
         }
     }
 

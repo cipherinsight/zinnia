@@ -61,6 +61,10 @@ impl IRGenerator {
     /// other binding can observe the old object, or the value is immutable).
     pub(crate) fn update_in_place(&mut self, name: &str, result: &Value) -> bool {
         let Some(current) = self.ctx.get(name) else { return false };
+        // Views and detached copies of the array (or of the arrays a list
+        // holds) see the update, whether it is written in place or rebinds
+        // `name`.
+        self.note_array_write(&current);
         match &current {
             Value::StaticArray { dtype, segment_id, .. } => {
                 if *dtype != crate::types::NumberType::Float && has_float_values(result) {
@@ -70,8 +74,6 @@ impl IRGenerator {
                         name, name
                     );
                 }
-                // Views and detached copies of the array see the update.
-                self.note_array_write(&current);
                 let segment = *segment_id;
                 // The caller sees an in-place kernel's array arguments.
                 let shared = self.is_caller_visible_segment(segment)
@@ -82,6 +84,8 @@ impl IRGenerator {
                         })
                         .is_some();
                 if !shared {
+                    // The caller rebinds `name` to `result`.
+                    self.note_array_moved(&current, result);
                     return false;
                 }
                 let written = super::named_attr::write_into(&mut self.builder, result, &current);
@@ -106,10 +110,12 @@ impl IRGenerator {
                         name, other
                     );
                 }
+                self.note_array_moved(&current, result);
                 false
             }
             Value::List(_) => {
                 self.ensure_list_not_shared(name, &current);
+                self.note_array_moved(&current, result);
                 false
             }
             _ => false,

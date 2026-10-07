@@ -52,6 +52,16 @@ impl Link {
     }
 }
 
+/// The memory segments of the arrays in `value`: an array's own, or those of
+/// the arrays a list or tuple holds at any depth (a merge of two arrays of
+/// different shapes is a list of rows).
+fn array_segments(value: &Value) -> Vec<u32> {
+    match value {
+        Value::List(data) | Value::Tuple(data) => data.values.iter().flat_map(array_segments).collect(),
+        other => array_segment(other).into_iter().collect(),
+    }
+}
+
 /// The memory segment holding an array value, if it has one.
 pub(crate) fn array_segment(value: &Value) -> Option<u32> {
     match value {
@@ -138,15 +148,20 @@ impl IRGenerator {
     /// and to `b` on another: Python would make the name the same object as
     /// one of them, so a later write through the name (or to `a` or `b`)
     /// detaches the others.
-    pub(crate) fn record_path_dependent_alias(&mut self, merged: &Value, sources: [&Value; 2]) {
-        let Some(merged_segment) = array_segment(merged) else { return };
-        let source_segments: Vec<u32> = sources.iter().filter_map(|v| array_segment(v)).collect();
-        // A merge under a compile-time condition is one of the sources itself.
-        if source_segments.contains(&merged_segment) {
-            return;
-        }
-        for source_segment in source_segments {
-            self.builder.link_storages(merged_segment, source_segment, Link::PathDependentAlias.stale_reason());
+    pub(crate) fn record_path_dependent_alias(&mut self, condition: &Value, merged: &Value, sources: [&Value; 2]) {
+        let [a, b] = sources.map(array_segments);
+        let why = Link::PathDependentAlias.stale_reason();
+        for merged_segment in array_segments(merged) {
+            // A merge under a compile-time condition is one of the sources
+            // itself (or, for a list, keeps some of their arrays).
+            if a.contains(&merged_segment) || b.contains(&merged_segment) {
+                continue;
+            }
+            for (segments, taken) in [(&a, true), (&b, false)] {
+                for &source_segment in segments {
+                    self.builder.link_merged_storage(merged_segment, source_segment, why, condition, taken);
+                }
+            }
         }
     }
 
@@ -157,7 +172,7 @@ impl IRGenerator {
         let (a_cells, b_cells) = self.static_side_as_cells(a, b);
         let merged =
             crate::helpers::value_ops::select_value(&mut self.builder, condition, &a_cells, &b_cells);
-        self.record_path_dependent_alias(&merged, [a, b]);
+        self.record_path_dependent_alias(condition, &merged, [a, b]);
         merged
     }
 
@@ -179,12 +194,32 @@ impl IRGenerator {
         }
     }
 
-    /// Note an update of the array `written` whose new contents may live in
-    /// another storage (a rebinding update): its links become stale as after
-    /// a store write. (Writes into a storage are noted by the store itself.)
+    /// Note an update of the array `written` (or of the arrays a list or
+    /// tuple holds) whose new contents may live in another storage (a
+    /// rebinding update): its links become stale as after a store write.
+    /// (Writes into a storage are noted by the store itself.)
     pub(crate) fn note_array_write(&mut self, written: &Value) {
-        if let Some(segment) = array_segment(written) {
+        for segment in array_segments(written) {
             self.builder.note_storage_replaced(segment);
+        }
+    }
+
+    /// Note that the arrays of `old` now live in those of `new` (an update
+    /// that rebinds a name to new storages): the new storages take over the
+    /// old ones' links. Pairwise when the two hold as many arrays, otherwise
+    /// every new one takes over every old one's links.
+    pub(crate) fn note_array_moved(&mut self, old: &Value, new: &Value) {
+        let (old, new) = (array_segments(old), array_segments(new));
+        if old.len() == new.len() {
+            for (o, n) in old.into_iter().zip(new) {
+                self.builder.move_links(o, n);
+            }
+        } else {
+            for &o in &old {
+                for &n in &new {
+                    self.builder.move_links(o, n);
+                }
+            }
         }
     }
 

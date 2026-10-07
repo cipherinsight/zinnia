@@ -42,6 +42,8 @@ The findings:
 - N11: `np.expand_dims` of a runtime-shaped array merged under a condition
   published the old rank.
 - F1, F4: the reviewer's re-checks of the first review's findings.
+- Fuzz: the classes the reviewer's fuzzers found when re-run on this
+  branch's first commit (see that section).
 """
 import itertools
 
@@ -525,3 +527,87 @@ def test_an_in_place_kernel_matches_numpy(name):
 def test_an_in_place_write_through_a_copied_view_is_rejected(name):
     with pytest.raises(ZinniaException, match=STALE):
         compile_kernel(IN_PLACE_STALE[name])
+
+
+# ── Found by the reviewer's fuzzers, re-run on this branch's first commit ─
+#
+# - an `op=` update of a runtime-shaped array, or one that rebinds a name to
+#   a new storage, did not make the arrays linked to it stale, and the new
+#   storage did not take over the links (a write through a linked copy then
+#   missed the array);
+# - two multi-dimensional arrays of different shapes merged into a list of
+#   rows, on which `m[i, j]` read row `i` and `m[i, j] = v` wrote nothing;
+# - a name bound in one arm of an `if` (which the join drops) and bound again
+#   in a loop that may stop before the assignment kept the loop's value on
+#   every path.
+
+FUZZ_H = 'def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], i: Integer, c: Boolean):\n'
+FUZZ_STALE = {
+    "op= on a merged runtime-shaped array": FUZZ_H + '    t = x[::2]\n    if c:\n        t = x[1:]\n    t += 1\n    return x\n',
+    "op= that rebinds, then a write through a copy": FUZZ_H + '    m = m * 1\n    a1 = np.fliplr(m)\n    m += 1\n    a1[1, 1] = -7\n    return m\n',
+}
+FUZZ_MATCH = {
+    "op= on a merged runtime-shaped array, read it": FUZZ_H + '    t = x[::2]\n    if c:\n        t = x[1:]\n    t += 1\n    return t\n',
+    "a name bound before the branch and the loop": FUZZ_H + '    a1 = x * 0\n    if c:\n        a1 = x * 1\n        x[2] = 7\n    for k in range(2):\n        if x[k] > 2:\n            break\n        a1 = x + 0\n    return x, a1\n',
+    "a loop inside a branch rebinding a branch-local name": FUZZ_H + '    for line in range(3):\n        if x[line] > 0:\n            for j in range(2):\n                t = x[j]\n                x[j] = x[j + 1]\n                x[j + 1] = t\n    return x\n',
+}
+FUZZ_SHAPES = {
+    "read": FUZZ_H + '    s = 0\n    if c:\n        m = m[:, ::2]\n    s = s + m[i % 3, 1]\n    return s\n',
+    "write": FUZZ_H + '    m = m * 1\n    if c:\n        m = m[:, ::2]\n    m[2, 1] = 100\n    return m\n',
+    "loop break": FUZZ_H + '    t = m * 1\n    for k in range(2):\n        if x[k] > 2:\n            break\n        t = m[:2] * 1\n    return t\n',
+}
+FUZZ_BRANCH_ONLY = FUZZ_H + '    if c:\n        a1 = x * 1\n        x[2] = 7\n    for k in range(2):\n        if x[k] > 2:\n            break\n        a1 = x + 0\n    return x, a1\n'
+FUZZ_X = np.array([3, -1, 4, -6, 5, 9], dtype=np.int64)
+FUZZ_M = np.array([[1, -2, 3, 0], [-4, 5, -6, 2], [7, -8, 9, -1]], dtype=np.int64)
+
+# The fuzz programs themselves, with their scalars (i, j, c, d).
+FUZZ_PROGRAMS = {
+    'fz_rebind_101_auto #1254': ('def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], i: Integer, j: Integer, c: Boolean, d: Boolean):\n    s = 0\n    m = np.expand_dims(x, 0)\n    np.putmask(x, x > 2, -2)\n    x[(i + 1) % 6] = x[-3] + -1\n    a2 = x[::2]\n    x = np.transpose(m)\n    if i > 1:\n        s = s + -9\n        if c:\n            a2[(i % 3 - 3)] *= 2\n            x = x[1:]\n    s = s + m[(i % 1 - 1), 3] + -1\n    x += 1\n    return s, x, m, a2\n', (3, 2, True, False)),
+    'fz_rebind_101_auto #1996': ('def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], i: Integer, j: Integer, c: Boolean, d: Boolean):\n    s = 0\n    m = np.flip(m)\n    if not c:\n        np.putmask(x, x > 2, -1)\n        m = m[:, ::2]\n    m[-1, (j + 1) % 4] = x[(i % 6 - 6)] + -2\n    return s, x, m\n', (0, 4, True, False)),
+    'fz_rebind_101_auto #2239': ('def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], i: Integer, j: Integer, c: Boolean, d: Boolean):\n    s = 0\n    s = s + x[(i + 0) % 6] + 2\n    x = m.copy()\n    np.putmask(m, m > 2, 5)\n    a2 = np.array(m)\n    m = np.swapaxes(a2, 0, 1)\n    if c:\n        a2[-3, -3] += x[(j % 3 - 3), -2] + 0\n        if i > 1:\n            x = a2[:, ::2]\n            m[m > 0] = -3\n    else:\n        m[(i + 1) % 4, (j + 3) % 3] *= 6\n    return s, x, m\n', (2, 1, True, True)),
+    'fz_rebind_101_auto #2746': ('def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], i: Integer, j: Integer, c: Boolean, d: Boolean):\n    s = 0\n    x = m[:, ::2]\n    np.putmask(m, m > 2, -5)\n    if i > 1:\n        m = np.atleast_1d(x)\n        for k in range(2):\n            if x[k] > 5:\n                break\n            s = s + x[(j % 3 - 3), 0] + 1\n    np.putmask(x, x > 2, 0)\n    a3 = m[1:]\n    m += 1\n    return s, x, m\n', (-3, 0, True, True)),
+    'fz_rebind_102_ram #121': ('def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], i: Integer, j: Integer, c: Boolean, d: Boolean):\n    s = 0\n    m = x[::2]\n    x[-2] *= m[(j % 3 - 3)] + 2\n    if i > 1:\n        if i > 1:\n            x = np.atleast_1d(x)\n            s = s + x[3] + 2\n        if c:\n            m = m[1:]\n            m += 1\n    return s, x, m\n', (3, 0, True, False)),
+    'fz_rebind_102_ram #261': ('def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], i: Integer, j: Integer, c: Boolean, d: Boolean):\n    s = 0\n    m[0, (j + 3) % 4] *= x[(j % 6 - 6)] + -2\n    s = s + m[0, -3] + -2\n    a1 = np.fliplr(m)\n    m += 1\n    a1[1, (i % 4 - 4)] = -7\n    np.multiply(x, 2, out=x)\n    return s, x, m\n', (1, 0, False, True)),
+    'fz_rebind_102_ram #573': ('def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], i: Integer, j: Integer, c: Boolean, d: Boolean):\n    s = 0\n    a1 = x[::2]\n    a2 = m[:, ::2]\n    s = s + 4\n    m[(i + 2) % 3, -1] = a2[-3, (i % 2 - 2)] + 1\n    if d:\n        if not c:\n            a3 = a2.copy()\n            a2 += 1\n        else:\n            m += 1\n        for k in range(2):\n            if x[k] > 0:\n                break\n            a2 = np.asarray(m)\n    a2[(i % 3 - 3), (j % 2 - 2)] = a1[(j + 2) % 3] + 2\n    s = s + x[4] + 1\n    return s, x, m, a1, a2\n', (0, 2, True, False)),
+    'fz_rebind_102_ram #1778': ('def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], i: Integer, j: Integer, c: Boolean, d: Boolean):\n    s = 0\n    m[(j + 1) % 3, (i + 3) % 4] *= -2\n    m[2, (i + 1) % 4] = x[(j + 3) % 6] + -1\n    m[(i + 3) % 3, -4] = m[(i + 0) % 3, -4] + -2\n    for k in range(2):\n        if x[k] > 6:\n            break\n        s = s + m[(i + 2) % 3, (i + 3) % 4] + -1\n    a1 = m + -2\n    if not c:\n        m = a1[:, ::2]\n        if not c:\n            s = s + a1[2, (j + 1) % 4] + -2\n            a1[(i % 3 - 3), 3] = a1[(i + 2) % 3, (j % 4 - 4)] + 0\n    m[(j % 3 - 3), (i + 3) % 2] += -9\n    return s, x, m\n', (-3, 2, False, True)),
+    'fz_rebind_102_ram #2086': ('def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], i: Integer, j: Integer, c: Boolean, d: Boolean):\n    s = 0\n    x[-6] *= 4\n    m[(j % 3 - 3), -1] *= -7\n    m += 1\n    s = s + m[(i + 1) % 3, -3] + 2\n    x[(j + 1) % 6] += -9\n    if c:\n        np.putmask(x, x > 2, 0)\n        m = m[:, ::2]\n    s = s + m[(i % 3 - 3), (i % 2 - 2)] + 1\n    return s, x, m\n', (-3, 3, True, False)),
+    'fz_rebind_103_noirram #22': ('def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], i: Integer, j: Integer, c: Boolean, d: Boolean):\n    s = 0\n    a1 = m.T\n    if not c:\n        a1 = a1 + 2\n        a1 = np.fliplr(m)\n    else:\n        if c:\n            a1[2, (j + 2) % 3] = m[-2, (i % 4 - 4)] + -2\n            s = s + a1[(j % 4 - 4), -1] + -1\n    x[x > -3] = -5\n    np.multiply(x, 2, out=x)\n    for k in range(2):\n        if x[k] > 0:\n            break\n        x = x[1:]\n    a5 = np.flip(m)\n    for k in range(2):\n        if x[k] > 6:\n            break\n        for k in range(2):\n            if x[k] > 5:\n                break\n            a1 += 1\n    return s, x, m, a5\n', (-1, 3, True, True)),
+    'fz_rebind_103_noirram #87': ('def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], i: Integer, j: Integer, c: Boolean, d: Boolean):\n    s = 0\n    if i > 1:\n        np.copyto(m, -5, where=m < 0)\n        m[0, (i % 4 - 4)] += m[(j + 3) % 3, (i + 0) % 4] + -2\n    x = m[:, ::2]\n    if i > 1:\n        s = s + -7\n        x[(i % 3 - 3), (i % 2 - 2)] *= -4\n    else:\n        x = m + 3\n    s = s + x[(j % 3 - 3), (j % 4 - 4)] + 2\n    m = np.transpose(m)\n    m[-2, 2] += m[(i % 4 - 4), (j % 3 - 3)] + -2\n    m[m > 5] = 1\n    np.multiply(m, 2, out=m)\n    return s, x, m\n', (-3, 1, False, True)),
+    'fz_rebind_103_noirram #685': ('def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], i: Integer, j: Integer, c: Boolean, d: Boolean):\n    s = 0\n    x[(j % 6 - 6)] += -3\n    if c:\n        x = np.atleast_1d(x)\n        x = m[0]\n    else:\n        m = m[:, ::2]\n    x[(j + 3) % 4] *= x[(j % 4 - 4)] + 1\n    return s, x, m\n', (-3, 2, True, False)),
+    'fz_rebind_103_noirram #1899': ('def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], i: Integer, j: Integer, c: Boolean, d: Boolean):\n    s = 0\n    m[(i % 3 - 3), (j % 4 - 4)] *= x[-3] + -2\n    s = s + m[(j % 3 - 3), -2] + 2\n    x = m[1:]\n    x[(i + 2) % 2, -3] *= x[(j + 2) % 2, (i + 2) % 4] + 1\n    if i > 1:\n        x = x[:, ::2]\n        if d:\n            x = np.array(x)\n            s = s + 2\n    m[(i % 3 - 3), 0] = m[-3, (j % 4 - 4)] + -1\n    np.copyto(m, -3, where=m < 0)\n    return s, x, m\n', (-3, 1, False, False)),
+    'fz_rebind_131_backends #405': ('def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], i: Integer, j: Integer, c: Boolean, d: Boolean):\n    s = 0\n    if c:\n        a1 = x * 1\n        x[(j + 2) % 6] += 2\n    for k in range(2):\n        if x[k] > 2:\n            break\n        a1 = x + 0\n    np.multiply(m, 2, out=m)\n    return s, x, m, a1\n', (0, 4, True, False)),
+}
+
+
+@pytest.mark.parametrize("name", list(FUZZ_STALE))
+@pytest.mark.parametrize("c", [False, True])
+def test_fuzz_an_update_keeps_the_links(name, c):
+    with pytest.raises(ZinniaException, match=STALE):
+        compile_kernel(FUZZ_STALE[name])
+
+
+@pytest.mark.parametrize("name", list(FUZZ_MATCH))
+@pytest.mark.parametrize("c", [False, True])
+def test_fuzz_controls_match_numpy(name, c):
+    assert_all_backends_match_numpy(FUZZ_MATCH[name], FUZZ_X, FUZZ_M, 1, c)
+
+
+@pytest.mark.parametrize("name", list(FUZZ_SHAPES))
+def test_fuzz_a_multidimensional_merge_of_different_shapes_is_rejected(name):
+    with pytest.raises(ZinniaException, match=SHAPES):
+        compile_kernel(FUZZ_SHAPES[name])
+
+
+def test_fuzz_a_branch_only_name_bound_again_in_a_guarded_loop_is_rejected():
+    with pytest.raises(ZinniaException, match="bound in one branch"):
+        compile_kernel(FUZZ_BRANCH_ONLY)
+
+
+@pytest.mark.parametrize("name", list(FUZZ_PROGRAMS))
+def test_fuzz_program_is_rejected_or_correct(name):
+    source, scalars = FUZZ_PROGRAMS[name]
+    try:
+        compile_kernel(source)
+    except ZinniaException:
+        return
+    assert_all_backends_match_numpy(source, FUZZ_X, FUZZ_M, *scalars)

@@ -329,6 +329,19 @@ fn select_value_of_fresh(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value
             let f2 = crate::helpers::promote::promote_static_to_dynamic_with_extents(b, fv);
             return select_value(b, cond, tv, &f2);
         }
+        // Two multi-dimensional arrays of different shapes would merge into
+        // a list of rows, which loses the array's semantics: `m[i, j]` reads
+        // row `i` and `m[i, j] = v` writes nothing. (1-D arrays of different
+        // lengths merge into a runtime-shaped array below.)
+        if let (Value::StaticArray { shape: ts, .. }, Value::StaticArray { shape: fs, .. }) = (tv, fv) {
+            if ts != fs && (ts.len() > 1 || fs.len() > 1) {
+                panic!(
+                    "a variable bound to arrays of different shapes on different paths (a runtime \
+                     condition, or a loop that may stop early) is not supported for \
+                     multi-dimensional arrays ({ts:?} and {fs:?})"
+                );
+            }
+        }
         let tv_n = crate::helpers::static_array::base::to_value_list(b, tv);
         let fv_n = crate::helpers::static_array::base::to_value_list(b, fv);
         return select_value(b, cond, &tv_n, &fv_n);

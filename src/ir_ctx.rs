@@ -10,6 +10,10 @@ pub struct IRContext {
     scopes: Vec<Scope>,
     pub recursion_depth: i32,
     unreachable_loop_bindings: HashMap<String, String>,
+    /// Names bound in only one arm of a runtime `if`, which the join drops
+    /// (Python binds them on that arm's paths only), with the index of the
+    /// scope the join happened in.
+    branch_only_bindings: Vec<(usize, String)>,
 }
 
 impl Default for IRContext {
@@ -26,6 +30,7 @@ impl IRContext {
             })],
             recursion_depth: 0,
             unreachable_loop_bindings: HashMap::new(),
+            branch_only_bindings: Vec::new(),
         }
     }
 
@@ -125,6 +130,50 @@ impl IRContext {
         self.unreachable_loop_bindings.get(key).map(String::as_str)
     }
 
+    /// Record that the join of a runtime `if` dropped `key`, bound in one
+    /// arm only.
+    pub fn mark_branch_only_binding(&mut self, key: &str) {
+        if !self.exists(key) {
+            self.branch_only_bindings.push((self.scopes.len() - 1, key.to_string()));
+        }
+    }
+
+    /// Whether `key` is unbound here but was bound in one arm of a runtime
+    /// `if` of this function (see [`Self::mark_branch_only_binding`]).
+    pub fn is_branch_only_binding(&self, key: &str) -> bool {
+        if self.exists(key) {
+            return false;
+        }
+        let function = (0..self.scopes.len()).rev().find(|&i| self.scopes[i].is_boundary()).unwrap_or(0);
+        self.branch_only_bindings.iter().any(|(scope, name)| *scope >= function && name == key)
+    }
+
+    /// Whether the current scope is a loop body's with only loops between
+    /// it and the function's own scope: a name first bound here stays bound
+    /// after the loops on every path (inside an `if`, the join drops it).
+    pub fn in_loop_body_outside_branches(&self) -> bool {
+        if !matches!(self.scopes.last(), Some(Scope::Loop(_))) {
+            return false;
+        }
+        for scope in self.scopes.iter().rev() {
+            if scope.is_boundary() {
+                return true;
+            }
+            if matches!(scope, Scope::Conditional(_)) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Pop the current scope, forgetting what was recorded about it.
+    fn pop_scope(&mut self) -> Scope {
+        let popped = self.scopes.pop().unwrap();
+        let depth = self.scopes.len();
+        self.branch_only_bindings.retain(|(scope, _)| *scope < depth);
+        popped
+    }
+
     /// Check if a variable exists in the scope chain.
     pub fn exists(&self, key: &str) -> bool {
         let n = self.scopes.len();
@@ -175,12 +224,12 @@ impl IRContext {
 
     pub fn circuit_leave(&mut self) -> Scope {
         assert!(matches!(self.scopes.last(), Some(Scope::Circuit(_))));
-        self.scopes.pop().unwrap()
+        self.pop_scope()
     }
 
     pub fn chip_leave(&mut self) -> Scope {
         assert!(matches!(self.scopes.last(), Some(Scope::Chip(_))));
-        self.scopes.pop().unwrap()
+        self.pop_scope()
     }
 
     pub fn loop_enter(&mut self) {
@@ -199,7 +248,7 @@ impl IRContext {
 
     pub fn loop_leave(&mut self) -> Scope {
         assert!(matches!(self.scopes.last(), Some(Scope::Loop(_))));
-        let popped = self.scopes.pop().unwrap();
+        let popped = self.pop_scope();
 
         // Python loop-scope semantics: names assigned in the body remain
         // visible after the loop terminates (no fresh scope per iteration).
@@ -240,7 +289,7 @@ impl IRContext {
 
     pub fn if_leave(&mut self) -> Scope {
         assert!(matches!(self.scopes.last(), Some(Scope::Conditional(_))));
-        self.scopes.pop().unwrap()
+        self.pop_scope()
     }
 
     pub fn generator_enter(&mut self) {
@@ -251,7 +300,7 @@ impl IRContext {
 
     pub fn generator_leave(&mut self) -> Scope {
         assert!(matches!(self.scopes.last(), Some(Scope::Generator(_))));
-        self.scopes.pop().unwrap()
+        self.pop_scope()
     }
 
     // ── Query helpers ─────────────────────────────────────────────────
