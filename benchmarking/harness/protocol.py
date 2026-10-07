@@ -49,6 +49,7 @@ FAILURE_CLASSES: dict[str, str] = {
     "witness_dependent": "the circuit built for input A differs from the one for input B",
     "nondeterministic_build": "a later step compiled a different circuit than setup did",
     "prove_failed": "witness generation or proving failed on input B",
+    "witness_mismatch": "Noir's artifact executor and `nargo execute` wrote different witnesses",
     "verify_failed": "the verifier rejected an honest proof",
     "wrong_output": "the proof's public outputs differ from the NumPy reference",
     "output_unchecked": "the public outputs could not be mapped onto the kernel's outputs",

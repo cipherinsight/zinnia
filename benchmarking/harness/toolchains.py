@@ -20,6 +20,10 @@ from benchmarking.harness import paths
 
 HOME = Path.home()
 
+#: The Noir release of the pinned nargo, and of `noir-execute` (built from
+#: the commit nargo reports; see `probe_noir_execute_build`).
+NOIR_VERSION = "1.0.0-beta.20"
+
 NOIR_SYSTEMS = ("zinnia_noir", "noir_hw")
 HALO2_SYSTEMS = ("zinnia_halo2", "halo2_hw")
 SP1_SYSTEMS = ("sp1", "sp1_groth16")
@@ -39,7 +43,12 @@ class Tool:
 
 TOOLS: tuple[Tool, ...] = (
     Tool("nargo", (str(HOME / ".nargo/bin/nargo"), "--version"),
-         "nargo version = 1.0.0-beta.20", NOIR_SYSTEMS),
+         f"nargo version = {NOIR_VERSION}", NOIR_SYSTEMS),
+    # Noir's artifact executor, the timed witness step of both Noir sides; built
+    # by `build --noir-execute`. It does not print its commit; the build record
+    # does (`probe_noir_execute_build`).
+    Tool("noir-execute", (str(paths.NOIR_EXECUTE_BINARY), "--version"),
+         f"noir-execute version = {NOIR_VERSION}", NOIR_SYSTEMS),
     Tool("bb", (str(HOME / ".bb/bb"), "--version"), "5.0.0-nightly.20260324", NOIR_SYSTEMS),
     # `cargo prove --version` prints a commit, not the release number; the SDK
     # version is checked in the SP1 program's Cargo.lock (see LOCKED_CRATES).
@@ -88,6 +97,10 @@ def nargo_path() -> Path:
 
 def bb_path() -> Path:
     return tool_executable("bb")
+
+
+def noir_execute_path() -> Path:
+    return tool_executable("noir-execute")
 
 
 @dataclass
@@ -149,6 +162,70 @@ def probe_locked_crate(locked: LockedCrate) -> Probe:
     return Probe(name, str(base), locked.version, "; ".join(found), status, locked.systems)
 
 
+NARGO_COMMIT = re.compile(r"git version hash: ([0-9a-f]{40}), is dirty: (true|false)")
+
+
+def nargo_commit() -> str:
+    """The Noir commit the pinned nargo was built from, as `nargo --version` prints it.
+
+    Raises `RuntimeError` when nargo cannot run, prints no commit, or was
+    built from a modified checkout.
+    """
+    try:
+        proc = subprocess.run([str(nargo_path()), "--version"], capture_output=True, text=True,
+                              timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"cannot run nargo: {exc}") from None
+    match = NARGO_COMMIT.search(proc.stdout + proc.stderr)
+    if match is None:
+        raise RuntimeError(f"nargo --version names no commit: {proc.stdout.strip()!r}")
+    if match.group(2) == "true":
+        raise RuntimeError(f"nargo was built from a modified checkout of {match.group(1)}")
+    return match.group(1)
+
+
+def read_noir_execute_record() -> dict | None:
+    path = paths.NOIR_EXECUTE_RECORD
+    return json.loads(path.read_text()) if path.is_file() else None
+
+
+def probe_noir_execute_build() -> Probe:
+    """`noir-execute` must be the recorded build of the commit nargo was built from.
+
+    The binary does not print its commit, so the build record
+    (`build --noir-execute`) carries it, with the binary's SHA-256; the
+    installed binary must still be the recorded one.
+    """
+    from benchmarking.harness.build import sha256_file  # build imports this module
+
+    name = "noir-execute (commit)"
+    record = read_noir_execute_record()
+    binary = paths.NOIR_EXECUTE_BINARY
+
+    def probe(status: str, expected: str | None, found: str) -> Probe:
+        return Probe(name, str(paths.NOIR_EXECUTE_RECORD), expected, found, status,
+                     NOIR_SYSTEMS)
+
+    try:
+        commit = nargo_commit()
+    except RuntimeError as exc:
+        return probe("missing", None, f"no commit to compare with: {exc}")
+    if record is None or not binary.is_file():
+        return probe("missing", commit, "not built (run `python -m benchmarking.harness build "
+                                        "--skip-zinnia --noir-execute`)")
+    problems = []
+    if record.get("noir_commit") != commit:
+        problems.append(f"built from {record.get('noir_commit')}, nargo is {commit}")
+    if (record.get("source") or {}).get("dirty") is not False:
+        problems.append("the recorded Noir checkout was not clean")
+    if record.get("binary_sha256") != sha256_file(binary):
+        problems.append("the installed binary is not the recorded build")
+    found = f"commit {record.get('noir_commit')}, sha256 {record.get('binary_sha256')}"
+    if problems:
+        return probe("mismatch", commit, f"{found}: {'; '.join(problems)}")
+    return probe("ok", commit, found)
+
+
 def python_packages() -> dict[str, str]:
     """Versions of the Python side (interpreter, NumPy, Z3, maturin)."""
     from importlib import metadata
@@ -163,8 +240,9 @@ def python_packages() -> dict[str, str]:
 
 
 def check_environment() -> list[Probe]:
-    """Probe every tool and locked crate."""
+    """Probe every tool, the commit of `noir-execute`, and every locked crate."""
     probes = [probe_tool(tool) for tool in TOOLS]
+    probes.append(probe_noir_execute_build())
     probes.extend(probe_locked_crate(locked) for locked in LOCKED_CRATES)
     return probes
 

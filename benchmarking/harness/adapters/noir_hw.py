@@ -83,13 +83,13 @@ def _package_name(case: PerfCase) -> str:
 
 class NoirHandwrittenAdapter(Adapter):
     name = "noir_hw"
-    description = "handwritten Noir (main.nr) -> nargo 1.0.0-beta.20 + bb UltraHonk (ZK)"
+    description = ("handwritten Noir (main.nr) -> nargo 1.0.0-beta.20 compile, noir-execute, "
+                   "bb UltraHonk (ZK)")
     windows = dict(
         setup="nargo compile + bb write_vk",
         prove_core="wall clock of the `bb prove` process (UltraHonk, ZK), including bb "
                    "start-up and CRS loading",
-        end_to_end="`nargo execute` (re-elaborates the package source, reuses setup's compiled "
-                   "ACIR, runs the ACVM: witness generation) + `bb prove`",
+        end_to_end=noir_toolchain.END_TO_END_WINDOW,
         verify="wall clock of the `bb verify` process with the setup's verification key",
     )
 
@@ -141,15 +141,15 @@ class NoirHandwrittenAdapter(Adapter):
         package = self._package(ctx)
         toml, _ = self._inputs(ctx, package, ctx.input_name)
         package.write_inputs("Prover_B", toml)
-        witness_s, witness = package.execute("Prover_B", f"witness_{ctx.proof_dir.name}")
-        if noir_toolchain.sha256_file(package.bytecode) != state["bytecode_sha256"]:
-            raise StepFailure("nondeterministic_build", "nargo execute changed the ACIR")
-        prove_s = package.prove(witness, ctx.proof_dir)
+        timings = noir_toolchain.prove_sample(package, "Prover_B",
+                                              f"witness_{ctx.proof_dir.name}", ctx.proof_dir,
+                                              state["bytecode_sha256"])
         proof_path = ctx.proof_dir / "proof"
-        return ProveResult(prove_core_s=prove_s, end_to_end_s=witness_s + prove_s,
+        return ProveResult(prove_core_s=timings.bb_prove, end_to_end_s=timings.end_to_end,
                            proof_path=str(proof_path), proof_bytes=proof_path.stat().st_size,
                            publics=self._publics(package, ctx.proof_dir),
-                           timings_s={"nargo_execute": witness_s, "bb_prove": prove_s})
+                           timings_s=timings.timings_s(),
+                           details={"witness_sha256": timings.witness_sha256})
 
     @staticmethod
     def _publics(package: noir_toolchain.NoirPackage, proof_dir: Path) -> DecodedPublics:

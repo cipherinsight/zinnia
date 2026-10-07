@@ -5,8 +5,8 @@ package per call and proves without zero knowledge). It takes the emitted
 `main.nr` from `emit_structural`, checks it is byte-identical for inputs A and
 B (the circuit must not depend on the witness), builds one package with it,
 compiles it and writes the verification key once in setup, and then proves
-input B on that package with the flags `noir_toolchain` uses for both Noir
-sides. `Prover.toml` is written from Zinnia's own witness builder, encoded the
+input B on that package the way `noir_toolchain.prove_sample` does for both
+Noir sides. `Prover.toml` is written from Zinnia's own witness builder, encoded the
 way the backend's `emit_prover_toml` encodes it (src/prove/noir/emit.rs); a
 test checks both files against what the backend stages. One known difference:
 for an input exactly half-way between two Q32 values the backend may round the
@@ -107,13 +107,13 @@ def _emit_main_nr(compiled, args: list[Any]) -> str:
 
 class ZinniaNoirAdapter(Adapter):
     name = "zinnia_noir"
-    description = "Zinnia -> Noir source -> nargo 1.0.0-beta.20 + bb UltraHonk (ZK)"
+    description = ("Zinnia -> Noir source -> nargo 1.0.0-beta.20 compile, noir-execute, "
+                   "bb UltraHonk (ZK)")
     windows = {
         "setup": "compile + emit main.nr for A and B + nargo compile + bb write_vk",
         "prove_core": "wall clock of the `bb prove` process (UltraHonk, ZK), including bb "
                       "start-up and CRS loading",
-        "end_to_end": "`nargo execute` (re-elaborates the package source, reuses setup's "
-                      "compiled ACIR, runs the ACVM: witness generation) + `bb prove`",
+        "end_to_end": noir_toolchain.END_TO_END_WINDOW,
         "verify": "wall clock of the `bb verify` process with the setup's verification key",
     }
 
@@ -145,20 +145,19 @@ class ZinniaNoirAdapter(Adapter):
         package = noir_toolchain.NoirPackage(ctx.work_dir / "package", PACKAGE_NAME)
         package.write_inputs("Prover_B", prover_toml(_witness(state["program_inputs"],
                                                                ctx.arguments())))
-        witness_s, witness = package.execute("Prover_B", f"witness_{ctx.proof_dir.name}")
-        if noir_toolchain.sha256_file(package.bytecode) != state["bytecode_sha256"]:
-            raise StepFailure("nondeterministic_build", "nargo execute changed the ACIR")
-        prove_s = package.prove(witness, ctx.proof_dir)
+        timings = noir_toolchain.prove_sample(package, "Prover_B",
+                                              f"witness_{ctx.proof_dir.name}", ctx.proof_dir,
+                                              state["bytecode_sha256"])
 
         # With no exposed output the emitter adds one synthetic public (an input
         # cell) so bb accepts the circuit; it is not an output.
         fields = noir_toolchain.public_fields(ctx.proof_dir) if state["expose_kinds"] else []
         proof_path = ctx.proof_dir / "proof"
         return ProveResult(
-            prove_core_s=prove_s, end_to_end_s=witness_s + prove_s,
+            prove_core_s=timings.bb_prove, end_to_end_s=timings.end_to_end,
             proof_path=str(proof_path), proof_bytes=proof_path.stat().st_size,
-            publics=zinnia_publics(fields, state),
-            timings_s={"nargo_execute": witness_s, "bb_prove": prove_s})
+            publics=zinnia_publics(fields, state), timings_s=timings.timings_s(),
+            details={"witness_sha256": timings.witness_sha256})
 
     def verify(self, ctx: StepContext) -> VerifyResult:
         state = ctx.load_state()

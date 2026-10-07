@@ -2,7 +2,7 @@
 
     python -m benchmarking.harness check-env [--systems S,..] [--out FILE]
     python -m benchmarking.harness build [--jobs N] [--baselines halo2_hw,sp1,risc0,cairo]
-                                         [--skip-zinnia]
+                                         [--noir-execute] [--skip-zinnia]
     python -m benchmarking.harness run --label L [--systems S,..] [--case-set FILE]
                                        [--cases ID,..] [--fixtures-dir DIR] [--repeats N]
                                        [--timeout S] [--memory-max 16G|none] [--threads N]
@@ -56,7 +56,8 @@ def cmd_check_env(args: argparse.Namespace) -> int:
 
 
 def cmd_build(args: argparse.Namespace) -> int:
-    from benchmarking.harness.build import BASELINE_BUILDS, build_baselines, build_release
+    from benchmarking.harness.build import (BASELINE_BUILDS, build_baselines, build_noir_execute,
+                                            build_release)
     baselines = _list(args.baselines)
     unknown = [b for b in baselines if b not in BASELINE_BUILDS]
     if unknown:
@@ -65,6 +66,8 @@ def cmd_build(args: argparse.Namespace) -> int:
         build_release(jobs=args.jobs)
     if baselines:
         build_baselines(baselines, jobs=args.jobs)
+    if args.noir_execute:
+        build_noir_execute(jobs=args.jobs)
     return 0
 
 
@@ -140,7 +143,10 @@ def parser() -> argparse.ArgumentParser:
     build = sub.add_parser("build", help="release build of the extension + build record")
     build.add_argument("--jobs", type=int, default=5)
     build.add_argument("--baselines", help="also build these programs: halo2_hw,sp1,risc0,cairo")
-    build.add_argument("--skip-zinnia", action="store_true", help="only build --baselines")
+    build.add_argument("--noir-execute", action="store_true",
+                       help="also build Noir's artifact executor from the commit nargo reports")
+    build.add_argument("--skip-zinnia", action="store_true",
+                       help="only build --baselines / --noir-execute")
     build.set_defaults(func=cmd_build)
 
     run = sub.add_parser("run", help="run one epoch")

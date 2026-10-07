@@ -1,21 +1,31 @@
-"""nargo and Barretenberg, driven the same way for both Noir sides.
+"""nargo, Noir's artifact executor and Barretenberg, driven the same way for both Noir sides.
 
 Both Zinnia -> Noir and the handwritten Noir baselines go through this module,
-so they use the same binaries (`toolchains.nargo_path()`, `toolchains.bb_path()`,
-never a `PATH` lookup), the same package layout (the `noir_fpc` library copied
-into the package), the same proving scheme and the same flags.
+so they use the same binaries (`toolchains.nargo_path()`,
+`toolchains.noir_execute_path()`, `toolchains.bb_path()`, never a `PATH`
+lookup), the same package layout (the `noir_fpc` library copied into the
+package), the same proving scheme and the same flags.
 
 Proofs are zero-knowledge on both sides (author's decision; audit H-08):
 UltraHonk with `--verifier_target noir-recursive` (Poseidon2 transcript, ZK).
+
+Witness generation (`prove_sample`) runs setup's compiled artifact with
+`noir-execute`, the artifact executor of nargo's Noir release. `nargo execute`
+re-elaborates the package source on every call before running the same ACIR,
+so it charges the front end to every proof; it still runs in every sample, and
+its witness must be identical, so the earlier end-to-end definition stays
+computable (`nargo_execute` + `bb_prove`).
 """
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import shutil
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from benchmarking.harness import paths, toolchains
@@ -25,6 +35,12 @@ from benchmarking.harness.outputs import fields_from_be_bytes, fields_to_be_byte
 SCHEME = "ultra_honk"
 VERIFIER_TARGET = "noir-recursive"
 BB_FLAGS = ("--scheme", SCHEME, "--verifier_target", VERIFIER_TARGET)
+#: The end-to-end window of both Noir sides (`prove_sample`).
+END_TO_END_WINDOW = ("`noir-execute` on setup's compiled artifact (runs the ACVM: witness "
+                     "generation) + `bb prove` with that witness. Every sample also runs "
+                     "`nargo execute` (re-elaborates the package source first) after "
+                     "`noir-execute` and before `bb prove`, records it as "
+                     "`timings_s.nargo_execute` and requires the same witness")
 TOOL_TIMEOUT_S = None  # the step timeout of the harness bounds every tool call
 OUTPUT_TAIL = 2000
 
@@ -100,9 +116,20 @@ class NoirPackage:
         return seconds
 
     def execute(self, prover_name: str, witness_name: str) -> tuple[float, Path]:
-        """Witness generation from `<prover_name>.toml`; the ACIR is already compiled."""
+        """`nargo execute` with `<prover_name>.toml`: elaborates the package source again,
+        checks it against the compiled artifact, then runs the ACIR."""
         seconds, _ = run_tool([str(toolchains.nargo_path()), "execute", "--prover-name",
                                prover_name, witness_name],
+                              cwd=self.directory, failure_class="prove_failed")
+        return seconds, self.target / f"{witness_name}.gz"
+
+    def execute_artifact(self, prover_name: str, witness_name: str) -> tuple[float, Path]:
+        """`noir-execute` with `<prover_name>.toml` on the compiled artifact alone."""
+        seconds, _ = run_tool([str(toolchains.noir_execute_path()),
+                               "--artifact-path", str(self.bytecode),
+                               "--prover-file", str(self.directory / f"{prover_name}.toml"),
+                               "--output-dir", str(self.target),
+                               "--witness-name", witness_name],
                               cwd=self.directory, failure_class="prove_failed")
         return seconds, self.target / f"{witness_name}.gz"
 
@@ -132,6 +159,56 @@ class NoirPackage:
                                "-w", str(witness), "-k", str(self.vk), "-o", str(out_dir),
                                *BB_FLAGS], cwd=self.directory, failure_class="prove_failed")
         return seconds
+
+
+def witness_sha256(witness: Path) -> str:
+    """SHA-256 of a witness file's decompressed content (the gzip header is not compared)."""
+    return hashlib.sha256(gzip.decompress(witness.read_bytes())).hexdigest()
+
+
+@dataclass
+class SampleTimings:
+    """The process wall clocks of one Noir prove sample, in seconds."""
+
+    noir_execute: float
+    nargo_execute: float
+    bb_prove: float
+    #: SHA-256 of the decompressed witness both executors wrote.
+    witness_sha256: str
+
+    @property
+    def end_to_end(self) -> float:
+        """Witness generation on the compiled artifact + proving."""
+        return self.noir_execute + self.bb_prove
+
+    def timings_s(self) -> dict[str, float]:
+        return {"noir_execute": self.noir_execute, "nargo_execute": self.nargo_execute,
+                "bb_prove": self.bb_prove}
+
+
+def prove_sample(package: NoirPackage, prover_name: str, witness_name: str, proof_dir: Path,
+                 bytecode_sha256: str) -> SampleTimings:
+    """One prove sample on setup's package, in the same order on both Noir sides.
+
+    1. `noir-execute` on the compiled artifact (the timed witness step);
+    2. `nargo execute` on the same inputs (recorded as `nargo_execute`, the
+       witness step of the earlier end-to-end definition);
+    3. the compiled artifact must still be setup's, and the two witnesses
+       must be identical once decompressed;
+    4. `bb prove` with the witness of step 1.
+    """
+    execute_s, witness = package.execute_artifact(prover_name, witness_name)
+    nargo_s, nargo_witness = package.execute(prover_name, f"{witness_name}_nargo")
+    if sha256_file(package.bytecode) != bytecode_sha256:
+        raise StepFailure("nondeterministic_build", "nargo execute changed the ACIR")
+    digest = witness_sha256(witness)
+    nargo_digest = witness_sha256(nargo_witness)
+    if digest != nargo_digest:
+        raise StepFailure("witness_mismatch", f"noir-execute wrote witness {digest}, nargo "
+                          f"execute {nargo_digest} (SHA-256 of the decompressed files)")
+    prove_s = package.prove(witness, proof_dir)
+    return SampleTimings(noir_execute=execute_s, nargo_execute=nargo_s, bb_prove=prove_s,
+                         witness_sha256=digest)
 
 
 def public_fields(proof_dir: Path) -> list[int]:
