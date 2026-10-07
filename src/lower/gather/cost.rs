@@ -150,15 +150,17 @@ pub(super) fn element_by_onehot(n: u64, onehot_is_free: bool, target: Target) ->
 /// reads in the whole program (they share its equality tests): a select
 /// chain over the index's bits `[i == 1..n)` (`element::gather_by_select_chain`).
 /// `checked_below_n`: the program checks `AssertU128Lt(i, n)`. halo2-base
-/// then turns a chain of at least three links into an inner product, one
-/// multiply-add per link (`prove/halo2_base/synthesizer/plan.rs`,
-/// `OneHotChain`); otherwise each link is a select gate.
+/// then turns a chain of at least three links into an inner product over
+/// the links' bits and the bit of the value no link tests (one more
+/// equality test, shared like the others), one multiply-add per term
+/// (`prove/halo2_base/synthesizer/plan.rs`, `OneHotChain`); otherwise each
+/// link is a select gate.
 pub(super) fn element_by_select_chain(n: u64, index_reads: u64, checked_below_n: bool, target: Target) -> u64 {
     let u = element_units(target);
     let links = n.saturating_sub(1);
     let fused = target == Target::Halo2Base && checked_below_n && links >= 3;
-    let link = if fused { u.mul_add } else { u.select_var };
-    (links * u.eq_const).div_ceil(index_reads.max(1)) + links * link
+    let (tests, link_cost) = if fused { (links + 1, (links + 1) * u.mul_add) } else { (links, links * u.select_var) };
+    (tests * u.eq_const).div_ceil(index_reads.max(1)) + link_cost
 }
 
 /// One read of `n` cells at an index read `index_reads` times (see

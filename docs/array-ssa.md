@@ -515,7 +515,9 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
   (`costs_step4d.json`): 334 of 356 unchanged, 19 cheaper (0381 halo2 -2,007; insertion_sort
   halo2 -10,075 at the base's k, Noir -1,031; periodic_dist -9,237 / -729; lu, make_decision,
   projection_simplex, clip, 0450, 0383, 0298, value_index), 3 costlier on halo2 by 15-17 cells
-  (0345, 0346, 0347: reads of a column at a runtime index, see "Open").
+  (0345, 0346, 0347: reads of a column at a runtime index, fixed after the merge with
+  eval-refactor 35c86a81, see "Open"). After it (`costs_calib.json` against `costs_base35c.json`):
+  337 unchanged, 19 cheaper, none costlier.
 
 - Step 5: `AllocateMemory`, `WriteMemory`, `ReadMemory`, `ReadTable`, `MemoryTraceEmit/Seal`,
   `DynamicNDArrayGetItem/SetItem` deleted with their builder API (`ir_*_memory`: callers use the
@@ -537,8 +539,8 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
   candidate still prices its table group's fixed columns itself) and the RAM construction's
   per-axis facts as postconditions (no case needs them); `ElementOfWrite` stays (it applies to
   any select pattern a program builds, and costs nothing when it does not).
-- 0345-0347 (+15, +17, +17 halo2 cells): the selection now prices the column reads alone (the
-  writes fold away) and prefers the pinned-sign wrap with select chains (estimate 198) over the
-  position one-hot with recorded one-hot reads (estimate 210); emitted, the second is 15-17 cells
-  cheaper (forcing it reproduces the base exactly). A calibration of the gather costs, not of
-  this design.
+- (resolved) 0345-0347 were 15-17 halo2-base cells over the base: the writes fold away, the
+  selection priced the column reads alone, and its estimate of a select chain over a bounded index
+  (fused by halo2-base into an inner product) counted one term per link where the backend emits
+  one more (the value no link tests). Priced as emitted (`gather::cost::element_by_select_chain`),
+  the position one-hot wins and all three equal the base.

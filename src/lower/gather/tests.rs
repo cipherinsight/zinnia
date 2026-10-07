@@ -467,24 +467,24 @@ fn reads_at_one_index(rows: usize, cols: usize) -> IRGraph {
 }
 
 #[test]
-fn reads_sharing_an_index_are_inner_products_on_noir_and_select_chains_on_halo2_base() {
-    // 0345's column read: 8 rows of 6 cells at one column index. On Noir a
-    // select of two variable branches is two gates and a multiply-add one,
-    // so the shared indicators win; halo2-base already turns a select chain
-    // over a bounded index into an inner product, one equality test fewer.
+fn reads_sharing_an_index_are_inner_products_of_the_wraps_one_hot() {
+    // 0345's column read: 8 rows of 6 cells at one column index. The wrap
+    // is the pinned position one-hot (`lower::memory::wrap`) and its bits
+    // are the reads' one-hot: no select at all (the only equality tests are
+    // its `sum == 1` and its wrap relation), and it proves the index's
+    // range, so no range check remains. On Noir a select of two variable
+    // branches is two gates and a multiply-add one; on halo2-base a select
+    // chain over the index's equality bits becomes an inner product of one
+    // more term than it has links (`plan::OneHotChain`), 15 cells more than
+    // the one-hot here (0345: 3,224 against 3,209).
     let graph = reads_at_one_index(8, 6);
     let count = |g: &IRGraph, f: fn(&IR) -> bool| g.stmts.iter().filter(|s| f(&s.ir)).count();
-    let noir = pass(&graph, Target::Noir);
-    // On Noir the wrap is the pinned position one-hot (`lower::memory::wrap`):
-    // no select at all, and its bits are the reads' one-hot (the only
-    // equality tests are its `sum == 1` and its wrap relation); it proves the
-    // index's range, so no range check remains.
-    assert_eq!(count(&noir, |ir| matches!(ir, IR::SelectI)), 0, "no select");
-    assert_eq!(count(&noir, |ir| matches!(ir, IR::EqI)), 2, "the reads use the wrap's one-hot");
-    assert_eq!(count(&noir, |ir| matches!(ir, IR::AssertU128Lt)), 0, "the range check is replaced");
-    let halo2 = pass(&graph, Target::Halo2Base);
-    assert_eq!(count(&halo2, |ir| matches!(ir, IR::SelectI)), 1 + 8 * 5);
-    assert_eq!(count(&halo2, |ir| matches!(ir, IR::EqI)), 5);
+    for target in [Target::Noir, Target::Halo2Base] {
+        let lowered = pass(&graph, target);
+        assert_eq!(count(&lowered, |ir| matches!(ir, IR::SelectI)), 0, "{target:?}: no select");
+        assert_eq!(count(&lowered, |ir| matches!(ir, IR::EqI)), 2, "{target:?}: the reads use the wrap's one-hot");
+        assert_eq!(count(&lowered, |ir| matches!(ir, IR::AssertU128Lt)), 0, "{target:?}: the range check is replaced");
+    }
 }
 
 /// The cells of `a[w] = v` (the frontend's one-hot write: cell `k` is
