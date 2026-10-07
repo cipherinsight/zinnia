@@ -315,14 +315,13 @@ def test_mixed_runtime_index_read_out_of_range_is_rejected(i, j):
 
 
 def test_mixed_runtime_index_read_selects_one_axis_at_a_time():
-    # Each output a[i, r, j] reads along j within each of the 3 rows (i', r)
-    # by a select chain (5 - 1 selects per row), then along i by an inner
-    # product with i's equality indicators (3 of them, shared by all four
-    # outputs; cheaper than 3 - 1 selects per output): 3 * 4 selects per
-    # output and no conjunction of the two axes' tests per candidate.
+    # Each output a[i, r, j] reads along j within each of the 3 rows (i', r),
+    # then along i: no conjunction of the two axes' tests per candidate, and
+    # each index's selectors built once for all four outputs (with position
+    # one-hots, 3 + 5 hinted bits).
     classes = ir_classes(compile_kernel(GATHER_3D))
     assert "LogicalAndIR" not in classes
-    assert classes.count("SelectFIR") == 4 * (3 * 4)
+    assert classes.count("HintIR") <= 3 + 5
 
 
 def test_mixed_runtime_index_read_halo2_base_matches_mock():
