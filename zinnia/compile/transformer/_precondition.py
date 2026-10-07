@@ -428,6 +428,10 @@ def _build_numeric_term(
             )
         lhs, lhs_kind = _build_numeric_term(node.left, fn_param_names, dbg, fn_param_types)
         rhs, rhs_kind = _build_numeric_term(node.right, fn_param_names, dbg, fn_param_types)
+        if op == "Div":
+            # True division is a float whatever its operands (Python); the
+            # circuit and the SMT facts both compute it as one.
+            return _build_arith(op, lhs, rhs), "Float"
         kind = _combine_numeric_kinds(lhs_kind, rhs_kind, node, dbg)
         return _build_arith(op, lhs, rhs), kind
     raise InvalidProgramException(

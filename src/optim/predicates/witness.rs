@@ -480,13 +480,19 @@ where
         ContractTerm::Arith { op, lhs, rhs } => {
             let l = emit_int_term(b, lhs, name_lookup)?;
             let r = emit_int_term(b, rhs, name_lookup)?;
+            // `/` is true division (a float), as in Python and in the
+            // predicate's facts (`formula::lower`).
+            if *op == ArithOp::Div {
+                let (l, r) = (b.ir_float_cast(&l), b.ir_float_cast(&r));
+                return Ok(b.ir_div_f(&l, &r));
+            }
             let ir = match (&l, &r) {
                 (Value::Integer(_) | Value::Boolean(_), Value::Integer(_) | Value::Boolean(_)) => {
                     match op {
                         ArithOp::Add => IR::AddI,
                         ArithOp::Sub => IR::SubI,
                         ArithOp::Mul => IR::MulI,
-                        ArithOp::Div => IR::DivI,
+                        ArithOp::Div => unreachable!("true division is handled above"),
                         ArithOp::FloorDiv => IR::FloorDivI,
                         ArithOp::Mod => IR::ModI,
                         ArithOp::Pow => IR::PowI,

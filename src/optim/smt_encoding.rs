@@ -190,7 +190,7 @@ pub trait IROp {
 /// `fresh_unconstrained()` with a comment naming the reason.
 /// For `a` and `b`: (whether the floor result differs from the
 /// Euclidean one, i.e. `b < 0` and `a mod b != 0`; the Euclidean `a mod b`).
-fn floor_adjustment(a: &Int, b: &Int) -> (Bool, Int) {
+pub(crate) fn floor_adjustment(a: &Int, b: &Int) -> (Bool, Int) {
     let zero = Int::from_i64(0);
     let r = a.modulo(b);
     let shift = Bool::and(&[&b.lt(&zero), &r.eq(&zero).not()]);
@@ -229,10 +229,16 @@ impl IROp for IR {
             // Euclidean remainder, the floor quotient is one less and the
             // remainder `mod + b`. `DivI` is exact division, where all
             // conventions agree.
+            // `DivI` is exact division in the field: `a / b` when `b`
+            // divides `a`, else the field element `a * b^-1`, which is no
+            // integer of the window. Only the first case is encoded; the
+            // other is left unconstrained.
             IR::DivI => {
                 let a = args[0].as_int();
                 let b = args[1].as_int();
-                Z3Term::Int(a.div(&b))
+                let zero = Int::from_i64(0);
+                let exact = Bool::and(&[&b.eq(&zero).not(), &a.modulo(&b).eq(&zero)]);
+                Z3Term::Int(exact.ite(&a.div(&b), &Int::fresh_const("div_i_inexact_")))
             }
             IR::FloorDivI | IR::FloorDivIPinned { .. } => {
                 let a = args[0].as_int();
