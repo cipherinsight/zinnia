@@ -16,11 +16,14 @@ For every `perf` case of the case sets and each target:
 
 Costs are the measured ones: halo2-base advice + lookup cells at the `k` that
 `estimate_params` picks (a forced construction can change `k`, and with it the lookup
-width), and Noir `bb gates`. A forced construction that applies to only some groups of
+width), and Noir `bb gates`. On halo2-base the verdict is also given in `poly_cost`
+(committed polynomials x 2^k, `poly_*` keys), the size model that counts the columns of
+fixed overheads (a verifier challenge, lookup tables) the cell count does not see. A forced construction that applies to only some groups of
 its family is reported with `applied` < `groups` (the rest keep the layer's choice).
 
     python benchmarking/ablations/oracle.py --out oracle.json [--case-sets ds1000,npbench_pythran]
-        [--cases ...] [--targets halo2,noir] [--jobs 8] [--timeout 1200] [--wrap "..."]
+        [--cases ...] [--targets halo2,noir] [--jobs 8] [--timeout 1200]
+        [--wrap "python benchmarking/ablations/capped.py 8G 1100"]
 """
 
 from __future__ import annotations
@@ -54,16 +57,17 @@ def applied(layer: dict, family: str, name: str) -> tuple[int, int]:
     return sum(name in g["chosen"] for g in groups), len(groups)
 
 
-def verdict(default_cost: int | None, forced: dict[str, dict]) -> dict:
-    costs = {name: r["cost"] for name, r in forced.items() if r["cost"] is not None}
+def verdict(default_cost: int | None, forced: dict[str, dict], key: str = "cost", prefix: str = "") -> dict:
+    """The best and worst forced construction by `key` against the compiler's choice."""
+    costs = {name: r[key] for name, r in forced.items() if r.get(key) is not None}
     if default_cost is None or not costs:
-        return {"best": None, "worst": None, "beaten": None}
+        return {f"{prefix}best": None, f"{prefix}worst": None, f"{prefix}beaten": None}
     best = min(costs, key=lambda n: (costs[n], n))
     worst = max(costs, key=lambda n: (costs[n], n))
-    return {"best": [best, costs[best]], "worst": [worst, costs[worst]],
-            "beaten": costs[best] < default_cost,
-            "best_over_default": round(costs[best] / default_cost, 4) if default_cost else None,
-            "worst_over_default": round(costs[worst] / default_cost, 4) if default_cost else None}
+    return {f"{prefix}best": [best, costs[best]], f"{prefix}worst": [worst, costs[worst]],
+            f"{prefix}beaten": costs[best] < default_cost,
+            f"{prefix}best_over_default": round(costs[best] / default_cost, 4),
+            f"{prefix}worst_over_default": round(costs[worst] / default_cost, 4)}
 
 
 def main() -> int:
@@ -102,7 +106,9 @@ def main() -> int:
     results: dict = {}
     for i, (set_name, case, _, target) in enumerate(cases):
         default = defaults[i]
-        row = {"default": {"cost": common.cost_of(default, target), "ir": default.get("ir"),
+        row = {"default": {"cost": common.cost_of(default, target),
+                           "poly_cost": common.cost_of(default, target, "poly_cost"),
+                           "ir": default.get("ir"),
                            "k": default.get("k"), "error": default.get("error"),
                            "chosen": default.get("layer", {}).get("chosen")},
                "families": {}}
@@ -112,7 +118,8 @@ def main() -> int:
         row = results[set_name][case][target]
         uses, groups = applied(record.get("layer", {}), family, name)
         row["families"].setdefault(family, {"alternatives": {}})["alternatives"][name] = {
-            "cost": common.cost_of(record, target), "k": record.get("k"), "ir": record.get("ir"),
+            "cost": common.cost_of(record, target), "poly_cost": common.cost_of(record, target, "poly_cost"),
+            "k": record.get("k"), "ir": record.get("ir"),
             "applied": uses, "groups": groups, "error": record.get("error")}
     beaten = []
     for set_name, per_case in results.items():
@@ -120,13 +127,18 @@ def main() -> int:
             for target, row in per_target.items():
                 for family, entry in row["families"].items():
                     entry.update(verdict(row["default"]["cost"], entry["alternatives"]))
+                    if target == "halo2":
+                        entry.update(verdict(row["default"]["poly_cost"], entry["alternatives"],
+                                             "poly_cost", "poly_"))
                     if entry["beaten"]:
-                        beaten.append((case, target, family, entry["best"], row["default"]["cost"]))
+                        poly = f" (poly cost: {'also beaten' if entry.get('poly_beaten') else 'not beaten'})" \
+                            if target == "halo2" else ""
+                        beaten.append((case, target, family, entry["best"], row["default"]["cost"], poly))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(results, indent=1, sort_keys=True) + "\n")
     compared = sum(len(r["families"]) for per in results.values() for t in per.values() for r in t.values())
-    for case, target, family, best, cost in beaten:
-        print(f"BEATEN {case} {target} {family}: {best[0]} {best[1]} < selected {cost}")
+    for case, target, family, best, cost, poly in beaten:
+        print(f"BEATEN {case} {target} {family}: {best[0]} {best[1]} < selected {cost}{poly}")
     print(f"{len(beaten)} of {compared} (case, target, family) comparisons have a cheaper forced "
           f"construction; {len(cases)} case-targets, {len(forced_jobs)} forced compiles")
     return 0

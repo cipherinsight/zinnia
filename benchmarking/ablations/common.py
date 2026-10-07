@@ -8,7 +8,10 @@ configuration's environment variables set (they are read by the compiler itself,
 * `ir`: SHA-256 (16 hex digits) of the exported IR statements, as
   `benchmarking/determinism.py` computes it;
 * halo2: `cells` = advice + lookup cells at the `k` that `estimate_params` picks,
-  with `k` and `lookup_bits` (`halo2_base_cell_stats`, witness-free);
+  with `k`, `lookup_bits` and `poly_cost` (committed polynomials x 2^k, the size model
+  `estimate_params` minimises; it also counts the columns that fixed overheads such as
+  a verifier challenge or a lookup table add, which cells do not see)
+  (`halo2_base_cell_stats`, witness-free);
 * noir: `noir` = SHA-256 (16 hex digits) of the emitted `main.nr` (input B), and with
   gates on, `gates` = `bb gates` circuit size (`noir_gates.gate_count`);
 * `layer`: what the array-lowering layer chose (`summarize_report`).
@@ -92,7 +95,8 @@ def measure(kernel: str, fixture_path: str, function: str, target: str, gates: b
         from zinnia._zinnia_core import halo2_base_cell_stats
         stats = json.loads(halo2_base_cell_stats(compiled._compiled_ir))
         record.update(cells=stats["advice"] + stats["lookup"], advice=stats["advice"],
-                      lookup=stats["lookup"], k=stats["k"], lookup_bits=stats["lookup_bits"])
+                      lookup=stats["lookup"], k=stats["k"], lookup_bits=stats["lookup_bits"],
+                      poly_cost=stats.get("poly_cost"))
     else:
         fixture = load_fixture(Path(fixture_path))
         source = compiled.emit_structural(*fixture.arguments("B"), backend="noir")
@@ -122,7 +126,11 @@ def child_main(argv: list[str]) -> int:
 def run_child(entry: dict, target: str, env: dict[str, str], gates: bool, timeout: float,
               wrap: list[str]) -> dict:
     """Measure one case and target in a child process with `env` added to the
-    environment; the layer report is collected and summarized."""
+    environment; the layer report is collected and summarized.
+
+    `wrap` (a memory cap such as `capped.py MEM SECONDS`) should enforce its own
+    timeout below `timeout`: on this process's timeout only the wrapper is killed, and
+    a wrapper that runs its command in a session of its own leaves it running."""
     kernel, fixture, function = case_files(entry)
     with tempfile.TemporaryDirectory(prefix="zinnia-ablation-") as tmp:
         report = Path(tmp) / "layer.jsonl"
@@ -184,11 +192,11 @@ def summarize_report(lines: list[str]) -> dict:
             "native_memory": native, "fallback": fallback, "estimated_cost": estimated}
 
 
-def cost_of(record: dict, target: str) -> int | None:
-    """The measured cost: halo2-base cells, or Noir gates."""
+def cost_of(record: dict, target: str, metric: str = "cells") -> int | None:
+    """The measured cost: halo2-base cells (or `metric`, e.g. `poly_cost`), or Noir gates."""
     if "error" in record:
         return None
-    return record.get("cells") if target == "halo2" else record.get("gates")
+    return record.get(metric) if target == "halo2" else record.get("gates")
 
 
 if __name__ == "__main__" and sys.argv[1:2] == ["--child"]:

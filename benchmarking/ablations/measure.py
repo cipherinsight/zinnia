@@ -12,7 +12,7 @@ and for a named fixed configuration the groups that kept the layer's choice
     python benchmarking/ablations/measure.py --config abl_joint --out abl_joint.json \\
         [--case-sets ds1000,npbench_pythran] [--cases 0345,pythran_lu__factorMatrix0] \\
         [--targets halo2,noir] [--gates] [--jobs 8] [--timeout 1200] \\
-        [--wrap "python benchmarking/ablations/capped.py 8G none"]
+        [--wrap "python benchmarking/ablations/capped.py 8G 1100"]
 
 The output maps case set -> case -> target -> record (`common.measure`), with the
 configuration and its environment under `"config"`.

@@ -38,10 +38,10 @@ case $c in
   fix_selects) env=(ZINNIA_FORCE_CONSTRUCTION=@selects) ;;
   oracle)
     echo "== oracle $(date -Is)"
-    $PY "$S/oracle.py" --jobs "$JOBS" --wrap "$CAP 8G none" --out "$OUT/oracle.json" > "$OUT/oracle.log" 2>&1
+    $PY "$S/oracle.py" --jobs "$JOBS" --timeout 3700 --wrap "$CAP 24G 3600" --out "$OUT/oracle.json" > "$OUT/oracle.log" 2>&1
     echo "oracle exit $? $(date -Is)"; tail -n 1 "$OUT/oracle.log"; exit 0 ;;
   noir_hw)
-    $PY benchmarking/noir_gates.py --baselines --jobs "$JOBS" --wrap "$CAP 8G 1200" \
+    $PY benchmarking/noir_gates.py --baselines --jobs "$JOBS" --timeout 1300 --wrap "$CAP 8G 1200" \
       --out "$OUT/noir_hw.json" > "$OUT/noir_hw.log" 2>&1
     echo "noir_hw exit $?"; exit 0 ;;
   *) echo "unknown config $c" >&2; exit 2 ;;
@@ -51,9 +51,9 @@ env "${env[@]}" $PY -m benchmarking.harness.costs_halo2 \
   --halo2-bin "$WT/benchmarking/baselines/halo2_hw/target/release/halo2_hw" \
   --out "$OUT/costs_$c.json" > "$OUT/costs_$c.log" 2>&1
 echo "costs exit $? $(date -Is)"; tail -n 1 "$OUT/costs_$c.log"
-env "${env[@]}" $PY benchmarking/noir_gates.py --zinnia --jobs "$JOBS" --wrap "$CAP 8G 1200" \
+env "${env[@]}" $PY benchmarking/noir_gates.py --zinnia --jobs "$JOBS" --timeout 3700 --wrap "$CAP 24G 3600" \
   --out "$OUT/gates_$c.json" > "$OUT/gates_$c.log" 2>&1
 echo "gates exit $? $(date -Is)"
-$PY "$S/measure.py" --config "$c" --gates --jobs "$JOBS" --wrap "$CAP 8G none" \
+$PY "$S/measure.py" --config "$c" --gates --timeout 3700 --jobs "$JOBS" --wrap "$CAP 24G 3600" \
   --out "$OUT/measure_$c.json" > "$OUT/measure_$c.log" 2>&1
 echo "measure exit $? $(date -Is)"; tail -n 1 "$OUT/measure_$c.log"
