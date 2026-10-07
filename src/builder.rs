@@ -8,6 +8,8 @@ use crate::types::{NumberType, ScalarValue, StmtId, StringValue, Value};
 
 mod arrays;
 mod store;
+mod stale;
+pub use stale::COPIED_VIEW;
 mod fixed_width;
 mod bool_dtype;
 mod same_value;

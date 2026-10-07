@@ -585,6 +585,50 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
     noir_differential 100/100; costs_halo2 `--check` 100/100; Python suite 3,686 passed; Rust
     lib the known 18 failures; determinism 200/200 and 158/158 stable over 3 processes.
 
+- Second soundness review fixes (branch `array-ssa-fix2`,
+  `eval-redo/layer/array-ssa-review/REVIEW-2.md`; regression tests
+  `testing/lang/test_array_ssa_review2.py`, every `r2/q_*.py` reproducer on the mock,
+  halo2-base and Noir):
+  - N1-N4 (stale copies read through a method call, written through `out=` without a
+    record, nested more than one container deep, or read by a merge). The detached-copy
+    bookkeeping moved into the store (`builder/stale.rs`), so one place sees every read and
+    one place every write. A link `(copy, base)` is kept between storages NumPy would share.
+    A store write (`note_storage_written`) marks every storage linked to its target stale,
+    and so does an update that rebinds a name to a new storage (`note_storage_replaced`).
+    Every read of a storage's cells (`known_cells`, `storage_read*`, ...) rejects a stale
+    storage with a compile error, whatever syntax reached it. Staleness is
+    path-qualified: a storage is stale on the conjunctions of literals of the writes'
+    execution predicates. A read is rejected when one of them can hold with the read's own
+    predicate, which keeps the "elif rebind" pattern of F1 compiling. A merge
+    (`select_value`) reads its operands without the check and carries their staleness to
+    its result, conjoined with the branch condition or its negation, so a merged stale
+    value is rejected only when it is read.
+  - N5: `np.asarray(x, dtype=d)`, `np.array(x, copy=False | None)` and
+    `x.astype(d, copy=False)` return `x` when `d` is `x`'s own exact dtype (bool, int64, a
+    fixed-width integer). Zinnia has one float dtype for every float width (and one complex
+    dtype), so for a float or complex `d` it cannot tell whether NumPy copies. It converts
+    and links the result as a view, so a write through either array makes reading the other
+    a compile error. `copy=False` where a copy may be needed is a compile error (NumPy
+    raises `ValueError`).
+  - N6: `IRContext::set` wrote an assignment in a loop into the nearest scope holding the
+    name. When that scope lay outside an enclosing `else`/`elif` branch, the branch merge
+    then overwrote the value with the other branch's. The write now goes into the innermost
+    conditional scope between the loop and the owner. Tested with `while`, nested loops,
+    `break`, `continue`, `return` and loops in every branch.
+  - N7: a merge of a sequence (an array's elements, as a list or tuple) with a number is a
+    compile error. The two values have different shapes, and the merge used to take the
+    true side on every path; a loop that may break before rebinding a name reaches it, the
+    `if` check for different ranks does not.
+  - N8: a reshape that copies a non-contiguous array is linked to its source when NumPy's
+    no-copy reshape (`_attempt_nocopy_reshape`, ported as `reshapes_without_copy`) would
+    succeed. Writes through either array are then compile errors.
+  - N9: `np.real` / `np.imag` of a list or tuple (what a merged complex array is) take the
+    part of each element.
+  - N10: the results of `np.broadcast_to` and of the imaginary part of a real array are
+    read-only storages. A write to one is a compile error, as NumPy raises.
+  - N11: `np.expand_dims` of a runtime-shaped array exposed the old rank statement when the
+    rank was not a constant; the rank is static and is stated as such.
+
 ### Open
 - Dynamic-array lanes beyond the runtime length: `1.0 / x[x > 0]` and `x[x > 0] ** -1.5` used to
   be compile errors (the division's or power's precondition could not be stated over the

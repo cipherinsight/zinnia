@@ -7,6 +7,7 @@ use super::IRGenerator;
 
 mod builtins;
 mod array_compat;
+pub(crate) use array_compat::astype_without_copy;
 mod array_iteration;
 mod dynamic_array_compat;
 mod linalg_norm;
@@ -127,12 +128,14 @@ impl IRGenerator {
                     "imag" => {
                         let total: usize = shape.iter().product();
                         let zero = self.builder.ir_constant_float(0.0);
-                        return crate::helpers::static_array::base::build_static_array_from_flat(
+                        let zeros = crate::helpers::static_array::base::build_static_array_from_flat(
                             &mut self.builder,
                             vec![zero; total],
                             shape,
                             crate::types::NumberType::Float,
                         );
+                        self.builder.mark_read_only_in(&zeros, READ_ONLY_RESULT);
+                        return zeros;
                     }
                     _ => {}
                 }
@@ -234,6 +237,11 @@ impl IRGenerator {
         } else {
             value
         };
+        // NumPy returns these read-only: a write to them raises.
+        let real_argument = ctx.args_orig.first().is_some_and(|a| !is_complex_value(a));
+        if ctx.member == "broadcast_to" || (ctx.member == "imag" && real_argument) {
+            self.builder.mark_read_only_in(&value, READ_ONLY_RESULT);
+        }
         // NumPy answers these with a view of their first argument: where
         // Zinnia's result is a copy, writes through either one are tracked
         // (`detached_copies`).
@@ -406,12 +414,14 @@ impl IRGenerator {
                     if let Value::StaticArray { shape, .. } = &target_orig {
                         let total: usize = shape.iter().product();
                         let zero = self.builder.ir_constant_float(0.0);
-                        return crate::helpers::static_array::base::build_static_array_from_flat(
+                        let zeros = crate::helpers::static_array::base::build_static_array_from_flat(
                             &mut self.builder,
                             vec![zero; total],
                             shape.clone(),
                             crate::types::NumberType::Float,
                         );
+                        self.builder.mark_read_only_in(&zeros, READ_ONLY_RESULT);
+                        return zeros;
                     }
                 }
                 _ => {}
@@ -503,6 +513,10 @@ impl IRGenerator {
             "astype" => {
                 let dtype = visited_args_orig.first().or_else(|| visited_kwargs_orig.get("dtype"))
                     .expect("astype requires a dtype");
+                if array_compat::astype_without_copy(&visited_kwargs_orig) {
+                    let dtype = crate::helpers::dtype::Dtype::required(dtype, "astype");
+                    return self.as_dtype_without_copy(&target_orig, Some(dtype), false, "astype");
+                }
                 array_compat::astype(&mut self.builder, &target_orig, dtype)
             }
             "ndim" => {
@@ -763,3 +777,18 @@ const RETURNS_A_VIEW: &[&str] = &[
     "atleast_1d", "atleast_2d", "atleast_3d", "expand_dims", "flip", "fliplr", "flipud",
     "moveaxis", "rot90", "squeeze", "swapaxes", "transpose",
 ];
+
+/// Why a result NumPy returns read-only cannot be written.
+const READ_ONLY_RESULT: &str = "NumPy returns this array read-only (`np.broadcast_to`, or the \
+     `imag` of a real array) and raises `ValueError` on a write to it; write to a copy instead";
+
+/// Whether `v` is a complex number or array.
+fn is_complex_value(v: &Value) -> bool {
+    match v {
+        Value::Complex { .. } => true,
+        Value::StaticArray { dtype, .. } => *dtype == crate::types::NumberType::Complex,
+        Value::DynamicNDArray(data) => data.dtype == crate::types::NumberType::Complex,
+        Value::List(d) | Value::Tuple(d) => d.values.iter().any(is_complex_value),
+        _ => false,
+    }
+}

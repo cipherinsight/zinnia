@@ -183,6 +183,10 @@ impl IRGenerator {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
                 let dtype = visited_args_orig.first().or_else(|| visited_kwargs_orig.get("dtype"))
                     .expect("astype requires a dtype");
+                if super::array_compat::astype_without_copy(visited_kwargs_orig) {
+                    let dtype = crate::helpers::dtype::Dtype::required(dtype, "astype");
+                    return Some(self.as_dtype_without_copy(&val, Some(dtype), false, "astype"));
+                }
                 super::array_compat::astype(&mut self.builder, &val, dtype)
             }
             "argmax" | "argmin" => {

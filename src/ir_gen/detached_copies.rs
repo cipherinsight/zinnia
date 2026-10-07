@@ -14,12 +14,16 @@
 //!
 //! A copy and the array it was taken from are *detached*: after a write to
 //! either one, the other no longer holds what NumPy would show. This module
-//! records detached pairs and, after every write, marks every segment still
-//! linked to the written one as *stale*. Reading a name whose array lives in
-//! a stale segment is a compile-time error, so such a program is rejected
-//! instead of proving a result NumPy would not compute.
-
-use std::collections::{BTreeSet, HashMap};
+//! decides which pairs are detached and records them in the array store
+//! (`IRBuilder::link_storages`). The store does the rest in one place each:
+//! every write to a storage (any syntax: assignment, `op=`, `out=`, a
+//! helper, a method) marks every storage linked to it *stale*, and every
+//! read of a stale storage's cells (a name, a method call, an element of a
+//! nested container, a merge's operand, an output) is a compile-time error,
+//! so such a program is rejected instead of proving a result NumPy would not
+//! compute. A merge of a stale value carries the staleness over to its
+//! result (`helpers::value_ops::select_value`), so a merge that is never
+//! read costs nothing.
 
 use crate::types::{SliceIndex, Value};
 
@@ -37,14 +41,7 @@ enum Link {
 impl Link {
     fn stale_reason(self) -> &'static str {
         match self {
-            Link::View => {
-                "it is linked by NumPy view semantics to an array that was modified afterwards, \
-                 but Zinnia had to copy it (the view's position depends on a private index, it \
-                 is a reversed or runtime-bounded slice, or it is the result of a function \
-                 NumPy returns a view from, such as `np.flip` or `np.rot90`), so it would not \
-                 show the modification. Index the original array directly instead of keeping \
-                 the view."
-            }
+            Link::View => crate::builder::COPIED_VIEW,
             Link::PathDependentAlias => {
                 "a name that refers to this array on some paths and to another array on others \
                  (bound under a runtime condition) was used to modify one of them; which array \
@@ -52,41 +49,6 @@ impl Link {
                  arrays under the condition instead (`if c: a[i] = v else: b[i] = v`)."
             }
         }
-    }
-}
-
-/// Detached (copy, base) segment pairs and the segments made stale by later
-/// writes.
-#[derive(Debug, Default)]
-pub(crate) struct DetachedCopies {
-    pairs: Vec<(u32, u32, Link)>,
-    stale: HashMap<u32, &'static str>,
-}
-
-impl DetachedCopies {
-    /// Segments connected to `segment` through detached pairs (transitively),
-    /// excluding `segment` itself, with the kind of the first link that
-    /// reached each.
-    fn linked(&self, segment: u32) -> Vec<(u32, Link)> {
-        let mut seen = BTreeSet::from([segment]);
-        let mut frontier = vec![segment];
-        let mut found = Vec::new();
-        while let Some(current) = frontier.pop() {
-            for &(copy, base, link) in &self.pairs {
-                let other = if copy == current {
-                    base
-                } else if base == current {
-                    copy
-                } else {
-                    continue;
-                };
-                if seen.insert(other) {
-                    found.push((other, link));
-                    frontier.push(other);
-                }
-            }
-        }
-        found
     }
 }
 
@@ -116,7 +78,7 @@ impl IRGenerator {
             return;
         };
         if base_segment != result_segment && is_basic_indexing(indices) {
-            self.detached_copies.pairs.push((result_segment, base_segment, Link::View));
+            self.builder.link_storages(result_segment, base_segment, Link::View.stale_reason());
         }
     }
 
@@ -130,8 +92,46 @@ impl IRGenerator {
             return;
         };
         if base_segment != result_segment {
-            self.detached_copies.pairs.push((result_segment, base_segment, Link::View));
+            self.builder.link_storages(result_segment, base_segment, Link::View.stale_reason());
         }
+    }
+
+    /// `x` (an array) as `dtype` where NumPy copies only when it must
+    /// (`np.asarray(x, dtype)`, `np.array(x, dtype, copy=None)`,
+    /// `x.astype(dtype, copy=False)`; `dtype` `None`: no conversion): `x`
+    /// itself when the dtype is `x`'s own, a converted copy otherwise. Zinnia
+    /// knows an integer or bool array's NumPy dtype exactly, but not a float
+    /// or complex array's width (float32 and float64 are both Q32), so for
+    /// those it cannot tell whether NumPy returns `x`: it returns a copy
+    /// linked to `x` as a view (a write through either one, then a read of
+    /// the other, is a compile error). With `must_not_copy`
+    /// (`np.array(x, copy=False)`), a conversion NumPy must copy for raises
+    /// `ValueError`, as does one Zinnia cannot decide.
+    pub(crate) fn as_dtype_without_copy(
+        &mut self,
+        x: &Value,
+        dtype: Option<crate::helpers::dtype::Dtype>,
+        must_not_copy: bool,
+        context: &str,
+    ) -> Value {
+        use crate::helpers::dtype::Dtype;
+        let Some(dtype) = dtype else { return x.clone() };
+        let own = crate::helpers::dtype::element_dtype(&mut self.builder, x);
+        let exact = matches!(own, Dtype::Bool | Dtype::Int64 | Dtype::FixedInt(_));
+        if own == dtype && exact {
+            return x.clone();
+        }
+        if must_not_copy {
+            panic!(
+                "{context}: copy=False needs the array's own dtype, and Zinnia cannot tell that \
+                 {dtype:?} is (NumPy raises ValueError when a copy is needed); drop copy=False"
+            );
+        }
+        let converted = crate::helpers::dtype::convert(&mut self.builder, x, dtype);
+        if own == dtype {
+            self.record_view_result(x, &converted);
+        }
+        converted
     }
 
     /// Record `merged = select(c, a, b)` for a name bound to `a` on one path
@@ -146,9 +146,7 @@ impl IRGenerator {
             return;
         }
         for source_segment in source_segments {
-            self.detached_copies
-                .pairs
-                .push((merged_segment, source_segment, Link::PathDependentAlias));
+            self.builder.link_storages(merged_segment, source_segment, Link::PathDependentAlias.stale_reason());
         }
     }
 
@@ -181,24 +179,20 @@ impl IRGenerator {
         }
     }
 
-    /// Note a write into the memory of `written` (an array value): every
-    /// array detached from it no longer matches NumPy.
+    /// Note an update of the array `written` whose new contents may live in
+    /// another storage (a rebinding update): its links become stale as after
+    /// a store write. (Writes into a storage are noted by the store itself.)
     pub(crate) fn note_array_write(&mut self, written: &Value) {
-        let Some(segment) = array_segment(written) else { return };
-        for (other, link) in self.detached_copies.linked(segment) {
-            self.detached_copies.stale.entry(other).or_insert(link.stale_reason());
+        if let Some(segment) = array_segment(written) {
+            self.builder.note_storage_replaced(segment);
         }
     }
 
-    /// Reject reading `name` when its value (or an array inside it) lives in
-    /// a stale segment.
-    pub(crate) fn check_not_stale(&self, name: &str, value: &Value) {
-        let stale_reason = |v: &Value| array_segment(v).and_then(|s| self.detached_copies.stale.get(&s));
-        let reason = match value {
-            Value::List(data) | Value::Tuple(data) => data.values.iter().find_map(stale_reason),
-            other => stale_reason(other),
-        };
-        if let Some(reason) = reason {
+    /// Reject reading `name` when its value (or an array at any depth inside
+    /// it) lives in a stale storage. The store rejects the read of the cells
+    /// anyway; this check names the variable in the error.
+    pub(crate) fn check_not_stale(&mut self, name: &str, value: &Value) {
+        if let Some(reason) = self.builder.stale_reason_in(value) {
             panic!("Reading `{}` is not supported here: {}", name, reason);
         }
     }

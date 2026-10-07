@@ -20,6 +20,12 @@ mod iteration;
 mod list_methods;
 mod list_sharing;
 mod named_attr;
+
+/// Whether `astype(..., copy=False)` (see `named_attr`), for the
+/// runtime-shaped arrays' method dispatch.
+pub(crate) fn named_attr_astype_without_copy(kwargs: &std::collections::HashMap<String, crate::types::Value>) -> bool {
+    named_attr::astype_without_copy(kwargs)
+}
 pub mod outputs;
 mod preconditions;
 mod visitors;
@@ -150,8 +156,6 @@ pub struct IRGenerator {
     pub(crate) induction_origins: HashMap<String, String>,
     pub(crate) loop_index_bound_contexts: Vec<LoopIndexBoundContext>,
     pub(crate) loop_read_reuse_contexts: Vec<LoopReadReuseContext>,
-    /// Copies made where NumPy would return a view (see `detached_copies`).
-    pub(crate) detached_copies: detached_copies::DetachedCopies,
     /// Where every public output value comes from (see `outputs`).
     pub(crate) output_layout: outputs::OutputLayout,
     /// The array arguments of an in-place kernel (one that returns no
@@ -274,7 +278,6 @@ impl IRGenerator {
             induction_origins: HashMap::new(),
             loop_index_bound_contexts: Vec::new(),
             loop_read_reuse_contexts: Vec::new(),
-            detached_copies: detached_copies::DetachedCopies::default(),
             output_layout: outputs::OutputLayout::default(),
             in_place_arguments: Vec::new(),
             in_place_body_start: 0,

@@ -238,6 +238,35 @@ fn merge_dynamic_arrays(
 
 /// Conditional select: if cond { tv } else { fv }, with element-wise support.
 pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> Value {
+    // A stale operand (an array that no longer holds what NumPy would show,
+    // `builder/store.rs`) is read here without an error, and its staleness
+    // carried over to the matching part of the result: reading the result
+    // is the error (the merge may never be read).
+    if !b.has_stale(tv) && !b.has_stale(fv) {
+        return select_value_of_fresh(b, cond, tv, fv);
+    }
+    let out = b.with_stale_reads(|b| select_value_of_fresh(b, cond, tv, fv));
+    carry_staleness(b, cond, tv, fv, &out);
+    out
+}
+
+/// Mark the parts of `out` (a merge of `tv` and `fv`) stale where the
+/// matching part of the operand it takes is: element by element through
+/// lists and tuples of one length, and the whole of any other part.
+fn carry_staleness(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value, out: &Value) {
+    match (tv, fv, out) {
+        (Value::List(t) | Value::Tuple(t), Value::List(f) | Value::Tuple(f), Value::List(o) | Value::Tuple(o))
+            if t.values.len() == o.values.len() && f.values.len() == o.values.len() =>
+        {
+            for ((t, f), o) in t.values.iter().zip(&f.values).zip(&o.values) {
+                carry_staleness(b, cond, t, f, o);
+            }
+        }
+        _ => b.carry_merge_staleness(cond, tv, fv, out),
+    }
+}
+
+fn select_value_of_fresh(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> Value {
     if std::env::var("ZINNIA_DEBUG_SELECT_VALUE").is_ok() {
         eprintln!("[select_value] tv={:?} fv={:?}", tv.zinnia_type(), fv.zinnia_type());
     }
@@ -365,8 +394,19 @@ pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> 
             let fdyn = crate::helpers::promote::promote_static_to_dynamic(b, fv);
             select_value(b, cond, &tdyn, &fdyn)
         }
-        // Composite vs scalar: no meaningful merge; keep the legacy
-        // true-side fallback.
+        // A sequence (an array's elements) against a number: the two values
+        // have different shapes (`m = x[::2]` in a loop that may break before
+        // it, with `m` a 2-D array), which no merged value represents. It
+        // used to take the true side on every path.
+        (Value::List(_) | Value::Tuple(_), Value::Integer(_) | Value::Float(_) | Value::Boolean(_) | Value::Complex { .. })
+        | (Value::Integer(_) | Value::Float(_) | Value::Boolean(_) | Value::Complex { .. }, Value::List(_) | Value::Tuple(_)) => {
+            panic!(
+                "a variable bound to arrays of different shapes on different paths (a runtime \
+                 condition, or a loop that may stop early) is not supported"
+            )
+        }
+        // Composite vs another kind of value: no meaningful merge; keep the
+        // legacy true-side fallback.
         (Value::List(_) | Value::Tuple(_), _) | (_, Value::List(_) | Value::Tuple(_)) => tv.clone(),
         // Complex (2-cell) values: select per component. Promote any
         // numeric scalar on either side to Complex first.

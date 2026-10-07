@@ -123,7 +123,7 @@ impl IRBuilder {
     /// (through double negations, which the loop scope builds for item
     /// activity), statically true leaves dropped, as sorted statement ids.
     /// `p` implies `q` whenever `atoms(q) ⊆ atoms(p)`.
-    fn predicate_atoms(&mut self, p: &Value) -> Rc<[StmtId]> {
+    pub(super) fn predicate_atoms(&mut self, p: &Value) -> Rc<[StmtId]> {
         let Some(root) = p.stmt_id() else {
             return Rc::from(Vec::new());
         };

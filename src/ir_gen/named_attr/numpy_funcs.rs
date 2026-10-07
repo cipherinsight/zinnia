@@ -878,6 +878,27 @@ fn np_indices(b: &mut crate::builder::IRBuilder, args: &[Value]) -> Value {
     )
 }
 
+/// `np.real` (`imag` false) or `np.imag` of a (nested) sequence of numbers,
+/// as NumPy computes it: an array of each element's part. (`np.real` of the
+/// merge of two complex arrays, which is a list of complex numbers, used to
+/// return the list itself, which exposes both parts of every element.)
+fn complex_part_of_sequence(b: &mut crate::builder::IRBuilder, seq: &Value, imag: bool) -> Value {
+    fn part(b: &mut crate::builder::IRBuilder, v: &Value, imag: bool) -> Value {
+        match v {
+            Value::Complex { real, imag: im } => Value::Float(if imag { im.clone() } else { real.clone() }),
+            Value::List(data) | Value::Tuple(data) => {
+                let values: Vec<Value> = data.values.iter().map(|e| part(b, e, imag)).collect();
+                let types = values.iter().map(|e| e.zinnia_type()).collect();
+                Value::List(crate::types::CompositeData { elements_type: types, values, value_id: crate::types::ValueId::next() })
+            }
+            Value::Integer(_) | Value::Float(_) | Value::Boolean(_) if imag => b.ir_constant_float(0.0),
+            other => other.clone(),
+        }
+    }
+    let parts = part(b, seq, imag);
+    crate::helpers::static_array::base::to_static_array(b, &parts).unwrap_or(parts)
+}
+
 /// How `np.atleast_{n}d` answers an array argument as a view.
 enum AtleastView {
     /// The array itself (its rank is at least `n`).
@@ -994,6 +1015,9 @@ impl IRGenerator {
                             &d,
                         )
                     }
+                    // A sequence (e.g. the merge of two complex arrays under
+                    // a runtime condition): the real part of each element.
+                    seq @ (Value::List(_) | Value::Tuple(_)) => complex_part_of_sequence(&mut self.builder, &seq, false),
                     // For real inputs, real is the identity.
                     other => other,
                 }
@@ -1029,6 +1053,7 @@ impl IRGenerator {
                     Value::Integer(_) | Value::Float(_) | Value::Boolean(_) => {
                         self.builder.ir_constant_float(0.0)
                     }
+                    seq @ (Value::List(_) | Value::Tuple(_)) => complex_part_of_sequence(&mut self.builder, &seq, true),
                     other => other,
                 }
             }
@@ -1036,23 +1061,38 @@ impl IRGenerator {
             ("np", "pi") | ("math", "pi") => self.builder.ir_constant_float(std::f64::consts::PI),
             ("np", "e") | ("math", "e") => self.builder.ir_constant_float(std::f64::consts::E),
             ("np", "asarray" | "array") => {
-                // An array argument: `np.asarray(x)` is `x` itself and
-                // `np.array(x)` a copy (also when a `dtype` changes nothing:
-                // then `np.asarray` is still `x`).
+                // An array argument: `np.asarray(x)` (and `np.array(x,
+                // copy=None)`) is `x` itself unless the dtype needs a copy;
+                // `np.array(x)` (`copy=True`) always copies; `np.array(x,
+                // copy=False)` raises where a copy is needed (NumPy 2).
                 let dtype = visited_args_orig.get(1).or_else(|| visited_kwargs_orig.get("dtype")).filter(|d| !matches!(d, Value::None));
                 if let Some(arr @ (Value::StaticArray { .. } | Value::DynamicNDArray(_))) = visited_args_orig.first() {
-                    let converted = match dtype {
-                        Some(dtype) => {
-                            let dtype = Dtype::required(dtype, &format!("np.{member}"));
-                            crate::helpers::dtype::convert(&mut self.builder, arr, dtype)
-                        }
-                        None => arr.clone(),
+                    let context = format!("np.{member}");
+                    let dtype = dtype.map(|d| Dtype::required(d, &context));
+                    let copy = match (member, visited_kwargs_orig.get("copy")) {
+                        ("asarray", None) => Some(false),
+                        (_, None) => Some(true),
+                        (_, Some(Value::None)) => None,
+                        (_, Some(flag)) => Some(
+                            flag.bool_val()
+                                .or_else(|| flag.int_val().map(|v| v != 0))
+                                .unwrap_or_else(|| panic!("{context}: copy= must be a compile-time True, False or None")),
+                        ),
                     };
-                    let same = super::super::detached_copies::array_segment(&converted) == super::super::detached_copies::array_segment(arr);
-                    return Some(if member == "array" && same {
-                        super::array_compat::copy_array(&mut self.builder, &converted)
-                    } else {
-                        converted
+                    return Some(match copy {
+                        Some(true) => {
+                            let converted = match dtype {
+                                Some(dtype) => crate::helpers::dtype::convert(&mut self.builder, arr, dtype),
+                                None => arr.clone(),
+                            };
+                            let same = super::super::detached_copies::array_segment(&converted)
+                                == super::super::detached_copies::array_segment(arr);
+                            if same { super::array_compat::copy_array(&mut self.builder, &converted) } else { converted }
+                        }
+                        // `asarray` without `copy=`, or `copy=None`.
+                        None => self.as_dtype_without_copy(arr, dtype, false, &context),
+                        Some(false) if member == "asarray" => self.as_dtype_without_copy(arr, dtype, false, &context),
+                        Some(false) => self.as_dtype_without_copy(arr, dtype, true, &context),
                     });
                 }
                 // np.asarray(x) — pass through if already a composite

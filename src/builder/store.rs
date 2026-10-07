@@ -46,6 +46,15 @@ pub(crate) struct Storage {
     /// For the real-part storage of a static complex array, the storage of
     /// its imaginary parts (same addresses).
     imag: Option<u32>,
+    /// For the imaginary-part storage of a static complex array, its
+    /// real-part storage (the array's identity).
+    pub(super) real: Option<u32>,
+    /// Where the cells no longer hold what NumPy would show
+    /// (`builder/stale.rs`).
+    pub(super) stale: super::stale::Staleness,
+    /// Why the array is read-only, when NumPy makes it so (`np.broadcast_to`,
+    /// the `imag` of a real array): a write to it is a compile error.
+    pub(super) read_only: Option<&'static str>,
 }
 
 enum State {
@@ -66,6 +75,11 @@ pub(crate) struct ArrayStore {
     next_id: u32,
     /// Writes so far (every write to any storage ticks it).
     write_clock: u64,
+    /// Detached pairs `(copy, base, why)`: storages Python would share and
+    /// Zinnia keeps apart (`builder/stale.rs`).
+    pub(super) links: Vec<(u32, u32, &'static str)>,
+    /// Reads of stale storages allowed (inside `IRBuilder::with_stale_reads`).
+    pub(super) stale_reads_allowed: u32,
 }
 
 /// The element type of a storage of `dtype` cells.
@@ -108,7 +122,7 @@ impl IRBuilder {
         let id = self.store.next_id;
         self.store.next_id += 1;
         self.track_storage_alloc(id, &cells, zero_filled);
-        self.store.storages.insert(id, Storage { elem, state: State::Cells(cells), cell_bounds: None, last_write: 0, imag: None });
+        self.store.storages.insert(id, Storage { elem, state: State::Cells(cells), cell_bounds: None, last_write: 0, imag: None, real: None, stale: Default::default(), read_only: None });
         id
     }
 
@@ -117,6 +131,7 @@ impl IRBuilder {
     pub fn pair_complex_storages(&mut self, real: u32, imag: u32) {
         assert_eq!(self.storage_len(real), self.storage_len(imag), "complex parts of one length");
         self.storage_mut(real).imag = Some(imag);
+        self.storage_mut(imag).real = Some(real);
     }
 
     /// The imaginary-part storage paired with `storage` (a static complex
@@ -129,6 +144,7 @@ impl IRBuilder {
     /// a runtime position happened), with no IR; `None` otherwise. The cells
     /// of a complex pair's real storage are complex values.
     pub fn known_cells(&mut self, storage: u32) -> Option<Vec<Value>> {
+        self.check_readable(storage);
         self.force_pending_cells(storage);
         let State::Cells(cells) = &self.storage(storage).state else { return None };
         let cells = cells.clone();
@@ -140,6 +156,7 @@ impl IRBuilder {
     /// The cell at `address` when the compiler knows the storage's cells
     /// (see [`Self::known_cells`]); `None` otherwise or past the end.
     pub fn known_cell(&mut self, storage: u32, address: usize) -> Option<Value> {
+        self.check_readable(storage);
         self.force_pending_cells(storage);
         let State::Cells(cells) = &self.storage(storage).state else { return None };
         let cell = cells.get(address)?.clone();
@@ -152,6 +169,10 @@ impl IRBuilder {
     /// storage whose cells are a deferred product), for a reader that cannot
     /// build IR. Not complex-aware: the real part's cell.
     pub fn known_cell_now(&self, storage: u32, address: usize) -> Option<&Value> {
+        // A stale storage's cells are read through the checked readers.
+        if !self.storage(self.storage_owner(storage)).stale.is_empty() {
+            return None;
+        }
         if self.static_array_product_provenance.contains_key(&storage) {
             return None;
         }
@@ -197,6 +218,13 @@ impl IRBuilder {
     /// When the address is outside the storage (a compiler error: the
     /// frontend reads constant addresses it computed from the shape).
     pub fn storage_read(&mut self, storage: u32, address: usize) -> Value {
+        self.check_readable(storage);
+        self.read_cell(storage, address)
+    }
+
+    /// [`Self::storage_read`] without the stale check: for a write's own
+    /// read of the cell it changes.
+    fn read_cell(&mut self, storage: u32, address: usize) -> Value {
         self.force_pending_cells(storage);
         let len = self.storage_len(storage);
         assert!(address < len, "a read of cell {address} of an array of {len} cells");
@@ -224,6 +252,7 @@ impl IRBuilder {
     /// storage, guarded into range where the code does not run). The caller
     /// has checked it where the read runs.
     pub fn storage_read_at(&mut self, storage: u32, address: &Value) -> Value {
+        self.check_readable(storage);
         if let Some(a) = address.int_val() {
             return self.storage_read(storage, usize::try_from(a).expect("a non-negative address"));
         }
@@ -246,6 +275,7 @@ impl IRBuilder {
     ///   row-major combined index (the known cells, or the version's cells at
     ///   constant addresses).
     pub fn storage_read_positions(&mut self, storage: u32, offset: usize, axes: &[(usize, usize)], positions: &[Value]) -> Value {
+        self.check_readable(storage);
         self.force_pending_cells(storage);
         assert_eq!(axes.len(), positions.len(), "one position per axis");
         let mut base = offset;
@@ -329,7 +359,7 @@ impl IRBuilder {
             self.write_cell(storage, base, value, condition);
             return;
         }
-        let Some(predicate) = self.write_condition(storage, condition) else { return };
+        let Some(predicate) = self.write_condition(condition) else { return };
         let len = self.storage_len(storage);
         let elem = self.storage(storage).elem;
         let value = self.stored_as(elem, value);
@@ -359,8 +389,8 @@ impl IRBuilder {
         self.force_pending_cells(storage);
         let len = self.storage_len(storage);
         assert!(address < len, "a write of cell {address} of an array of {len} cells");
-        let Some(predicate) = self.write_condition(storage, condition) else {
-            return self.storage_read(storage, address);
+        let Some(predicate) = self.write_condition(condition) else {
+            return self.read_cell(storage, address);
         };
         let elem = self.storage(storage).elem;
         let value = self.stored_as(elem, value);
@@ -370,7 +400,7 @@ impl IRBuilder {
                 let stored = match &predicate {
                     None => value,
                     Some(p) => {
-                        let old = self.storage_read(storage, address);
+                        let old = self.read_cell(storage, address);
                         self.select_cell_value(elem, p, &value, &old)
                     }
                 };
@@ -382,7 +412,7 @@ impl IRBuilder {
             State::Version { .. } => {
                 let access = ArrayAccess::constant(len as u32, elem, address as u32);
                 self.write_version(storage, access, &[], &value, predicate.as_ref());
-                self.storage_read(storage, address)
+                self.read_cell(storage, address)
             }
         }
     }
@@ -421,6 +451,7 @@ impl IRBuilder {
         self.store.write_clock += 1;
         let clock = self.store.write_clock;
         self.storage_mut(storage).last_write = clock;
+        self.propagate_write_to_links(storage);
     }
 
     // ── Internals ──────────────────────────────────────────────────────
@@ -452,11 +483,11 @@ impl IRBuilder {
         self.storage_mut(storage).state = State::Cells(cells);
     }
 
-    fn storage(&self, storage: u32) -> &Storage {
+    pub(super) fn storage(&self, storage: u32) -> &Storage {
         self.store.storages.get(&storage).unwrap_or_else(|| panic!("array storage {storage} does not exist"))
     }
 
-    fn storage_mut(&mut self, storage: u32) -> &mut Storage {
+    pub(super) fn storage_mut(&mut self, storage: u32) -> &mut Storage {
         self.store.storages.get_mut(&storage).unwrap_or_else(|| panic!("array storage {storage} does not exist"))
     }
 
@@ -479,7 +510,7 @@ impl IRBuilder {
     }
 
     /// [`Self::storage_write_predicate`] conjoined with `condition`.
-    fn write_condition(&mut self, storage: u32, condition: Option<&Value>) -> Option<Option<Value>> {
+    fn write_condition(&mut self, condition: Option<&Value>) -> Option<Option<Value>> {
         let predicate = self.storage_write_predicate()?;
         let Some(condition) = condition else { return Some(predicate) };
         match (constant_truth(condition), predicate) {
@@ -544,6 +575,10 @@ impl IRBuilder {
     /// from the old contents are dropped (provenance invariant #4), and a
     /// fixed-width array accepts only values of its type.
     fn note_storage_write(&mut self, storage: u32, value: &Value) {
+        let owner = self.storage_owner(storage);
+        if let Some(why) = self.storage(owner).read_only {
+            panic!("assignment destination is read-only: {why}");
+        }
         self.provenance.on_segment_write(storage);
         self.storage_mut(storage).cell_bounds = None;
         self.track_storage_write(storage, value);

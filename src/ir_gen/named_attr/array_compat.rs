@@ -296,6 +296,18 @@ pub(super) fn reduction(b: &mut IRBuilder, op: &str, args: &[Value], kwargs: &Ha
 }
 
 /// `x.astype(dtype)`: `x` converted into the dtype (`helpers::dtype`).
+/// Whether `x.astype(..., copy=False)`: NumPy then returns `x` itself when
+/// the dtype is its own (`IRGenerator::as_dtype_without_copy`).
+pub(crate) fn astype_without_copy(kwargs: &HashMap<String, Value>) -> bool {
+    match kwargs.get("copy") {
+        None => false,
+        Some(flag) => !flag
+            .bool_val()
+            .or_else(|| flag.int_val().map(|v| v != 0))
+            .unwrap_or_else(|| panic!("astype: copy= must be a compile-time True or False")),
+    }
+}
+
 pub(super) fn astype(b: &mut IRBuilder, input: &Value, dtype: &Value) -> Value {
     let dtype = crate::helpers::dtype::Dtype::required(dtype, "astype");
     crate::helpers::dtype::convert(b, input, dtype)

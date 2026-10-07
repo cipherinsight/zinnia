@@ -361,10 +361,11 @@ pub fn dyn_expand_dims(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Val
         .cloned()
         .unwrap_or_else(|| ScalarValue::new(Some(1), None));
     rt_strides.insert(axis, ins);
-    let runtime_rank = ScalarValue::new(
-        data.meta.runtime_rank.static_val.map(|r| r + 1),
-        data.meta.runtime_rank.stmt_id,
-    );
+    // The rank is static (as `dyn_squeeze` states it). It used to add 1 to
+    // the static value only, keeping the statement of a merged rank as is,
+    // so the output layout exposed the old rank with the new dimensions
+    // (review finding N11).
+    let runtime_rank = ScalarValue::new(Some(shape.len() as i64), None);
 
     Value::DynamicNDArray(DynamicNDArrayData {
         envelope,

@@ -186,7 +186,7 @@ pub fn try_apply_reshape(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Opti
         let new_strides = row_major_strides(&target);
         Value::StaticArray {
             dtype,
-            shape: target,
+            shape: target.clone(),
             segment_id,
             strides: new_strides,
             offset,
@@ -210,16 +210,68 @@ pub fn try_apply_reshape(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Opti
             }
         }
         crate::helpers::static_array::base::build_static_array_from_flat_complex(
-            b, reals, imags, target,
+            b, reals, imags, target.clone(),
         )
     } else {
         let flat = materialise_to_flat(b, val);
-        build_static_array_from_flat(b, flat, target, dtype)
+        build_static_array_from_flat(b, flat, target.clone(), dtype)
     };
+    // A copy of a non-contiguous array that NumPy reshapes as a view (a
+    // strided slice or a column to the same number of elements per axis
+    // run): link it, so a write through either one makes the other stale.
+    if let Value::StaticArray { segment_id: out_segment, .. } = &out {
+        if *out_segment != segment_id && reshapes_without_copy(&shape, &strides, &target) {
+            b.link_storages(*out_segment, segment_id, crate::builder::COPIED_VIEW);
+        }
+    }
     if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
         crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
     }
     Some(out)
+}
+
+/// Whether NumPy reshapes an array of `shape` and element `strides` to
+/// `target` without a copy (a view): NumPy's `_attempt_nocopy_reshape` for C
+/// order. Axes of length 1 are dropped; every run of old axes that the new
+/// shape merges or splits must be contiguous within itself.
+fn reshapes_without_copy(shape: &[usize], strides: &[usize], target: &[usize]) -> bool {
+    if shape.iter().product::<usize>() == 0 {
+        return true;
+    }
+    let (olddims, oldstrides): (Vec<usize>, Vec<usize>) =
+        shape.iter().zip(strides).filter(|(d, _)| **d != 1).map(|(d, s)| (*d, *s)).unzip();
+    let newdims: Vec<usize> = target.to_vec();
+    let (oldnd, newnd) = (olddims.len(), newdims.len());
+    let (mut oi, mut oj, mut ni, mut nj) = (0usize, 1usize, 0usize, 1usize);
+    while ni < newnd && oi < oldnd {
+        let mut np = newdims[ni];
+        let mut op = olddims[oi];
+        while np != op {
+            if np < op {
+                if nj >= newnd {
+                    return false;
+                }
+                np *= newdims[nj];
+                nj += 1;
+            } else {
+                if oj >= oldnd {
+                    return false;
+                }
+                op *= olddims[oj];
+                oj += 1;
+            }
+        }
+        for ok in oi..oj - 1 {
+            if oldstrides[ok] != olddims[ok + 1] * oldstrides[ok + 1] {
+                return false;
+            }
+        }
+        ni = nj;
+        nj += 1;
+        oi = oj;
+        oj += 1;
+    }
+    true
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -1113,6 +1165,35 @@ mod tests {
             .collect();
         let lst = list_of(row_lists);
         super::super::base::to_static_array(b, &lst).expect("StaticArray")
+    }
+
+    /// NumPy's answers (`np.shares_memory(a, a.reshape(t))`) for strided
+    /// arrays: element strides as Zinnia keeps them.
+    #[test]
+    fn reshapes_without_copy_matches_numpy() {
+        // x[::2] of 6 elements: shape (3,), stride 2.
+        assert!(reshapes_without_copy(&[3], &[2], &[3]));
+        assert!(reshapes_without_copy(&[3], &[2], &[3, 1]));
+        assert!(reshapes_without_copy(&[3], &[2], &[1, 3, 1]));
+        // m[:, 1] of a 3x4 array: shape (3,), stride 4.
+        assert!(reshapes_without_copy(&[3], &[4], &[3, 1]));
+        // m.T of a 3x4 array: shape (4, 3), strides (1, 4).
+        assert!(reshapes_without_copy(&[4, 3], &[1, 4], &[4, 3]));
+        assert!(!reshapes_without_copy(&[4, 3], &[1, 4], &[3, 4]));
+        assert!(!reshapes_without_copy(&[4, 3], &[1, 4], &[12]));
+        assert!(reshapes_without_copy(&[4, 3], &[1, 4], &[2, 2, 3]));
+        // m[:, ::2] of a 3x4 array: shape (3, 2), strides (4, 2), a uniform
+        // stride of 2.
+        assert!(reshapes_without_copy(&[3, 2], &[4, 2], &[6]));
+        assert!(reshapes_without_copy(&[3, 2], &[4, 2], &[2, 3]));
+        assert!(reshapes_without_copy(&[3, 2], &[4, 2], &[3, 2, 1]));
+        // m[::2] of a 4x3 array: shape (2, 3), strides (6, 1).
+        assert!(!reshapes_without_copy(&[2, 3], &[6, 1], &[6]));
+        assert!(reshapes_without_copy(&[2, 3], &[6, 1], &[2, 3, 1]));
+        assert!(!reshapes_without_copy(&[2, 3], &[6, 1], &[3, 2]));
+        // Contiguous arrays always reshape without a copy.
+        assert!(reshapes_without_copy(&[2, 3, 4], &[12, 4, 1], &[6, 4]));
+        assert!(reshapes_without_copy(&[2, 3, 4], &[12, 4, 1], &[4, 6]));
     }
 
     #[test]

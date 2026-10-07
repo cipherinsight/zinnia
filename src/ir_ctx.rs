@@ -32,20 +32,35 @@ impl IRContext {
     // ── Variable access ───────────────────────────────────────────────
 
     /// Set a variable in the current scope.
-    /// For LoopScope: if the variable exists in a parent scope, update it there.
+    ///
+    /// Inside a loop, an assignment to a name bound outside the loop updates
+    /// that binding (Python has no per-iteration scope), so the next
+    /// iteration and the code after the loop see it. The update goes up the
+    /// scope chain to the scope holding the name, but never past a
+    /// conditional scope: a branch's bindings are joined with the other
+    /// branch's when the `if` ends (`merge_conditional_branch_bindings`), so
+    /// a write inside a branch must land in that branch's own scope. (It
+    /// used to go straight to the scope outside the `if`; the join then
+    /// replaced it with the other branch's value, so `if c: s = s + 100
+    /// else: for k in range(2): s = s + 1` gave 0, not 2, where `c` is
+    /// false: review finding N6.)
     pub fn set(&mut self, key: &str, val: Value) {
         self.unreachable_loop_bindings.remove(key);
         let store = ValueStore::new(val);
         let n = self.scopes.len();
 
-        // LoopScope: if var exists in parent, set it in parent.
-        // This ensures mutations inside while blocks propagate to the loop variable.
-        // ConditionalScope writes stay local — the IR generator emits `select` to merge.
         if matches!(&self.scopes[n - 1], Scope::Loop(_)) {
+            // The innermost conditional scope between the loop and the scope
+            // holding the name, if any.
+            let mut branch: Option<usize> = None;
             for i in (0..n - 1).rev() {
                 if self.scopes[i].exists_local(key) {
-                    self.scopes[i].set_local(key.to_string(), store);
+                    let target = branch.unwrap_or(i);
+                    self.scopes[target].set_local(key.to_string(), store);
                     return;
+                }
+                if branch.is_none() && matches!(self.scopes[i], Scope::Conditional(_)) {
+                    branch = Some(i);
                 }
                 if self.scopes[i].is_boundary() {
                     break;

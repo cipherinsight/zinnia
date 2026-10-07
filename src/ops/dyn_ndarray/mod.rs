@@ -276,12 +276,24 @@ impl IRGenerator {
             "size" => metadata::dyn_size(&mut self.builder, &data),
 
             // Simple value ops
+            "astype" if crate::ir_gen::named_attr_astype_without_copy(kwargs) => {
+                let dtype = args.first().or_else(|| kwargs.get("dtype")).expect("astype requires a dtype");
+                let dtype = crate::helpers::dtype::Dtype::required(dtype, "astype");
+                self.as_dtype_without_copy(&val, Some(dtype), false, "astype")
+            }
             "astype" => metadata::dyn_astype(&mut self.builder, &data, args),
             "flatten" => metadata::dyn_flatten_to_list(&mut self.builder, &data),
             "flat" => metadata::dyn_flat(&mut self.builder, &data),
             "tolist" => metadata::dyn_tolist(&mut self.builder, &data),
             "real" => metadata::dyn_complex_real(&mut self.builder, &data),
-            "imag" => metadata::dyn_complex_imag(&mut self.builder, &data),
+            "imag" => {
+                let imag = metadata::dyn_complex_imag(&mut self.builder, &data);
+                if data.dtype != crate::types::NumberType::Complex {
+                    // NumPy's `imag` of a real array is read-only.
+                    self.builder.mark_read_only_in(&imag, "NumPy returns the `imag` of a real array read-only and raises `ValueError` on a write to it");
+                }
+                imag
+            }
             "conjugate" | "conj" => metadata::dyn_complex_conjugate(&mut self.builder, &data),
             // NumPy views; a layout Zinnia cannot give as one (a runtime-
             // strided buffer) is a copy, linked to the array so that writes
