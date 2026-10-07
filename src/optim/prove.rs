@@ -97,36 +97,33 @@ pub fn prove(b: &IRBuilder, term: &ContractTerm) -> ProveOutcome {
     if crate::optim::resolver::req_disabled() {
         return ProveOutcome::Unknown;
     }
-    let facts = b
-        .facts
-        .visible_facts()
-        .into_iter()
-        .cloned()
-        .collect::<Vec<Fact>>();
-    let paths = b
-        .facts
-        .visible_path_conditions()
-        .into_iter()
-        .cloned()
-        .collect::<Vec<Fact>>();
-    let floats = float_values(b, facts.iter().chain(&paths).chain(std::iter::once(term)));
-    prove_typed(term, &facts, &paths, &floats)
+    let facts: Vec<&Fact> = b.facts.visible_facts().into_iter().collect();
+    let paths: Vec<&Fact> = b.facts.visible_path_conditions().into_iter().collect();
+    prove_typed(term, &facts, &paths, Floats(Some(b)))
 }
 
-/// The values among `terms`' variables that `b`'s IR computes as floats.
-fn float_values<'a>(b: &IRBuilder, terms: impl Iterator<Item = &'a ContractTerm>) -> BTreeSet<ValueId> {
-    let mut values = BTreeSet::new();
-    for term in terms {
-        fact_walk_vars(term, &mut |var| {
-            if let ContractVar::Value(vid) = *var {
-                let float = b.value_id_to_stmt_id(vid).is_some_and(|sid| b.is_float_stmt(sid));
-                if float {
-                    values.insert(vid);
+/// Where to learn which values are floats: the IR of the builder the facts
+/// come from, when there is one. Asked only for the facts of a query that
+/// reaches Z3.
+#[derive(Clone, Copy)]
+struct Floats<'a>(Option<&'a IRBuilder>);
+
+impl Floats<'_> {
+    /// The values among `terms`' variables that the IR computes as floats.
+    fn among(self, terms: &[&ContractTerm]) -> BTreeSet<ValueId> {
+        let Some(b) = self.0 else { return BTreeSet::new() };
+        let mut values = BTreeSet::new();
+        for term in terms {
+            fact_walk_vars(term, &mut |var| {
+                if let ContractVar::Value(vid) = *var {
+                    if b.value_id_to_stmt_id(vid).is_some_and(|sid| b.is_float_stmt(sid)) {
+                        values.insert(vid);
+                    }
                 }
-            }
-        });
+            });
+        }
+        values
     }
-    values
 }
 
 /// Same as [`prove`] but takes an explicit fact list and path-condition
@@ -134,11 +131,13 @@ fn float_values<'a>(b: &IRBuilder, terms: impl Iterator<Item = &'a ContractTerm>
 /// [`FactScope`]. Which values are floats is inferred from the terms alone
 /// (see [`substitution_for`]).
 pub fn prove_with_facts(term: &ContractTerm, facts: &[Fact], paths: &[Fact]) -> ProveOutcome {
-    prove_typed(term, facts, paths, &BTreeSet::new())
+    let facts: Vec<&Fact> = facts.iter().collect();
+    let paths: Vec<&Fact> = paths.iter().collect();
+    prove_typed(term, &facts, &paths, Floats(None))
 }
 
-/// [`prove_with_facts`] with the values known to be floats.
-fn prove_typed(term: &ContractTerm, facts: &[Fact], paths: &[Fact], floats: &BTreeSet<ValueId>) -> ProveOutcome {
+/// [`prove_with_facts`] over borrowed facts, with where to learn floats.
+fn prove_typed(term: &ContractTerm, facts: &[&Fact], paths: &[&Fact], floats: Floats) -> ProveOutcome {
     PROVE_CALL_COUNT.fetch_add(1, Ordering::Relaxed);
     let outcome = prove_with_facts_inner(term, facts, paths, floats);
     match outcome {
@@ -149,7 +148,7 @@ fn prove_typed(term: &ContractTerm, facts: &[Fact], paths: &[Fact], floats: &BTr
     outcome
 }
 
-fn prove_with_facts_inner(term: &ContractTerm, facts: &[Fact], paths: &[Fact], floats: &BTreeSet<ValueId>) -> ProveOutcome {
+fn prove_with_facts_inner(term: &ContractTerm, facts: &[&Fact], paths: &[&Fact], floats: Floats) -> ProveOutcome {
     // Compound-term decomposition. For And/Or/Not we recurse on
     // operands and combine outcomes structurally:
     //
@@ -239,7 +238,7 @@ fn prove_with_facts_inner(term: &ContractTerm, facts: &[Fact], paths: &[Fact], f
 /// Atomic-term prove. Runs the two pre-Z3 fast-paths first, then falls
 /// through to the Z3 solver. Callers go through [`prove_with_facts`],
 /// which decomposes compound terms and only reaches this for leaves.
-fn prove_atomic_with_facts(term: &ContractTerm, facts: &[Fact], paths: &[Fact], floats: &BTreeSet<ValueId>) -> ProveOutcome {
+fn prove_atomic_with_facts(term: &ContractTerm, facts: &[&Fact], paths: &[&Fact], floats: Floats) -> ProveOutcome {
     // Pre-Z3 fast-path 1: pure-opaque PredicateApp. If `term` is a
     // PredicateApp whose registered kind has no numeric meta-facts
     // (e.g. `is_sorted`), Z3 can only entail or contradict it via a
@@ -273,7 +272,7 @@ fn prove_atomic_with_facts(term: &ContractTerm, facts: &[Fact], paths: &[Fact], 
     // contradicted (unless the other facts contradict each other, which is
     // no reason to conclude anything about the query). Fewer facts keep
     // each Z3 query small however many unrelated facts a program has.
-    let mut relevant: Option<(Vec<Fact>, Vec<Fact>)> = None;
+    let mut relevant: Option<(Vec<&Fact>, Vec<&Fact>)> = None;
     if let Some(refs) = collect_concrete_var_refs(term) {
         if !refs.is_empty() {
             let mut uf = UnionFind::default();
@@ -313,8 +312,8 @@ fn prove_atomic_with_facts(term: &ContractTerm, facts: &[Fact], paths: &[Fact], 
                 hit
             };
             relevant = Some((
-                facts.iter().filter(|f| in_component(f)).cloned().collect(),
-                paths.iter().filter(|f| in_component(f)).cloned().collect(),
+                facts.iter().copied().filter(|f| in_component(f)).collect(),
+                paths.iter().copied().filter(|f| in_component(f)).collect(),
             ));
         }
     }
@@ -584,18 +583,18 @@ pub fn maximize_shape_param(
 /// Returns `Some(true)` if unsat (the chosen relation held), `Some(false)`
 /// if sat, `None` if Z3 returned Unknown (typically the step budget ran out).
 fn check_unsat(
-    facts: &[Fact],
-    paths: &[Fact],
+    facts: &[&Fact],
+    paths: &[&Fact],
     term: &ContractTerm,
-    floats: &BTreeSet<ValueId>,
+    floats: Floats,
     negate: bool,
     rlimit: u32,
 ) -> Option<bool> {
     PROVE_Z3_INVOCATIONS.fetch_add(1, Ordering::Relaxed);
     // One symbol per Input / Value(vid) / shape parameter the assembled
     // formula references, shared by every assertion.
-    let terms: Vec<&ContractTerm> = facts.iter().chain(paths).chain(std::iter::once(term)).collect();
-    let subst = substitution_for(&terms, floats);
+    let terms: Vec<&ContractTerm> = facts.iter().chain(paths).copied().chain(std::iter::once(term)).collect();
+    let subst = substitution_for(&terms, &floats.among(&terms));
 
     let solver = z3_budget::solver(rlimit);
 

@@ -33,8 +33,7 @@ pub(crate) fn derive_bounds_from_facts(
     // A conjunction holds only if each conjunct does: the interval facts of
     // arithmetic results (`interval_fact_for_int_binary`) are `lo <= v && v
     // <= hi`, and a chain of them bounds nothing unless both sides are seen.
-    let terms = entries.into_iter().flat_map(|term| conjuncts(term, &path_conds));
-    for term in terms {
+    let mut consider = |term: &ContractTerm| {
         if let ContractTerm::Cmp { op, lhs, rhs } = term {
             // Match `Value(vid) <op> LitInt(n)` or `LitInt(n) <op> Value(vid)`.
             let (relation, n) = match (lhs.as_ref(), rhs.as_ref()) {
@@ -57,18 +56,18 @@ pub(crate) fn derive_bounds_from_facts(
                     };
                     (swapped, *n)
                 }
-                _ => continue,
+                _ => return,
             };
             // `v > i64::MAX` or `v < i64::MIN` bounds nothing representable.
             match relation {
                 CmpOp::Ge => lo = Some(lo.map_or(n, |cur| cur.max(n))),
                 CmpOp::Gt => {
-                    let Some(n) = n.checked_add(1) else { continue };
+                    let Some(n) = n.checked_add(1) else { return };
                     lo = Some(lo.map_or(n, |cur| cur.max(n)))
                 }
                 CmpOp::Le => hi = Some(hi.map_or(n, |cur| cur.min(n))),
                 CmpOp::Lt => {
-                    let Some(n) = n.checked_sub(1) else { continue };
+                    let Some(n) = n.checked_sub(1) else { return };
                     hi = Some(hi.map_or(n, |cur| cur.min(n)))
                 }
                 CmpOp::Eq => {
@@ -78,6 +77,9 @@ pub(crate) fn derive_bounds_from_facts(
                 CmpOp::Ne => {}
             }
         }
+    };
+    for term in entries {
+        for_each_conjunct(term, &path_conds, &mut consider);
     }
     match (lo, hi) {
         (Some(min), Some(max)) => Some((min, max)),
@@ -85,24 +87,25 @@ pub(crate) fn derive_bounds_from_facts(
     }
 }
 
-/// The conjuncts of a fact (a conjunction holds exactly when each conjunct
-/// does), looking through `Implies(p, body)`, encoded as `Or(Not(p), body)`,
+/// Call `f` with each conjunct of a fact (a conjunction holds exactly when
+/// each conjunct does), looking through `Implies(p, body)`, encoded as `Or(Not(p), body)`,
 /// when `p` is an in-scope path condition: that is how the branch merge
 /// keeps an arm-only fact, and `body` is the original claim.
-fn conjuncts<'a>(
-    term: &'a crate::optim::predicates::formula::ContractTerm,
+fn for_each_conjunct(
+    term: &crate::optim::predicates::formula::ContractTerm,
     path_conds: &[&crate::optim::predicates::formula::ContractTerm],
-) -> Vec<&'a crate::optim::predicates::formula::ContractTerm> {
+    f: &mut impl FnMut(&crate::optim::predicates::formula::ContractTerm),
+) {
     use crate::optim::predicates::formula::{BoolOp, ContractTerm};
     match term {
         ContractTerm::BoolComb { op: BoolOp::And, operands } => {
-            operands.iter().flat_map(|t| conjuncts(t, path_conds)).collect()
+            operands.iter().for_each(|t| for_each_conjunct(t, path_conds, f));
         }
         ContractTerm::BoolComb { op: BoolOp::Or, operands } if operands.len() == 2 => match &operands[0] {
-            ContractTerm::Not(p) if path_conds.iter().any(|c| **c == **p) => conjuncts(&operands[1], path_conds),
-            _ => vec![term],
+            ContractTerm::Not(p) if path_conds.iter().any(|c| **c == **p) => for_each_conjunct(&operands[1], path_conds, f),
+            _ => f(term),
         },
-        _ => vec![term],
+        _ => f(term),
     }
 }
 
