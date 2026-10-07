@@ -269,7 +269,10 @@ and `python -m hw_check.noir_driver <mode> ...`) prints one JSON object with `ok
 `prove_s`, `verify_s`, loads and writes separately; Noir: `compile_s`,
 `write_vk_s`, `execute_s`, `prove_s`, `verify_s`). halo2's `prove_s` covers
 `create_proof` and `transcript.finalize()`, the window of Zinnia's
-`prove_seconds`. `halo2_hw` sizes the circuit by Zinnia's rule
+`prove_seconds`. For Noir, the benchmark harness does not use the driver's
+timings: it runs the tools itself, and its witness step is `noir-execute` on the
+compiled artifact, not the driver's `nargo execute` (`benchmarking/README.md`,
+section Noir). `halo2_hw` sizes the circuit by Zinnia's rule
 (`params.rs`); `--k` and `--lookup-bits` override it.
 
 ## 8. Cases without a baseline

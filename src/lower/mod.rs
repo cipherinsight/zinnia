@@ -15,7 +15,10 @@
 //! * [`emit`]: the pass [`ArrayLowering`] (graph building, selection,
 //!   emission in topological order, discharge of checks);
 //! * [`facts`] and [`checks`]: free facts, program checks as facts, and the
-//!   emission of checks through `builder/guard.rs`.
+//!   emission of checks through `builder/guard.rs`;
+//! * measurement only (`docs/ablations.md`): [`forcing`] (one fixed
+//!   construction per group), `local` (each group decides on its own) and
+//!   `report` (what each lowering chose).
 //!
 //! Families: [`sort`], [`gather`], [`stats`], [`memory`], [`linear`], [`permutation`]; scatter registers its own in [`registry`].
 //! [`challenge`]: the program-wide verifier challenge of the constructions that check
@@ -28,12 +31,15 @@ pub mod checks;
 pub mod construction;
 pub mod emit;
 pub mod facts;
+pub mod forcing;
 pub mod gather;
 pub mod graph;
 pub mod linear;
+mod local;
 pub mod memory;
 pub mod op;
 pub mod permutation;
+mod report;
 pub mod scatter;
 pub mod select;
 pub mod sort;

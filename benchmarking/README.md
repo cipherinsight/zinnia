@@ -22,6 +22,7 @@
 .venv/bin/python -m benchmarking.harness check-env          # versions and paths; non-zero on a mismatch
 .venv/bin/python -m benchmarking.harness build              # release extension + build record
 .venv/bin/python -m benchmarking.harness build --skip-zinnia --baselines halo2_hw,sp1,risc0,cairo
+.venv/bin/python -m benchmarking.harness build --skip-zinnia --noir-execute   # Noir's artifact executor
 .venv/bin/python -m benchmarking.harness run --label main   # one epoch, default systems and case set
 .venv/bin/python -m benchmarking.harness analyze benchmarking/results/<epoch>
 .venv/bin/python -m benchmarking.harness run --label npb --case-set benchmarking/datasets/case_sets/npbench_pythran_perf.json \
@@ -55,6 +56,18 @@ features, rustc, source state). `run` refuses to time a Zinnia system unless the
 debug sections. It also refuses when a toolchain a requested system needs has the wrong version,
 or when `RISC0_DEV_MODE` is set.
 
+`build --noir-execute` builds `noir-execute`, Noir's artifact executor (package
+`noir_artifact_cli` of the Noir repository), from the commit the pinned nargo reports in
+`nargo --version`: it fetches that commit alone into `target/noir-execute/noir`, installs the Rust
+toolchain the checkout's `rust-toolchain.toml` names (rustup, minimal profile), runs
+`cargo +<toolchain> build --release --locked -p noir_artifact_cli --bin noir-execute`, copies the
+binary to `target/noir-execute/bin/noir-execute` and writes
+`target/zinnia-harness-noir-execute.json` (Noir commit, version, toolchain, binary SHA-256,
+checkout state). It needs git, rustup and network access to GitHub. The binary does not print its
+commit, so `check-env` and `run` take it from that record: they refuse a Noir system unless the
+record's commit is nargo's, the checkout was clean, and the installed binary has the recorded
+SHA-256. The epoch manifest keeps the record (`noir_execute_build`).
+
 ## The protocol
 
 For each case, in a seeded random order, and each requested system:
@@ -86,8 +99,9 @@ suspended during an epoch (`balooctl6`/`balooctl`) and resumed after. A raw reco
 the proof had no public value). Otherwise its status is the first failure class:
 
 `no_program`, `reference_failed`, `unsupported`, `setup_failed`, `witness_dependent`,
-`nondeterministic_build`, `prove_failed`, `verify_failed`, `wrong_output`, `output_unchecked`,
-`tamper_accepted`, `tamper_inconclusive`, `timeout`, `out_of_memory`, `crashed`, `harness_error`
+`nondeterministic_build`, `prove_failed`, `witness_mismatch`, `verify_failed`, `wrong_output`,
+`output_unchecked`, `tamper_accepted`, `tamper_inconclusive`, `timeout`, `out_of_memory`, `crashed`,
+`harness_error`
 (`harness/protocol.py` describes each). Nothing is dropped.
 
 ### Clocks per system
@@ -95,7 +109,7 @@ the proof had no public value). Otherwise its status is the first failure class:
 | system | prove core | end to end | verify |
 |---|---|---|---|
 | `zinnia_halo2` | `prove_s`: `create_proof` + transcript finalize, timed in the backend | `preprocess_s` + `witness_s` + `prove_s` | `verify_s`: transcript + `verify_proof` with the verifying key read from setup's key directory |
-| `zinnia_noir`, `noir_hw` | `bb prove` process wall clock (includes bb start-up; the epoch manifest records the start-up floor on a one-line circuit) | `nargo execute` + `bb prove` (`nargo execute` re-elaborates the package source before running the ACIR: see Noir below) | `bb verify` process |
+| `zinnia_noir`, `noir_hw` | `bb prove` process wall clock (includes bb start-up; the epoch manifest records the start-up floor on a one-line circuit) | `noir-execute` on setup's compiled artifact + `bb prove` (see Noir below; `end_to_end_nargo_s` in the analysis has `nargo execute` instead) | `bb verify` process |
 | `halo2_hw` | `prove_s` (create_proof) | `witness_s` + `prove_s` | `verify_s` |
 | `sp1`, `sp1_groth16` | `prove` (the SDK executes inside the prove call) | `prove` | `verify` |
 | `risc0` (`_groth16`) | `prove` (+ `compress_succinct` + `wrap_groth16`) | `execute` + prove core | `verify` |
@@ -147,17 +161,36 @@ Both Noir sides go through `harness/adapters/noir_toolchain.py`: nargo 1.0.0-bet
 `write_vk`, `prove`, `verify` and `gates`. Zinnia's `main.nr` comes from `emit_structural`
 and must be byte-identical for inputs A and B.
 
-The two sides run the same commands on the same files: setup compiles the package and writes
-the verifying key (`bb write_vk`); every prove runs `nargo execute` with `Prover_B.toml` and
-`bb prove -k <setup's vk>`; every verify runs `bb verify -k <setup's vk>`. Writing
-`Prover_B.toml` (Zinnia's input builder, or `hw_check.prover_toml`) is outside the windows on
-both sides. `nargo execute` is the witness step on both sides, but nargo has no mode that runs
-the compiled ACIR alone: each call re-elaborates the package's source and libraries (it skips
-code generation when the result matches the compiled artifact), then runs the ACVM. Its floor on
-a one-line circuit is in the manifest (`calibration.bb.nargo_execute_s`, about 60 ms), and it
-grows with the source size: on 0381 Zinnia's emitted `main.nr` is 669 KB and `nargo check`
-alone takes about 170 ms of its about 285 ms `nargo execute`, against 60 ms of 66 ms for the
-2.5 KB handwritten one.
+The two sides run the same commands on the same files (`noir_toolchain.prove_sample`). Setup
+compiles the package (`nargo compile`) and writes the verifying key (`bb write_vk`). Every prove
+sample runs, in this order:
+
+1. `noir-execute --artifact-path target/<package>.json --prover-file Prover_B.toml`: the ACVM on
+   setup's compiled artifact, the witness step of the end-to-end clock;
+2. `nargo execute --prover-name Prover_B`, recorded as `timings_s.nargo_execute` (in no clock of
+   the record; the analysis adds it to `bb prove` as `end_to_end_nargo_s`);
+3. two checks, either of which fails the case: the compiled artifact is still setup's
+   (`nondeterministic_build`), and the two witnesses are identical once decompressed
+   (`witness_mismatch`; the record keeps the witness SHA-256 in `details.witness_sha256`);
+4. `bb prove -k <setup's vk>` with the witness of step 1.
+
+Every verify runs `bb verify -k <setup's vk>`. Writing `Prover_B.toml` (Zinnia's input builder, or
+`hw_check.prover_toml`) is outside the windows on both sides.
+
+`noir-execute` is the executor of nargo's own release and commit (see `build --noir-execute`
+above). It reads the compiled artifact and runs it. `nargo execute` runs the same ACIR, but has
+no mode that skips the front end: each call re-elaborates the package's source and libraries
+(it skips code generation when the result matches the compiled artifact) before running the
+ACVM, so it charges source elaboration to every proof, and that cost grows with the source.
+Zinnia's backend emits straight-line source: on 0385 its `main.nr` is 2.3 MB against 732 bytes
+handwritten. On one machine (2026-10-08, 8 cores) `nargo execute` took about 0.91 s on Zinnia's
+package and 0.32 s on the handwritten one, while `noir-execute` took about 0.21 s and 0.20 s for
+the same witnesses; on a one-line circuit the floors are about 70 ms and 1 ms. Epochs before 2026-10-08 timed `nargo execute` as the witness step; the
+analysis computes both definitions (`end_to_end_s`, and `end_to_end_nargo_s` = `nargo execute` +
+`bb prove`, which earlier records give as their `end_to_end_s`), and `summary.md` states which
+witness step each Noir system's `end_to_end_s` used. The start-up floors of the three tools on
+a one-line circuit are in the manifest (`calibration.bb`: `noir_execute_s`, `nargo_execute_s`,
+`bb_prove_s`, `bb_verify_s`).
 
 ## The per-system program contract
 
@@ -187,11 +220,13 @@ and `hw_check.noir_driver` decoding the outputs from each `main.nr`'s `// @outpu
 `results/<epoch>/`: `manifest.json` (repository commit, diff hash and untracked files; build
 record and current `.so` hash; every toolchain version and path; baseline entry points and
 `Cargo.lock` hashes; `noir_fpc` hashes; machine; tracked environment variables; configuration;
-case order; indexer log; nargo/bb start-up calibration), `case_set.json`, `raw/<system>/<case>.json` (every
+case order; indexer log; `noir-execute` build record; noir-execute/nargo/bb start-up
+calibration), `case_set.json`, `raw/<system>/<case>.json` (every
 sample with both clocks, proof size and hash, decoded publics of the first samples, output
 check, verification, tamper result, CPU state, file hashes), `raw/_reference/<case>.json`,
 `logs/`, `work/` (keys and proofs, not committed), and `summary/` from `analyze`:
-`per_case.csv` (median and IQR per clock), `summary.json`/`summary.md` with per-system coverage,
+`per_case.csv` (median and IQR per clock; the Noir systems also get `end_to_end_nargo_s`),
+`summary.json`/`summary.md` with per-system coverage,
 the **all-supported subset** (cases every system completed) and on it the geometric mean of
 per-case ratios (Zinnia / baseline) with a bootstrap 95 % interval, the same per pair of
 systems, exclusions, and the acceptance table when `acceptance/results.json` exists.

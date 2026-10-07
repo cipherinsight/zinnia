@@ -8,6 +8,11 @@ with the `.so` SHA-256, profile, features, rustc and source state.
 `run` refuses to time anything unless the installed `.so` is the one the record
 describes, is byte-identical to Cargo's release artifact, and is not the debug
 artifact.
+
+`build_noir_execute` builds Noir's artifact executor from the Noir commit the
+pinned nargo reports and records it (`target/zinnia-harness-noir-execute.json`);
+`run` refuses a Noir system unless the installed binary is that build
+(`toolchains.probe_noir_execute_build`).
 """
 
 from __future__ import annotations
@@ -16,9 +21,11 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
+import tomllib
 from pathlib import Path
 
 from benchmarking.harness import gitstate, paths, toolchains
@@ -170,4 +177,104 @@ def build_baselines(names: list[str], jobs: int = DEFAULT_BUILD_JOBS) -> dict:
         }
     BASELINE_RECORD.write_text(json.dumps(record, indent=2))
     print(f"baseline build record: {BASELINE_RECORD}")
+    return record
+
+
+# ---------------------------------------------------------------------------
+# Noir's artifact executor
+# ---------------------------------------------------------------------------
+
+NOIR_REPOSITORY = "https://github.com/noir-lang/noir.git"
+NOIR_EXECUTE_PACKAGE = "noir_artifact_cli"
+NOIR_EXECUTE_BIN = "noir-execute"
+
+
+def _run(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> None:
+    print("  $", " ".join(command), flush=True)
+    proc = subprocess.run(command, cwd=cwd, env=env)
+    if proc.returncode != 0:
+        raise RuntimeError(f"{' '.join(command)} failed (exit {proc.returncode})")
+
+
+def _git_output(source: Path, *args: str) -> str | None:
+    proc = subprocess.run(["git", *args], cwd=source, capture_output=True, text=True,
+                          timeout=120)
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def checkout_noir(commit: str, source: Path = paths.NOIR_EXECUTE_SOURCE) -> None:
+    """A clean checkout of `commit` of the Noir repository at `source`.
+
+    Fetches only that commit (`--depth 1`). An existing checkout is reused
+    when it is clean; a modified one is refused rather than overwritten.
+    """
+    if not (source / ".git").exists():
+        source.mkdir(parents=True, exist_ok=True)
+        _run(["git", "init", "-q"], source)
+        _run(["git", "remote", "add", "origin", NOIR_REPOSITORY], source)
+    if _git_output(source, "status", "--porcelain"):
+        raise RuntimeError(f"{source} has local changes; delete it to start from a fresh clone")
+    if _git_output(source, "rev-parse", "HEAD") != commit:
+        _run(["git", "fetch", "-q", "--depth", "1", "origin", commit], source)
+        _run(["git", "checkout", "-q", "--detach", commit], source)
+    head = _git_output(source, "rev-parse", "HEAD")
+    if head != commit:
+        raise RuntimeError(f"{source} is at {head} after checking out {commit}")
+
+
+def rust_toolchain_channel(source: Path) -> str:
+    """The Rust toolchain Noir pins in its `rust-toolchain.toml`."""
+    config = tomllib.loads((source / "rust-toolchain.toml").read_text())
+    return config["toolchain"]["channel"]
+
+
+def build_noir_execute(jobs: int = DEFAULT_BUILD_JOBS) -> dict:
+    """Build `noir-execute` from the Noir commit of the pinned nargo; install and record it.
+
+    The build uses the Rust toolchain Noir's checkout pins (installed with
+    rustup's minimal profile, without the extra targets the toolchain file
+    lists) and Noir's `Cargo.lock` (`--locked`).
+    """
+    commit = toolchains.nargo_commit()
+    source = paths.NOIR_EXECUTE_SOURCE
+    print(f"noir-execute: Noir {commit} in {source}", flush=True)
+    started = time.time()
+    checkout_noir(commit, source)
+    channel = rust_toolchain_channel(source)
+    if shutil.which("rustup") is None:
+        raise RuntimeError(f"rustup is needed to install Noir's Rust toolchain {channel}")
+    _run(["rustup", "toolchain", "install", channel, "--profile", "minimal",
+          "--no-self-update"], source)
+    command = ["nice", "-n", "10", "cargo", f"+{channel}", "build", "--release", "--locked",
+               "-p", NOIR_EXECUTE_PACKAGE, "--bin", NOIR_EXECUTE_BIN]
+    _run(command, source, env=dict(os.environ, CARGO_BUILD_JOBS=str(jobs)))
+
+    binary = paths.NOIR_EXECUTE_BINARY
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source / "target" / "release" / NOIR_EXECUTE_BIN, binary)
+    version = _command_version(str(binary), "--version")
+    if toolchains.NOIR_VERSION not in (version or ""):
+        raise RuntimeError(f"{binary} --version says {version!r}, not {toolchains.NOIR_VERSION}")
+    record = {
+        "built_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "build_seconds": round(time.time() - started, 1),
+        "noir_repository": NOIR_REPOSITORY,
+        "noir_commit": commit,
+        "version": version,
+        "nargo_version": _command_version(str(toolchains.nargo_path()), "--version"),
+        "command": command,
+        "rust_toolchain": channel,
+        "rustc": _command_version("rustc", f"+{channel}", "--version"),
+        "cargo": _command_version("cargo", f"+{channel}", "--version"),
+        "RUSTFLAGS": os.environ.get("RUSTFLAGS"),
+        "binary": paths.relative_to_repo(binary),
+        "binary_sha256": sha256_file(binary),
+        "source": gitstate.describe(source),
+    }
+    paths.NOIR_EXECUTE_RECORD.write_text(json.dumps(record, indent=2))
+    print(f"noir-execute build record: {paths.NOIR_EXECUTE_RECORD}")
+    print(json.dumps(record, indent=2))
+    probe = toolchains.probe_noir_execute_build()
+    if probe.status != "ok":
+        raise RuntimeError(f"the built noir-execute does not pass its check: {probe.found}")
     return record

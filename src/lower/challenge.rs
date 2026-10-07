@@ -30,7 +30,7 @@
 //! every challenge construction lists it as a precondition, and its producer
 //! has a one-time cost ([`producer_cost`]). The selection pays it at most
 //! once and uses challenge constructions only when the whole program is
-//! cheaper with them (`emit::select_all`).
+//! cheaper with them (`emit::select_members`).
 
 use super::construction::Target;
 use super::graph::Requirement;

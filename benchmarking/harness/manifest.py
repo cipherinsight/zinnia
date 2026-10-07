@@ -3,7 +3,8 @@
 Fields (audit `harness.md` section 4.2): repository state (harness and Zinnia
 live in the same repository: commit, `git diff` SHA-256, untracked files), the
 extension's build record and current SHA-256, every toolchain version and
-path, the halo2_hw `Cargo.lock` hash, machine facts, tracked environment
+path, the build record of `noir-execute` (Noir commit, binary SHA-256), the
+halo2_hw `Cargo.lock` hash, machine facts, tracked environment
 variables, the run configuration, and the case list. Per-case input-file
 hashes are in the raw records.
 """
@@ -56,6 +57,7 @@ def start_manifest(epoch_name: str, config: RunConfig, build_record: dict | None
                             if build.BASELINE_RECORD.exists() else None),
         "extension_sha256": _sha256_or_none(extension) if extension else None,
         "toolchains": toolchains.as_json(probes),
+        "noir_execute_build": toolchains.read_noir_execute_record(),
         "python": toolchains.python_packages(),
         "noir_fpc_sha256": {paths.relative_to_repo(f): build.sha256_file(f)
                             for f in sorted(paths.NOIR_FPC.rglob("*")) if f.is_file()

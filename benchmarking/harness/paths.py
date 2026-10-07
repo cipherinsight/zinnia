@@ -32,6 +32,14 @@ DEBUG_ARTIFACT = REPO_ROOT / "target" / "debug" / "lib_zinnia_core.so"
 #: Written by the `build` command; checked by `run` before any timing.
 BUILD_RECORD = REPO_ROOT / "target" / "zinnia-harness-build.json"
 
+#: Noir's artifact executor (`noir-execute`), built by `build --noir-execute`
+#: from the Noir commit the pinned nargo reports: the Noir checkout, the
+#: installed binary and its build record.
+NOIR_EXECUTE_DIR = REPO_ROOT / "target" / "noir-execute"
+NOIR_EXECUTE_SOURCE = NOIR_EXECUTE_DIR / "noir"
+NOIR_EXECUTE_BINARY = NOIR_EXECUTE_DIR / "bin" / "noir-execute"
+NOIR_EXECUTE_RECORD = REPO_ROOT / "target" / "zinnia-harness-noir-execute.json"
+
 
 def installed_extension() -> Path | None:
     """The extension module Python imports, or `None` if there is none."""

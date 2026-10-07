@@ -39,6 +39,19 @@ pub(crate) fn read_graph(
     only: Option<&[&dyn Construction]>,
     target: Target,
 ) -> ReadGraph {
+    read_graph_with(n, rows, (i, j), checked, only, target, &crate::lower::emit::Options::from_env())
+}
+
+/// [`read_graph`] lowered with explicit switches (`emit::Options`).
+pub(crate) fn read_graph_with(
+    n: usize,
+    rows: usize,
+    (i, j): (i64, i64),
+    checked: bool,
+    only: Option<&[&dyn Construction]>,
+    target: Target,
+    options: &crate::lower::emit::Options,
+) -> ReadGraph {
     let mut b = IRBuilder::new();
     let mut inputs = Vec::new();
     let mut read = |b: &mut IRBuilder, name: String, value: i64| {
@@ -66,7 +79,7 @@ pub(crate) fn read_graph(
         Some(only) => only.to_vec(),
         None => registry,
     };
-    let lowered = crate::lower::emit::lower(&graph, target, &constructions).expect("reads to lower");
+    let lowered = crate::lower::emit::lower_with(&graph, target, &constructions, options).expect("reads to lower");
     let in_range = |x: i64| (0..n as i64).contains(&x);
     let expected = (in_range(i) && in_range(j))
         .then(|| (0..rows).flat_map(|r| [i, j].map(|x| 10 * r as i64 + x + 1)).collect());
@@ -138,3 +151,23 @@ fn the_selection_reads_numpys_element_on_both_targets() {
         }
     }
 }
+
+/// Under the local selection (`ZINNIA_ABLATE_JOINT`), which prices each
+/// line's reads as if they were the program's only ones, the circuits read
+/// NumPy's element, and have no witness for an index outside the line, on
+/// both targets.
+#[test]
+fn the_local_selection_reads_numpys_element_on_both_targets() {
+    let local = crate::lower::emit::Options { local: true, ..Default::default() };
+    for target in [Target::Halo2Base, Target::Noir] {
+        for n in [2usize, 3, 5, 16, 64] {
+            for rows in [1usize, 4] {
+                for i in [-1, 0, n as i64 / 2, n as i64 - 1, n as i64] {
+                    let case = read_graph_with(n, rows, (i, 0), true, None, target, &local);
+                    check_against_numpy(&case, &format!("local {target:?} n={n} rows={rows} i={i}"));
+                }
+            }
+        }
+    }
+}
+

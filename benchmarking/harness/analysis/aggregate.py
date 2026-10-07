@@ -17,6 +17,14 @@ Writes `summary/` inside the epoch (or the directory given for shards):
     headline comparison within each group;
   - every excluded case with its reason;
   - the acceptance table, when the epoch has `acceptance/results.json`.
+
+Two end-to-end clocks are computed for the Noir systems. `end_to_end_s` is
+what the record measured: since 2026-10-08 `noir-execute` on the compiled
+artifact + `bb prove`; in earlier epochs `nargo execute` + `bb prove`
+(`end_to_end_witness_step` tells which). `end_to_end_nargo_s` is `nargo
+execute` + `bb prove` in every epoch: earlier records give it as their
+`end_to_end_s`, later ones record `nargo execute` in each sample. For the
+other systems both clocks are the same.
 """
 
 from __future__ import annotations
@@ -31,8 +39,11 @@ from benchmarking.harness.adapters import BASELINE_SYSTEMS, SAME_PROOF_SYSTEM, Z
 from benchmarking.harness.analysis import stats
 from benchmarking.harness.case_sets import INCLUDED
 from benchmarking.harness.protocol import OK, REFERENCE_SYSTEM
+from benchmarking.harness.toolchains import NOIR_SYSTEMS
 
-CLOCKS = ("prove_core_s", "end_to_end_s", "verify_s")
+#: End to end with `nargo execute` as the Noir witness step (module docstring).
+END_TO_END_NARGO = "end_to_end_nargo_s"
+CLOCKS = ("prove_core_s", "end_to_end_s", END_TO_END_NARGO, "verify_s")
 
 
 @dataclass
@@ -88,6 +99,15 @@ def load_shards(roots: list[Path]) -> EpochData:
     return EpochData(roots[0], manifest, {"cases": list(cases.values())}, records)
 
 
+def _prove_clock(prove: dict, clock: str) -> float | None:
+    if clock != END_TO_END_NARGO:
+        return prove.get(clock)
+    timings = prove.get("timings_s") or {}
+    if "nargo_execute" in timings:
+        return timings["nargo_execute"] + timings["bb_prove"]
+    return prove.get("end_to_end_s")
+
+
 def clock_values(record: dict, clock: str) -> list[float]:
     """The timed samples of one clock (warm-up excluded)."""
     values = []
@@ -96,10 +116,28 @@ def clock_values(record: dict, clock: str) -> list[float]:
             result = (sample.get("verify") or {}).get("result") or {}
             value = result.get("verify_s")
         else:
-            value = (sample.get("prove") or {}).get(clock)
+            value = _prove_clock(sample.get("prove") or {}, clock)
         if value is not None:
             values.append(float(value))
     return values
+
+
+def end_to_end_witness_step(record: dict) -> str | None:
+    """The witness step in a Noir record's `end_to_end_s`; `None` for other systems."""
+    if record.get("system") not in NOIR_SYSTEMS:
+        return None
+    for sample in record["samples"]:
+        timings = (sample.get("prove") or {}).get("timings_s") or {}
+        if timings:
+            return "noir-execute" if "noir_execute" in timings else "nargo execute"
+    return None
+
+
+def clocks_of(*systems: str) -> list[str]:
+    """The clocks reported for `systems`: `end_to_end_nargo_s` only when a Noir
+    system is among them (for the others it repeats `end_to_end_s`)."""
+    noir = bool(set(systems) & set(NOIR_SYSTEMS))
+    return [clock for clock in CLOCKS if clock != END_TO_END_NARGO or noir]
 
 
 def setup_facts(record: dict) -> dict:
@@ -118,7 +156,7 @@ def per_case_rows(data: EpochData) -> list[dict]:
         for case, record in sorted(data.records[system].items()):
             row = {"system": system, "case": case, "status": record["status"],
                    "samples": len(record["samples"])}
-            for clock in CLOCKS:
+            for clock in clocks_of(system):
                 values = clock_values(record, clock)
                 if values:
                     q1, q3 = stats.quartiles(values)
@@ -140,6 +178,17 @@ def coverage(data: EpochData) -> dict:
                     for case, r in sorted(data.records[system].items()) if r["failure"]]
         out[system] = {"cases": len(data.records[system]), "ok": statuses.get(OK, 0),
                        "by_status": dict(statuses), "failures": failures}
+    return out
+
+
+def witness_steps(data: EpochData) -> dict[str, dict[str, int]]:
+    """For each Noir system, how many records time each witness step in `end_to_end_s`."""
+    out = {}
+    for system in data.systems:
+        steps = Counter(end_to_end_witness_step(r) for r in data.records[system].values())
+        steps.pop(None, None)
+        if steps:
+            out[system] = dict(steps)
     return out
 
 
@@ -238,21 +287,22 @@ def summarize(epochs: Path | list[Path], out: Path | None = None) -> dict:
         "epoch": data.manifest.get("epoch"),
         "systems": data.systems,
         "coverage": coverage(data),
+        "end_to_end_witness_step": witness_steps(data),
         "all_supported_subset": all_supported,
         "headline_subset": headline,
         "data_movement_subset": movement_only,
         "comparisons_headline": [compare(data, z, b, headline, clock)
-                                 for z, b in pairs for clock in CLOCKS],
+                                 for z, b in pairs for clock in clocks_of(z, b)],
         "comparisons_data_movement": [compare(data, z, b, movement_only, clock)
-                                      for z, b in pairs for clock in CLOCKS],
+                                      for z, b in pairs for clock in clocks_of(z, b)],
         "comparisons_all_supported": [compare(data, z, b, all_supported, clock)
-                                      for z, b in pairs for clock in CLOCKS],
+                                      for z, b in pairs for clock in clocks_of(z, b)],
         "comparisons_pairwise": [compare(data, z, b, common_subset(data, [z, b]), clock)
-                                 for z, b in pairs for clock in CLOCKS],
+                                 for z, b in pairs for clock in clocks_of(z, b)],
         "comparisons_by_group": {
             group: {"headline_subset": [c for c in headline if c in members],
                     "comparisons": [compare(data, z, b, [c for c in headline if c in members],
-                                            clock) for z, b in pairs for clock in CLOCKS]}
+                                            clock) for z, b in pairs for clock in clocks_of(z, b)]}
             for group, members in sorted(case_groups(data).items())},
         "excluded_cases": exclusions(data),
         "acceptance": acceptance_summary(roots[0]),
@@ -291,7 +341,12 @@ def render_markdown(summary: dict, data: EpochData) -> str:
     lines = [f"# Epoch {summary['epoch']}", "",
              "Ratios are Zinnia / baseline of per-case medians; below 1 means Zinnia is faster.",
              "Only cases with status `ok` (proved, verified, outputs equal to NumPy, tampered "
-             "proof rejected) enter a comparison.", "", "## Coverage", "",
+             "proof rejected) enter a comparison.", ""]
+    for system, steps in summary["end_to_end_witness_step"].items():
+        lines.append(f"`{system}` `end_to_end_s` witness step: "
+                     + ", ".join(f"{step} ({count} cases)" for step, count in steps.items())
+                     + "; `end_to_end_nargo_s` uses `nargo execute`.")
+    lines += ["", "## Coverage", "",
              "| system | cases | ok | other statuses |", "|---|---|---|---|"]
     for system, cov in summary["coverage"].items():
         others = ", ".join(f"{k}: {v}" for k, v in sorted(cov["by_status"].items()) if k != OK)

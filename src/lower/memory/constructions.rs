@@ -226,11 +226,14 @@ impl Construction for ElementByTable {
         if group.kind != OpKind::Element || n < 2 {
             return Vec::new();
         }
-        let offered: Vec<usize> =
-            cx.groups.iter().filter(|g| g.kind == OpKind::Element && g.line_len() >= 2).map(|g| g.line_len()).collect();
+        let offered: Vec<usize> = cx
+            .sharing_groups(group)
+            .filter(|g| g.kind == OpKind::Element && g.line_len() >= 2)
+            .map(|g| g.line_len())
+            .collect();
         let offered_rows: usize = offered.iter().sum();
         let indices: Vec<StmtId> = group.lanes.iter().map(|l| l.own[0]).collect();
-        let index_reads = cost::index_reads(cx, &indices);
+        let index_reads = cost::index_reads(cx, group, &indices);
         let cost = cost::table(n as u64, &index_reads, offered.len() as u64, offered_rows as u64, cx.target);
         let post = group
             .lanes

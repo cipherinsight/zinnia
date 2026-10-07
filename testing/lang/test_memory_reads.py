@@ -26,7 +26,6 @@ CONSTRUCTIONS = [
     None,
     "gather: element by a select chain",
     "gather: element by indicators",
-    "gather: element through memory",
     "memory: element by index bits",
     "memory: element by table read",
 ]
