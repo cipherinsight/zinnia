@@ -511,6 +511,10 @@ fn smt_query_with_budget(
         }
     }
 
+    // A value is resolved only from a model of the constraints (the
+    // statements defining `root` and the program's facts): unsatisfiable
+    // constraints, which would make any value "unique", give `Unsat` here and
+    // no answer.
     let resolved = match z3_budget::check("resolver.value", &solver) {
         z3::SatResult::Sat => {
             // Got a model; ask if `root != model_value` is satisfiable. If
@@ -686,6 +690,9 @@ fn smt_extreme(
     } else {
         opt.minimize(&int);
     }
+    // A bound comes from a model (`Sat`), so the constraints are satisfiable;
+    // the verifier below re-asserts the same constraints, so its `Unsat` is
+    // not vacuous. Unsatisfiable constraints give no bound.
     let candidate = match z3_budget::check_optimize("resolver.extreme", &opt) {
         z3::SatResult::Sat => opt
             .get_model()
