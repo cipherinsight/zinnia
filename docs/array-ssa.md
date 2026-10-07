@@ -606,7 +606,11 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
     `select(c, a, b)` of the arrays a name was bound to is linked to `a` on the paths
     where `c` holds and to `b` on the others, so a write through the merge makes `b`
     stale only where the merge is `b`. (A negated conjunction is kept as such: a path
-    that implies the conjunction cannot be in its negation.)
+    that implies the conjunction cannot be in its negation.) A storage that a write reaches
+    along several chains of links is marked stale on the literals the chains' paths have
+    in common (a superset of their union), so the walk stays polynomial; following every
+    chain path by path took exponential time on `In, Out = Out, In` in a loop that may
+    stop early (Pythran `lapl2d`).
   - N5: `np.asarray(x, dtype=d)`, `np.array(x, copy=False | None)` and
     `x.astype(d, copy=False)` return `x` when `d` is `x`'s own exact dtype (bool, int64, a
     fixed-width integer). Zinnia has one float dtype for every float width (and one complex
@@ -618,7 +622,10 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
     name. When that scope lay outside an enclosing `else`/`elif` branch, the branch merge
     then overwrote the value with the other branch's. The write now goes into the innermost
     conditional scope between the loop and the owner. Tested with `while`, nested loops,
-    `break`, `continue`, `return` and loops in every branch.
+    `break`, `continue`, `return` and loops in every branch. The branch's scope then holds the name
+    while the enclosing scope keeps its value before the branch; the list-sharing check
+    (`IRContext::find_other_binding`) treats every binding of the name inside the current
+    function as the variable itself, not as a second reference to the list.
   - N7: a merge of a sequence (an array's elements, as a list or tuple) with a number is a
     compile error. The two values have different shapes, and the merge used to take the
     true side on every path; a loop that may break before rebinding a name reaches it, the

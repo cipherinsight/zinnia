@@ -46,6 +46,7 @@ The findings:
   branch's first commit (see that section).
 """
 import itertools
+import time
 
 import numpy as np
 import pytest
@@ -611,3 +612,20 @@ def test_fuzz_program_is_rejected_or_correct(name):
     except ZinniaException:
         return
     assert_all_backends_match_numpy(source, FUZZ_X, FUZZ_M, *scalars)
+
+
+def test_swapping_two_arrays_in_a_loop_that_may_stop_compiles_quickly():
+    # Pythran `lapl2d`: each iteration merges `In` and `Out` under the loop's
+    # condition. Following every chain of merges path by path took
+    # exponential time; one joined path per storage keeps it polynomial.
+    source = '''def kernel(In: Float[Array, "4 4"], Out: Float[Array, "4 4"], niter: Integer):
+    for it in range(0, 64):
+        if it >= niter:
+            break
+        Out[1:3, 1:3] = 0.25 * (In[0:2, 1:3] + In[1:3, 0:2] - 4.0 * In[1:3, 1:3] + In[2:4, 1:3] + In[1:3, 2:4])
+        In, Out = (Out, In)
+'''
+    started = time.time()
+    with pytest.raises(ZinniaException, match=STALE):
+        compile_kernel(source)
+    assert time.time() - started < 60

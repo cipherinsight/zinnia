@@ -30,7 +30,7 @@
 //! test is syntactic and errs towards rejecting: two conjunctions it does
 //! not prove disjoint are treated as overlapping.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ir_defs::IR;
 use crate::types::{StmtId, Value};
@@ -282,17 +282,21 @@ impl IRBuilder {
     /// A write to `storage` (under the current execution predicate) makes
     /// every storage linked to it stale on the write's path, conjoined with
     /// the paths on which each link along the way shares the memory.
+    ///
+    /// A storage reached along several chains of links is stale on the
+    /// union of their paths. That union is over-approximated by one
+    /// conjunction, the literals the paths have in common (fewer literals,
+    /// more paths), so the walk stays polynomial: a chain of merges, such as
+    /// `a, b = b, a` in a loop that may stop early, would otherwise give
+    /// every storage a path per combination of iterations.
     pub(super) fn propagate_write_to_links(&mut self, storage: u32) {
         if self.store.links.is_empty() {
             return;
         }
         let Some(path) = self.current_path() else { return };
         let start = self.storage_owner(storage);
-        // (storage, path) pairs: a storage reached on two paths is stale on
-        // both. Paths only grow, so this terminates.
-        let mut seen = BTreeSet::from([(start, path.clone())]);
+        let mut reached: BTreeMap<u32, (&'static str, Vec<Literal>)> = BTreeMap::new();
         let mut frontier = vec![(start, path)];
-        let mut reached: Vec<(u32, &'static str, Vec<Literal>)> = Vec::new();
         while let Some((current, path)) = frontier.pop() {
             for link in &self.store.links {
                 let other = if link.copy == current {
@@ -306,13 +310,23 @@ impl IRBuilder {
                     continue;
                 }
                 let Some(shared) = link.when.within(&path) else { continue };
-                if seen.insert((other, shared.clone())) {
-                    reached.push((other, link.why, shared.clone()));
-                    frontier.push((other, shared));
-                }
+                let joined = match reached.get(&other) {
+                    None => shared,
+                    Some((_, known)) => {
+                        let common: Vec<Literal> =
+                            known.iter().filter(|l| shared.binary_search(l).is_ok()).copied().collect();
+                        if common.len() == known.len() {
+                            continue; // `known` already covers `shared`
+                        }
+                        common
+                    }
+                };
+                let why = reached.get(&other).map_or(link.why, |(why, _)| *why);
+                reached.insert(other, (why, joined.clone()));
+                frontier.push((other, joined));
             }
         }
-        for (other, why, path) in reached {
+        for (other, (why, path)) in reached {
             self.storage_mut(other).stale.add(why, path);
         }
     }
