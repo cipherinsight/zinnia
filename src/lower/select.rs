@@ -121,7 +121,7 @@ fn select_exact_in_context(problem: &Problem) -> Option<Selection> {
     opt.minimize(&cost);
     opt.minimize(&positions);
     opt.minimize(&highest_first);
-    if z3_budget::check_optimize("lower.select", &opt) != SatResult::Sat {
+    if z3_budget::check_selection("lower.select", &opt) != SatResult::Sat {
         return None;
     }
     let model = opt.get_model()?;

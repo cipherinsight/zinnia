@@ -68,18 +68,49 @@ pub fn optimize(rlimit: u32) -> Optimize {
     opt
 }
 
-/// `solver.check()`, traced (see [`traced`]).
+/// Measurement only: `ZINNIA_ABLATE_SMT=1` turns off SMT reasoning
+/// everywhere on the compile path. Every reasoning query below then answers
+/// `Unknown` without calling Z3, which each caller already treats as "no
+/// information" (the soundness rule of `optim::prove`): the resolvers fall
+/// back to their interval layer, `prove` to its interval fast paths, and a
+/// precondition nothing else proves is checked in the circuit. The
+/// construction selection ([`check_selection`]) is an optimization problem,
+/// not reasoning about values, and is not affected. Unset (the default), it
+/// has no effect. Read once per process.
+pub fn smt_ablated() -> bool {
+    static ABLATED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ABLATED.get_or_init(|| std::env::var("ZINNIA_ABLATE_SMT").is_ok_and(|v| v.trim() == "1"))
+}
+
+/// `solver.check()`, traced (see [`traced`]); `Unknown` under [`smt_ablated`].
 pub fn check(site: &str, solver: &Solver) -> SatResult {
+    if smt_ablated() {
+        return SatResult::Unknown;
+    }
     traced(site, || solver.get_statistics(), || solver.check())
 }
 
-/// `solver.check_assumptions(assumptions)`, traced (see [`traced`]).
+/// `solver.check_assumptions(assumptions)`, traced (see [`traced`]);
+/// `Unknown` under [`smt_ablated`].
 pub fn check_assuming(site: &str, solver: &Solver, assumptions: &[Bool]) -> SatResult {
+    if smt_ablated() {
+        return SatResult::Unknown;
+    }
     traced(site, || solver.get_statistics(), || solver.check_assumptions(assumptions))
 }
 
-/// `opt.check(&[])`, traced (see [`traced`]).
+/// `opt.check(&[])` for a bound query (the extreme of a value), traced (see
+/// [`traced`]); `Unknown` under [`smt_ablated`].
 pub fn check_optimize(site: &str, opt: &Optimize) -> SatResult {
+    if smt_ablated() {
+        return SatResult::Unknown;
+    }
+    traced(site, || opt.get_statistics(), || opt.check(&[]))
+}
+
+/// `opt.check(&[])` for the construction selection (`lower::select`), traced
+/// (see [`traced`]). Not reasoning about values, so [`smt_ablated`] leaves it on.
+pub fn check_selection(site: &str, opt: &Optimize) -> SatResult {
     traced(site, || opt.get_statistics(), || opt.check(&[]))
 }
 

@@ -25,16 +25,23 @@ pub struct FreeFacts<'a> {
     range: RefCell<RangeResolver>,
     /// Facts established by the postconditions of scalar gadgets.
     established: Vec<Fact>,
+    /// Prove nothing (the ablation `ZINNIA_ABLATE_LAYER_FACTS`).
+    disabled: bool,
 }
 
 impl<'a> FreeFacts<'a> {
     pub fn new(graph: &'a IRGraph) -> FreeFacts<'a> {
-        FreeFacts { graph, range: RefCell::new(RangeResolver::new()), established: Vec::new() }
+        FreeFacts { graph, range: RefCell::new(RangeResolver::new()), established: Vec::new(), disabled: false }
+    }
+
+    /// No free fact at all (the ablation `ZINNIA_ABLATE_LAYER_FACTS`).
+    pub fn none(graph: &'a IRGraph) -> FreeFacts<'a> {
+        FreeFacts { disabled: true, ..FreeFacts::new(graph) }
     }
 
     /// `true` when `fact` holds without any construction.
     pub fn proves(&self, fact: &Fact) -> bool {
-        self.established_by_gadget(fact) || self.proves_by_bounds(&fact.claim)
+        !self.disabled && (self.established_by_gadget(fact) || self.proves_by_bounds(&fact.claim))
     }
 
     /// `true` when a scalar gadget's postcondition implies `fact`. Program
@@ -42,7 +49,7 @@ impl<'a> FreeFacts<'a> {
     /// is the job of `AlwaysSatisfiedElimination`, which runs earlier with
     /// the same range engine and SMT.
     pub fn established_by_gadget(&self, fact: &Fact) -> bool {
-        self.established.iter().any(|f| f.implies(fact))
+        !self.disabled && self.established.iter().any(|f| f.implies(fact))
     }
 
     fn proves_by_bounds(&self, claim: &Claim) -> bool {
@@ -67,6 +74,9 @@ impl<'a> FreeFacts<'a> {
 
     /// Bounds of an integer statement's value, when known.
     pub fn bounds(&self, stmt: StmtId) -> Option<(i64, i64)> {
+        if self.disabled {
+            return None;
+        }
         let value = Value::Integer(ScalarValue::new(None, Some(stmt)));
         let mut range = self.range.borrow_mut();
         let min = range.resolve_min_with_stmts(&value, &self.graph.stmts)?;

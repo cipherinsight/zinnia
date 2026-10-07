@@ -61,8 +61,11 @@ pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction
     // Claims' value lists are numbered per lowering (`ListId`).
     super::graph::ListId::reset();
     let groups = collect_groups(graph);
-    let facts = FreeFacts::new(graph);
-    let program_checks = checks::program_checks(graph);
+    let ablated = crate::ablated("ZINNIA_ABLATE_LAYER_FACTS");
+    let facts = if ablated { FreeFacts::none(graph) } else { FreeFacts::new(graph) };
+    // Under the ablation the program's checks take no part: none is
+    // dropped, none justifies a precondition.
+    let program_checks = if ablated { Vec::new() } else { checks::program_checks(graph) };
     let mut freely_proven = checks::dominated(&program_checks);
     freely_proven.extend(
         program_checks.iter().filter(|c| c.forms.iter().any(|f| facts.established_by_gadget(f))).map(|c| c.stmt),
@@ -108,7 +111,7 @@ pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction
             nodes.push(NodeEntry::program_check(check, target));
         }
     }
-    add_check_nodes(&mut nodes, target);
+    add_check_nodes(&mut nodes, target, ablated);
     add_program_nodes(&mut nodes, target);
 
     let selected = select_all(&nodes, &roots);
@@ -117,6 +120,11 @@ pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction
     Some(emit(graph, &groups, nodes, &selected, &dropped))
 }
 
+/// Measurement only (`docs/ablations.md`): `ZINNIA_ABLATE_LAYER_FACTS=1`
+/// gives the layer no free facts and leaves the program's checks out of it,
+/// so every precondition fact gets a check node and every program check is
+/// kept as the IR generator emitted it.
+///
 /// Measurement only: the environment variable `ZINNIA_FORCE_CONSTRUCTION`
 /// set to a comma-separated list of [`Construction::name`]s makes, for every
 /// group, the first listed construction applying to it the only one offering
@@ -217,14 +225,16 @@ fn facts_of(requirements: &[Requirement]) -> impl Iterator<Item = Fact> + '_ {
     })
 }
 
-/// A check node for every precondition fact no node establishes.
-fn add_check_nodes(nodes: &mut Vec<NodeEntry>, target: Target) {
+/// A check node for every precondition fact no node establishes (with
+/// `every`, for every precondition fact: the selection may still pick a
+/// construction's postcondition when that is cheaper).
+fn add_check_nodes(nodes: &mut Vec<NodeEntry>, target: Target, every: bool) {
     let wanted: Vec<Fact> = nodes.iter().flat_map(|n| n.pre_facts()).collect();
     let mut added: HashSet<Fact> = HashSet::new();
     for fact in wanted {
         let required = Requirement::Fact(fact);
         let produced = nodes.iter().any(|n| n.node.post.iter().any(|p| justifies(p, &required)));
-        if !produced && added.insert(fact) {
+        if (every || !produced) && added.insert(fact) {
             let node = Node { pre: Vec::new(), post: vec![required], cost: checks::cost(&fact.claim, target) };
             nodes.push(NodeEntry { name: "check", node, kind: NodeKind::Check(fact) });
         }
