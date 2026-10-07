@@ -93,7 +93,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                        threads=args.threads, seed=args.seed, halo2_params=halo2_params,
                        shard=list(shard) if shard else None)
     try:
-        root = run_epoch(args.label, cases, config, case_set, Path(args.results_dir))
+        root = run_epoch(args.label, cases, config, case_set, Path(args.results_dir).resolve())
     except RunRefused as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 2
