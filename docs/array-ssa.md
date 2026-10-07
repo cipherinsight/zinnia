@@ -650,6 +650,14 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
     of an `if` (the join drops it) and bound again in a loop that may stop before the
     assignment kept the loop's value on every path; that is a compile error
     (`IRContext::is_branch_only_binding`).
+  - Validation against bc584e01 (`array-ssa-data/fix2/`; the code at ea0dff81 and the
+    merge of eval-refactor fe282b23): IR and `main.nr` digests identical on all 179 perf
+    cases on both targets (scattering included); acceptance 327 outcomes identical;
+    check_outputs 100/100 on halo2-base and Noir; noir_differential 100/100;
+    costs_halo2 `--check` 100/100; Python suite 3,968 passed (342 new tests, 96 of which
+    fail on bc584e01); Rust lib the known 18 failures; determinism 200/200 and 158/158
+    stable over 3 processes; the reviewer's fuzzers (44,300 programs, same seeds) 0
+    mismatches; every `r2/q_*.py` reproducer matches NumPy or is a compile error.
 
 ### Open
 - Dynamic-array lanes beyond the runtime length: `1.0 / x[x > 0]` and `x[x > 0] ** -1.5` used to
