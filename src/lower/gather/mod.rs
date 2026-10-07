@@ -43,6 +43,7 @@ pub use semantics::GatherSemantics;
 
 use crate::builder::IRBuilder;
 use crate::ir::IRStatement;
+use crate::ir_array::{ArrayAccess, ArrayElem};
 use crate::ir_defs::IR;
 use crate::lower::{ArrayOp, OpKind};
 use crate::optim::predicates::formula::{BoolOp, CmpOp, ContractTerm, ContractVar};
@@ -123,16 +124,19 @@ pub fn element_lane(b: &mut IRBuilder, cells: &[Value], index: &Value) -> Option
     Some(checked_element_lane(b, cells, index))
 }
 
-/// `cells[index]` as a placeholder (not empty), for a runtime `index` the
-/// caller has wrapped and checked into `[0, cells.len())` where the read
-/// runs. The layer picks how to read it per target: a select chain over
+/// `cells[index]` (not empty) as an `ArrayRead` of the array of `cells`,
+/// for a runtime `index` the caller has wrapped and checked into `[0,
+/// cells.len())` where the read runs. The layer reads it as an element
+/// group (`OpKind::Element`) and picks how per target: a select chain over
 /// the index's equality bits, an inner product with them, the index's
-/// recorded one-hot, or a memory read (`constructions.rs`).
+/// recorded one-hot, a multiplexer over its bits, or a table
+/// (`constructions.rs`, `lower::memory`).
 pub fn checked_element_lane(b: &mut IRBuilder, cells: &[Value], index: &Value) -> Value {
     assert!(!cells.is_empty(), "an element read over no cells");
-    let shared: Arc<[Value]> = cells.iter().map(|c| b.ensure_ptr(c)).collect();
-    let op = ArrayOp { kind: OpKind::Element, shared: shared.len() as u32, output: 0, position: None };
-    b.ir_array_op(op, &shared, std::slice::from_ref(index))
+    let elem = if cells.iter().any(|c| matches!(c, Value::Float(_))) { ArrayElem::Float } else { ArrayElem::Int };
+    let array = b.array_of_cells(cells, elem);
+    let access = ArrayAccess::flat(cells.len() as u32, elem);
+    b.ir_array_read(&array, access, std::slice::from_ref(index))
 }
 
 /// Whether `v` is, plus a constant, a lane whose one-hot a construction can

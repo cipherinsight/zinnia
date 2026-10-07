@@ -22,6 +22,7 @@
 //! identities at a random point (halo2-base only), and their probabilistic soundness.
 //! See `eval-redo/layer/core-api.md` for how to add a family.
 
+pub mod arrays;
 pub mod challenge;
 pub mod checks;
 pub mod construction;

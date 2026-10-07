@@ -568,7 +568,10 @@ fn dce_body(body: &str, exposes: &[String]) -> String {
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix("let ") {
             if let Some(eq) = rest.find(" = ") {
+                // A memory (`IR::RamInit`) is `let mut`; its writes are
+                // statements of their own, which keep it live.
                 let lhs = rest[..eq].trim();
+                let lhs = lhs.strip_prefix("mut ").unwrap_or(lhs);
                 let expr = &rest[eq + 3..];
                 // Drop an optional type annotation `vN: TYPE` so the name
                 // matches downstream identifier refs. Both `let v: u8 =`
@@ -737,6 +740,11 @@ pub struct NoirEmitter<'a> {
     dynamic_reads_per_epoch: HashMap<(u32, u64), usize>,
     /// Native Noir arrays holding a segment's slots, per (segment, epoch).
     segment_arrays: HashMap<(u32, u64), String>,
+    /// The read-only tables (`IR::RomInit`): the Noir array and its cells.
+    roms: HashMap<crate::types::StmtId, (String, Vec<String>)>,
+    /// The read-write memories (`IR::RamInit`): each memory version's
+    /// mutable Noir array and length.
+    rams: HashMap<crate::types::StmtId, (String, usize)>,
     /// Hint arrays already computed, by their call expression (see
     /// `prover_hint`).
     hint_arrays: HashMap<String, String>,
@@ -2047,6 +2055,28 @@ impl<'a> NoirEmitter<'a> {
         out
     }
 
+    /// The mutable array and length of a memory version.
+    fn ram_version(&self, version: crate::types::StmtId) -> Result<(String, usize), ProvingError> {
+        self.rams
+            .get(&version)
+            .cloned()
+            .ok_or_else(|| ProvingError::synthesis(format!("statement {version} is not a memory version")))
+    }
+
+    /// An index into a memory of `len` cells: a constant must be in range at
+    /// compile time; a runtime address is checked by `array_index` (an
+    /// address outside fails the proof, as the mock rejects it).
+    fn ram_index(&mut self, address: &CellRef, len: usize) -> Result<String, ProvingError> {
+        if let Some(a) = self.s_int_of(address) {
+            return usize::try_from(a)
+                .ok()
+                .filter(|&a| a < len)
+                .map(|a| a.to_string())
+                .ok_or_else(|| ProvingError::synthesis(format!("memory access out of bounds: address {a}")));
+        }
+        Ok(self.array_index(address, len as u64))
+    }
+
     /// `addr` as a checked `u32` index into an array of `len >= 1` elements
     /// (library `array_index`), once per (addr, len).
     fn array_index(&mut self, addr: &str, len: u64) -> String {
@@ -2168,6 +2198,8 @@ impl<'a> NoirEmitter<'a> {
             proven_range: HashMap::new(),
             dynamic_reads_per_epoch: HashMap::new(),
             segment_arrays: HashMap::new(),
+            roms: HashMap::new(),
+            rams: HashMap::new(),
             hint_arrays: HashMap::new(),
             interval_of: HashMap::new(),
             segment_iv: HashMap::new(),
@@ -3482,6 +3514,72 @@ impl Synthesizer for NoirEmitter<'_> {
         }
         Ok(self.native_read(segment_id, addr))
     }
+    /// A native array holding the cells (a ROM block in bb).
+    fn rom_init(&mut self, table: crate::types::StmtId, cells: &[CellRef]) -> Result<(), ProvingError> {
+        let name = self.fresh();
+        let _ = writeln!(self.body, "    let {}: [Field; {}] = [{}];", name, cells.len(), cells.join(", "));
+        self.roms.insert(table, (name, cells.to_vec()));
+        Ok(())
+    }
+
+    /// A read of the native array at an index `array_index` checks into the
+    /// table (an address outside fails the proof, as the mock rejects it;
+    /// it does not rely on bb's memory check, which the pinned bb version
+    /// does not enforce for index p - 1); a constant address must be in
+    /// range at compile time and reads its cell.
+    fn rom_read(&mut self, table: crate::types::StmtId, address: &CellRef) -> Result<CellRef, ProvingError> {
+        let (name, cells) = self
+            .roms
+            .get(&table)
+            .cloned()
+            .ok_or_else(|| ProvingError::synthesis(format!("statement {table} is not a table")))?;
+        if let Some(a) = self.s_int_of(address) {
+            return usize::try_from(a)
+                .ok()
+                .and_then(|a| cells.get(a).cloned())
+                .ok_or_else(|| ProvingError::synthesis(format!("table read out of bounds: address {a}")));
+        }
+        if cells.is_empty() {
+            return Err(ProvingError::synthesis("a read of an empty table"));
+        }
+        let index = self.array_index(address, cells.len() as u64);
+        Ok(self.bind(&format!("{name}[{index}]")))
+    }
+
+    /// A mutable native array holding the cells (a RAM block in bb). The
+    /// interpreter checks the RAM discipline, so every version of a memory
+    /// is the array's state where it is read.
+    fn ram_init(&mut self, memory: crate::types::StmtId, cells: &[CellRef]) -> Result<(), ProvingError> {
+        if cells.is_empty() {
+            return Err(ProvingError::synthesis("an empty memory"));
+        }
+        let name = self.fresh();
+        let _ = writeln!(self.body, "    let mut {}: [Field; {}] = [{}];", name, cells.len(), cells.join(", "));
+        self.rams.insert(memory, (name, cells.len()));
+        Ok(())
+    }
+
+    /// `array[index] = value`, the index checked into the memory by
+    /// `array_index` (or a constant in range).
+    fn ram_write(&mut self, from: crate::types::StmtId, to: crate::types::StmtId, address: &CellRef, value: &CellRef) -> Result<(), ProvingError> {
+        let (name, len) = self.ram_version(from)?;
+        let index = self.ram_index(address, len)?;
+        let _ = writeln!(self.body, "    {name}[{index}] = {value};");
+        self.rams.insert(to, (name, len));
+        Ok(())
+    }
+
+    /// `array[index]`, the index checked into the memory by `array_index`
+    /// (or a constant in range). Not a cached binding: a later write changes
+    /// the array.
+    fn ram_read(&mut self, version: crate::types::StmtId, address: &CellRef) -> Result<CellRef, ProvingError> {
+        let (name, len) = self.ram_version(version)?;
+        let index = self.ram_index(address, len)?;
+        let out = self.fresh();
+        let _ = writeln!(self.body, "    let {out} = {name}[{index}];");
+        Ok(out)
+    }
+
     fn memory_trace_emit(
         &mut self,
         _segment_id: u32,

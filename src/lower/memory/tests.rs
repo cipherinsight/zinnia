@@ -74,7 +74,7 @@ pub(crate) fn read_graph(
 }
 
 fn has_placeholder(graph: &IRGraph) -> bool {
-    graph.stmts.iter().any(|s| matches!(&s.ir, IR::ArrayOp(op) if op.kind == OpKind::Element))
+    graph.stmts.iter().any(|s| matches!(&s.ir, IR::ArrayRead(_)) || matches!(&s.ir, IR::ArrayOp(op) if op.kind == OpKind::Element))
 }
 
 fn check_against_numpy(case: &ReadGraph, what: &str) {

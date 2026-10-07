@@ -17,6 +17,8 @@ mod keys;
 mod memory;
 mod plan;
 mod ranges;
+mod ram;
+mod rom;
 
 use self::fixed_point::Divisor;
 use self::memory::MemoryState;
@@ -70,6 +72,10 @@ pub struct Halo2BaseSynthesizer<'a> {
     public_values: Vec<Fp>,
     /// Memory segments and the caches of dynamic reads (see `memory.rs`).
     memory: MemoryState,
+    /// The read-only tables (`IR::RomInit`), by statement.
+    roms: std::collections::HashMap<crate::types::StmtId, rom::Rom>,
+    /// The read-write memories (`IR::RamInit`) and their shared trace.
+    memories: ram::Memories,
     /// Q values that are float casts `n·2^P` of an integer cell `n`, by the
     /// Q cell's id (see `fixed_point::Factor`).
     float_casts: HashMap<u64, Halo2BaseCell>,
@@ -189,6 +195,8 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             params,
             public_values: Vec::new(),
             memory: MemoryState::default(),
+            roms: std::collections::HashMap::new(),
+            memories: ram::Memories::default(),
             float_casts: HashMap::new(),
             two_valued: HashMap::new(),
             bit_cache: HashMap::new(),
@@ -1716,6 +1724,21 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
     fn read_table(&mut self, segment_id: u32, addr: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         self.memory_read_table(segment_id, addr)
+    }
+    fn rom_init(&mut self, table: crate::types::StmtId, cells: &[Self::CellRef]) -> Result<(), ProvingError> {
+        self.rom_init_cells(table, cells)
+    }
+    fn rom_read(&mut self, table: crate::types::StmtId, address: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        self.rom_read_cell(table, address)
+    }
+    fn ram_init(&mut self, memory: crate::types::StmtId, cells: &[Self::CellRef]) -> Result<(), ProvingError> {
+        self.ram_init_cells(memory, cells)
+    }
+    fn ram_write(&mut self, from: crate::types::StmtId, to: crate::types::StmtId, address: &Self::CellRef, value: &Self::CellRef) -> Result<(), ProvingError> {
+        self.ram_write_cell(from, to, address, value)
+    }
+    fn ram_read(&mut self, version: crate::types::StmtId, address: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        self.ram_read_cell(version, address)
     }
     fn memory_trace_emit(&mut self, _: u32, _: bool, _: &[Self::CellRef]) -> Result<(), ProvingError> { Ok(()) }
     fn memory_trace_seal(&mut self) -> Result<(), ProvingError> { Ok(()) }

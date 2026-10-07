@@ -65,6 +65,19 @@ impl IRBuilder {
         self.create_ir(&IR::ArrayInit { len: cells.len() as u32, elem }, cells)
     }
 
+    /// An `ArrayInit` of `cells`, one per list of cells: reads of the same
+    /// cells share it (and so form one element group in the layer).
+    pub fn array_of_cells(&mut self, cells: &[Value], elem: ArrayElem) -> Value {
+        let cells: Vec<Value> = cells.iter().map(|c| self.ensure_ptr(c)).collect();
+        let key: Vec<StmtId> = cells.iter().map(|c| c.stmt_id().expect("a materialized cell")).collect();
+        if let Some(array) = self.array_inits.get(&(elem, key.clone())) {
+            return array.clone();
+        }
+        let array = self.ir_array_init(&cells, elem);
+        self.array_inits.insert((elem, key), array.clone());
+        array
+    }
+
     /// `ArrayWrite`: `version` with the cell `access` names at `positions`
     /// set to `value` when `predicate` holds (fold 4 for a constant false
     /// predicate).
@@ -156,13 +169,6 @@ impl IRBuilder {
                 out
             }
         }
-    }
-
-    /// The operands of the array version `stmt` this builder built
-    /// (`ArrayInit`: its cells; `ArrayWrite`: version, positions, value,
-    /// predicate).
-    pub(crate) fn array_def(&self, stmt: StmtId) -> Option<&[Value]> {
-        self.array_defs.get(&stmt).map(Vec::as_slice)
     }
 
     /// `RomInit`: a read-only table holding `cells`.

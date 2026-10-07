@@ -79,8 +79,10 @@ pub enum OpKind {
     /// that shape. Shared operands: the cells, then `(start, stop)` per
     /// axis, each start in `[0, dims[a]]`. Lane `p` is the buffer's cell `p`.
     Window { rank: u8, dims: [u32; 3] },
-    /// `x[i]` of the shared cells at the lane's own operand `i`, which is in
-    /// `[0, n)` (the frontend checked it).
+    /// The reads of one line of known cells: `ArrayRead`s of an `ArrayInit`
+    /// (`lower::arrays`), `x[i]` of the shared cells at the lane's own
+    /// operand `i`, which is in `[0, n)` (the frontend checked it). A group
+    /// kind only: no placeholder has it (the reads are `IR::ArrayRead`s).
     Element,
     /// `c[p] = v` for a permutation `p` of `0..n`: lane `j` is `c[j]`, the
     /// `v[k]` with `p[k] == j`. Shared operands: `p`, then `v` (n each). The
@@ -130,6 +132,10 @@ pub enum OpKind {
     /// position `k` the bit `[w == k]`. An `i` outside `[-len, len)` has no
     /// proof (NumPy raises; the program checks `0 <= w < len`).
     Wrap { len: u32 },
+    /// The version tree of an array the program writes at runtime
+    /// (`lower::memory::versions`): a group kind only, whose lanes are the
+    /// tree's reads at constant addresses. No placeholder has it.
+    Versions,
 }
 
 impl OpKind {
@@ -151,6 +157,7 @@ impl OpKind {
             OpKind::Correlation { .. } | OpKind::MatMul { .. } => &super::linear::LinearSemantics,
             OpKind::IsPermutation => &super::permutation::IsPermutationSemantics,
             OpKind::Wrap { .. } => &super::memory::wrap::WrapSemantics,
+            OpKind::Versions => unreachable!("a memory group has no placeholder"),
         }
     }
 
@@ -174,6 +181,7 @@ impl OpKind {
             OpKind::MatMul { .. } => "matmul",
             OpKind::IsPermutation => "is_permutation",
             OpKind::Wrap { .. } => "wrap",
+            OpKind::Versions => "versions",
         }
     }
 }

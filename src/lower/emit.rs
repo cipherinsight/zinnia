@@ -32,7 +32,7 @@ use crate::types::{StmtId, Value};
 use super::checks::{self, ProgramCheck};
 use super::construction::{Candidate, Construction, Context, Emitter, Target};
 use super::facts::FreeFacts;
-use super::graph::{Fact, Group, GroupId, Lane, Requirement};
+use super::graph::{CellSource, Fact, Group, GroupId, Lane, Requirement, VersionLine};
 use super::select::{self, justifies, Node, Problem};
 
 /// The array lowering pass for one compile target.
@@ -45,14 +45,37 @@ impl IRPass for ArrayLowering {
     /// justify, then simplifies what it emitted as the earlier passes did
     /// (`select(c, 1, 0)` is `c`, ...), deduplicates it, and drops what no
     /// output needs. A graph with nothing to do is returned unchanged.
+    ///
+    /// Lowering runs in rounds: an emitter may leave a read it does not
+    /// build itself as an `ArrayRead` of an `ArrayInit` (the reads of an
+    /// overlay's versions, a sort's reads at hinted ranks), which the next
+    /// round lowers with every other element read.
     fn exec(&self, graph: IRGraph) -> IRGraph {
-        let Some(lowered) = lower(&graph, self.target, &super::registry()) else {
-            return graph;
-        };
-        let simplified = crate::optim::PatternMatchOptim.exec(lowered);
-        let deduplicated = crate::optim::DuplicateCodeElimination.exec(simplified);
-        crate::optim::DeadCodeElimination.exec(deduplicated)
+        let mut graph = graph;
+        for _ in 0..MAX_ROUNDS {
+            let Some(lowered) = lower(&graph, self.target, &super::registry()) else {
+                return graph;
+            };
+            let simplified = crate::optim::PatternMatchOptim.exec(lowered);
+            let deduplicated = crate::optim::DuplicateCodeElimination.exec(simplified);
+            graph = crate::optim::DeadCodeElimination.exec(deduplicated);
+            if !has_array_operations(&graph) {
+                return graph;
+            }
+        }
+        panic!("array lowering: array operations left after {MAX_ROUNDS} rounds");
     }
+}
+
+/// The most lowering rounds a program may need (an overlay's reads, then a
+/// table's; a sort's reads at hinted ranks).
+const MAX_ROUNDS: usize = 4;
+
+/// Whether `graph` still has something for the layer: a placeholder or an
+/// array read or write (an `ArrayInit` alone is dead once its reads are
+/// lowered).
+fn has_array_operations(graph: &IRGraph) -> bool {
+    graph.stmts.iter().any(|s| matches!(s.ir, IR::ArrayOp(_) | IR::ArrayRead(_) | IR::ArrayWrite(_)))
 }
 
 /// Lower `graph` with `constructions`; `None` when it has no placeholder
@@ -60,14 +83,14 @@ impl IRPass for ArrayLowering {
 pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction]) -> Option<IRGraph> {
     // Claims' value lists are numbered per lowering (`ListId`).
     super::graph::ListId::reset();
-    let groups = collect_groups(graph);
+    let (groups, direct) = collect_groups(graph);
     let facts = FreeFacts::new(graph);
     let program_checks = checks::program_checks(graph);
     let mut freely_proven = checks::dominated(&program_checks);
     freely_proven.extend(
         program_checks.iter().filter(|c| c.forms.iter().any(|f| facts.established_by_gadget(f))).map(|c| c.stmt),
     );
-    if groups.is_empty() && freely_proven.is_empty() {
+    if groups.is_empty() && direct.is_empty() && freely_proven.is_empty() {
         return None;
     }
 
@@ -89,7 +112,16 @@ pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction
             if only.is_some_and(|name| construction.name() != name.as_str()) && produces_lanes {
                 continue;
             }
-            for candidate in candidates {
+            for mut candidate in candidates {
+                // Reading a written version's cells needs them (its memory
+                // group's overlay produces them).
+                if let Some(line) = &group.version {
+                    let produces_own_lane =
+                        candidate.post.iter().any(|r| matches!(r, Requirement::Lane(s) if group.lanes.iter().any(|l| l.stmt == *s)));
+                    if produces_own_lane {
+                        candidate.pre.push(super::memory::versions::cells_requirement(line.version));
+                    }
+                }
                 nodes.push(NodeEntry::offered(construction.name(), candidate, &facts));
             }
         }
@@ -114,7 +146,7 @@ pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction
     let selected = select_all(&nodes, &roots);
     let mut dropped = freely_proven;
     dropped.extend(unselected_checks(&nodes, &selected));
-    Some(emit(graph, &groups, nodes, &selected, &dropped))
+    Some(emit(graph, &groups, &direct, nodes, &selected, &dropped))
 }
 
 /// Measurement only: the environment variable `ZINNIA_FORCE_CONSTRUCTION`
@@ -131,25 +163,81 @@ fn forced_construction() -> Vec<String> {
 
 // ── Groups ──────────────────────────────────────────────────────────────
 
-fn collect_groups(graph: &IRGraph) -> Vec<Group> {
-    let mut by_key: BTreeMap<(super::OpKind, Vec<StmtId>), GroupId> = BTreeMap::new();
+/// The groups of `graph`'s placeholders and array reads, and the reads of a
+/// known cell at a constant address (read → cell), which need no
+/// construction:
+///
+/// * a placeholder's group: its kind and shared operands;
+/// * an element group: the reads of one line of known cells (`ArrayRead`s
+///   of an `ArrayInit`, `super::arrays`), or of one line of a written
+///   version's cells (`Group::version`);
+/// * a memory group (`OpKind::Versions`): a version tree with writes
+///   (`super::memory::versions`), whose lanes are its reads at constant
+///   addresses.
+fn collect_groups(graph: &IRGraph) -> (Vec<Group>, HashMap<StmtId, StmtId>) {
+    type Key = (super::OpKind, Vec<StmtId>, Option<VersionLine>);
+    let mut by_key: BTreeMap<Key, GroupId> = BTreeMap::new();
     let mut groups: Vec<Group> = Vec::new();
-    for stmt in &graph.stmts {
-        let IR::ArrayOp(op) = &stmt.ir else { continue };
-        let shared = op.shared as usize;
-        let key = (op.kind, stmt.arguments[..shared].to_vec());
-        let id = *by_key.entry(key).or_insert_with(|| {
-            groups.push(Group { id: groups.len(), kind: op.kind, shared: stmt.arguments[..shared].to_vec(), lanes: Vec::new() });
+    let mut direct: HashMap<StmtId, StmtId> = HashMap::new();
+    let mut add_lane = |key: Key, lane: Lane| {
+        let id = *by_key.entry(key.clone()).or_insert_with(|| {
+            let (kind, shared, version) = key;
+            groups.push(Group { id: groups.len(), kind, shared, lanes: Vec::new(), version, tree: None });
             groups.len() - 1
         });
-        groups[id].lanes.push(Lane {
-            stmt: stmt.stmt_id,
-            output: op.output,
-            position: op.position,
-            own: stmt.arguments[shared..].to_vec(),
-        });
+        groups[id].lanes.push(lane);
+    };
+    let trees = super::memory::versions::trees(&graph.stmts);
+    let root_of_read: HashMap<StmtId, StmtId> =
+        trees.iter().flat_map(|(&root, t)| t.reads.iter().map(move |r| (r.stmt, root))).collect();
+    for stmt in &graph.stmts {
+        match &stmt.ir {
+            IR::ArrayOp(op) => {
+                let shared = op.shared as usize;
+                let lane = Lane {
+                    stmt: stmt.stmt_id,
+                    output: op.output,
+                    position: op.position,
+                    own: stmt.arguments[shared..].to_vec(),
+                };
+                add_lane((op.kind, stmt.arguments[..shared].to_vec(), None), lane);
+            }
+            IR::ArrayRead(access) => match super::arrays::element_read(&graph.stmts, stmt.stmt_id) {
+                Some(super::arrays::ElementRead { line, index: Some(index) }) => {
+                    let lane = Lane { stmt: stmt.stmt_id, output: 0, position: None, own: vec![index] };
+                    add_lane((super::OpKind::Element, line, None), lane);
+                }
+                Some(super::arrays::ElementRead { line, index: None }) => {
+                    direct.insert(stmt.stmt_id, line[0]);
+                }
+                // A read of a written version: its tree's (`trees`).
+                None => match stmt.arguments.get(1) {
+                    Some(&index) => {
+                        let line = VersionLine { version: stmt.arguments[0], addresses: access.line() };
+                        let lane = Lane { stmt: stmt.stmt_id, output: 0, position: None, own: vec![index] };
+                        add_lane((super::OpKind::Element, Vec::new(), Some(line)), lane);
+                    }
+                    None => {
+                        let root = root_of_read[&stmt.stmt_id];
+                        let lane = Lane { stmt: stmt.stmt_id, output: 0, position: Some(access.offset), own: Vec::new() };
+                        add_lane((super::OpKind::Versions, vec![root], None), lane);
+                    }
+                },
+            },
+            _ => {}
+        }
     }
-    groups
+    // Every tree is a memory group (with no lane of its own when all its
+    // reads are at runtime positions).
+    for (root, tree) in trees {
+        let key = (super::OpKind::Versions, vec![root], None);
+        let id = *by_key.entry(key).or_insert_with(|| {
+            groups.push(Group { id: groups.len(), kind: super::OpKind::Versions, shared: vec![root], lanes: Vec::new(), version: None, tree: None });
+            groups.len() - 1
+        });
+        groups[id].tree = Some(std::rc::Rc::new(tree));
+    }
+    (groups, direct)
 }
 
 fn users_of(graph: &IRGraph) -> HashMap<StmtId, Vec<StmtId>> {
@@ -453,6 +541,18 @@ impl EmitCx<'_> {
         stmts.iter().map(|s| self.value(*s)).collect()
     }
 
+    /// The values of an element group's cells (`Group::cells`): statements'
+    /// values, or a written version's cells from its memory group.
+    pub fn cells(&mut self, b: &mut IRBuilder, cells: &CellSource) -> Vec<Value> {
+        match cells {
+            CellSource::Stmts(stmts) => self.values(stmts),
+            CellSource::Version(line) => {
+                let all = self.shared_at::<Vec<Value>>(b, line.version, super::memory::versions::CELLS);
+                line.addresses.iter().map(|&a| all[a].clone()).collect()
+            }
+        }
+    }
+
     /// The shared value `name` of `group`, emitted once by its selected
     /// producer.
     pub fn shared<T: 'static>(&mut self, b: &mut IRBuilder, group: GroupId, name: &'static str) -> Rc<T> {
@@ -511,7 +611,14 @@ enum Unit {
     Stmt(StmtId),
 }
 
-fn emit(graph: &IRGraph, groups: &[Group], nodes: Vec<NodeEntry>, selected: &[usize], dropped: &HashSet<StmtId>) -> IRGraph {
+fn emit(
+    graph: &IRGraph,
+    groups: &[Group],
+    direct: &HashMap<StmtId, StmtId>,
+    nodes: Vec<NodeEntry>,
+    selected: &[usize],
+    dropped: &HashSet<StmtId>,
+) -> IRGraph {
     let selected_set: HashSet<usize> = selected.iter().copied().collect();
     let mut lane_producer: HashMap<StmtId, usize> = HashMap::new();
     let mut state = EmitState {
@@ -588,6 +695,8 @@ fn emit(graph: &IRGraph, groups: &[Group], nodes: Vec<NodeEntry>, selected: &[us
                     let producer = lane_producer[&s];
                     let mut cx = EmitCx { lookup: &lookup, state: &mut state };
                     cx.with_emitter(&mut b, producer, |e, b, cx| e.lane(b, cx, lane))
+                } else if let Some(cell) = direct.get(&s) {
+                    lookup[cell].clone()
                 } else if dropped.contains(&s) {
                     Value::None
                 } else {
@@ -630,7 +739,10 @@ fn emission_order(
     for &node in starts {
         let mut inputs: Vec<Unit> = Vec::new();
         for (lane, _) in lane_producer.iter().filter(|(_, &p)| p == node) {
-            inputs.extend(group_of[lane].shared.iter().map(|s| Unit::Stmt(*s)));
+            let group = group_of[lane];
+            inputs.extend(group.shared.iter().map(|s| Unit::Stmt(*s)));
+            // A written version's cells are built from its write's operands.
+            inputs.extend(group.version.iter().map(|line| Unit::Stmt(line.version)));
         }
         inputs.extend(check_inputs.get(&node).into_iter().flatten().map(|s| Unit::Stmt(*s)));
         inputs.sort_unstable();

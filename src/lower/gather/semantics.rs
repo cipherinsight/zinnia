@@ -31,10 +31,6 @@ impl OperatorSemantics for GatherSemantics {
                     None => Some(zero_like(&args[..cells])),
                 }
             }
-            OpKind::Element => {
-                let index = usize::try_from(args.get(n)?.int_val()?).ok().filter(|&i| i < n)?;
-                constant_of(&args[index])
-            }
             OpKind::PermutationScatter => {
                 let half = n / 2;
                 let j = op.position? as i64;
@@ -50,14 +46,13 @@ impl OperatorSemantics for GatherSemantics {
         let n = op.shared as usize;
         match op.kind {
             OpKind::Window { rank, .. } if is_float(&args[..n - 2 * rank as usize]) => NumberType::Float,
-            OpKind::Element if is_float(&args[..n]) => NumberType::Float,
             OpKind::PermutationScatter if is_float(&args[n / 2..n]) => NumberType::Float,
             _ => NumberType::Integer,
         }
     }
 
-    /// A position lies in `[0, n)`; a window cell is a source cell or 0; an
-    /// element is one of the cells; a scattered cell one of the values.
+    /// A position lies in `[0, n)`; a window cell is a source cell or 0; a
+    /// scattered cell one of the values.
     fn bounds(&self, op: &ArrayOp, operands: &[Option<Interval>]) -> Option<Interval> {
         let n = op.shared as usize;
         let union = |xs: &[Option<Interval>]| xs.iter().copied().reduce(|x, y| Some(Interval::union(x?, y?))).flatten();
@@ -67,7 +62,6 @@ impl OperatorSemantics for GatherSemantics {
                 let cells = union(&operands[..n - 2 * rank as usize])?;
                 Some(Interval::union(cells, Interval::point(0)))
             }
-            OpKind::Element => union(&operands[..n]),
             OpKind::PermutationScatter => union(&operands[n / 2..n]),
             _ => None,
         }
@@ -75,7 +69,6 @@ impl OperatorSemantics for GatherSemantics {
 
     fn picks_from(&self, op: &ArrayOp) -> Option<Range<usize>> {
         match op.kind {
-            OpKind::Element => Some(0..op.shared as usize),
             OpKind::PermutationScatter => Some(op.shared as usize / 2..op.shared as usize),
             _ => None,
         }

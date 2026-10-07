@@ -318,6 +318,8 @@ fn measure_linear_cells() {
                     .iter()
                     .map(|&p| crate::lower::Lane { stmt: 0, output: 0, position: Some(p as u32), own: Vec::new() })
                     .collect(),
+                version: None,
+                tree: None,
             };
             println!(
                 "{shape:?} live {}: direct {direct} est {} | identity {identity} (2nd {second}) est {} | diff measured {} est {}",

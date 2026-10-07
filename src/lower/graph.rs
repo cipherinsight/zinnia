@@ -41,13 +41,65 @@ pub struct Lane {
 pub struct Group {
     pub id: GroupId,
     pub kind: OpKind,
-    /// The shared operands (the operator's inputs).
+    /// The shared operands (the operator's inputs). An element group's are
+    /// the cells it reads, when they are statements of the graph (an
+    /// `ArrayInit`'s operands).
     pub shared: Vec<StmtId>,
     /// The live lanes, in statement order.
     pub lanes: Vec<Lane>,
+    /// For an element group that reads a written array version: the
+    /// version and the addresses of the cells its reads can name (its
+    /// `shared` is empty). The version's memory group produces those cells
+    /// (`Requirement::SharedAt { at: version, name: memory::versions::CELLS }`),
+    /// which every candidate of this group producing its lanes needs
+    /// (`emit::lower` adds the precondition).
+    pub version: Option<VersionLine>,
+    /// For a memory group (`OpKind::Versions`): its version tree.
+    pub tree: Option<std::rc::Rc<crate::lower::memory::versions::Tree>>,
+}
+
+/// The cells of a written array version an element group reads.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct VersionLine {
+    pub version: StmtId,
+    pub addresses: Vec<usize>,
+}
+
+/// Where an element group's cells come from: statements of the graph, or a
+/// written version's cells (`EmitCx::cells` gives their values).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CellSource {
+    Stmts(Vec<StmtId>),
+    Version(VersionLine),
+}
+
+impl CellSource {
+    pub fn len(&self) -> usize {
+        match self {
+            CellSource::Stmts(cells) => cells.len(),
+            CellSource::Version(line) => line.addresses.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 impl Group {
+    /// The number of cells an element group reads.
+    pub fn line_len(&self) -> usize {
+        self.version.as_ref().map_or(self.shared.len(), |line| line.addresses.len())
+    }
+
+    /// Where an element group's cells come from.
+    pub fn cells(&self) -> CellSource {
+        match &self.version {
+            Some(line) => CellSource::Version(line.clone()),
+            None => CellSource::Stmts(self.shared.clone()),
+        }
+    }
+
     /// The live lanes of output `output` at constant positions, by position.
     pub fn positions(&self, output: u8) -> impl Iterator<Item = (u32, &Lane)> {
         self.lanes

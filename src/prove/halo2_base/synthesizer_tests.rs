@@ -2555,3 +2555,87 @@ fn ram_is_chosen_by_cost_and_proves_with_real_keys() {
     tampered[3] += Fp::one();
     assert!(!verify_with_keys(&keys, &proof.proof, &tampered).valid, "changed read verified");
 }
+
+fn layered_ram_graph(n: usize, m: usize) -> crate::ir::IRGraph {
+    crate::lower::memory::test_support::two_memories(n, m, crate::lower::Target::Halo2Base, &[&crate::lower::memory::versions::RamTrace])
+}
+
+/// The layer's RAM: every read is the last write the program executed (a
+/// write whose predicate is false changes nothing), both memories share one
+/// trace without reading each other's cells, a position outside its array
+/// has no witness, and every read value (a hint) moved by any delta is
+/// rejected (MockProver).
+#[test]
+fn layered_ram_reads_the_last_executed_write_and_is_pinned() {
+    use crate::ir_defs::IR;
+    let (n, m) = (5usize, 3usize);
+    let ir = layered_ram_graph(n, m);
+    assert_eq!(ir.stmts.iter().filter(|s| matches!(s.ir, IR::RamInit { .. })).count(), 2, "two memories");
+    let mut shifts: Vec<Fp> = vec![int(1), int(-1), int(100)];
+    shifts.extend(deltas(&[]));
+    // [a0, v0, a1, v1, p, c, w, r0, r1, s]
+    let cases = [
+        [1i64, 7, 3, 8, 1, 2, 9, 1, 3, 2],
+        [1, 7, 1, 8, 0, 0, 9, 1, 4, 1],
+        [4, 7, 4, 8, 1, 1, 9, 4, 0, 1],
+        [0, 7, 2, 8, 0, 2, 9, 2, 0, 0],
+        [5, 7, 2, 8, 1, 0, 9, 2, 0, 0],
+        [0, 7, 2, 8, 1, 3, 9, 2, 0, 0],
+        [0, 7, 2, 8, 1, 0, 9, 2, 0, -1],
+        [0, 7, 2, 8, 0, 0, 9, 2, 5, 0],
+    ];
+    let names = ["a0", "v0", "a1", "v1", "p", "c", "w", "r0", "r1", "s"];
+    for case in cases {
+        let [a0, v0, a1, v1, p, c, w, r0, r1, s] = case;
+        let mut ints: Vec<(String, i64)> = (0..n).map(|k| (format!("x{k}"), 100 + k as i64)).collect();
+        ints.extend((0..m).map(|k| (format!("y{k}"), 200 + k as i64)));
+        ints.extend(names.iter().zip(case).map(|(name, v)| (name.to_string(), v)));
+        let wit = witness_of(&ints);
+        let honest = synthesize_graph_with(&ir, &wit, &[], false);
+        let inside = |x: i64, len: usize| (0..len as i64).contains(&x);
+        if ![inside(a0, n), inside(a1, n), inside(r0, n), inside(r1, n), inside(c, m), inside(s, m)].iter().all(|&ok| ok) {
+            assert!(!honest.accepted, "{case:?}: accepted, NumPy raises");
+            continue;
+        }
+        let mut a: Vec<i64> = (0..n as i64).map(|k| 100 + k).collect();
+        let mut bv: Vec<i64> = (0..m as i64).map(|k| 200 + k).collect();
+        a[a0 as usize] = v0;
+        if p == 1 {
+            a[a1 as usize] = v1;
+        }
+        bv[c as usize] = w;
+        let expected = vec![int(a[r0 as usize]), int(a[r1 as usize]), int(bv[s as usize])];
+        assert!(honest.accepted, "{case:?}: honest witness rejected");
+        assert_eq!(honest.outputs, expected, "{case:?}");
+        // Three reads and the old cell of the predicated write.
+        assert_eq!(honest.hints, 4, "one hint per memory read");
+        for hint in 0..honest.hints {
+            for shift in &shifts {
+                assert!(!synthesize_graph_with(&ir, &wit, &[(hint, *shift)], false).accepted, "{case:?}: hint #{hint} moved by {shift:?}");
+            }
+        }
+    }
+}
+
+/// The layer's RAM proves and verifies through the backend's real keys
+/// (one shared trace pinned at key generation); a changed public read does
+/// not verify.
+#[test]
+fn layered_ram_proves_with_real_keys() {
+    use crate::prove::halo2_base::keys::{keygen, prove_with_keys, verify_with_keys};
+    let (n, m) = (5usize, 3usize);
+    let ir = layered_ram_graph(n, m);
+    let mut ints: Vec<(String, i64)> = (0..n).map(|k| (format!("x{k}"), 100 + k as i64)).collect();
+    ints.extend((0..m).map(|k| (format!("y{k}"), 200 + k as i64)));
+    let values = [1i64, 7, 3, 8, 1, 2, 9, 1, 3, 2];
+    ints.extend(["a0", "v0", "a1", "v1", "p", "c", "w", "r0", "r1", "s"].iter().zip(values).map(|(n, v)| (n.to_string(), v)));
+    let params = ProvingParams { k: 10, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
+    let keys = keygen(&ir, &params).expect("keygen");
+    assert_eq!(keys.pinning.ram_traces, 1, "one shared trace");
+    let proof = prove_with_keys(&ir, &witness_of(&ints), &keys).expect("prove");
+    assert_eq!(proof.public_values, vec![int(7), int(8), int(9)]);
+    assert!(verify_with_keys(&keys, &proof.proof, &proof.public_values).valid, "honest proof rejected");
+    let mut tampered = proof.public_values.clone();
+    tampered[1] += Fp::one();
+    assert!(!verify_with_keys(&keys, &proof.proof, &tampered).valid, "changed read verified");
+}

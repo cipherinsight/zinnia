@@ -16,8 +16,8 @@
 //! The pass [`ArgmaxQueries`] finds `r` as the gather family's argmax lane
 //! (`OpKind::ArgmaxOfFlags` over `h`) or as a first-True select chain
 //! (`select(h_0, 0, select(h_1, 1, .. select(h_{n-1}, n-1, 0)))`), views a
-//! statement built from reads at `r` (`OpKind::Element` lanes, or reads of
-//! known segments) by
+//! statement built from reads at `r` (`ArrayRead`s of known cells, or reads
+//! of known segments) by
 //! equality tests, `and`, `or` and `not` as `B[r]` (or `not B[r]`) for a
 //! vector `B` of statements the program has, and replaces it by `any(h)`
 //! (or its negation) when `B` is `h`. Everything it relies on is a
@@ -250,9 +250,9 @@ impl<'a> Facts<'a> {
         let st = self.stmt(stmt);
         let (cells, at) = match &st.ir {
             IR::ReadMemory { segment_id } => (self.segments.get(segment_id)?.clone(), st.arguments[0]),
-            IR::ArrayOp(op) if op.kind == OpKind::Element => {
-                let n = op.shared as usize;
-                (st.arguments[..n].to_vec(), *st.arguments.get(n)?)
+            IR::ArrayRead(_) => {
+                let read = crate::lower::arrays::element_read(&self.graph.stmts, stmt)?;
+                (read.line, read.index?)
             }
             _ => return None,
         };
@@ -349,7 +349,7 @@ mod tests {
         b.ir_expose_public_i(&result);
         let graph = b.export_ir_graph();
         let graph = if rewrite { ArgmaxQueries.exec(graph) } else { graph };
-        let elements = graph.stmts.iter().filter(|s| matches!(&s.ir, IR::ArrayOp(op) if op.kind == OpKind::Element)).count();
+        let elements = graph.stmts.iter().filter(|s| matches!(&s.ir, IR::ArrayRead(_))).count();
         assert_eq!(elements == 0, rewrite || !placeholders, "element lanes die exactly when rewritten");
         if placeholders {
             let lowered = crate::lower::emit::lower(&graph, crate::lower::Target::Halo2Base, &crate::lower::registry());

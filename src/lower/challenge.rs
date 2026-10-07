@@ -57,11 +57,22 @@ pub const CHALLENGE: Requirement = Requirement::Program { name: CHALLENGE_NAME }
 /// (the scaling tables there).
 pub const HALO2_BASE_CHALLENGE_COST: u64 = 2_000;
 
+/// The name of the program-wide RAM trace (halo2-base,
+/// `lower::memory::versions::RamTrace`).
+pub const RAM_NAME: &str = "RAM trace";
+
+/// The one-time cost of the RAM trace on halo2-base, in cells: its 8 advice
+/// and 11 fixed columns, a shuffle and a lookup argument (about 11
+/// committed polynomials of `2^k` rows; `prove/halo2_base/circuit/ram.rs`),
+/// at `k = 9`.
+pub const HALO2_BASE_RAM_COST: u64 = 11 * 512;
+
 /// The one-time cost of producing the program-wide requirement `name` on
 /// `target`; `None` when the target cannot produce it.
 pub fn producer_cost(name: &str, target: Target) -> Option<u64> {
     match (name, target) {
         (CHALLENGE_NAME, Target::Halo2Base) => Some(HALO2_BASE_CHALLENGE_COST),
+        (RAM_NAME, Target::Halo2Base) => Some(HALO2_BASE_RAM_COST),
         _ => None,
     }
 }

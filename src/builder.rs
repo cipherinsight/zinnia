@@ -264,6 +264,8 @@ pub struct IRBuilder {
     /// built, by statement, for the folds of `ir_array_read`
     /// (`builder/arrays.rs`).
     array_defs: HashMap<StmtId, Vec<Value>>,
+    /// The `ArrayInit` of every list of cells `array_of_cells` built.
+    array_inits: HashMap<(crate::ir_array::ArrayElem, Vec<StmtId>), Value>,
 }
 
 impl Default for IRBuilder {
@@ -310,6 +312,7 @@ impl IRBuilder {
             bool_segments: HashSet::new(),
             bool_cells: HashSet::new(),
             array_defs: HashMap::new(),
+            array_inits: HashMap::new(),
         }
     }
 

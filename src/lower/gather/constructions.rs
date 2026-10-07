@@ -21,6 +21,7 @@ use std::rc::Rc;
 
 use crate::builder::IRBuilder;
 use crate::ir_defs::IR;
+use crate::lower::graph::CellSource;
 use crate::lower::{
     Bound, Candidate, Claim, Construction, Context, EmitCx, Emitter, Fact, Group, GroupId, Lane, OpKind, Requirement,
 };
@@ -520,7 +521,7 @@ impl Construction for ElementByOneHot {
                     // A permutation scatter's hits and a wrap's position bits
                     // are cells already; a scan's one-hot is products to build.
                     let onehot_is_free = matches!(cx.groups[*g].kind, OpKind::PermutationScatter | OpKind::Wrap { .. });
-                    cost::element_by_onehot(group.shared.len() as u64, onehot_is_free, cx.target)
+                    cost::element_by_onehot(group.line_len() as u64, onehot_is_free, cx.target)
                 })
                 .sum();
             Candidate {
@@ -528,7 +529,7 @@ impl Construction for ElementByOneHot {
                 post: reads.iter().map(|(lane, _)| Requirement::Lane(lane.stmt)).collect(),
                 cost,
                 emitter: Box::new(OneHotReadEmitter {
-                    cells: group.shared.clone(),
+                    cells: group.cells(),
                     sources: reads.iter().map(|(lane, source)| (lane.stmt, *source)).collect(),
                 }),
             }
@@ -541,14 +542,14 @@ impl Construction for ElementByOneHot {
 }
 
 struct OneHotReadEmitter {
-    cells: Vec<StmtId>,
+    cells: CellSource,
     /// Each read's lane and the source of its index's one-hot.
     sources: Vec<(StmtId, (GroupId, usize, i64))>,
 }
 
 impl Emitter for OneHotReadEmitter {
     fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, lane: &Lane) -> Value {
-        let cells = cx.values(&self.cells);
+        let cells = cx.cells(b, &self.cells);
         let source = self.sources.iter().find(|(stmt, _)| *stmt == lane.stmt).expect("a read of this node").1;
         let encoding = encoding_at(b, cx, source);
         super::element::gather_by_onehot(b, &cells, &encoding, dtype_of(&cells))
@@ -586,7 +587,7 @@ impl IndexedRead {
         if group.kind != OpKind::Element {
             return Vec::new();
         }
-        let n = group.shared.len() as u64;
+        let n = group.line_len() as u64;
         let indices: Vec<StmtId> = group.lanes.iter().map(|l| l.own[0]).collect();
         let cost: u64 = indices
             .iter()
@@ -610,7 +611,7 @@ impl IndexedRead {
                 pre: Vec::new(),
                 post: lanes(group).chain(facts).collect(),
                 cost: cost + checks,
-                emitter: Box::new(IndexedReadEmitter { how: self, cells: group.shared.clone(), proves, checked: Vec::new() }),
+                emitter: Box::new(IndexedReadEmitter { how: self, cells: group.cells(), proves, checked: Vec::new() }),
             }
         };
         let mut out = vec![candidate(false)];
@@ -653,7 +654,7 @@ impl Construction for ElementByIndicators {
 
 struct IndexedReadEmitter {
     how: IndexedRead,
-    cells: Vec<StmtId>,
+    cells: CellSource,
     /// Assert each index's one-hot (the candidate proves its range).
     proves: bool,
     /// The indices whose one-hot is asserted already.
@@ -662,7 +663,7 @@ struct IndexedReadEmitter {
 
 impl Emitter for IndexedReadEmitter {
     fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, lane: &Lane) -> Value {
-        let cells = cx.values(&self.cells);
+        let cells = cx.cells(b, &self.cells);
         let index = cx.value(lane.own[0]);
         let dtype = dtype_of(&cells);
         match self.how {
@@ -694,8 +695,8 @@ impl Construction for ElementByMemory {
         vec![Candidate {
             pre: Vec::new(),
             post: lanes(group).collect(),
-            cost: cost::element_by_memory(group.shared.len() as u64, reads, &index_reads(cx, &indices), cx.target),
-            emitter: Box::new(MemoryReadEmitter { cells: group.shared.clone(), segment: None }),
+            cost: cost::element_by_memory(group.line_len() as u64, reads, &index_reads(cx, &indices), cx.target),
+            emitter: Box::new(MemoryReadEmitter { cells: group.cells(), segment: None }),
         }]
     }
 }
@@ -717,13 +718,13 @@ fn index_reads(cx: &Context, indices: &[StmtId]) -> Vec<u64> {
 }
 
 struct MemoryReadEmitter {
-    cells: Vec<StmtId>,
+    cells: CellSource,
     segment: Option<(u32, NumberType)>,
 }
 
 impl Emitter for MemoryReadEmitter {
     fn begin(&mut self, b: &mut IRBuilder, cx: &mut EmitCx) {
-        let cells = cx.values(&self.cells);
+        let cells = cx.cells(b, &self.cells);
         let dtype = dtype_of(&cells);
         self.segment = Some((crate::helpers::segment::alloc_and_write_values(b, &cells, dtype), dtype));
     }

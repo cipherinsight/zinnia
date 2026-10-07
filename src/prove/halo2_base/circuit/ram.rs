@@ -11,6 +11,14 @@
 //! program's cells (an initial row's address is a fixed column). A read's
 //! value is a hint.
 //!
+//! The memories of `IR::RamInit` share one trace (`synthesizer/ram.rs`):
+//! memory `t` owns the addresses `[base_t, base_t + n_t)`, and an access's
+//! row holds the program's address cell `a` with the fixed base, the
+//! address being `base_t + a`. The trace proves every address in `[0, N)`
+//! for the total `N`; that `a` lies in `[0, n_t)`, so the access stays in
+//! its own memory, is the program's index check (the lowering's
+//! precondition, `lower::memory::versions`).
+//!
 //! The prover also lays out the same rows sorted by (address, time): the
 //! *sorted trace*, advice. halo2's shuffle argument proves the two traces
 //! equal as multisets of `(enabled, time, kind, address, value)` (the
@@ -68,10 +76,13 @@ pub struct RamRow {
     pub value: AssignedValue<Fp>,
 }
 
+/// The address of a row: fixed, or a cell plus a fixed base (several
+/// memories share one trace, each in its own range of addresses; a cell
+/// holds the address within its memory).
 #[derive(Clone)]
 pub enum RamAddress {
     Fixed(u64),
-    Cell(AssignedValue<Fp>),
+    Cell { base: u64, cell: AssignedValue<Fp> },
 }
 
 /// One segment's trace: `n` slots, its rows in program order.
@@ -112,7 +123,7 @@ impl RamRow {
     fn address_value(&self) -> Fp {
         match &self.address {
             RamAddress::Fixed(a) => Fp::from(*a),
-            RamAddress::Cell(c) => *c.value(),
+            RamAddress::Cell { base, cell } => Fp::from(*base) + *cell.value(),
         }
     }
 }
@@ -250,7 +261,8 @@ impl TraceConfig {
                         RamAddress::Fixed(a) => {
                             raw_assign_fixed(&mut region, self.p_addr_fixed, row, Fp::from(*a));
                         }
-                        RamAddress::Cell(cell) => {
+                        RamAddress::Cell { base, cell } => {
+                            raw_assign_fixed(&mut region, self.p_addr_fixed, row, Fp::from(*base));
                             raw_assign_fixed(&mut region, self.p_dyn, row, Fp::one());
                             place(&mut region, self.p_addr, row, cell);
                         }

@@ -6,16 +6,21 @@ use std::any::Any;
 use std::rc::Rc;
 
 use crate::builder::IRBuilder;
+use crate::lower::graph::CellSource;
 use crate::lower::{
     Bound, Candidate, Claim, Construction, Context, EmitCx, Emitter, Fact, Group, Lane, OpKind, Requirement, Scope,
 };
+use crate::ir_array::ArrayElem;
 use crate::types::{NumberType, StmtId, Value};
 
 use super::cost;
 
 /// The family's constructions, in the order the selection breaks ties.
 pub fn constructions() -> Vec<&'static dyn Construction> {
-    vec![&ElementByIndexBits, &IndexBitsNode, &ElementByTable, &super::wrap::WrapByPinnedSign, &super::wrap::WrapByPositionHits]
+    let mut all: Vec<&'static dyn Construction> =
+        vec![&ElementByIndexBits, &IndexBitsNode, &ElementByTable, &super::wrap::WrapByPinnedSign, &super::wrap::WrapByPositionHits];
+    all.extend(super::versions::constructions());
+    all
 }
 
 /// `0 <= i < n` on every path. The index operand is the frontend's guarded
@@ -85,7 +90,7 @@ fn line_length_at(cx: &Context, index: StmtId) -> Option<usize> {
         .groups
         .iter()
         .filter(|g| g.kind == OpKind::Element && g.lanes.iter().any(|l| l.own[0] == index))
-        .map(|g| g.shared.len());
+        .map(|g| g.line_len());
     let first = lengths.next()?;
     lengths.all(|n| n == first).then_some(first)
 }
@@ -109,14 +114,14 @@ impl Construction for ElementByIndexBits {
     }
 
     fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
-        let n = group.shared.len();
+        let n = group.line_len();
         if group.kind != OpKind::Element || n < 2 {
             return Vec::new();
         }
         let indices = distinct_indices(group);
         let lanes = group.lanes.iter().map(|l| Requirement::Lane(l.stmt));
         let cost = group.lanes.len() as u64 * cost::index_bits_read(n as u64, cx.target);
-        let emitter = Box::new(BitsEmitter { cells: group.shared.clone() });
+        let emitter = Box::new(BitsEmitter { cells: group.cells() });
         if n == 2 {
             let post = lanes.chain(indices.into_iter().map(|i| in_bounds(i, n)));
             return vec![Candidate { pre: Vec::new(), post: post.collect(), cost, emitter }];
@@ -137,7 +142,7 @@ impl Construction for IndexBitsNode {
     /// One node per index this group is the first to read (over 3 or more
     /// cells, every reader of the index over the same length).
     fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
-        let n = group.shared.len();
+        let n = group.line_len();
         if group.kind != OpKind::Element || n < 3 {
             return Vec::new();
         }
@@ -169,12 +174,12 @@ impl Emitter for BitsNodeEmitter {
 }
 
 struct BitsEmitter {
-    cells: Vec<StmtId>,
+    cells: CellSource,
 }
 
 impl Emitter for BitsEmitter {
     fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, lane: &Lane) -> Value {
-        let cells = cx.values(&self.cells);
+        let cells = cx.cells(b, &self.cells);
         let index = cx.value(lane.own[0]);
         let dtype = dtype_of(&cells);
         let bits: Rc<Vec<Value>> =
@@ -185,25 +190,23 @@ impl Emitter for BitsEmitter {
 
 // ── Memory argument (read-only table) ─────────────────────────────────
 
-/// `x[i]` by a memory-argument read: the line written once to a memory
-/// segment (constant addresses: wiring), every read an `IR::ReadTable`.
-/// halo2-base looks the read up in the segment's table (a dynamic lookup,
-/// `prove/halo2_base/circuit/tables.rs`); Noir reads a native array at an
-/// index `array_index` checks (bb's ROM table); the mock reads the slot and
-/// rejects an address outside the segment.
+/// `x[i]` by a table read: the line as a read-only table (`IR::RomInit`),
+/// every read an `IR::RomRead`. halo2-base looks the read up in the table
+/// (a dynamic lookup, `prove/halo2_base/circuit/tables.rs`); Noir reads a
+/// native array at an index `array_index` checks (bb's ROM table); the mock
+/// reads the cell and rejects an address outside the table.
 ///
 /// **Preconditions.** None.
 ///
 /// **Postconditions.** Every lane; `0 <= i < n` for every index read.
 ///
 /// **Soundness and completeness.** On every backend a table read has a
-/// witness exactly when the address is one of the segment's `n` addresses,
-/// and its value is then the slot's (halo2-base: the lookup argument against
+/// witness exactly when the address is one of the table's `n` addresses,
+/// and its value is then that cell's (halo2-base: the lookup argument against
 /// rows `(tag, j, x_j)` with `j` fixed; Noir: `array_index` bounds the index
 /// and the ROM read returns the element; their arguments are in those
 /// modules). The read value on halo2-base is a hint the lookup pins (tamper
-/// test `table_reads_are_pinned_and_in_bounds`). The segment is never written
-/// after its reads (it holds this group's line only).
+/// test `table_reads_are_pinned_and_in_bounds`). A table is read-only.
 ///
 /// **Cost** (`cost::table`): halo2-base one cell per slot and three per
 /// read, plus a share of the table groups' fixed columns and lookup
@@ -219,12 +222,12 @@ impl Construction for ElementByTable {
     }
 
     fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
-        let n = group.shared.len();
+        let n = group.line_len();
         if group.kind != OpKind::Element || n < 2 {
             return Vec::new();
         }
         let offered: Vec<usize> =
-            cx.groups.iter().filter(|g| g.kind == OpKind::Element && g.shared.len() >= 2).map(|g| g.shared.len()).collect();
+            cx.groups.iter().filter(|g| g.kind == OpKind::Element && g.line_len() >= 2).map(|g| g.line_len()).collect();
         let offered_rows: usize = offered.iter().sum();
         let indices: Vec<StmtId> = group.lanes.iter().map(|l| l.own[0]).collect();
         let index_reads = cost::index_reads(cx, &indices);
@@ -238,27 +241,31 @@ impl Construction for ElementByTable {
             pre: Vec::new(),
             post: post.collect(),
             cost,
-            emitter: Box::new(TableEmitter { cells: group.shared.clone(), segment: None }),
+            emitter: Box::new(TableEmitter { cells: group.cells(), table: None }),
         }]
     }
 }
 
 struct TableEmitter {
-    cells: Vec<StmtId>,
-    segment: Option<(u32, NumberType)>,
+    cells: CellSource,
+    /// The table (`IR::RomInit`) and its cells' type, built by `begin`.
+    table: Option<(Value, ArrayElem)>,
 }
 
 impl Emitter for TableEmitter {
     fn begin(&mut self, b: &mut IRBuilder, cx: &mut EmitCx) {
-        let cells = cx.values(&self.cells);
-        let dtype = dtype_of(&cells);
-        self.segment = Some((crate::helpers::segment::alloc_and_write_values(b, &cells, dtype), dtype));
+        let cells = cx.cells(b, &self.cells);
+        let elem = match dtype_of(&cells) {
+            NumberType::Float => ArrayElem::Float,
+            _ => ArrayElem::Int,
+        };
+        self.table = Some((b.ir_rom_init(&cells, elem), elem));
     }
 
     fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, lane: &Lane) -> Value {
-        let (segment, dtype) = self.segment.expect("begin ran");
+        let (table, elem) = self.table.clone().expect("begin ran");
         let index = cx.value(lane.own[0]);
-        crate::helpers::segment::read_table_typed(b, segment, &index, dtype)
+        b.ir_rom_read(&table, self.cells.len() as u32, elem, &index)
     }
 }
 

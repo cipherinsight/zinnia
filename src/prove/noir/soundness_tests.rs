@@ -1389,3 +1389,58 @@ fn index_write_hints_are_pinned_in_noir() {
         }
     }
 }
+
+/// The memories the layer emits on Noir (`lower::memory::versions::NativeRam`:
+/// mutable native arrays): every read is the last write the program
+/// executed (a write whose predicate is false changes nothing), two
+/// memories do not mix, a position outside its array has no witness, and
+/// the mock agrees. The same program by the overlay agrees too.
+#[test]
+fn native_ram_reads_the_last_executed_write() {
+    if !toolchain_present(false) {
+        return;
+    }
+    let (n, m) = (5usize, 3usize);
+    let ram = crate::lower::memory::test_support::two_memories(n, m, crate::lower::Target::Noir, &[&crate::lower::memory::versions::NativeRam]);
+    assert_eq!(ram.stmts.iter().filter(|s| matches!(s.ir, IR::RamInit { .. })).count(), 2, "two memories");
+    let overlay_constructions: Vec<&dyn crate::lower::Construction> = crate::lower::registry()
+        .into_iter()
+        .filter(|c| !matches!(c.name(), "memory: RAM trace" | "memory: native RAM"))
+        .collect();
+    let overlay = crate::lower::memory::test_support::two_memories(n, m, crate::lower::Target::Noir, &overlay_constructions);
+    let names = ["a0", "v0", "a1", "v1", "p", "c", "w", "r0", "r1", "s"];
+    let cases = [
+        [1i64, 7, 3, 8, 1, 2, 9, 1, 3, 2],
+        [1, 7, 1, 8, 0, 0, 9, 1, 4, 1],
+        [4, 7, 4, 8, 1, 1, 9, 4, 0, 1],
+        [5, 7, 2, 8, 1, 0, 9, 2, 0, 0],
+        [0, 7, 2, 8, 1, 3, 9, 2, 0, 0],
+        [0, 7, 2, 8, 0, 0, 9, 2, 5, 0],
+    ];
+    for case in cases {
+        let xs: Vec<String> = (0..n).map(|k| format!("x{k}")).collect();
+        let ys: Vec<String> = (0..m).map(|k| format!("y{k}")).collect();
+        let mut ints: Vec<(&str, i64)> = xs.iter().enumerate().map(|(k, x)| (x.as_str(), 100 + k as i64)).collect();
+        ints.extend(ys.iter().enumerate().map(|(k, y)| (y.as_str(), 200 + k as i64)));
+        ints.extend(names.iter().copied().zip(case));
+        let w = witness(&ints);
+        let [a0, v0, a1, v1, p, c, wv, r0, r1, s] = case;
+        let inside = |x: i64, len: usize| (0..len as i64).contains(&x);
+        if ![inside(a0, n), inside(a1, n), inside(r0, n), inside(r1, n), inside(c, m), inside(s, m)].iter().all(|&ok| ok) {
+            assert_rejected(execute(&ram, &w));
+            assert!(!mock_outputs(&ram, &w).0, "{case:?}: the mock accepted");
+            continue;
+        }
+        let mut a: Vec<i128> = (0..n as i128).map(|k| 100 + k).collect();
+        let mut b: Vec<i128> = (0..m as i128).map(|k| 200 + k).collect();
+        a[a0 as usize] = v0 as i128;
+        if p == 1 {
+            a[a1 as usize] = v1 as i128;
+        }
+        b[c as usize] = wv as i128;
+        let expected = vec![a[r0 as usize], a[r1 as usize], b[s as usize]];
+        assert_eq!(execute(&ram, &w).unwrap(), expected, "{case:?}");
+        assert_eq!(mock_outputs(&ram, &w), (true, expected.clone()), "mock {case:?}");
+        assert_eq!(execute(&overlay, &w).unwrap(), expected, "overlay {case:?}");
+    }
+}

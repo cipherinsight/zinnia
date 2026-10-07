@@ -115,6 +115,8 @@ enum Role {
     ValueOnly,
     /// The result is one of the operands in the range.
     Selects(Range<usize>),
+    /// The result is one of these operands.
+    Joins(Vec<usize>),
     /// Allocates a segment filled with the value.
     Allocates(u32, i64),
     Reads(u32),
@@ -206,14 +208,16 @@ fn role(ir: &IR, operands: usize) -> Role {
         IR::WriteMemory { segment_id } | IR::DynamicNDArraySetItem { segment_id, .. } => {
             Role::Writes(*segment_id)
         }
-        // Array versions are handles, not values; the builder's array store
-        // tracks what a storage holds and records its reads itself
-        // (`IRBuilder::array_read`). Tables and memories are emitted by the
-        // lowering, after tracking.
-        IR::ArrayInit { .. }
-        | IR::ArrayWrite(_)
-        | IR::ArrayRead(_)
-        | IR::RomInit { .. }
+        // An array version is tracked as what its cells hold (the type they
+        // share, `Derived` when they differ), and a read as its version:
+        // the read is one of the cells. Whether a write may store its value
+        // is checked where the frontend builds it (`check_assignment`, the
+        // array store). Tables and memories are emitted by the lowering,
+        // after tracking.
+        IR::ArrayInit { .. } => Role::Selects(0..operands),
+        IR::ArrayRead(_) => Role::Selects(0..1),
+        IR::ArrayWrite(access) => Role::Joins(vec![0, access.rank() + 1]),
+        IR::RomInit { .. }
         | IR::RomRead { .. }
         | IR::RamInit { .. }
         | IR::RamWrite { .. }
@@ -325,6 +329,13 @@ impl IRBuilder {
                     if !state.suspended {
                         reject_arithmetic(ir, t);
                     }
+                }
+            }
+            Role::Joins(candidates) => {
+                let mut tracked = candidates.iter().map(|&k| state.of(&operands[k]));
+                let first = tracked.next().flatten();
+                if let Some(t) = tracked.fold(first, FixedWidth::either) {
+                    self.fixed_width.values.insert(stmt, t);
                 }
             }
             Role::Selects(candidates) => {

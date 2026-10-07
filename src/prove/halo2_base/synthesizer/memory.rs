@@ -109,6 +109,8 @@ pub(super) struct MemoryState {
     indicators: HashMap<(u64, i64), Halo2BaseCell>,
     /// The tag of each (segment, slots version) read as a table.
     table_tags: HashMap<(u32, u64), u64>,
+    /// Tables registered so far (segments' and `IR::RomInit`s').
+    table_count: u64,
     /// `(root id, value set)` memberships already asserted.
     memberships: std::collections::HashSet<(u64, Vec<i64>)>,
     /// Stage-1 planes of two-root reads, keyed by (segment, slots version,
@@ -244,7 +246,7 @@ impl Halo2BaseSynthesizer<'_> {
         if let Some(tag) = self.memory.table_tags.get(&(segment_id, version)) {
             return Ok(*tag);
         }
-        let tag = self.memory.table_tags.len() as u64;
+        let tag = self.next_table_tag();
         self.memory.table_tags.insert((segment_id, version), tag);
         let len = self.segment(segment_id)?.slots.len();
         for address in 0..len {
@@ -253,6 +255,14 @@ impl Halo2BaseSynthesizer<'_> {
             self.tables.rows.push((tag, address as u64, value));
         }
         Ok(tag)
+    }
+
+    /// A tag no table has yet (tables of segments and `IR::RomInit` share
+    /// the numbering).
+    pub(super) fn next_table_tag(&mut self) -> u64 {
+        let tag = self.memory.table_count;
+        self.memory.table_count += 1;
+        tag
     }
 
     /// Whether `segment_id`'s accesses after its first runtime-address write
@@ -306,7 +316,7 @@ impl Halo2BaseSynthesizer<'_> {
             if let Some(range) = Interval::new(0, len as i128 - 1) {
                 self.prove_range(&cell, range);
             }
-            RamAddress::Cell(self.assigned(&cell))
+            RamAddress::Cell { base: 0, cell: self.assigned(&cell) }
         };
         let state = self.memory.segments.get(&segment_id).and_then(|s| s.ram.as_ref()).expect("RAM mode");
         let current = index.map_or(Fp::zero(), |i| state.contents[i]);

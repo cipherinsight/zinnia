@@ -27,9 +27,14 @@
 
 pub mod constructions;
 pub mod cost;
+pub mod versions;
 pub mod wrap;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod versions_tests;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 pub use constructions::{constructions, ElementByIndexBits};
