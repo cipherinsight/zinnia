@@ -575,7 +575,8 @@ impl Halo2BaseSynthesizer<'_> {
     /// `exponent_bits` low bits of `|e|`, most significant first, from 1.0,
     /// on `r = a` (`e >= 0`) or `r = 1.0 / a` (`e < 0`).
     ///
-    /// Soundness: the sign and magnitude of `e` are pinned (`sign_and_abs`);
+    /// Soundness: the sign and magnitude of `e` are pinned (`sign_and_abs`;
+    /// skipped for an `e` whose proven range is non-negative, where `|e| = e`);
     /// `num_to_bits` decomposes `|e|` into `exponent_bits` booleans that
     /// recompose it, so there is no witness for `|e| >= 2^exponent_bits`.
     /// The reciprocal divides by `a` only when `e < 0` (by 1.0 otherwise), and
@@ -593,14 +594,20 @@ impl Halo2BaseSynthesizer<'_> {
             self.note_unsat(move || format!("{x} ** {n}: zero to a negative power, |e| >= 2^{exponent_bits}, or beyond the window"));
         }
         let one = self.constant_float(1.0)?;
-        let (negative, magnitude) = self.sign_and_abs(e)?;
-        let a_is_zero = self.is_zero_bit(a);
-        let infinite = self.logical_and(&negative, &a_is_zero)?;
-        let finite = self.logical_not(&infinite)?;
-        self.assert_true(&finite)?;
-        let divisor = self.select_bit(&negative, a, &one)?;
-        let reciprocal = self.fixed_div(&one, &divisor)?;
-        let factor = self.select_bit(&negative, &reciprocal, a)?;
+        // An exponent already proven non-negative (a range the circuit
+        // constrains) needs neither its sign nor the reciprocal.
+        let (magnitude, factor) = if self.proven_range(e).is_some_and(|r| r.lo >= 0) {
+            (*e, *a)
+        } else {
+            let (negative, magnitude) = self.sign_and_abs(e)?;
+            let a_is_zero = self.is_zero_bit(a);
+            let infinite = self.logical_and(&negative, &a_is_zero)?;
+            let finite = self.logical_not(&infinite)?;
+            self.assert_true(&finite)?;
+            let divisor = self.select_bit(&negative, a, &one)?;
+            let reciprocal = self.fixed_div(&one, &divisor)?;
+            (magnitude, self.select_bit(&negative, &reciprocal, a)?)
+        };
 
         let magnitude_cell = self.assigned(&magnitude);
         let bits = self.gate.num_to_bits(self.builder.main(0), magnitude_cell, exponent_bits as usize);

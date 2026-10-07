@@ -320,6 +320,16 @@ fn powers_follow_the_mock_and_are_pinned() {
         assert!(honest.accepted, "{base} ** {e}: honest witness rejected");
         assert_eq!(honest.outputs, vec![kernel::fp_pow_int(q(base), int(e), 64, PRECISION_BITS).unwrap()]);
     }
+    // An exponent proven non-negative skips the sign and the reciprocal.
+    let ranged: Box<Op> = Box::new(|s, c| {
+        s.range_check(&c[1], 8);
+        Ok(vec![s.pow_f_int(&c[0], &c[1], 4)?])
+    });
+    for (base, e) in [(1.25, 0i64), (-0.7, 15), (3.0, 6)] {
+        let expected = kernel::fp_pow_int(q(base), int(e), 4, PRECISION_BITS).unwrap();
+        assert_sound(&format!("{base} ** {e} (non-negative e)"), &*ranged, &[q(base), int(e)], &[expected], &[]);
+    }
+    assert!(cells_of(&*ranged, &[q(1.5), int(3)]).0 < cells_of(&*four, &[q(1.5), int(3)]).0);
     assert!(!synthesize(&*four, &[q(1.25), int(16)], &[]).accepted, "|e| = 16 needs 5 bits");
     assert!(!synthesize(&*four, &[q(1.25), int(-16)], &[]).accepted);
     assert!(!synthesize(&*four, &[q(0.0), int(-1)], &[]).accepted, "0 ** -1 is NumPy's inf");
