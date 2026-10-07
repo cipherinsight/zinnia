@@ -860,8 +860,6 @@ impl IRGenerator {
                     if self.ctx.exists(&name) {
                         let val = one.value.clone();
                         self.ctx.set(&name, val);
-                    } else {
-                        self.ctx.mark_branch_only_binding(&name);
                     }
                 }
                 (None, None) => unreachable!(),
@@ -1523,6 +1521,8 @@ impl IRGenerator {
             }
             panic!("Variable `{}` not found", n.name)
         });
+        self.check_bound(&n.name);
+        let value = self.resolve_different_shapes(value);
         self.check_not_stale(&n.name, &value);
         value
     }
@@ -2034,26 +2034,8 @@ impl IRGenerator {
                 let should_merge = self.ctx.exists(&t.name)
                     && conditional_select
                     && self.ctx.has_nontrivial_condition();
-                // A first binding in a loop body under a condition (after a
-                // `break`, `continue` or `return`, with no `if` around the
-                // loop to drop it at its join) stays bound after the loop on
-                // every path. That is wrong where the name holds the value
-                // of an earlier `if` arm, which the join dropped: on the
-                // paths that skip this assignment, Python keeps that value.
-                if !should_merge
-                    && conditional_select
-                    && self.ctx.in_loop_body_outside_branches()
-                    && self.ctx.has_nontrivial_condition()
-                    && self.ctx.is_branch_only_binding(&t.name)
-                {
-                    panic!(
-                        "`{}` is bound in one branch of a runtime condition and then assigned \
-                         again in a loop that may stop before the assignment; Zinnia does not \
-                         keep the first binding, so on the paths that skip the second one the \
-                         value would be wrong. Bind `{}` before the condition.",
-                        t.name, t.name
-                    );
-                }
+                let predicate = self.builder.write_predicate().cloned();
+                self.ctx.note_assignment(&t.name, predicate.as_ref());
                 if should_merge {
                     let orig = self.ctx.get(&t.name).unwrap();
                     let cond = self.ctx.get_condition_value(&mut self.builder);
@@ -2064,11 +2046,21 @@ impl IRGenerator {
                 }
             }
             ASTNode::ASTTupleAssignTarget(t) => {
-                // P2 segarr: a StaticArray bound to an unpacking target
-                // (e.g. `for a, b in arr2d:` where `arr2d` is a 2-D
-                // segment-backed array) must be materialised to a List so
-                // the unpacking machinery can iterate its elements.
-                let value = if matches!(&value, Value::StaticArray { .. }) {
+                // A StaticArray bound to an unpacking target is unpacked
+                // into what iterating it gives: the elements of a 1-D array
+                // (`for a, b in arr2d:` unpacks each row), and for a
+                // multi-dimensional array its rows as views sharing its
+                // storage (`a, b, c = m; b[0] = 99` writes `m[1, 0]`). Rows
+                // materialised as lists of cells used to miss writes in
+                // either direction (review 3, B1).
+                let value = if matches!(&value, Value::StaticArray { shape, .. } if shape.len() >= 2) {
+                    let items = self.value_items(&value).into_iter().map(|item| item.value).collect::<Vec<_>>();
+                    Value::List(CompositeData {
+                        elements_type: items.iter().map(|v| v.zinnia_type()).collect(),
+                        values: items,
+                        value_id: ValueId::next(),
+                    })
+                } else if matches!(&value, Value::StaticArray { .. }) {
                     crate::helpers::static_array::base::to_value_list(&mut self.builder, &value)
                 } else if matches!(&value, Value::DynamicNDArray(_)) {
                     dynamic_array_to_unpackable_list(&mut self.builder, &value, t.targets.len())
@@ -2239,11 +2231,16 @@ impl IRGenerator {
         let inner_val = self.visit_subscript(inner);
         let indices = self.eval_slice_indices(outer);
         self.builder.check_assignment(&inner_val, &value);
-        let root_segment = chain_root(inner)
+        // The inner subscript shares the root's memory when it is a view of
+        // the root array, or an array a root list or tuple holds (an element
+        // of a list is the object itself: `a, *rest = m; rest[0][0] = 99`
+        // writes `m[1, 0]`).
+        let root_segments = chain_root(inner)
             .and_then(|root| self.ctx.get(root))
-            .and_then(|root| super::detached_copies::array_segment(&root));
+            .map(|root| super::detached_copies::array_segments(&root))
+            .unwrap_or_default();
         let shares_root = super::detached_copies::array_segment(&inner_val)
-            .is_some_and(|segment| Some(segment) == root_segment);
+            .is_some_and(|segment| root_segments.contains(&segment));
         let has_new_axis = indices.iter().any(|i| matches!(i, SliceIndex::NewAxis));
         if shares_root && matches!(inner_val, Value::StaticArray { .. }) && !has_new_axis {
             crate::helpers::static_array::write::static_array_setitem(
@@ -2304,6 +2301,7 @@ impl IRGenerator {
         let Some(current) = self.ctx.get(var_name) else {
             panic!("Variable `{}` not found", var_name);
         };
+        self.check_name_usable(var_name);
         self.builder.check_assignment(&current, &value);
         let updated = match &current {
             Value::Tuple(_) => panic!("'tuple' object does not support item assignment"),

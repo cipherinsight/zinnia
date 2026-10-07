@@ -52,6 +52,10 @@ pub(crate) struct Storage {
     /// Where the cells no longer hold what NumPy would show
     /// (`builder/stale.rs`).
     pub(super) stale: super::stale::Staleness,
+    /// Where the array's shape itself is not the one NumPy would have (a
+    /// merge of arrays of different shapes): neither its cells nor its
+    /// metadata can be read there.
+    pub(super) unshaped: super::stale::Staleness,
     /// Why the array is read-only, when NumPy makes it so (`np.broadcast_to`,
     /// the `imag` of a real array): a write to it is a compile error.
     pub(super) read_only: Option<&'static str>,
@@ -122,7 +126,7 @@ impl IRBuilder {
         let id = self.store.next_id;
         self.store.next_id += 1;
         self.track_storage_alloc(id, &cells, zero_filled);
-        self.store.storages.insert(id, Storage { elem, state: State::Cells(cells), cell_bounds: None, last_write: 0, imag: None, real: None, stale: Default::default(), read_only: None });
+        self.store.storages.insert(id, Storage { elem, state: State::Cells(cells), cell_bounds: None, last_write: 0, imag: None, real: None, stale: Default::default(), unshaped: Default::default(), read_only: None });
         id
     }
 
@@ -170,7 +174,8 @@ impl IRBuilder {
     /// build IR. Not complex-aware: the real part's cell.
     pub fn known_cell_now(&self, storage: u32, address: usize) -> Option<&Value> {
         // A stale storage's cells are read through the checked readers.
-        if !self.storage(self.storage_owner(storage)).stale.is_empty() {
+        let owner = self.storage(self.storage_owner(storage));
+        if !owner.stale.is_empty() || !owner.unshaped.is_empty() {
             return None;
         }
         if self.static_array_product_provenance.contains_key(&storage) {
@@ -579,6 +584,7 @@ impl IRBuilder {
         if let Some(why) = self.storage(owner).read_only {
             panic!("assignment destination is read-only: {why}");
         }
+        self.check_shape_known(owner);
         self.provenance.on_segment_write(storage);
         self.storage_mut(storage).cell_bounds = None;
         self.track_storage_write(storage, value);

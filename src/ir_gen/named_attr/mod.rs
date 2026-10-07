@@ -4,6 +4,7 @@ use crate::ast::*;
 use crate::types::{CompositeData, Value, ValueId, ZinniaType};
 
 use super::IRGenerator;
+use crate::builder::IRBuilder;
 
 mod builtins;
 mod array_compat;
@@ -114,6 +115,12 @@ impl IRGenerator {
             return self.visit_chip_call(member, &visited_args_orig, &visited_kwargs_orig);
         }
         if let Some(target_name) = target {
+            // A method or attribute of a variable: the variable must be
+            // bound here and have a known shape (`visit_load` checks the
+            // same for a bare name).
+            if self.ctx.exists(target_name) {
+                self.check_name_usable(target_name);
+            }
             if target_name == "copy" && matches!(member, "copy" | "deepcopy") {
                 return visited_args_orig.first().cloned().unwrap_or(Value::None);
             }
@@ -237,15 +244,18 @@ impl IRGenerator {
         } else {
             value
         };
-        // NumPy returns these read-only: a write to them raises.
+        // NumPy returns these read-only: a write to them raises. The
+        // diagonal of a 2-D array (`np.diag(m)`) is a read-only view; the
+        // diagonal matrix built from a 1-D array is a new, writable array.
         let real_argument = ctx.args_orig.first().is_some_and(|a| !is_complex_value(a));
-        if ctx.member == "broadcast_to" || (ctx.member == "imag" && real_argument) {
+        let diagonal_of_matrix = ctx.member == "diag" && ctx.args_orig.first().is_some_and(is_matrix);
+        if ctx.member == "broadcast_to" || (ctx.member == "imag" && real_argument) || diagonal_of_matrix {
             self.builder.mark_read_only_in(&value, READ_ONLY_RESULT);
         }
         // NumPy answers these with a view of their first argument: where
         // Zinnia's result is a copy, writes through either one are tracked
         // (`detached_copies`).
-        if RETURNS_A_VIEW.contains(&ctx.member) {
+        if RETURNS_A_VIEW.contains(&ctx.member) || diagonal_of_matrix {
             if let Some(base) = ctx.args_orig.first() {
                 self.record_view_result(base, &value);
             }
@@ -323,6 +333,9 @@ impl IRGenerator {
         }
         if n.member=="squeeze" {
             if let Some(value)=crate::helpers::static_array::shape::try_apply_squeeze(&mut self.builder,&target,visited_kwargs.get("axis").or_else(||visited_args.first())) {return value;}
+        }
+        if let Some(metadata) = static_array_metadata(&mut self.builder, &n.member, &target) {
+            return metadata;
         }
         let target_orig = target.clone();
         let visited_args_orig: Vec<Value> = visited_args.clone();
@@ -774,13 +787,50 @@ fn ufunc_input_count(name: &str) -> Option<usize> {
 /// it is an array): a write through the result changes the argument, and
 /// the other way round.
 const RETURNS_A_VIEW: &[&str] = &[
-    "atleast_1d", "atleast_2d", "atleast_3d", "expand_dims", "flip", "fliplr", "flipud",
-    "moveaxis", "rot90", "squeeze", "swapaxes", "transpose",
+    "atleast_1d", "atleast_2d", "atleast_3d", "broadcast_to", "expand_dims", "flip", "fliplr",
+    "flipud", "moveaxis", "rot90", "squeeze", "swapaxes", "transpose",
 ];
 
 /// Why a result NumPy returns read-only cannot be written.
-const READ_ONLY_RESULT: &str = "NumPy returns this array read-only (`np.broadcast_to`, or the \
-     `imag` of a real array) and raises `ValueError` on a write to it; write to a copy instead";
+const READ_ONLY_RESULT: &str = "NumPy returns this array read-only (`np.broadcast_to`, \
+     `np.diag` of a 2-D array, or the `imag` of a real array) and raises `ValueError` on a write \
+     to it; write to a copy instead";
+
+/// `.shape`, `.ndim` or `.size` of a static array, from its layout: the
+/// cells are not read, so the metadata of an array whose cells are stale
+/// (they miss a write NumPy would show, `builder/stale.rs`) is still
+/// available. `None` for another member or value.
+fn static_array_metadata(b: &mut IRBuilder, member: &str, v: &Value) -> Option<Value> {
+    let Value::StaticArray { shape, .. } = v else { return None };
+    match member {
+        "shape" => {
+            let extents: Vec<Value> = shape
+                .iter()
+                .map(|&s| Value::Integer(crate::types::ScalarValue::new(Some(s as i64), None)))
+                .collect();
+            Some(Value::Tuple(CompositeData {
+                elements_type: vec![ZinniaType::Integer; extents.len()],
+                values: extents,
+                value_id: ValueId::next(),
+            }))
+        }
+        "ndim" => Some(b.ir_constant_int(shape.len() as i64)),
+        "size" => Some(b.ir_constant_int(shape.iter().product::<usize>() as i64)),
+        _ => None,
+    }
+}
+
+/// Whether `v` is a 2-D array (`np.diag` of one is its diagonal).
+fn is_matrix(v: &Value) -> bool {
+    match v {
+        Value::StaticArray { shape, .. } => shape.len() == 2,
+        Value::DynamicNDArray(data) => data.envelope.dims.len() == 2,
+        Value::List(data) | Value::Tuple(data) => {
+            data.values.first().is_some_and(|row| matches!(row, Value::List(_) | Value::Tuple(_)))
+        }
+        _ => false,
+    }
+}
 
 /// Whether `v` is a complex number or array.
 fn is_complex_value(v: &Value) -> bool {

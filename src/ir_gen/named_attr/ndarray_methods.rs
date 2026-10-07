@@ -219,6 +219,13 @@ impl IRGenerator {
             }
 
             // ── NDArray property access ──────────────────────────────
+            "shape" | "ndim" | "size"
+                if matches!(self.ctx.get(var), Some(Value::StaticArray { .. })) =>
+            {
+                let val = self.ctx.get(var).unwrap();
+                super::static_array_metadata(&mut self.builder, member, &val)
+                    .expect("a static array has a shape, ndim and size")
+            }
             "shape" => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
                 // P1 segarr boundary: normalize StaticArray to legacy List view.

@@ -659,6 +659,45 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
     stable over 3 processes; the reviewer's fuzzers (44,300 programs, same seeds) 0
     mismatches; every `r2/q_*.py` reproducer matches NumPy or is a compile error.
 
+- Third soundness review fixes (branch `array-ssa-fix3`,
+  `eval-redo/layer/array-ssa-review/REVIEW-3.md`; regression tests
+  `testing/lang/test_array_ssa_review3.py`, every `r3/q3_*.py` reproducer on the mock,
+  halo2-base and Noir):
+  - B1: unpacking a multi-dimensional array (`a, b, c = m`, `a, *rest = m`) gives the
+    views of its rows that iterating it gives; they used to be lists of cells, so writes
+    were lost in both directions. A chained write through a list element
+    (`rest[0][0] = v`) writes into the array the list holds.
+  - B2, B3: `np.broadcast_to` and `np.diag` of a 2-D array are linked to their argument
+    as views and are read-only (`np.diag` of a 1-D array builds a new, writable array).
+  - B4: Python binds a local name exactly where an assignment to it ran. Zinnia's scopes
+    keep a name bound after the scope that first bound it, which is exact except for a
+    first binding in a loop body the loop may leave before it (a `break` or `continue`
+    earlier in it or in an enclosing loop). For such a name `IRContext` records the execution
+    predicates of its assignments (an unconditional assignment ends the record), and a
+    read of it (a bare name, a method or attribute of it, a write to an element of it)
+    asserts their disjunction under the read's predicate (`ir_gen/unbound_names.rs`). The
+    assertion is left out where the read's predicate implies an assignment's (a read in
+    the iteration that bound it), so it costs nothing where Python cannot raise and no
+    perf program changes.
+  - FR1: the compile error for a name bound in one branch and assigned again in a loop
+    (fix2) is gone; B4's record covers the case. Where the loop may skip its assignment,
+    Python keeps the branch's value, which Zinnia dropped at the branch join, so those
+    paths have no proof (sound, not complete).
+  - FR2: a name bound to arrays of different shapes on different paths (multi-dimensional
+    arrays of different shapes, or an array and a number) is bound to a stand-in array
+    whose shape is marked unknown (`Staleness` of kind `Shape` in `builder/stale.rs`):
+    reading its cells or metadata, or writing to it, is a compile error, so a merge that
+    is never used costs nothing. A read whose path decides the merge's condition (a later
+    iteration of the loop that rebound the name, under the condition that the loop went
+    on) reads the merged array that path selects. A function's result merged over its
+    `return`s stays a compile error at the merge, since it reaches code that reads its
+    shape without a name lookup.
+  - FR3: `.shape`, `.ndim` and `.size` of a static array come from its layout, so the
+    metadata of a stale array is available; its cells are still rejected. (`len()` of a
+    stale name stays rejected: call arguments are converted to cells before dispatch.)
+  - A merge under a constant condition carries the selected operand's staleness on every
+    path (`carry_merge_staleness`), not only through the operand being returned itself.
+
 ### Open
 - Dynamic-array lanes beyond the runtime length: `1.0 / x[x > 0]` and `x[x > 0] ** -1.5` used to
   be compile errors (the division's or power's precondition could not be stated over the

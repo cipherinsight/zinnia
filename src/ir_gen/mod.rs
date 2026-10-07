@@ -28,6 +28,7 @@ pub(crate) fn named_attr_astype_without_copy(kwargs: &std::collections::HashMap<
 }
 pub mod outputs;
 mod preconditions;
+mod unbound_names;
 mod visitors;
 
 #[cfg(test)]
@@ -168,6 +169,10 @@ pub struct IRGenerator {
     /// conditional-expression arms; see `iteration::with_guard`), whose
     /// bindings do not escape.
     pub(crate) expression_guard_depth: usize,
+    /// The stand-ins for names bound to arrays of different shapes (see
+    /// `detached_copies::merge_of_different_shapes`), by storage: the merge
+    /// `select(condition, a, b)` each stands for.
+    pub(crate) different_shape_merges: HashMap<u32, (Value, Value, Value)>,
 }
 
 /// One entry in [`IRGenerator::chip_call_stack`]. See round-2 doc on
@@ -282,6 +287,7 @@ impl IRGenerator {
             in_place_arguments: Vec::new(),
             in_place_body_start: 0,
             expression_guard_depth: 0,
+            different_shape_merges: HashMap::new(),
         }
     }
 

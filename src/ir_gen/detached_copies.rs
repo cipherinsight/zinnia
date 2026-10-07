@@ -52,10 +52,16 @@ impl Link {
     }
 }
 
+/// Why a name bound to arrays of different shapes cannot be used.
+const DIFFERENT_SHAPES: &str = "the name is bound to arrays of different shapes (or to an array \
+     and a number) on different paths (a runtime condition, or a loop that may stop early), and \
+     Zinnia represents an array with one shape. Give it the same shape on every path, or use a \
+     different name for each shape.";
+
 /// The memory segments of the arrays in `value`: an array's own, or those of
 /// the arrays a list or tuple holds at any depth (a merge of two arrays of
 /// different shapes is a list of rows).
-fn array_segments(value: &Value) -> Vec<u32> {
+pub(crate) fn array_segments(value: &Value) -> Vec<u32> {
     match value {
         Value::List(data) | Value::Tuple(data) => data.values.iter().flat_map(array_segments).collect(),
         other => array_segment(other).into_iter().collect(),
@@ -169,11 +175,71 @@ impl IRGenerator {
     /// conditional assignment, with the aliasing recorded (see
     /// [`Self::record_path_dependent_alias`]).
     pub(crate) fn merge_binding(&mut self, condition: &Value, a: &Value, b: &Value) -> Value {
+        if let Some(stand_in) = self.merge_of_different_shapes(condition, a, b) {
+            return stand_in;
+        }
+        self.merge_values(condition, a, b)
+    }
+
+    /// [`Self::merge_binding`] for a value that is used directly, not bound
+    /// to a name (a function's result merged over its `return`s): arrays of
+    /// different shapes are a compile error at the merge, since such a value
+    /// reaches code (a loop over it, its `.shape` in an expression) that
+    /// reads its shape without a name lookup to check it.
+    pub(crate) fn merge_values(&mut self, condition: &Value, a: &Value, b: &Value) -> Value {
         let (a_cells, b_cells) = self.static_side_as_cells(a, b);
         let merged =
             crate::helpers::value_ops::select_value(&mut self.builder, condition, &a_cells, &b_cells);
         self.record_path_dependent_alias(condition, &merged, [a, b]);
         merged
+    }
+
+    /// A name bound to arrays of different shapes on different paths, which
+    /// no single array represents (multi-dimensional arrays of different
+    /// shapes, or an array and a number; 1-D arrays of different lengths
+    /// merge into a runtime-shaped array): a stand-in array whose cells and
+    /// shape cannot be read or written, so the program is rejected only if
+    /// it uses the name before rebinding it. `None` when the two merge.
+    fn merge_of_different_shapes(&mut self, condition: &Value, a: &Value, b: &Value) -> Option<Value> {
+        if condition.bool_val().is_some() || condition.int_val().is_some() {
+            return None; // `select_value` takes one side
+        }
+        let is_number = |v: &Value| {
+            matches!(v, Value::Integer(_) | Value::Float(_) | Value::Boolean(_) | Value::Complex { .. })
+        };
+        let array = match (a, b) {
+            (Value::StaticArray { shape: sa, .. }, Value::StaticArray { shape: sb, .. })
+                if sa != sb && (sa.len() > 1 || sb.len() > 1) => a,
+            (Value::StaticArray { .. }, other) if is_number(other) => a,
+            (other, Value::StaticArray { .. }) if is_number(other) => b,
+            _ => return None,
+        };
+        let stand_in = self.builder.with_stale_reads(|builder| {
+            let cells = crate::helpers::static_array::base::deep_to_value_list(builder, array);
+            crate::helpers::static_array::base::to_static_array(builder, &cells)
+                .expect("the cells of an array make an array")
+        });
+        self.builder.mark_shape_unknown_in(&stand_in, DIFFERENT_SHAPES);
+        let segment = array_segment(&stand_in).expect("a static array has a storage");
+        self.different_shape_merges.insert(segment, (condition.clone(), a.clone(), b.clone()));
+        Some(stand_in)
+    }
+
+    /// The array a name bound to `value` holds where the current code runs:
+    /// `value` itself, or for a stand-in of arrays of different shapes the
+    /// merged array the current path selects, when its condition is decided
+    /// there (a read in a later iteration of the loop that rebinds the name,
+    /// under the condition that the loop went on). Otherwise the stand-in.
+    pub(crate) fn resolve_different_shapes(&mut self, value: Value) -> Value {
+        let Some(segment) = array_segment(&value) else { return value };
+        let Some((condition, a, b)) = self.different_shape_merges.get(&segment).cloned() else {
+            return value;
+        };
+        match self.builder.decided_here(&condition) {
+            Some(true) => self.resolve_different_shapes(a),
+            Some(false) => self.resolve_different_shapes(b),
+            None => value,
+        }
     }
 
     /// When one side of a merge has a runtime shape and the other is a

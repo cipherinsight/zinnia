@@ -86,6 +86,17 @@ pub(crate) struct Link {
     when: Paths,
 }
 
+/// What a staleness withholds: the cells of an array (they miss a write
+/// NumPy would show), or also its shape (a merge of arrays of different
+/// shapes, whose shape depends on the path).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    Cells,
+    Shape,
+}
+
+const KINDS: [Kind; 2] = [Kind::Cells, Kind::Shape];
+
 /// Where a storage is stale: the reason, and the paths (conjunctions of
 /// literals, sorted; empty: every path).
 #[derive(Clone, Debug, Default)]
@@ -195,8 +206,27 @@ impl IRBuilder {
     /// arrays at any depth) is stale on a path the current code can run on,
     /// if one is.
     pub fn stale_reason_in(&mut self, value: &Value) -> Option<&'static str> {
+        KINDS.into_iter().find_map(|kind| self.reason_in(value, kind))
+    }
+
+    /// Why the shape of some array in `value` is unknown on a path the
+    /// current code can run on, if it is (see [`Self::mark_shape_unknown_in`]).
+    /// A stale array whose shape is known can still give its metadata.
+    pub fn unknown_shape_reason_in(&mut self, value: &Value) -> Option<&'static str> {
+        self.reason_in(value, Kind::Shape)
+    }
+
+    /// Mark every array in `value` as having no known shape, on every path:
+    /// `value` stands for a merge of arrays of different shapes, which no
+    /// single array represents. Reading its cells or its metadata is then a
+    /// compile error (`why`), and a merge that is never read costs nothing.
+    pub fn mark_shape_unknown_in(&mut self, value: &Value, why: &'static str) {
+        self.mark_stale_in(value, why, &[], Kind::Shape);
+    }
+
+    fn reason_in(&mut self, value: &Value, kind: Kind) -> Option<&'static str> {
         let here = self.current_path()?;
-        self.stalenesses_in(value).into_iter().find_map(|stale| {
+        self.stalenesses_in(value, kind).into_iter().find_map(|stale| {
             stale.paths.iter().any(|p| compatible(p, &here)).then_some(stale.why).flatten()
         })
     }
@@ -233,24 +263,32 @@ impl IRBuilder {
 
     /// Whether some array in `value` is stale on some path.
     pub fn has_stale(&self, value: &Value) -> bool {
-        !self.stalenesses_in(value).is_empty()
+        KINDS.into_iter().any(|kind| !self.stalenesses_in(value, kind).is_empty())
     }
 
     /// Mark the arrays of `out`, a merge `select(cond, tv, fv)`, stale where
     /// the operand it takes there is: `tv`'s stale paths under `cond`, and
-    /// `fv`'s under `not cond`.
+    /// `fv`'s under `not cond`. A constant `cond` selects one operand on
+    /// every path (`select_value` then returns that operand itself, but the
+    /// staleness is carried over all the same, so a merge that copied it
+    /// would stay sound).
     pub fn carry_merge_staleness(&mut self, cond: &Value, tv: &Value, fv: &Value, out: &Value) {
-        let Some(taken) = self.path_of(Some(cond)) else { return };
-        let (where_taken, where_not) = (Paths::Where(taken.clone()), Paths::WhereNot(taken));
-        let mut carried: Vec<(&'static str, Vec<Literal>)> = Vec::new();
-        for (side, paths) in [(tv, &where_taken), (fv, &where_not)] {
-            for stale in self.stalenesses_in(side) {
-                let why = stale.why.expect("a stale storage has a reason");
-                carried.extend(stale.paths.iter().filter_map(|p| paths.within(p)).map(|p| (why, p)));
+        let (where_taken, where_not) = match self.path_of(Some(cond)) {
+            Some(taken) => (Paths::Where(taken.clone()), Paths::WhereNot(taken)),
+            // The constant false: `fv` everywhere, `tv` nowhere.
+            None => (Paths::WhereNot(Vec::new()), Paths::Where(Vec::new())),
+        };
+        for kind in KINDS {
+            let mut carried: Vec<(&'static str, Vec<Literal>)> = Vec::new();
+            for (side, paths) in [(tv, &where_taken), (fv, &where_not)] {
+                for stale in self.stalenesses_in(side, kind) {
+                    let why = stale.why.expect("a stale storage has a reason");
+                    carried.extend(stale.paths.iter().filter_map(|p| paths.within(p)).map(|p| (why, p)));
+                }
             }
-        }
-        for (why, path) in carried {
-            self.mark_stale_in(out, why, &path);
+            for (why, path) in carried {
+                self.mark_stale_in(out, why, &path, kind);
+            }
         }
     }
 
@@ -268,14 +306,33 @@ impl IRBuilder {
             return;
         }
         let owner = self.storage_owner(storage);
-        if self.storage(owner).stale.paths.is_empty() {
+        let storage = self.storage(owner);
+        if storage.stale.paths.is_empty() && storage.unshaped.paths.is_empty() {
             return;
         }
         let Some(here) = self.current_path() else { return };
-        let stale = &self.storage(owner).stale;
-        if stale.paths.iter().any(|p| compatible(p, &here)) {
-            let why = stale.why.expect("a stale storage has a reason");
-            panic!("Reading this array is not supported here: {why}");
+        let storage = self.storage(owner);
+        for stale in [&storage.unshaped, &storage.stale] {
+            if stale.paths.iter().any(|p| compatible(p, &here)) {
+                let why = stale.why.expect("a stale storage has a reason");
+                panic!("Reading this array is not supported here: {why}");
+            }
+        }
+    }
+
+    /// Reject writing into `storage` where its shape is unknown (a stand-in
+    /// for a merge of arrays of different shapes): the write would land in
+    /// one of the merged arrays depending on the path, at a position the
+    /// shape decides.
+    pub(super) fn check_shape_known(&mut self, owner: u32) {
+        if self.storage(owner).unshaped.paths.is_empty() {
+            return;
+        }
+        let Some(here) = self.current_path() else { return };
+        let unshaped = &self.storage(owner).unshaped;
+        if unshaped.paths.iter().any(|p| compatible(p, &here)) {
+            let why = unshaped.why.expect("a stale storage has a reason");
+            panic!("Writing to this array is not supported here: {why}");
         }
     }
 
@@ -331,10 +388,11 @@ impl IRBuilder {
         }
     }
 
-    /// The stalenesses of the arrays in `value` (at any depth).
-    fn stalenesses_in(&self, value: &Value) -> Vec<Staleness> {
+    /// The stalenesses of one kind of the arrays in `value` (at any depth).
+    fn stalenesses_in(&self, value: &Value, kind: Kind) -> Vec<Staleness> {
         let of = |storage: u32| {
-            let stale = &self.storage(self.storage_owner(storage)).stale;
+            let storage = self.storage(self.storage_owner(storage));
+            let stale = if kind == Kind::Cells { &storage.stale } else { &storage.unshaped };
             (!stale.paths.is_empty()).then(|| stale.clone())
         };
         match value {
@@ -342,28 +400,45 @@ impl IRBuilder {
                 of(*segment_id).into_iter().chain(imag_segment_id.and_then(of)).collect()
             }
             Value::DynamicNDArray(data) => of(data.segment_id).into_iter().collect(),
-            Value::List(data) | Value::Tuple(data) => data.values.iter().flat_map(|v| self.stalenesses_in(v)).collect(),
+            Value::List(data) | Value::Tuple(data) => {
+                data.values.iter().flat_map(|v| self.stalenesses_in(v, kind)).collect()
+            }
             _ => Vec::new(),
         }
     }
 
-    /// Mark every array in `value` (at any depth) stale on `path`.
-    fn mark_stale_in(&mut self, value: &Value, why: &'static str, path: &[Literal]) {
-        match value {
-            Value::StaticArray { segment_id, .. } => {
-                let owner = self.storage_owner(*segment_id);
-                self.storage_mut(owner).stale.add(why, path.to_vec());
-            }
-            Value::DynamicNDArray(data) => {
-                let owner = self.storage_owner(data.segment_id);
-                self.storage_mut(owner).stale.add(why, path.to_vec());
-            }
+    /// Mark every array in `value` (at any depth) stale of `kind` on `path`.
+    fn mark_stale_in(&mut self, value: &Value, why: &'static str, path: &[Literal], kind: Kind) {
+        let segment = match value {
+            Value::StaticArray { segment_id, .. } => *segment_id,
+            Value::DynamicNDArray(data) => data.segment_id,
             Value::List(data) | Value::Tuple(data) => {
                 for v in &data.values {
-                    self.mark_stale_in(v, why, path);
+                    self.mark_stale_in(v, why, path, kind);
                 }
+                return;
             }
-            _ => {}
+            _ => return,
+        };
+        let owner = self.storage_owner(segment);
+        let storage = self.storage_mut(owner);
+        let stale = if kind == Kind::Cells { &mut storage.stale } else { &mut storage.unshaped };
+        stale.add(why, path.to_vec());
+    }
+
+    /// Whether `cond` holds (`Some(true)`) or fails (`Some(false)`) on every
+    /// path the current code runs on, judged from the literals: the current
+    /// path contains `cond`'s literals, or the negation of its one literal.
+    /// `None` when that is not shown.
+    pub fn decided_here(&mut self, cond: &Value) -> Option<bool> {
+        let here = self.current_path()?;
+        let Some(required) = self.path_of(Some(cond)) else { return Some(false) };
+        if required.iter().all(|l| here.binary_search(l).is_ok()) {
+            return Some(true);
+        }
+        match required.as_slice() {
+            [(s, positive)] if here.binary_search(&(*s, !positive)).is_ok() => Some(false),
+            _ => None,
         }
     }
 

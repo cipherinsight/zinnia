@@ -158,7 +158,7 @@ impl IRBuilder {
     }
 
     /// `true` when `q` holds wherever `p` holds, by inclusion of conjuncts.
-    fn predicate_implies(&mut self, p: &Value, q: &Value) -> bool {
+    pub(crate) fn predicate_implies(&mut self, p: &Value, q: &Value) -> bool {
         if p.stmt_id() == q.stmt_id() {
             return true;
         }
