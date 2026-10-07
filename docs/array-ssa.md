@@ -602,7 +602,11 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
     predicate, which keeps the "elif rebind" pattern of F1 compiling. A merge
     (`select_value`) reads its operands without the check and carries their staleness to
     its result, conjoined with the branch condition or its negation, so a merged stale
-    value is rejected only when it is read.
+    value is rejected only when it is read. Links are path-qualified too: a merge
+    `select(c, a, b)` of the arrays a name was bound to is linked to `a` on the paths
+    where `c` holds and to `b` on the others, so a write through the merge makes `b`
+    stale only where the merge is `b`. (A negated conjunction is kept as such: a path
+    that implies the conjunction cannot be in its negation.)
   - N5: `np.asarray(x, dtype=d)`, `np.array(x, copy=False | None)` and
     `x.astype(d, copy=False)` return `x` when `d` is `x`'s own exact dtype (bool, int64, a
     fixed-width integer). Zinnia has one float dtype for every float width (and one complex
@@ -628,6 +632,17 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
     read-only storages. A write to one is a compile error, as NumPy raises.
   - N11: `np.expand_dims` of a runtime-shaped array exposed the old rank statement when the
     rank was not a constant; the rank is static and is stated as such.
+  - Found by re-running the reviewer's fuzzers on the first commit of the branch (all
+    pre-existing on bc584e01): an `op=` update of a runtime-shaped array or of a list did
+    not note the write, and an update that rebinds a name to a new storage left the links
+    on the old storage (the new one now takes them over, `move_links`). A write into an
+    array held by a list was dropped silently (`set_nested_value`); it is written now,
+    and the remaining silent drops there are compile errors. Two multi-dimensional arrays
+    of different shapes merged into a list of rows, on which `m[i, j]` read row `i` and
+    `m[i, j] = v` wrote nothing; such a merge is a compile error. A name bound in one arm
+    of an `if` (the join drops it) and bound again in a loop that may stop before the
+    assignment kept the loop's value on every path; that is a compile error
+    (`IRContext::is_branch_only_binding`).
 
 ### Open
 - Dynamic-array lanes beyond the runtime length: `1.0 / x[x > 0]` and `x[x > 0] ** -1.5` used to
