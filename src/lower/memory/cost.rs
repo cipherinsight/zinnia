@@ -12,7 +12,7 @@
 //! family's (`gather::cost::units`).
 
 use crate::lower::gather::cost::units;
-use crate::lower::{Context, OpKind, Target};
+use crate::lower::{Context, Group, OpKind, Target};
 use crate::types::StmtId;
 
 /// `ceil(log2 n)` for `n >= 2`.
@@ -80,14 +80,13 @@ pub fn table(n: u64, index_reads: &[u64], offered: u64, offered_rows: u64, targe
     }
 }
 
-/// For each index, the number of element reads at it over every element
-/// group of the program.
-pub fn index_reads(cx: &Context, indices: &[StmtId]) -> Vec<u64> {
+/// For each index, the number of element reads at it over the element
+/// groups that share costs with `group` (`Context::sharing_groups`).
+pub fn index_reads(cx: &Context, group: &Group, indices: &[StmtId]) -> Vec<u64> {
     indices
         .iter()
         .map(|index| {
-            cx.groups
-                .iter()
+            cx.sharing_groups(group)
                 .filter(|g| g.kind == OpKind::Element)
                 .flat_map(|g| &g.lanes)
                 .filter(|lane| lane.own.first() == Some(index))

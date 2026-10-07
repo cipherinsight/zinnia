@@ -152,6 +152,27 @@ impl OpKind {
         }
     }
 
+    /// The family of operators this kind belongs to: the kinds whose groups
+    /// choose among the same constructions. Measurement only (the layer
+    /// report and the fixed configurations of `docs/ablations.md`).
+    pub fn family(self) -> &'static str {
+        match self {
+            OpKind::Sort => "sort",
+            OpKind::SearchSorted { .. } => "searchsorted",
+            OpKind::Corrcoef { .. } => "corrcoef",
+            OpKind::FirstSet | OpKind::LastSet | OpKind::ArgmaxOfFlags => "scan",
+            OpKind::Window { .. } => "window",
+            OpKind::Element => "element",
+            OpKind::PermutationScatter => "permutation scatter",
+            OpKind::Insert { .. } => "insert",
+            OpKind::MaskWrite => "mask write",
+            OpKind::Correlation { .. } | OpKind::MatMul { .. } => "linear",
+            OpKind::IsPermutation => "is_permutation",
+            OpKind::Wrap { .. } => "wrap",
+            OpKind::Versions => "memory",
+        }
+    }
+
     /// A short name for printing the IR.
     pub fn name(self) -> &'static str {
         match self {

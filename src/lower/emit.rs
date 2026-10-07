@@ -17,6 +17,11 @@
 //! 5. **Emission** in a topological order of statements, node starts and
 //!    lanes: a node starts right before its first lane, with its inputs
 //!    lowered; every other statement keeps its place.
+//!
+//! Measurement switches ([`Options`], `docs/ablations.md`) change steps 2-4:
+//! no free facts, a fixed construction per group (`super::forcing`), or each
+//! group deciding on its own (`super::local`); with every switch off the pass
+//! is the compiler's.
 
 use std::any::Any;
 use std::cmp::Reverse;
@@ -32,6 +37,7 @@ use crate::types::{StmtId, Value};
 use super::checks::{self, ProgramCheck};
 use super::construction::{Candidate, Construction, Context, Emitter, Target};
 use super::facts::FreeFacts;
+use super::forcing::Forcing;
 use super::graph::{CellSource, Fact, Group, GroupId, Lane, Requirement, VersionLine};
 use super::select::{self, justifies, Node, Problem};
 
@@ -93,16 +99,55 @@ fn has_array_operations(graph: &IRGraph) -> bool {
 }
 
 /// Lower `graph` with `constructions`; `None` when it has no placeholder
-/// and no check to drop.
+/// and no check to drop. The measurement switches are read from the
+/// environment ([`Options::from_env`]).
 pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction]) -> Option<IRGraph> {
+    lower_with(graph, target, constructions, &Options::from_env())
+}
+
+/// The measurement switches of the pass (`docs/ablations.md`). The default
+/// (every switch off) is the compiler's behaviour.
+#[derive(Clone, Debug, Default)]
+pub struct Options {
+    /// `ZINNIA_ABLATE_LAYER_FACTS=1`: no free facts, and the program's checks
+    /// take no part (none is dropped, none justifies a precondition), so every
+    /// precondition fact gets a check node and every program check is kept as
+    /// the IR generator emitted it.
+    pub no_facts: bool,
+    /// `ZINNIA_ABLATE_JOINT=1`: each group chooses its construction on its
+    /// own instead of all groups together (`super::local`).
+    pub local: bool,
+    /// `ZINNIA_FORCE_CONSTRUCTION`: one fixed construction per group
+    /// (`super::forcing`).
+    pub forcing: Forcing,
+    /// `ZINNIA_LAYER_REPORT=<path>`: append what each lowering chose to this
+    /// file (`super::report`).
+    pub report: Option<std::path::PathBuf>,
+}
+
+impl Options {
+    pub fn from_env() -> Options {
+        Options {
+            no_facts: crate::ablated("ZINNIA_ABLATE_LAYER_FACTS"),
+            local: crate::ablated("ZINNIA_ABLATE_JOINT"),
+            forcing: Forcing::from_env(),
+            report: std::env::var_os("ZINNIA_LAYER_REPORT").filter(|p| !p.is_empty()).map(Into::into),
+        }
+    }
+}
+
+/// [`lower`] with explicit switches.
+pub fn lower_with(
+    graph: &IRGraph,
+    target: Target,
+    constructions: &[&dyn Construction],
+    options: &Options,
+) -> Option<IRGraph> {
     // Claims' value lists are numbered per lowering (`ListId`).
     super::graph::ListId::reset();
     let (groups, direct) = collect_groups(graph);
-    let ablated = crate::ablated("ZINNIA_ABLATE_LAYER_FACTS");
-    let facts = if ablated { FreeFacts::none(graph) } else { FreeFacts::new(graph) };
-    // Under the ablation the program's checks take no part: none is
-    // dropped, none justifies a precondition.
-    let program_checks = if ablated { Vec::new() } else { checks::program_checks(graph) };
+    let facts = if options.no_facts { FreeFacts::none(graph) } else { FreeFacts::new(graph) };
+    let program_checks = if options.no_facts { Vec::new() } else { checks::program_checks(graph) };
     let mut freely_proven = checks::dominated(&program_checks);
     freely_proven.extend(
         program_checks.iter().filter(|c| c.forms.iter().any(|f| facts.established_by_gadget(f))).map(|c| c.stmt),
@@ -114,19 +159,88 @@ pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction
     let users = users_of(graph);
     let lane_group: HashMap<StmtId, GroupId> =
         groups.iter().flat_map(|g| g.lanes.iter().map(move |l| (l.stmt, g.id))).collect();
-    let cx = Context { target, graph, groups: &groups, facts: &facts, users: &users, lane_group: &lane_group };
+    let cx = Context {
+        target,
+        graph,
+        groups: &groups,
+        facts: &facts,
+        users: &users,
+        lane_group: &lane_group,
+        alone: options.local,
+    };
+    // A forced construction that cannot lower its group together with the
+    // rest of the program is released for that group (the group is lowered
+    // as usual), and the graph is built again.
+    let mut released: BTreeSet<GroupId> = BTreeSet::new();
+    let (nodes, selected, offers) = loop {
+        let (mut nodes, offers) = offer(&groups, &cx, constructions, &options.forcing, &released);
+        let (roots, check_roots) = root_requirements(&groups, &program_checks, &freely_proven, &mut nodes, target);
+        add_check_nodes(&mut nodes, target, options.no_facts);
+        add_program_nodes(&mut nodes, target);
+        let selection = if options.local {
+            super::local::select(&nodes, &groups, &roots, &check_roots)
+        } else {
+            select_members(&nodes, &(0..nodes.len()).collect::<Vec<_>>(), &roots)
+        };
+        match selection {
+            Ok(selected) => break (nodes, selected, offers),
+            Err(stuck) => {
+                let release: Vec<GroupId> = stuck
+                    .iter()
+                    .filter_map(|r| match r {
+                        Requirement::Lane(s) => lane_group.get(s).copied(),
+                        _ => None,
+                    })
+                    .filter(|g| offers[*g].forced.is_some() && !released.contains(g))
+                    .collect();
+                if release.is_empty() {
+                    let names: Vec<&str> = nodes.iter().map(|n| n.name).collect();
+                    panic!(
+                        "array lowering: no selection justifies every requirement \
+                         (unjustified: {stuck:?}; nodes: {names:?})"
+                    );
+                }
+                released.extend(release);
+            }
+        }
+    };
+    if let Some(path) = &options.report {
+        super::report::append(path, target, options, &groups, &nodes, &selected, &offers, &released);
+    }
+    let mut dropped = freely_proven;
+    dropped.extend(unselected_checks(&nodes, &selected));
+    Some(emit(graph, &groups, &direct, nodes, &selected, &dropped))
+}
+
+/// What the constructions offered one group: the constructions with
+/// candidates for it, and the one forced on it (`None`: lowered as usual).
+pub(super) struct Offer {
+    pub(super) applicable: Vec<&'static str>,
+    pub(super) forced: Option<&'static str>,
+}
+
+/// The implementation nodes the constructions offer for every group, and
+/// what each group was offered. Under a forcing, a group whose forced
+/// construction applies keeps only that construction's candidates (and its
+/// helpers', `Forcing::keeps`); the groups in `released` are lowered as
+/// usual.
+fn offer(
+    groups: &[Group],
+    cx: &Context,
+    constructions: &[&dyn Construction],
+    forcing: &Forcing,
+    released: &BTreeSet<GroupId>,
+) -> (Vec<NodeEntry>, Vec<Offer>) {
     let mut nodes: Vec<NodeEntry> = Vec::new();
-    let forced = forced_construction();
-    for group in &groups {
-        let offered: Vec<(&dyn Construction, Vec<super::Candidate>)> =
-            constructions.iter().map(|c| (*c, c.candidates(group, &cx))).collect();
-        // The first forced construction offering candidates for this group.
-        let only = forced.iter().find(|name| offered.iter().any(|(c, cands)| c.name() == name.as_str() && !cands.is_empty()));
+    let mut offers: Vec<Offer> = Vec::with_capacity(groups.len());
+    for group in groups {
+        let offered: Vec<(&dyn Construction, Vec<Candidate>)> =
+            constructions.iter().map(|c| (*c, c.candidates(group, cx))).collect();
+        let only = if released.contains(&group.id) { None } else { forcing.choice(group, &offered) };
+        let applicable = offered.iter().filter(|(_, candidates)| !candidates.is_empty()).map(|(c, _)| c.name()).collect();
+        offers.push(Offer { applicable, forced: only });
         for (construction, candidates) in offered {
-            // Producers of shared values only (no lane) stay: the forced
-            // construction may need them.
-            let produces_lanes = candidates.iter().any(|c| c.post.iter().any(|r| matches!(r, Requirement::Lane(_))));
-            if only.is_some_and(|name| construction.name() != name.as_str()) && produces_lanes {
+            if only.is_some_and(|name| !Forcing::keeps(name, construction.name())) {
                 continue;
             }
             for mut candidate in candidates {
@@ -139,13 +253,28 @@ pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction
                         candidate.pre.push(super::memory::versions::cells_requirement(line.version));
                     }
                 }
-                nodes.push(NodeEntry::offered(construction.name(), candidate, &facts));
+                nodes.push(NodeEntry::offered(construction.name(), group.id, candidate, cx.facts));
             }
         }
     }
+    (nodes, offers)
+}
+
+/// The root requirements: every live lane, then each program check that a
+/// node can establish or that implies a node's precondition (its own
+/// producer, the assertion kept, is added to `nodes`). Also returns each
+/// such check's root with the index of its node.
+fn root_requirements(
+    groups: &[Group],
+    program_checks: &[ProgramCheck],
+    freely_proven: &HashSet<StmtId>,
+    nodes: &mut Vec<NodeEntry>,
+    target: Target,
+) -> (Vec<Requirement>, Vec<(Requirement, usize)>) {
     let established: Vec<Fact> = nodes.iter().flat_map(|n| n.post_facts()).collect();
     let wanted: Vec<Fact> = nodes.iter().flat_map(|n| n.pre_facts()).collect();
     let mut roots: Vec<Requirement> = groups.iter().flat_map(|g| g.lanes.iter().map(|l| Requirement::Lane(l.stmt))).collect();
+    let mut check_roots = Vec::new();
     for check in program_checks.iter().filter(|c| !freely_proven.contains(&c.stmt)) {
         let provable = check.forms.iter().any(|f| established.iter().any(|e| e.implies(f)));
         let useful = check.forms.iter().any(|f| wanted.iter().any(|w| f.implies(w)));
@@ -154,33 +283,11 @@ pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction
             // when there is one (so that node can justify the check).
             let root = check.forms.iter().find(|f| established.iter().any(|e| e.implies(f))).unwrap_or(&check.forms[0]);
             roots.push(Requirement::Fact(*root));
+            check_roots.push((Requirement::Fact(*root), nodes.len()));
             nodes.push(NodeEntry::program_check(check, target));
         }
     }
-    add_check_nodes(&mut nodes, target, ablated);
-    add_program_nodes(&mut nodes, target);
-
-    let selected = select_all(&nodes, &roots);
-    let mut dropped = freely_proven;
-    dropped.extend(unselected_checks(&nodes, &selected));
-    Some(emit(graph, &groups, &direct, nodes, &selected, &dropped))
-}
-
-/// Measurement only (`docs/ablations.md`): `ZINNIA_ABLATE_LAYER_FACTS=1`
-/// gives the layer no free facts and leaves the program's checks out of it,
-/// so every precondition fact gets a check node and every program check is
-/// kept as the IR generator emitted it.
-///
-/// Measurement only: the environment variable `ZINNIA_FORCE_CONSTRUCTION`
-/// set to a comma-separated list of [`Construction::name`]s makes, for every
-/// group, the first listed construction applying to it the only one offering
-/// lanes (other groups are lowered as usual; producers of shared values only
-/// stay available), so cost curves and scaling demonstrations can compile
-/// one program with each alternative. The benchmark harness never sets it;
-/// a forced construction is sound like any other, it may only cost more.
-fn forced_construction() -> Vec<String> {
-    let names = std::env::var("ZINNIA_FORCE_CONSTRUCTION").unwrap_or_default();
-    names.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect()
+    (roots, check_roots)
 }
 
 // ── Groups ──────────────────────────────────────────────────────────────
@@ -278,14 +385,17 @@ fn users_of(graph: &IRGraph) -> HashMap<StmtId, Vec<StmtId>> {
 // ── Nodes ───────────────────────────────────────────────────────────────
 
 /// An implementation node of the pass.
-struct NodeEntry {
+pub(super) struct NodeEntry {
     /// The construction's name, or the framework's for checks.
-    name: &'static str,
-    node: Node,
-    kind: NodeKind,
+    pub(super) name: &'static str,
+    /// The group a construction offered the node for (`None` for the
+    /// framework's nodes).
+    pub(super) group: Option<GroupId>,
+    pub(super) node: Node,
+    pub(super) kind: NodeKind,
 }
 
-enum NodeKind {
+pub(super) enum NodeKind {
     /// A construction's candidate.
     Offered(Box<dyn Emitter>),
     /// A program's assertion, kept when selected.
@@ -299,26 +409,35 @@ enum NodeKind {
 
 impl NodeEntry {
     /// A candidate, with the preconditions free facts prove left out.
-    fn offered(name: &'static str, candidate: Candidate, facts: &FreeFacts) -> NodeEntry {
+    fn offered(name: &'static str, group: GroupId, candidate: Candidate, facts: &FreeFacts) -> NodeEntry {
         let Candidate { pre, post, cost, emitter } = candidate;
         let pre = pre
             .into_iter()
             .filter(|r| !matches!(r, Requirement::Fact(f) if facts.proves(f)))
             .collect();
-        NodeEntry { name, node: Node { pre, post, cost }, kind: NodeKind::Offered(emitter) }
+        NodeEntry { name, group: Some(group), node: Node { pre, post, cost }, kind: NodeKind::Offered(emitter) }
     }
 
     fn program_check(check: &ProgramCheck, target: Target) -> NodeEntry {
         let post = check.forms.iter().map(|f| Requirement::Fact(*f)).collect();
         let cost = checks::cost(&check.forms[0].claim, target);
-        NodeEntry { name: "program check", node: Node { pre: Vec::new(), post, cost }, kind: NodeKind::ProgramCheck(check.stmt) }
+        let node = Node { pre: Vec::new(), post, cost };
+        NodeEntry { name: "program check", group: None, node, kind: NodeKind::ProgramCheck(check.stmt) }
     }
 
-    fn post_facts(&self) -> impl Iterator<Item = Fact> + '_ {
+    /// The lanes the node produces.
+    pub(super) fn lanes(&self) -> impl Iterator<Item = StmtId> + '_ {
+        self.node.post.iter().filter_map(|r| match r {
+            Requirement::Lane(s) => Some(*s),
+            _ => None,
+        })
+    }
+
+    pub(super) fn post_facts(&self) -> impl Iterator<Item = Fact> + '_ {
         facts_of(&self.node.post)
     }
 
-    fn pre_facts(&self) -> impl Iterator<Item = Fact> + '_ {
+    pub(super) fn pre_facts(&self) -> impl Iterator<Item = Fact> + '_ {
         facts_of(&self.node.pre)
     }
 }
@@ -341,7 +460,7 @@ fn add_check_nodes(nodes: &mut Vec<NodeEntry>, target: Target, every: bool) {
         let produced = nodes.iter().any(|n| n.node.post.iter().any(|p| justifies(p, &required)));
         if (every || !produced) && added.insert(fact) {
             let node = Node { pre: Vec::new(), post: vec![required], cost: checks::cost(&fact.claim, target) };
-            nodes.push(NodeEntry { name: "check", node, kind: NodeKind::Check(fact) });
+            nodes.push(NodeEntry { name: "check", group: None, node, kind: NodeKind::Check(fact) });
         }
     }
 }
@@ -354,7 +473,7 @@ fn add_program_nodes(nodes: &mut Vec<NodeEntry>, target: Target) {
     for name in names {
         if let Some(cost) = super::challenge::producer_cost(name, target) {
             let node = Node { pre: Vec::new(), post: vec![Requirement::Program { name }], cost };
-            nodes.push(NodeEntry { name: "program-wide requirement", node, kind: NodeKind::Program });
+            nodes.push(NodeEntry { name: "program-wide requirement", group: None, node, kind: NodeKind::Program });
         }
     }
 }
@@ -368,9 +487,11 @@ fn program_requirements(requirements: &[Requirement]) -> impl Iterator<Item = &'
 
 // ── Selection ───────────────────────────────────────────────────────────
 
-/// The selected nodes, producers first, over every connected part of the
-/// graph (nodes are connected through the requirements they share, the
-/// program-wide ones excepted).
+/// The selected nodes among `members` (indices into `nodes`) that justify
+/// `roots`, producers first, over every connected part of the graph (nodes
+/// are connected through the requirements they share, the program-wide ones
+/// excepted). The compiler selects among all nodes; the local selection
+/// (`super::local`) among those one group may use.
 ///
 /// A program-wide requirement (the verifier challenge) is paid once for all
 /// parts together, so it is decided globally: for each set `S` of the
@@ -379,12 +500,19 @@ fn program_requirements(requirements: &[Requirement]) -> impl Iterator<Item = &'
 /// total is the cost of `S` plus the parts' costs. The cheapest total wins,
 /// ties to the smaller set (a requirement is used only when it pays). Exact
 /// whenever each part's selection is.
-fn select_all(nodes: &[NodeEntry], roots: &[Requirement]) -> Vec<usize> {
-    let parts = connected_parts(nodes, roots);
-    let producers: Vec<(usize, &'static str)> = nodes
+///
+/// `Err` holds the roots no selection justifies: those no member produces,
+/// or the roots of the parts that have no selection even with every
+/// program-wide requirement available.
+pub(super) fn select_members(
+    nodes: &[NodeEntry],
+    members: &[usize],
+    roots: &[Requirement],
+) -> Result<Vec<usize>, Vec<Requirement>> {
+    let parts = connected_parts(nodes, members, roots)?;
+    let producers: Vec<(usize, &'static str)> = members
         .iter()
-        .enumerate()
-        .filter_map(|(i, n)| match (&n.kind, n.node.post.as_slice()) {
+        .filter_map(|&i| match (&nodes[i].kind, nodes[i].node.post.as_slice()) {
             (NodeKind::Program, [Requirement::Program { name }]) => Some((i, *name)),
             _ => None,
         })
@@ -397,20 +525,20 @@ fn select_all(nodes: &[NodeEntry], roots: &[Requirement]) -> Vec<usize> {
         .map(|(members, _)| members.iter().flat_map(|&i| program_requirements(&nodes[i].node.pre)).collect())
         .collect();
     let mut solved: HashMap<(usize, Vec<&'static str>), Option<(u64, Vec<usize>)>> = HashMap::new();
+    let mut solve = |p: usize, names: Vec<&'static str>| {
+        let (members, part_roots) = &parts[p];
+        solved.entry((p, names.clone())).or_insert_with(|| select_part(nodes, members, part_roots, &names)).clone()
+    };
     let mut best: Option<(u64, Vec<usize>)> = None;
     for subset in 0..1usize << producers.len() {
         let available: Vec<(usize, &'static str)> =
             producers.iter().enumerate().filter(|(j, _)| subset >> j & 1 == 1).map(|(_, p)| *p).collect();
         let mut cost: u64 = available.iter().map(|&(i, _)| nodes[i].node.cost).sum();
         let mut selected: Vec<usize> = available.iter().map(|&(i, _)| i).collect();
-        let feasible = parts.iter().enumerate().all(|(p, (members, part_roots))| {
+        let feasible = (0..parts.len()).all(|p| {
             let names: Vec<&'static str> =
                 available.iter().map(|&(_, name)| name).filter(|name| needs[p].contains(name)).collect();
-            let result = solved
-                .entry((p, names.clone()))
-                .or_insert_with(|| select_part(nodes, members, part_roots, &names))
-                .clone();
-            let Some((part_cost, part_nodes)) = result else { return false };
+            let Some((part_cost, part_nodes)) = solve(p, names) else { return false };
             cost += part_cost;
             selected.extend(part_nodes);
             true
@@ -419,11 +547,17 @@ fn select_all(nodes: &[NodeEntry], roots: &[Requirement]) -> Vec<usize> {
             best = Some((cost, selected));
         }
     }
-    let Some((_, selected)) = best else {
-        let names: Vec<&str> = nodes.iter().map(|n| n.name).collect();
-        panic!("array lowering: no selection justifies every requirement (nodes: {names:?})");
-    };
-    selected
+    match best {
+        Some((_, selected)) => Ok(selected),
+        None => Err((0..parts.len())
+            .filter(|&p| {
+                let names: Vec<&'static str> =
+                    producers.iter().map(|&(_, name)| name).filter(|name| needs[p].contains(name)).collect();
+                solve(p, names).is_none()
+            })
+            .flat_map(|p| parts[p].1.clone())
+            .collect()),
+    }
 }
 
 /// The cheapest selection of one part, with the program-wide requirements
@@ -455,19 +589,24 @@ fn select_part(
     Some((selection.cost, selection.nodes.into_iter().map(|i| usable[i]).collect()))
 }
 
-/// Union of the nodes that share a requirement (or a root), with the
+/// Union of the `members` that share a requirement (or a root), with the
 /// roots of each part. Lanes and shared values are matched by key; facts
-/// (few) by implication.
-fn connected_parts(nodes: &[NodeEntry], roots: &[Requirement]) -> Vec<(Vec<usize>, Vec<Requirement>)> {
+/// (few) by implication. `Err` holds the roots no member mentions.
+fn connected_parts(
+    nodes: &[NodeEntry],
+    members: &[usize],
+    roots: &[Requirement],
+) -> Result<Vec<(Vec<usize>, Vec<Requirement>)>, Vec<Requirement>> {
     let mut parts = UnionFind::new(nodes.len());
     let mut first_with: HashMap<&Requirement, usize> = HashMap::new();
     let (mut produced, mut consumed): (Vec<(usize, Fact)>, Vec<(usize, Fact)>) = (Vec::new(), Vec::new());
-    for (i, entry) in nodes.iter().enumerate() {
+    for &i in members {
+        let entry = &nodes[i];
         for (r, is_post) in entry.node.post.iter().map(|r| (r, true)).chain(entry.node.pre.iter().map(|r| (r, false))) {
             match r {
                 Requirement::Fact(f) if is_post => produced.push((i, *f)),
                 Requirement::Fact(f) => consumed.push((i, *f)),
-                // Decided for all parts together (`select_all`).
+                // Decided for all parts together (`select_members`).
                 Requirement::Program { .. } => {}
                 _ => match first_with.get(r) {
                     Some(&j) => parts.union(i, j),
@@ -485,27 +624,32 @@ fn connected_parts(nodes: &[NodeEntry], roots: &[Requirement]) -> Vec<(Vec<usize
         }
     }
     let mut root_part: Vec<(usize, Requirement)> = Vec::new();
+    let mut unproduced: Vec<Requirement> = Vec::new();
     for r in roots {
         let producers: Vec<usize> = match r {
             Requirement::Fact(f) => producers_of(f),
             other => first_with.get(other).into_iter().copied().collect(),
         };
         let Some(&first) = producers.first() else {
-            panic!("array lowering: no construction produces {r:?}");
+            unproduced.push(r.clone());
+            continue;
         };
         for &j in &producers[1..] {
             parts.union(first, j);
         }
         root_part.push((first, r.clone()));
     }
+    if !unproduced.is_empty() {
+        return Err(unproduced);
+    }
     let mut by_part: BTreeMap<usize, (Vec<usize>, Vec<Requirement>)> = BTreeMap::new();
-    for i in 0..nodes.len() {
+    for &i in members {
         by_part.entry(parts.find(i)).or_default().0.push(i);
     }
     for (node, r) in root_part {
         by_part.entry(parts.find(node)).or_default().1.push(r);
     }
-    by_part.into_values().filter(|(_, roots)| !roots.is_empty()).collect()
+    Ok(by_part.into_values().filter(|(_, roots)| !roots.is_empty()).collect())
 }
 
 struct UnionFind(Vec<usize>);
