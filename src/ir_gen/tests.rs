@@ -11,6 +11,18 @@ use crate::optim::prove::{prove_with_facts, ProveOutcome};
 use crate::types::ValueId;
 use super::input_domain::is_domain_check_stmt as is_input_check;
 
+/// Whether `stmts[index]` is the backstop of a `while` unroll
+/// (`assert_while_exhausted`): `assert(select(running, not guard, true))`.
+fn is_while_backstop(stmts: &[crate::ir::IRStatement], index: usize) -> bool {
+    let stmt = &stmts[index];
+    let IR::Assert = stmt.ir else { return false };
+    let mut cond = &stmts[stmt.arguments[0] as usize];
+    if matches!(cond.ir, IR::SelectI) {
+        cond = &stmts[cond.arguments[1] as usize];
+    }
+    matches!(cond.ir, IR::LogicalNot)
+}
+
 #[test]
 fn test_generate_simple_constants() {
     let json = r#"{
@@ -1205,7 +1217,7 @@ fn loop_derived_static_array_read_skips_index_bound_witness_bundle() {
         .stmts
         .iter()
         .enumerate()
-        .filter(|(i, stmt)| matches!(stmt.ir, IR::Assert) && !is_input_check(&graph.stmts, *i))
+        .filter(|(i, stmt)| matches!(stmt.ir, IR::Assert) && !is_input_check(&graph.stmts, *i) && !is_while_backstop(&graph.stmts, *i))
         .count();
     let gte_count = graph
         .stmts
@@ -1541,7 +1553,7 @@ fn matching_guard_rhs_static_array_read_uses_guarded_safe_fallback_address() {
         .stmts
         .iter()
         .enumerate()
-        .filter(|(i, stmt)| matches!(stmt.ir, IR::Assert) && !is_input_check(&graph.stmts, *i))
+        .filter(|(i, stmt)| matches!(stmt.ir, IR::Assert) && !is_input_check(&graph.stmts, *i) && !is_while_backstop(&graph.stmts, *i))
         .count();
 
     assert_eq!(
