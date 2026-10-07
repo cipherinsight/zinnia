@@ -1182,6 +1182,10 @@ impl IRGenerator {
             }
 
             if test_static == Some(false) {
+                // Decided by reasoning, not by a constant: check it.
+                if static_fast.is_none() {
+                    self.assert_while_exhausted(&test_bool);
+                }
                 if loop_quota == loop_limit {
                     self.mark_unreachable_loop_body_bindings(
                         &n.block,
@@ -1259,11 +1263,16 @@ impl IRGenerator {
     /// loop would prove a different result.
     fn finish_unroll_limit(&mut self, guard: &Value, structural_cap: bool, limit: u32) {
         if structural_cap {
+            self.assert_while_exhausted(guard);
             return;
         }
         let condition = self.ctx.get_condition_value(&mut self.builder);
         let still_running = self.builder.ir_logical_and(&condition, guard);
-        if still_running.bool_val() == Some(false) || self.provably_false(&still_running) {
+        if still_running.bool_val() == Some(false) {
+            return;
+        }
+        if self.provably_false(&still_running) {
+            self.assert_while_exhausted(guard);
             return;
         }
         panic!(
@@ -1274,6 +1283,17 @@ impl IRGenerator {
             super::iteration::UNBOUNDED_LOOP_ERROR,
             limit
         );
+    }
+
+    /// The backstop of a `while` unroll that stops because the compiler
+    /// concluded the guard is false (from bounds, facts, SMT or a structural
+    /// cap), not because it is a constant: assert, where the loop is still
+    /// running, that the guard is false. A wrong conclusion then makes the
+    /// circuit unsatisfiable instead of silently dropping iterations (the
+    /// `exhausted` check of `range` loops, `iteration::range_items`).
+    fn assert_while_exhausted(&mut self, guard: &Value) {
+        let exhausted = self.builder.ir_logical_not(guard);
+        self.assert_value(&exhausted);
     }
 
     /// Whether `block` contains a `break` that exits the loop owning

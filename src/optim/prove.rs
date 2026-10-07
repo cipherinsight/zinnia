@@ -46,6 +46,9 @@ pub static PROVE_DISPROVED_COUNT: AtomicU64 = AtomicU64::new(0);
 pub static PROVE_UNKNOWN_COUNT: AtomicU64 = AtomicU64::new(0);
 pub static PROVE_Z3_INVOCATIONS: AtomicU64 = AtomicU64::new(0);
 pub static PROVE_FASTPATH_HITS: AtomicU64 = AtomicU64::new(0);
+/// Answers withdrawn because the facts used were unsatisfiable (or their
+/// satisfiability unknown).
+pub static PROVE_VACUOUS_COUNT: AtomicU64 = AtomicU64::new(0);
 
 pub fn reset_prove_counters() {
     PROVE_CALL_COUNT.store(0, Ordering::Relaxed);
@@ -54,6 +57,7 @@ pub fn reset_prove_counters() {
     PROVE_UNKNOWN_COUNT.store(0, Ordering::Relaxed);
     PROVE_Z3_INVOCATIONS.store(0, Ordering::Relaxed);
     PROVE_FASTPATH_HITS.store(0, Ordering::Relaxed);
+    PROVE_VACUOUS_COUNT.store(0, Ordering::Relaxed);
 }
 use crate::optim::predicates::facts::{Fact, FactScope};
 use crate::optim::predicates::formula::{self, ContractTerm, ContractVar, Substitution};
@@ -327,16 +331,7 @@ fn prove_atomic_with_facts(term: &ContractTerm, facts: &[&Fact], paths: &[&Fact]
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(z3_budget::PROVE_RLIMIT);
 
-    let entails = check_unsat(facts, paths, term, floats, /* negate */ true, rlimit);
-    match entails {
-        Some(true) => return ProveOutcome::Proved,
-        Some(false) | None => {}
-    }
-    let contradicts = check_unsat(facts, paths, term, floats, /* negate */ false, rlimit);
-    match contradicts {
-        Some(true) => ProveOutcome::Disproved,
-        _ => ProveOutcome::Unknown,
-    }
+    decide(facts, paths, term, floats, rlimit)
 }
 
 /// Walk `term`. Succeeds (returns `Some(atoms)`) iff every leaf is a
@@ -575,21 +570,21 @@ pub fn maximize_shape_param(
 // Internals
 // ---------------------------------------------------------------------------
 
-/// Assert `facts ∧ paths ∧ (¬term | term)` on a fresh solver and check sat.
+/// The Z3 part of an atomic prove: one solver holding the facts and path
+/// conditions, asked under assumptions whether `¬term` (then `term`) is
+/// unsatisfiable with them.
 ///
-/// `negate = true`  → assert `¬term`; unsat means term is *entailed*.
-/// `negate = false` → assert `term`;  unsat means term is *contradicted*.
+/// Unsatisfiable facts entail and contradict everything. Facts the circuit
+/// enforces are never contradictory where the code runs, so a contradiction
+/// means the code is unreachable or a fact is stated wrongly (as `%` by a
+/// negative divisor once was: a check was dropped on the strength of it).
+/// Either way it says nothing about the query, so `Proved` and `Disproved`
+/// stand only when the same solver finds the facts alone satisfiable; an
+/// unsatisfiable or undecided fact set gives `Unknown`.
 ///
-/// Returns `Some(true)` if unsat (the chosen relation held), `Some(false)`
-/// if sat, `None` if Z3 returned Unknown (typically the step budget ran out).
-fn check_unsat(
-    facts: &[&Fact],
-    paths: &[&Fact],
-    term: &ContractTerm,
-    floats: Floats,
-    negate: bool,
-    rlimit: u32,
-) -> Option<bool> {
+/// Every check is bounded by `rlimit` steps (`z3_budget`), so the outcome is
+/// deterministic.
+fn decide(facts: &[&Fact], paths: &[&Fact], term: &ContractTerm, floats: Floats, rlimit: u32) -> ProveOutcome {
     PROVE_Z3_INVOCATIONS.fetch_add(1, Ordering::Relaxed);
     // One symbol per Input / Value(vid) / shape parameter the assembled
     // formula references, shared by every assertion.
@@ -597,46 +592,40 @@ fn check_unsat(
     let subst = substitution_for(&terms, &floats.among(&terms));
 
     let solver = z3_budget::solver(rlimit);
-
     for f in facts.iter().chain(paths.iter()) {
-        match formula::lower_bool(f, &subst) {
-            Ok(out) => {
-                solver.assert(&out.term);
-                for (_, meta) in &out.meta_fact_sets {
-                    for m in meta {
-                        solver.assert(m);
-                    }
+        // A fact that does not lower (malformed template, unbound formal)
+        // contributes no information; the others still apply.
+        if let Ok(out) = formula::lower_bool(f, &subst) {
+            solver.assert(&out.term);
+            for (_, meta) in &out.meta_fact_sets {
+                for m in meta {
+                    solver.assert(m);
                 }
             }
-            Err(_) => {
-                // Drop facts that don't lower (malformed templates, unbound
-                // formals, etc.). They contribute no info; the prove still
-                // proceeds against the remaining facts.
-                continue;
-            }
         }
     }
+    // A query term that cannot be lowered decides nothing.
+    let Ok(lowered) = formula::lower_bool(term, &subst) else { return ProveOutcome::Unknown };
+    let query = lowered.term;
+    // Assumption literals `e => not term` and `c => term` (Z3 assumes
+    // literals only).
+    let entails = Bool::fresh_const("prove_entails");
+    let contradicts = Bool::fresh_const("prove_contradicts");
+    solver.assert(&entails.implies(&query.not()));
+    solver.assert(&contradicts.implies(&query));
 
-    let lowered_term = match formula::lower_bool(term, &subst) {
-        Ok(out) => out.term,
-        Err(_) => {
-            // Query term itself can't be lowered — soundly Unknown.
-            return None;
-        }
-    };
-
-    let target: Bool = if negate {
-        lowered_term.not()
+    let outcome = if z3_budget::check_assuming("prove.entails", &solver, &[entails]) == z3::SatResult::Unsat {
+        ProveOutcome::Proved
+    } else if z3_budget::check_assuming("prove.entails", &solver, &[contradicts]) == z3::SatResult::Unsat {
+        ProveOutcome::Disproved
     } else {
-        lowered_term
+        return ProveOutcome::Unknown;
     };
-    solver.assert(&target);
-
-    match z3_budget::check("prove.entails", &solver) {
-        z3::SatResult::Unsat => Some(true),
-        z3::SatResult::Sat => Some(false),
-        z3::SatResult::Unknown => None,
+    if z3_budget::check("prove.facts_sat", &solver) != z3::SatResult::Sat {
+        PROVE_VACUOUS_COUNT.fetch_add(1, Ordering::Relaxed);
+        return ProveOutcome::Unknown;
     }
+    outcome
 }
 
 fn optimize_shape_param(
@@ -797,6 +786,32 @@ mod tests {
         ];
         assert_eq!(prove_with_facts(&cmp(CmpOp::Gt, vref(1), lit(5)), &facts, &[]), ProveOutcome::Unknown);
         assert_eq!(prove_with_facts(&cmp(CmpOp::Ge, vref(1), lit(-1)), &facts, &[]), ProveOutcome::Proved);
+    }
+
+    /// Contradictory facts in the query's own component (a fact stated
+    /// wrongly, as `n % -3 == -1` once was: Euclidean where the circuit is
+    /// Python's floor) prove and disprove nothing: the divisor `n - 2` is
+    /// not "proved" non-zero.
+    #[test]
+    fn contradictory_facts_prove_nothing() {
+        let n = || vref(1);
+        let n_minus_2 = || ContractTerm::Arith { op: crate::optim::predicates::formula::ArithOp::Sub, lhs: Box::new(n()), rhs: Box::new(lit(2)) };
+        let facts = vec![cmp(CmpOp::Ge, n(), lit(4)), cmp(CmpOp::Le, n(), lit(2))];
+        assert_eq!(prove_with_facts(&cmp(CmpOp::Ne, n_minus_2(), lit(0)), &facts, &[]), ProveOutcome::Unknown);
+        assert_eq!(prove_with_facts(&cmp(CmpOp::Eq, n(), lit(3)), &facts, &[]), ProveOutcome::Unknown);
+        // Consistent facts still prove and disprove.
+        let facts = vec![cmp(CmpOp::Ge, n(), lit(4)), cmp(CmpOp::Le, n(), lit(6))];
+        assert_eq!(prove_with_facts(&cmp(CmpOp::Ne, n_minus_2(), lit(0)), &facts, &[]), ProveOutcome::Proved);
+        assert_eq!(prove_with_facts(&cmp(CmpOp::Eq, n(), lit(3)), &facts, &[]), ProveOutcome::Disproved);
+    }
+
+    /// A contradiction between the facts and the path conditions (code that
+    /// cannot run) is no proof either.
+    #[test]
+    fn unreachable_path_proves_nothing() {
+        let facts = vec![cmp(CmpOp::Ge, vref(1), lit(4))];
+        let paths = vec![cmp(CmpOp::Lt, vref(1), lit(0))];
+        assert_eq!(prove_with_facts(&cmp(CmpOp::Ne, vref(1), lit(0)), &facts, &paths), ProveOutcome::Unknown);
     }
 
     /// A float is a real: `x > -0.5` does not entail `x >= 0`, and
