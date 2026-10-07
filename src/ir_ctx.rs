@@ -98,14 +98,16 @@ impl IRContext {
     /// The name of a binding other than `name`'s own (in any scope, including
     /// callers' scopes outside the current chip) whose value satisfies
     /// `holds`. Used to find a second way to reach a Python list.
+    ///
+    /// `name` in any scope of the current function is `name` itself: a
+    /// branch or loop scope holds the variable's value on its paths, the
+    /// enclosing scope its value before them (a loop's writes inside a
+    /// branch land in the branch's scope, see [`Self::set`]).
     pub fn find_other_binding(&self, name: &str, holds: impl Fn(&Value) -> bool) -> Option<String> {
-        let own = (0..self.scopes.len())
-            .rev()
-            .find(|&i| self.scopes[i].exists_local(name) || self.scopes[i].is_boundary())
-            .filter(|&i| self.scopes[i].exists_local(name));
+        let function = (0..self.scopes.len()).rev().find(|&i| self.scopes[i].is_boundary()).unwrap_or(0);
         self.scopes.iter().enumerate().find_map(|(i, scope)| {
             scope.var_table().iter().find_map(|(other, store)| {
-                let is_own = own == Some(i) && other == name;
+                let is_own = i >= function && other == name;
                 (!is_own && holds(&store.value)).then(|| other.clone())
             })
         })
