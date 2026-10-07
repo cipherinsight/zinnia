@@ -7,6 +7,7 @@ use crate::ir::IRGraph;
 use crate::ir_defs::IR;
 use crate::types::{ScalarValue, StmtId, Value};
 
+use super::resolver::LayeredResolver;
 use super::IRPass;
 
 /// Result of the elimination pass — distinguishes the OK path from a
@@ -45,8 +46,14 @@ impl IRPass for AlwaysSatisfiedElimination {
 
         // Phase 2: pick out the assertions to eliminate (or reject).
         // Cheap path: the side-build's static_val. Expensive fallback:
-        // the active resolver, walking the live IR statements via the
-        // `_with_stmts` chokepoint.
+        // intervals, then SMT over the statements that define the condition
+        // (`LayeredResolver::for_check_elimination`). It assumes nothing the
+        // program's checks enforce (no other assertion, no precondition), so
+        // no assertion is dropped on the strength of itself or of another
+        // one dropped with it. The graph's own resolver is not used: passes
+        // that rebuild the graph reset it, and the IR generator's assumes
+        // the preconditions whose checks are among these assertions.
+        ir_graph.set_resolver(Box::new(LayeredResolver::for_check_elimination()));
         let mut to_eliminate: Vec<StmtId> = Vec::new();
         let mut provably_false_asserts: Vec<(StmtId, StmtId)> = Vec::new();
 
@@ -61,6 +68,11 @@ impl IRPass for AlwaysSatisfiedElimination {
             .collect();
 
         for (assert_stmt_id, cond_ptr) in assert_candidates {
+            // An input's domain check (`ir_gen::input_domain`) constrains a
+            // free input: nothing implies it, so it is not worth a query.
+            if crate::ir_gen::input_domain::is_domain_check(&ir_graph.stmts, cond_ptr) {
+                continue;
+            }
             // Cheap path — try the side-built static_val first.
             if let Some(cond_val) = values_lookup.get(&cond_ptr) {
                 if let Some(v) = cond_val.int_val() {

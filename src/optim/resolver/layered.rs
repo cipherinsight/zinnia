@@ -18,6 +18,10 @@ use crate::types::{StmtId, Value};
 use super::smt::SmtResolver;
 use super::Resolver;
 
+/// Statements one SMT query of [`LayeredResolver::for_check_elimination`]
+/// may encode (the IR generator's default cap, `smt_max_formula_size`).
+const CHECK_ELIMINATION_FORMULA_CAP: usize = 4096;
+
 /// A pipeline of resolvers, queried in order. First `Some(_)` wins.
 pub struct LayeredResolver {
     layers: Vec<Box<dyn Resolver>>,
@@ -82,6 +86,22 @@ impl LayeredResolver {
         let smt = SmtResolver::new()
             .with_rlimit(rlimit)
             .with_max_formula_size(max_formula_size)
+            .with_telemetry(std::sync::Arc::clone(&telemetry));
+        Self::new_with_telemetry(vec![Box::new(range), Box::new(smt)], telemetry)
+    }
+
+    /// The resolver of a pass that drops the checks it proves always true
+    /// (`AlwaysSatisfiedElimination`): intervals, then SMT over the
+    /// statements that define the condition, without the program's own facts
+    /// (`SmtResolver::without_program_facts`), so no check justifies itself.
+    /// The formula cap is the IR generator's default.
+    pub fn for_check_elimination() -> Self {
+        let telemetry = crate::optim::telemetry::SmtTelemetry::new();
+        let range = crate::optim::range::RangeResolver::new().with_telemetry(std::sync::Arc::clone(&telemetry));
+        let smt = SmtResolver::new()
+            .with_rlimit(crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT)
+            .with_max_formula_size(CHECK_ELIMINATION_FORMULA_CAP)
+            .without_program_facts()
             .with_telemetry(std::sync::Arc::clone(&telemetry));
         Self::new_with_telemetry(vec![Box::new(range), Box::new(smt)], telemetry)
     }
