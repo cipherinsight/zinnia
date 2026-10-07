@@ -533,7 +533,27 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
   `storage` across the frontend (several hundred sites in files other branches edit; a
   mechanical change best made when they have merged).
 
+- Step 6 (validation at 28c4b9c9 = eval-refactor 35c86a81 merged): costs on 178 cases x 2 targets
+  against `costs_base35c.json` (the merged base, which equals `costs_base6ff.json`): 337 unchanged,
+  19 cheaper, none costlier (`costs_calib.json`); IR and Noir digests identical across separate
+  measurement processes. check_outputs 100/100 on halo2-base and Noir; noir_differential (fresh
+  output) 100/100 match; costs_halo2 `--check` 100/100 (keygen, prove, verify, tamper rejected, mock
+  equal, NumPy match); acceptance account 214 accepted correct on both trees, no wrong output, two
+  rejections whose reason moved (nbody, convnet: see "Open"); Python suite 3,548 passed; Rust lib:
+  the known 18 failures (two legacy-halo2 cache tests flaky in parallel, pass alone); nargo test
+  105 passed; harness run of the 79 NPBench/Pythran entries on zinnia_halo2 and zinnia_noir: 158
+  of 158 ok (scattering included; its cost is not in the tables, which skip it on both sides).
+
 ### Open
+- Dynamic-array lanes beyond the runtime length: `1.0 / x[x > 0]` and `x[x > 0] ** -1.5` used to
+  be compile errors (the division's or power's precondition could not be stated over the
+  padded cells); they now compile, and the precondition is asserted on every lane, padding
+  included, so the honest witness has no proof when a padding cell is 0. No wrong output can
+  verify (the circuit rejects), and no acceptance program changes outcome (npbench nbody and
+  pythran convnet now stop at a later unsupported construct, a runtime `np.ndarray` length). The
+  fix is to compute a runtime-shaped array's lanes under their validity (`lane < length`) as the
+  execution predicate; it changes the IR of every runtime-shaped elementwise operation, so it is
+  left for a decision.
 
 - Not implemented from section 4: the program-wide `TABLES` requirement (each `ElementByTable`
   candidate still prices its table group's fixed columns itself) and the RAM construction's
