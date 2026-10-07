@@ -31,7 +31,8 @@ import itertools
 import numpy as np
 import pytest
 
-from testing.lang.all_backends import assert_all_backends_match_numpy, nargo_available, NOIR_PARAMS
+from testing.lang.all_backends import (NOIR_PARAMS, assert_all_backends_match_numpy, halo2_field_publics,
+                                       mock_field_publics, nargo_available, noir_field_publics)
 from testing.lang.mock_outputs import compile_kernel, numpy_outputs, run_mock_layout
 from zinnia.debug.exception.base import ZinniaException
 
@@ -433,9 +434,19 @@ UNBOUND = {
     "inside a branch": LB + '    s = 0\n    if c:\n        for k in range(3):\n            if x[k] > 0:\n                break\n            y = x[k]\n        s = y\n    return s\n',
     "method call on it": LB + '    for k in range(3):\n        if x[k] > 0:\n            break\n        y = x[k:k + 2]\n    return y.sum()\n',
     "subscript write to it": LB + '    for k in range(3):\n        if x[k] > 0:\n            break\n        y = x[k:k + 2] * 1\n    y[0] = 5\n    return y\n',
+    "op= on it": LB + '    for k in range(3):\n        if x[k] > 0:\n            break\n        y = x[k]\n    y += 1\n    return y\n',
+    "for-else binds it": LB + '    for k in range(3):\n        if x[k] > 0:\n            break\n    else:\n        y = 5\n    return y\n',
+    "iterating it": LB + '    s = 0\n    for k in range(3):\n        if x[k] > 0:\n            break\n        y = x[k:k + 2]\n    for v in y:\n        s = s + v\n    return s\n',
+    "list method on it": LB + '    for k in range(3):\n        if x[k] > 0:\n            break\n        y = [1]\n    y.append(2)\n    return len(y)\n',
 }
-UNBOUND_BOUND_INPUTS = [(X6_NEGATIVE_FIRST, True), (X6_NEGATIVE_FIRST, False)]
-UNBOUND_UNBOUND_INPUTS = [(X6_POSITIVE, True)]
+# Loops whose trip count is a runtime value: the first iteration may not run.
+RUNTIME_TRIPS = {
+    "while": 'k = 0\n    while k < n:\n        y = x[k]\n        k = k + 1\n    return y\n',
+    "for over a runtime range": 'for k in range(n):\n        y = x[k]\n    return y\n',
+    "bound before the loop": 'y = 7\n    for k in range(n):\n        y = x[k]\n    return y\n',
+}
+RUNTIME_TRIPS_HEAD = 'def kernel(x: Integer[Array, "6"], n: Integer):\n    '
+RUNTIME_TRIPS_REQUIRES = "@requires(lambda x, n: 0 <= n <= 4)\n"
 # A name bound before the loop is bound everywhere; no assertion.
 BOUND = {
     "bound before the loop": LB + '    y = 0\n    for k in range(3):\n        if x[k] > 0:\n            break\n        y = x[k]\n    return y\n',
@@ -577,17 +588,36 @@ def test_a_view_function_result_is_read_only(name):
 
 
 @pytest.mark.parametrize("name", list(UNBOUND))
-@pytest.mark.parametrize("inputs", range(len(UNBOUND_BOUND_INPUTS)))
-def test_a_name_bound_on_the_path_reads_its_value(name, inputs):
-    assert_all_backends_match_numpy(UNBOUND[name], *UNBOUND_BOUND_INPUTS[inputs])
+@pytest.mark.parametrize("x", ["negative first", "all negative", "positive"])
+@pytest.mark.parametrize("c", [False, True])
+def test_a_possibly_unbound_name_reads_its_value_or_has_no_proof(name, x, c):
+    x = {"negative first": X6_NEGATIVE_FIRST, "all negative": -np.abs(X6), "positive": X6_POSITIVE}[x]
+    try:
+        numpy_outputs(UNBOUND[name], x, c)
+    except Exception:  # noqa: BLE001  (UnboundLocalError)
+        assert_no_backend_proves(UNBOUND[name], x, c)
+        return
+    assert_all_backends_match_numpy(UNBOUND[name], x, c)
 
 
-@pytest.mark.parametrize("name", list(UNBOUND))
-def test_a_name_unbound_on_the_path_has_no_proof(name):
-    for args in UNBOUND_UNBOUND_INPUTS:
-        with pytest.raises(Exception):
-            numpy_outputs(UNBOUND[name], *args)
-        assert_no_backend_proves(UNBOUND[name], *args)
+@pytest.mark.parametrize("name", list(RUNTIME_TRIPS))
+@pytest.mark.parametrize("n", [0, 2, 4])
+def test_a_loop_with_a_runtime_trip_count_binds_only_where_it_runs(name, n):
+    python = RUNTIME_TRIPS_HEAD + RUNTIME_TRIPS[name]
+    source = RUNTIME_TRIPS_REQUIRES + python
+    try:
+        expected, _ = numpy_outputs(python, X6, n)
+    except Exception:  # noqa: BLE001  (UnboundLocalError)
+        assert_no_backend_proves(source, X6, n)
+        return
+    # The NumPy reference does not take `@requires`; compare by hand.
+    program = compile_kernel(source)
+    satisfied, values, _ = run_mock_layout(program, X6, n)
+    assert satisfied and values == expected
+    mock = mock_field_publics(program, X6, n)
+    assert halo2_field_publics(program, X6, n) == mock
+    if nargo_available():
+        assert noir_field_publics(program, X6, n) == mock
 
 
 @pytest.mark.parametrize("name", list(BOUND))
