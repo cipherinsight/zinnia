@@ -141,30 +141,6 @@ fn test_mock_prove_with_witness() {
 }
 
 #[test]
-fn test_mock_prove_memory() {
-    let ir = make_graph(vec![
-        (
-            IR::AllocateMemory {
-                segment_id: 0,
-                size: 4,
-                init_value: 0,
-            },
-            vec![],
-        ),
-        (IR::ConstantInt { value: 0 }, vec![]),
-        (IR::ConstantInt { value: 42 }, vec![]),
-        (IR::WriteMemory { segment_id: 0 }, vec![1, 2]),
-        (IR::ReadMemory { segment_id: 0 }, vec![1]),
-    ]);
-    let backend = MockProverBackend;
-    let params = ProvingParams::default();
-    let artifact = backend
-        .prove(&ir, &empty_resolved(params.precision_bits), &params)
-        .unwrap();
-    assert_eq!(artifact.proof_bytes, "mock_satisfied");
-}
-
-#[test]
 fn test_mock_product_sum_f_matches_scalar_path() {
     let params = ProvingParams {
         precision_bits: 16,

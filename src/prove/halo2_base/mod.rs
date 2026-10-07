@@ -441,7 +441,7 @@ pub fn cell_stats(ir: &IRGraph, lookup_bits: u32, precision_bits: u32) -> Result
     builder.set_instance_columns(1);
     let params = ProvingParams { k: ESTIMATE_K_MAX, lookup_bits, precision_bits };
     let (instances, second, tables, ram) = {
-        let mut synth = Halo2BaseSynthesizer::new(&mut builder, None, params, &ir.provenance);
+        let mut synth = Halo2BaseSynthesizer::new(&mut builder, None, params);
         synth.plan_ahead(ir);
         interpret_ir(ir, &mut synth)?;
         let parts = (std::mem::take(&mut synth.second_phase), std::mem::take(&mut synth.tables), std::mem::take(&mut synth.ram));
@@ -482,7 +482,7 @@ pub fn cell_profile(
     builder.set_instance_columns(1);
     let params = ProvingParams { k: ESTIMATE_K_MAX, lookup_bits, precision_bits };
     let profile = {
-        let mut synth = Halo2BaseSynthesizer::new(&mut builder, None, params, &ir.provenance);
+        let mut synth = Halo2BaseSynthesizer::new(&mut builder, None, params);
         synth.plan_ahead(ir);
         synth.enable_profile();
         interpret_ir(ir, &mut synth)?;
@@ -591,7 +591,7 @@ fn build_circuit(
         public_values
     } else {
         let mut synth =
-            Halo2BaseSynthesizer::new(&mut builder, witness.cloned(), params.clone(), &ir.provenance);
+            Halo2BaseSynthesizer::new(&mut builder, witness.cloned(), params.clone());
         synth.plan_ahead(ir);
         interpret_ir(ir, &mut synth).map_err(|e| {
             ProvingError::synthesis(format!("halo2-base synthesis failed: {}", e))
@@ -679,7 +679,6 @@ fn try_build_public_layout_only(
                 pending_instances.push(assigned);
                 public_values.push(value);
             }
-            IR::AllocateMemory { .. }
             | IR::StructuralPredicate { .. }
             | IR::ScalarPrecondition { .. } => {}
             _ => return Ok(None),

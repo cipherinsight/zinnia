@@ -46,7 +46,6 @@ fn op_is_minimal(op: &IR) -> bool {
             | IR::ConstantBool { .. }
             | IR::ExposePublicF
             | IR::ExposePublicI
-            | IR::AllocateMemory { .. }
     )
 }
 

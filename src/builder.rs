@@ -134,7 +134,7 @@ pub struct IRBuilder {
     /// the output slots at export (see `IRGraph::elided_publics`).
     elided_before_exposure: Vec<usize>,
     /// Conditional-write predicate. While `Some(p)`, every
-    /// `ir_write_memory` / `ir_dynamic_ndarray_set_item` stores
+    /// `storage_write_at` / `ir_dynamic_ndarray_set_item` stores
     /// `select(p, new, old)` instead of `new`, so segment mutations
     /// emitted inside a dynamic branch only take effect when that
     /// branch's path condition holds. IRGen scopes this around `if`-arm
@@ -1442,33 +1442,6 @@ impl IRBuilder {
                     self.provenance.set_interval(vid, hull);
                 }
             }
-            IR::ReadMemory { segment_id } | IR::ReadTable { segment_id } | IR::DynamicNDArrayGetItem { segment_id, .. } => {
-                if let (Some(vid), Some(hull)) =
-                    (out.value_id(), self.provenance.segment_hull(*segment_id))
-                {
-                    self.provenance.set_interval(vid, hull);
-                }
-            }
-            IR::AllocateMemory {
-                segment_id,
-                init_value,
-                ..
-            } => {
-                self.provenance.init_segment_hull(*segment_id, *init_value);
-            }
-            IR::WriteMemory { segment_id } | IR::DynamicNDArraySetItem { segment_id, .. } => {
-                // Invalidation chokepoint (provenance invariant #4): EVERY
-                // write-shaped op bumps the segment version and eager-drops
-                // segment-derived records here, so `ir_write_memory` and
-                // `ir_dynamic_ndarray_set_item` (and any future write op)
-                // get invalidation for free. Deposits made by helpers AFTER
-                // their writes — e.g. `mask.rs` deposits its `MaskReadView`
-                // after `alloc_and_write_values` — survive, because this
-                // fires during the write, before the later deposit.
-                self.provenance.on_segment_write(*segment_id);
-                let iv = interval_of(self, &args[1]);
-                self.provenance.widen_segment_hull(*segment_id, iv);
-            }
             IR::AssertNonNegI => {
                 // `x >= 0` over the signed-i64 domain (the halo2 check
                 // enforces x in [0, 2^63)).
@@ -2643,30 +2616,6 @@ impl IRBuilder {
         previous
     }
 
-    /// Store `value` in the array `storage` at `address` (a constant, or a
-    /// runtime flat address the caller checked), under the write predicate.
-    /// Returns the value the cell holds afterwards for a constant address
-    /// (callers that cache cells must cache it: it is `select(p, value,
-    /// old)` under a runtime predicate), `value` otherwise.
-    pub fn ir_write_memory(&mut self, storage: u32, address: &Value, value: &Value) -> Value {
-        match address.int_val() {
-            Some(a) => self.storage_write(storage, usize::try_from(a).expect("a non-negative address"), value),
-            None => {
-                self.storage_write_at(storage, address, value);
-                value.clone()
-            }
-        }
-    }
-
-    /// The cell of the array `storage` at `address` (a constant, or a
-    /// runtime flat address the caller checked).
-    pub fn ir_read_memory(&mut self, storage: u32, address: &Value) -> Value {
-        match address.int_val() {
-            Some(a) => self.storage_read(storage, usize::try_from(a).expect("a non-negative address")),
-            None => self.storage_read_at(storage, address),
-        }
-    }
-
     // ── Dynamic NDArray ───────────────────────────────────────────────
 
     pub fn ir_allocate_dynamic_ndarray_meta(
@@ -3217,17 +3166,10 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
         }
 
         // ── Memory operations (fixed) ─────────────────────────────
-        IR::AllocateMemory { .. } => Value::None,
-        IR::WriteMemory { .. } => Value::None,
-        IR::ReadMemory { .. } | IR::ReadTable { .. } => Value::Integer(ScalarValue::new(None, Some(ir_id))),
-        IR::MemoryTraceEmit { .. } => Value::None,
-        IR::MemoryTraceSeal => Value::None,
 
         // ── Dynamic NDArray (fixed) ───────────────────────────────
         IR::AllocateDynamicNDArrayMeta { .. } => Value::None,
         IR::WitnessDynamicNDArrayMeta { .. } | IR::AssertDynamicNDArrayMeta { .. } => Value::None,
-        IR::DynamicNDArrayGetItem { .. } => Value::Integer(ScalarValue::new(None, Some(ir_id))),
-        IR::DynamicNDArraySetItem { .. } => Value::None,
 
         // ── External calls (fixed) ────────────────────────────────
         IR::InvokeExternal { .. } => Value::None,
@@ -3310,8 +3252,6 @@ fn min_required_arity(ir: &IR) -> usize {
         | IR::Print
         | IR::StructuralPredicate { .. }
         | IR::ScalarPrecondition { .. }
-        | IR::AllocateMemory { .. }
-        | IR::MemoryTraceSeal
         | IR::AllocateDynamicNDArrayMeta { .. }
         | IR::InvokeExternal { .. } => 0,
         IR::AbsI
@@ -3344,12 +3284,8 @@ fn min_required_arity(ir: &IR) -> usize {
         | IR::AssertU128Lt
         | IR::ExposePublicI
         | IR::ExposePublicF
-        | IR::ReadMemory { .. }
-        | IR::ReadTable { .. }
-        | IR::MemoryTraceEmit { .. }
         | IR::WitnessDynamicNDArrayMeta { .. }
         | IR::AssertDynamicNDArrayMeta { .. }
-        | IR::DynamicNDArrayGetItem { .. }
         | IR::ExportExternalI { .. }
         | IR::ExportExternalF { .. }
         | IR::PoseidonHash => 1,
@@ -3393,8 +3329,6 @@ fn min_required_arity(ir: &IR) -> usize {
         | IR::LogicalAnd
         | IR::LogicalOr
         | IR::AddStr
-        | IR::WriteMemory { .. }
-        | IR::DynamicNDArraySetItem { .. }
         | IR::EqHash => 2,
         IR::SelectI | IR::SelectF | IR::SelectB | IR::SelectBitI | IR::SelectBitF => 3,
         IR::SelectManyI { len, .. } | IR::SelectManyF { len, .. } => {
@@ -3487,14 +3421,9 @@ fn unknown_value_for_ir(ir: &IR, ir_id: StmtId) -> Value {
         | IR::AssertU128Lt
         | IR::StructuralPredicate { .. }
         | IR::ScalarPrecondition { .. }
-        | IR::AllocateMemory { .. }
-        | IR::WriteMemory { .. }
-        | IR::MemoryTraceEmit { .. }
-        | IR::MemoryTraceSeal
         | IR::AllocateDynamicNDArrayMeta { .. }
         | IR::WitnessDynamicNDArrayMeta { .. }
         | IR::AssertDynamicNDArrayMeta { .. }
-        | IR::DynamicNDArraySetItem { .. }
         | IR::InvokeExternal { .. }
         | IR::IdentityCheck(_)
         | IR::ExportExternalI { .. } => Value::None,
@@ -3648,12 +3577,12 @@ mod tests {
         let v3 = b.ir_constant_int(3);
         let storage = b.alloc_storage(vec![v7, v3], crate::types::NumberType::Integer);
         let a0 = b.ir_constant_int(0);
-        let before = b.ir_read_memory(storage, &a0);
+        let before = b.storage_read_at(storage, &a0);
         assert_eq!(before.int_val(), Some(7), "a known cell reads as itself");
         let idx = fresh_dynamic_int(&mut b);
         let v99 = b.ir_constant_int(99);
-        b.ir_write_memory(storage, &idx, &v99);
-        let after = b.ir_read_memory(storage, &a0);
+        b.storage_write_at(storage, &idx, &v99);
+        let after = b.storage_read_at(storage, &a0);
         assert_eq!(after.int_val(), None);
         assert_eq!(read_bound_fact(&b, &after), None, "a stale (7, 7) bound would be a fact about 99");
     }
@@ -3667,8 +3596,8 @@ mod tests {
         let storage = b.alloc_storage(vec![v7], crate::types::NumberType::Integer);
         let a0 = b.ir_constant_int(0);
         let fresh = fresh_dynamic_int(&mut b);
-        b.ir_write_memory(storage, &a0, &fresh);
-        let r0 = b.ir_read_memory(storage, &a0);
+        b.storage_write_at(storage, &a0, &fresh);
+        let r0 = b.storage_read_at(storage, &a0);
         assert_eq!(r0.stmt_id(), fresh.stmt_id());
         assert_eq!(read_bound_fact(&b, &r0), None);
     }
@@ -3685,7 +3614,7 @@ mod tests {
         assert!(b.provenance.mask_read_view(storage).is_some());
         let idx = fresh_dynamic_int(&mut b);
         let nv = b.ir_constant_int(5);
-        b.ir_write_memory(storage, &idx, &nv);
+        b.storage_write_at(storage, &idx, &nv);
         assert!(b.provenance.mask_read_view(storage).is_none(), "a runtime write must drop the mask-read view");
     }
 
@@ -3700,21 +3629,20 @@ mod tests {
         let storage = b.alloc_storage(vec![one.clone(), two.clone()], crate::types::NumberType::Integer);
         let p = fresh_dynamic_int(&mut b);
         let previous = b.swap_write_predicate(Some(p.clone()));
-        let a0 = b.ir_constant_int(0);
         let nine = b.ir_constant_int(9);
-        let stored = b.ir_write_memory(storage, &a0, &nine);
+        let stored = b.storage_write(storage, 0, &nine);
         let stmt = &b.stmts[stored.stmt_id().unwrap() as usize];
         assert!(matches!(stmt.ir, IR::SelectI));
         assert_eq!(stmt.arguments, vec![p.stmt_id().unwrap(), nine.stmt_id().unwrap(), one.stmt_id().unwrap()]);
         let idx = fresh_dynamic_int(&mut b);
-        b.ir_write_memory(storage, &idx, &nine);
+        b.storage_write_at(storage, &idx, &nine);
         let write = b.stmts.iter().rev().find(|s| matches!(s.ir, IR::ArrayWrite(_))).expect("an array write");
         assert_eq!(*write.arguments.last().unwrap(), p.stmt_id().unwrap());
         let no = b.ir_constant_bool(false);
         b.swap_write_predicate(Some(no));
         let a1 = b.ir_constant_int(1);
         let before = b.stmts.len();
-        b.ir_write_memory(storage, &a1, &nine);
+        b.storage_write_at(storage, &a1, &nine);
         assert!(b.stmts[before..].iter().all(|s| !matches!(s.ir, IR::ArrayWrite(_) | IR::SelectI)));
         b.swap_write_predicate(previous);
     }

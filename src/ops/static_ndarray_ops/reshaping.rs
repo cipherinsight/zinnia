@@ -423,8 +423,8 @@ pub fn ndarray_repeat(
                     let i_const = b.ir_constant_int(i as i64);
                     let arr_idx = b.ir_floor_div_i(&i_const, &divisor);
                     let arr_idx_mod = b.ir_mod_i(&arr_idx, &len_arr_const);
-                    let src_val = b.ir_read_memory(src_seg, &arr_idx_mod);
-                    b.ir_write_memory(out_seg, &i_const, &src_val);
+                    let src_val = b.storage_read_at(src_seg, &arr_idx_mod);
+                    b.storage_write_at(out_seg, &i_const, &src_val);
                 }
                 let runtime_length_sv = value_to_scalar_i64(&runtime_length);
                 let runtime_length_vid = runtime_length_sv.value_id;

@@ -981,7 +981,7 @@ pub fn dyn_stack(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Val
     let max_out_addr = (out_numel as i64 - 1).max(0);
 
     // Per-input pass: for each input k, write its elements into the output
-    // at stack axis position k. Use ir_read_memory for source access and
+    // at stack axis position k. Use storage_read_at for source access and
     // in_bounds checks based on runtime_length for dynamic inputs.
     let src_max_numel: usize = base_shape.iter().product();
     let src_strides_base = dyn_row_major_strides(base_shape);
@@ -1002,7 +1002,7 @@ pub fn dyn_stack(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Val
             let src_flat_val = b.ir_constant_int(src_flat as i64);
             let in_bounds = b.ir_less_than_i(&src_flat_val, &runtime_len);
 
-            // Read from source via ir_read_memory.
+            // Read from source via storage_read_at.
             let clamped_src = (src_flat as i64).min(src_numel as i64 - 1).max(0);
             let src_addr = b.ir_constant_int(clamped_src);
             let src_val =

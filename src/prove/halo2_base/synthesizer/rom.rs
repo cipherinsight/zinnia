@@ -24,6 +24,13 @@ pub(super) struct Rom {
 }
 
 impl Halo2BaseSynthesizer<'_> {
+    /// A fresh table tag.
+    fn next_table_tag(&mut self) -> u64 {
+        let tag = self.table_count;
+        self.table_count += 1;
+        tag
+    }
+
     /// `RomInit`: register the table's rows under a fresh tag.
     pub(super) fn rom_init_cells(&mut self, table: StmtId, cells: &[Halo2BaseCell]) -> Result<(), ProvingError> {
         let tag = self.next_table_tag();

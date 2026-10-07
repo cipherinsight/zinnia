@@ -105,9 +105,6 @@ pub struct Halo2Synthesizer {
     /// reconstruct the instance column without re-walking the IR.
     public_values: Vec<Fp>,
     instance_row: usize,
-    /// Allocated memory segments: init value and the cell each slot holds
-    /// (`None` until written; see the memory section).
-    segments: HashMap<u32, (Fp, Vec<Option<Halo2CellRef>>)>,
     /// Cells bound to the fixed column by `constant_cell`, with their value.
     const_cells: HashMap<(usize, usize), Fp>,
     /// One fixed-bound cell per distinct constant value.
@@ -172,7 +169,6 @@ impl Halo2Synthesizer {
             public_cells: Vec::new(),
             public_values: Vec::new(),
             instance_row: 0,
-            segments: HashMap::new(),
             const_cells: HashMap::new(),
             const_cache: HashMap::new(),
             dyn_meta_bounds: HashMap::new(),
@@ -473,55 +469,6 @@ impl Halo2Synthesizer {
         self.const_cells.insert((cell.col_idx, cell.row), value);
         self.const_cache.insert(key, cell.clone());
         cell
-    }
-
-    /// The constant value of `cell` if it is bound to the fixed column.
-    fn constant_value(&self, cell: &Halo2CellRef) -> Option<Fp> {
-        self.const_cells.get(&(cell.col_idx, cell.row)).copied()
-    }
-
-    fn segment_len(&self, segment_id: u32) -> Result<usize, ProvingError> {
-        self.segments
-            .get(&segment_id)
-            .map(|(_, slots)| slots.len())
-            .ok_or_else(|| ProvingError::synthesis("Segment not allocated"))
-    }
-
-    /// The cell slot `idx` holds: its last write, or the init value as a
-    /// fixed constant.
-    fn slot_cell(&mut self, segment_id: u32, idx: usize) -> Result<Halo2CellRef, ProvingError> {
-        let (init, slots) = self
-            .segments
-            .get(&segment_id)
-            .ok_or_else(|| ProvingError::synthesis("Segment not allocated"))?;
-        match slots.get(idx).cloned().flatten() {
-            Some(cell) => Ok(cell),
-            None => {
-                let init = *init;
-                Ok(self.constant_cell(init, "mem_init"))
-            }
-        }
-    }
-
-    /// One-hot indicators `[addr == i]` over the segment's slots, with
-    /// `Σ_i [addr == i] = 1` asserted, which also proves `0 <= addr < len`.
-    fn address_indicators(&mut self, addr: &Halo2CellRef, len: usize) -> Result<Vec<Halo2CellRef>, ProvingError> {
-        if len == 0 {
-            return Err(ProvingError::synthesis("memory access into an empty segment"));
-        }
-        let mut hits = Vec::with_capacity(len);
-        let mut sum: Option<Halo2CellRef> = None;
-        for i in 0..len {
-            let idx = self.constant_int(i as i64)?;
-            let hit = self.eq_gadget(addr, &idx);
-            sum = Some(match sum {
-                None => hit.clone(),
-                Some(acc) => self.add_i(&acc, &hit)?,
-            });
-            hits.push(hit);
-        }
-        self.assert_true(&sum.expect("len > 0"))?;
-        Ok(hits)
     }
 
     // ── Constrained building blocks ───────────────────────────────────
@@ -3135,99 +3082,6 @@ impl Synthesizer for Halo2Synthesizer {
     // for an unwritten slot. The cost is linear in the segment length per
     // runtime access; the halo2-base backend has the cheaper gathers.
 
-    fn allocate_memory(
-        &mut self,
-        segment_id: u32,
-        size: u32,
-        init: i64,
-    ) -> Result<(), ProvingError> {
-        self.segments
-            .insert(segment_id, (kernel::i64_to_fp(init), vec![None; size as usize]));
-        Ok(())
-    }
-    fn write_memory(
-        &mut self,
-        segment_id: u32,
-        addr: &Halo2CellRef,
-        value: &Halo2CellRef,
-    ) -> Result<(), ProvingError> {
-        let len = self.segment_len(segment_id)?;
-        let updates: Vec<(usize, Halo2CellRef)> = match self.constant_value(addr) {
-            Some(a) => {
-                let a = usize::try_from(kernel::fp_to_i64(a))
-                    .ok()
-                    .filter(|a| *a < len)
-                    .ok_or_else(|| {
-                        ProvingError::synthesis(format!(
-                            "Memory write out of bounds: segment {} len {}",
-                            segment_id, len
-                        ))
-                    })?;
-                vec![(a, value.clone())]
-            }
-            None => {
-                let hits = self.address_indicators(addr, len)?;
-                let mut updates = Vec::with_capacity(len);
-                for (i, hit) in hits.iter().enumerate() {
-                    let old = self.slot_cell(segment_id, i)?;
-                    updates.push((i, self.select_bit(hit, value, &old)?));
-                }
-                updates
-            }
-        };
-        if let Some((_, slots)) = self.segments.get_mut(&segment_id) {
-            for (i, cell) in updates {
-                slots[i] = Some(cell);
-            }
-        }
-        Ok(())
-    }
-    /// A constant address past the end reads the init value, as in the
-    /// mock backend; a runtime address must be in bounds.
-    fn read_memory(
-        &mut self,
-        segment_id: u32,
-        addr: &Halo2CellRef,
-    ) -> Result<Halo2CellRef, ProvingError> {
-        let len = self.segment_len(segment_id)?;
-        if let Some(a) = self.constant_value(addr) {
-            let idx = usize::try_from(kernel::fp_to_i64(a)).unwrap_or(usize::MAX);
-            return self.slot_cell(segment_id, idx);
-        }
-        let hits = self.address_indicators(addr, len)?;
-        let init = self.segments[&segment_id].0;
-        let mut acc = self.constant_cell(init, "mem_init");
-        for (i, hit) in hits.iter().enumerate() {
-            let slot = self.slot_cell(segment_id, i)?;
-            acc = self.select_bit(hit, &slot, &acc)?;
-        }
-        Ok(acc)
-    }
-    /// A runtime address goes through `read_memory`, whose address
-    /// indicators admit only in-bounds addresses; a constant one must be in
-    /// bounds at synthesis time.
-    fn read_table(&mut self, segment_id: u32, addr: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        if let Some(a) = self.constant_value(addr) {
-            let len = self.segment_len(segment_id)?;
-            let in_bounds = usize::try_from(kernel::fp_to_i64(a)).is_ok_and(|a| a < len);
-            if !in_bounds {
-                return Err(ProvingError::synthesis("table read out of bounds"));
-            }
-        }
-        self.read_memory(segment_id, addr)
-    }
-    fn memory_trace_emit(
-        &mut self,
-        _: u32,
-        _: bool,
-        _: &[Halo2CellRef],
-    ) -> Result<(), ProvingError> {
-        Ok(())
-    }
-    fn memory_trace_seal(&mut self) -> Result<(), ProvingError> {
-        Ok(())
-    }
-
     // ── Dynamic NDArray (constrained via memory) ──────────────────────
 
     fn allocate_dynamic_ndarray_meta(
@@ -3245,7 +3099,7 @@ impl Synthesizer for Halo2Synthesizer {
         };
         self.dyn_meta_bounds
             .insert(array_id, (max_length, axis_bounds));
-        self.allocate_memory(10000 + array_id, max_length, 0)
+        Ok(())
     }
     fn witness_dynamic_ndarray_meta(
         &mut self,
@@ -3268,23 +3122,6 @@ impl Synthesizer for Halo2Synthesizer {
             .unwrap_or_else(|| (max_length, vec![max_length; max_rank as usize]))
     }
     // assert_dynamic_ndarray_meta uses the trait-default lowering.
-    fn dynamic_ndarray_get_item(
-        &mut self,
-        array_id: u32,
-        _: u32,
-        index: &Halo2CellRef,
-    ) -> Result<Halo2CellRef, ProvingError> {
-        self.read_memory(10000 + array_id, index)
-    }
-    fn dynamic_ndarray_set_item(
-        &mut self,
-        array_id: u32,
-        _: u32,
-        index: &Halo2CellRef,
-        value: &Halo2CellRef,
-    ) -> Result<(), ProvingError> {
-        self.write_memory(10000 + array_id, index, value)
-    }
 
     // ── Poseidon hash (constrained via mul+add gates) ─────────────────
 

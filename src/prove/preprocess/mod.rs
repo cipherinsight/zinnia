@@ -523,7 +523,6 @@ impl<'a> Preprocessor<'a> {
             | IR::ExposePublicF => Ok(None),
             IR::StructuralPredicate { .. } => Ok(None),
             IR::ScalarPrecondition { .. } => Ok(None),
-            IR::MemoryTraceEmit { .. } | IR::MemoryTraceSeal => Ok(None),
             // Evaluated by `eval_array` before this match.
             IR::ArrayInit { .. }
             | IR::ArrayWrite(_)
@@ -536,63 +535,6 @@ impl<'a> Preprocessor<'a> {
             IR::WitnessDynamicNDArrayMeta { .. } | IR::AssertDynamicNDArrayMeta { .. } => Ok(None),
 
             // Memory
-            IR::AllocateMemory {
-                segment_id,
-                size,
-                init_value,
-            } => {
-                let init = kernel::i64_to_fp(*init_value);
-                self.memories
-                    .insert(*segment_id, vec![init; *size as usize]);
-                self.memory_init.insert(*segment_id, init);
-                Ok(None)
-            }
-            IR::WriteMemory { segment_id } => {
-                let addr = kernel::fp_to_i64(args[0]) as usize;
-                // Match `mock/synthesizer.rs::write_memory`: a write to an
-                // unallocated segment or out-of-bounds address is an error, not
-                // a silent no-op.
-                let mem = self.memories.get_mut(segment_id).ok_or_else(|| {
-                    ProvingError::synthesis(format!(
-                        "Memory write to unallocated segment {}",
-                        segment_id
-                    ))
-                })?;
-                if addr >= mem.len() {
-                    return Err(ProvingError::synthesis(format!(
-                        "Memory write out of bounds: segment {} addr {} len {}",
-                        segment_id,
-                        addr,
-                        mem.len()
-                    )));
-                }
-                mem[addr] = args[1];
-                Ok(None)
-            }
-            IR::ReadTable { segment_id } => {
-                let mem = self
-                    .memories
-                    .get(segment_id)
-                    .ok_or_else(|| ProvingError::synthesis("Segment not allocated"))?;
-                // An address outside the segment has no witness; the
-                // backends (and the mock) reject it, the value here is moot.
-                let addr = usize::try_from(kernel::fp_to_i64(args[0])).ok().filter(|&a| a < mem.len());
-                Ok(Some(addr.map_or(Fp::zero(), |a| mem[a])))
-            }
-            IR::ReadMemory { segment_id } => {
-                let addr = kernel::fp_to_i64(args[0]) as usize;
-                let init = self
-                    .memory_init
-                    .get(segment_id)
-                    .copied()
-                    .unwrap_or(Fp::zero());
-                Ok(Some(
-                    self.memories
-                        .get(segment_id)
-                        .and_then(|m| m.get(addr).copied())
-                        .unwrap_or(init),
-                ))
-            }
 
             // Dynamic NDArray
             IR::AllocateDynamicNDArrayMeta {
@@ -603,26 +545,6 @@ impl<'a> Preprocessor<'a> {
                 self.memories
                     .insert(10000 + array_id, vec![Fp::zero(); *max_length as usize]);
                 self.memory_init.insert(10000 + array_id, Fp::zero());
-                Ok(None)
-            }
-            IR::DynamicNDArrayGetItem { array_id, .. } => {
-                let addr = kernel::fp_to_i64(args[0]) as usize;
-                let seg = 10000 + array_id;
-                Ok(Some(
-                    self.memories
-                        .get(&seg)
-                        .and_then(|m| m.get(addr).copied())
-                        .unwrap_or(Fp::zero()),
-                ))
-            }
-            IR::DynamicNDArraySetItem { array_id, .. } => {
-                let addr = kernel::fp_to_i64(args[0]) as usize;
-                let seg = 10000 + array_id;
-                if let Some(mem) = self.memories.get_mut(&seg) {
-                    if addr < mem.len() {
-                        mem[addr] = args[1];
-                    }
-                }
                 Ok(None)
             }
 

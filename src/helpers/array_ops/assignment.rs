@@ -7,7 +7,7 @@ use super::bounded_axis::{select_stride_mode, stride_value, StrideMode};
 use super::indexing::{compute_flat_addr, wrap_and_check_dynamic_indices};
 
 /// Single element assignment: dyn[i] = x or dyn[i, j] = x.
-/// In-place write via `ir_write_memory` — O(1).
+/// In-place write via `storage_write_at` — O(1).
 pub fn dyn_setitem(
     b: &mut IRBuilder,
     data: &DynamicNDArrayData,

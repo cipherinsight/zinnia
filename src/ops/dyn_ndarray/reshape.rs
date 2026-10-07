@@ -10,13 +10,13 @@ use crate::types::{
 ///
 /// Shares the source segment; permutes `logical_shape` / `logical_strides`
 /// / `runtime_shape` / `runtime_strides`; preserves `logical_offset`. No
-/// `ir_write_memory` is emitted — the materialisation cost is deferred to
+/// `storage_write_at` is emitted — the materialisation cost is deferred to
 /// consumers that need contiguous layout (which call
 /// [`super::force_contiguous`]).
 ///
 /// Op chains like `slice → reshape → swapaxes → reshape` benefit most:
 /// previously each link in the chain materialised the full array (4×
-/// `ir_write_memory` storm for 0388-style kernels). Now only consumers
+/// `storage_write_at` storm for 0388-style kernels). Now only consumers
 /// that actually need contiguous data pay materialisation.
 pub fn dyn_transpose(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) -> Value {
     let shape = &data.meta.logical_shape;

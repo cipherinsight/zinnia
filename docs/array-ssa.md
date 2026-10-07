@@ -42,7 +42,7 @@ prefer a clean design."
 | 2 | layer, read side: element groups from `ArrayRead(ArrayInit)`, rounds, `Rom*` | done (8724bc75) |
 | 3 | store behind the builder memory API; memory groups (overlay, RAM trace, native RAM) | done |
 | 4 | frontend families onto the store API (writes at runtime positions are `ArrayWrite`s); B1-B9 | done |
-| 5 | delete old ops, passes, backend memory code; rename | todo |
+| 5 | delete old ops, passes, backend memory code | done (rename deferred, see log) |
 | 6 | validation and per-case cost table | todo |
 
 (Updated as steps land; see "Status log" at the end.)
@@ -517,8 +517,26 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
   projection_simplex, clip, 0450, 0383, 0298, value_index), 3 costlier on halo2 by 15-17 cells
   (0345, 0346, 0347: reads of a column at a runtime index, see "Open").
 
+- Step 5: `AllocateMemory`, `WriteMemory`, `ReadMemory`, `ReadTable`, `MemoryTraceEmit/Seal`,
+  `DynamicNDArrayGetItem/SetItem` deleted with their builder API (`ir_*_memory`: callers use the
+  store's `storage_read_at` / `storage_write_at`), the `Synthesizer` trait's memory methods and
+  every backend's implementation (halo2-base `synthesizer/memory.rs` and the plan's
+  `ram_segments`, `reads_per_root`, `address_only`; Noir's segments, epochs, gathers and native
+  segment arrays; the mock's and preprocess's segments; legacy halo2's segments), the
+  provenance table's `segment_hull`, `write_version` and `layout` (and the segment-keyed
+  records' wire form: only the frontend reads them), the scatter family's `IndexWrite`
+  constructions, and their tests. The select chains' one-hot inner products live in
+  `halo2_base/synthesizer/one_hot.rs`. Tests of the deleted code are deleted; the tamper tests
+  of tables were ported to `RomRead` (halo2-base and Noir). Not done: renaming `segment_id` to
+  `storage` across the frontend (several hundred sites in files other branches edit; a
+  mechanical change best made when they have merged).
+
 ### Open
 
+- Not implemented from section 4: the program-wide `TABLES` requirement (each `ElementByTable`
+  candidate still prices its table group's fixed columns itself) and the RAM construction's
+  per-axis facts as postconditions (no case needs them); `ElementOfWrite` stays (it applies to
+  any select pattern a program builds, and costs nothing when it does not).
 - 0345-0347 (+15, +17, +17 halo2 cells): the selection now prices the column reads alone (the
   writes fold away) and prefers the pinned-sign wrap with select chains (estimate 198) over the
   position one-hot with recorded one-hot reads (estimate 210); emitted, the second is 15-17 cells

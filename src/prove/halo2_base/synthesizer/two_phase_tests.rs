@@ -60,7 +60,7 @@ pub(crate) fn mock_run(ir: &IRGraph, inputs: &[(&str, InputNode)], tamper: &Tamp
     builder.set_instance_columns(1);
     let (outputs, hints, second_phase) = {
         let witness = ResolvedWitness::new(circuit_inputs, params.precision_bits);
-        let mut synth = Halo2BaseSynthesizer::new(&mut builder, Some(witness), params, &ir.provenance);
+        let mut synth = Halo2BaseSynthesizer::new(&mut builder, Some(witness), params);
         synth.tamper = tamper::HintTamper::targeting(&tamper.hints);
         synth.plan_ahead(ir);
         interpret_ir(ir, &mut synth).expect("synthesis");

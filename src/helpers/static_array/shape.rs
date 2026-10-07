@@ -364,7 +364,7 @@ pub fn try_apply_transpose(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Op
     }
     let perm = parse_transpose_perm(args, ndim)?;
     // Lazy view: permute shape and strides; share the segment with the
-    // source (no materialisation, no `ir_write_memory` for each cell).
+    // source (no materialisation, no `storage_write_at` for each cell).
     // Downstream readers handle non-contiguous strides via
     // `payload_cells` (strides-aware) and `compute_addr`.
     let new_shape: Vec<usize> = perm.iter().map(|&p| shape[p]).collect();

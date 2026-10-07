@@ -53,7 +53,7 @@ pub struct DynamicNDArrayData {
     pub envelope: Envelope,
     pub dtype: NumberType,
     /// ZKRAM segment ID. Every dynamic ndarray is backed by a segment;
-    /// reads go through `ir_read_memory`, writes through `ir_write_memory`.
+    /// reads go through `storage_read_at`, writes through `storage_write_at`.
     pub segment_id: u32,
     pub meta: DynArrayMeta,
     /// Compilation-layer identity of the *whole tensor* (as opposed to

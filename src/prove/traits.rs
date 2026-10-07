@@ -500,34 +500,6 @@ pub trait Synthesizer {
 
     // ── Memory ────────────────────────────────────────────────────────
 
-    fn allocate_memory(
-        &mut self,
-        segment_id: u32,
-        size: u32,
-        init: i64,
-    ) -> Result<(), ProvingError>;
-    fn write_memory(
-        &mut self,
-        segment_id: u32,
-        addr: &Self::CellRef,
-        value: &Self::CellRef,
-    ) -> Result<(), ProvingError>;
-    fn read_memory(
-        &mut self,
-        segment_id: u32,
-        addr: &Self::CellRef,
-    ) -> Result<Self::CellRef, ProvingError>;
-    /// `IR::ReadTable`: the slot at `addr`, with no witness for an address
-    /// outside the segment; the segment is not written afterwards.
-    fn read_table(&mut self, segment_id: u32, addr: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
-    fn memory_trace_emit(
-        &mut self,
-        segment_id: u32,
-        is_write: bool,
-        args: &[Self::CellRef],
-    ) -> Result<(), ProvingError>;
-    fn memory_trace_seal(&mut self) -> Result<(), ProvingError>;
-
     // ── Dynamic NDArray ───────────────────────────────────────────────
 
     fn allocate_dynamic_ndarray_meta(
@@ -601,19 +573,6 @@ pub trait Synthesizer {
         self.assert_true(&in_total_bound)?;
         Ok(())
     }
-    fn dynamic_ndarray_get_item(
-        &mut self,
-        array_id: u32,
-        segment_id: u32,
-        index: &Self::CellRef,
-    ) -> Result<Self::CellRef, ProvingError>;
-    fn dynamic_ndarray_set_item(
-        &mut self,
-        array_id: u32,
-        segment_id: u32,
-        index: &Self::CellRef,
-        value: &Self::CellRef,
-    ) -> Result<(), ProvingError>;
 
     // ── Arrays before lowering (`IR::ArrayWrite`, `IR::ArrayRead`) ─────
     //

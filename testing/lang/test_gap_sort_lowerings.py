@@ -84,15 +84,25 @@ def proves(source, *args):
     return program.verify(result)
 
 
-def read_cells(source):
-    """halo2-base cells (advice + lookup, 8-bit lookups) of the program's
-    `ReadMemory` statements."""
-    from zinnia._zinnia_core import halo2_base_cell_profile
+def program_cells(source):
+    """halo2-base cells (advice + lookup, 8-bit lookups) of the program."""
+    from zinnia._zinnia_core import halo2_base_cell_stats
 
     program = compile_kernel(source)
-    reads = {s["stmt_id"] for s in program.get_ir_stmts() if s["ir_instance"]["__class__"] == "ReadMemoryIR"}
-    profile = json.loads(halo2_base_cell_profile(program._compiled_ir, 8))
-    return sum(advice + lookup for stmt, advice, lookup in profile if stmt in reads)
+    params = json.dumps({"k": 12, "precision_bits": 32, "lookup_bits": 8})
+    stats = json.loads(halo2_base_cell_stats(program._compiled_ir, params))
+    return stats["advice"] + stats["lookup"]
+
+
+ELEMENT_READS = ["memory: element by index bits", "gather: element by a select chain", "gather: element by indicators"]
+
+
+def forced_cells(monkeypatch, source, construction):
+    """`program_cells` with the reads built by `construction` alone."""
+    monkeypatch.setenv("ZINNIA_FORCE_CONSTRUCTION", construction)
+    cells = program_cells(source)
+    monkeypatch.delenv("ZINNIA_FORCE_CONSTRUCTION")
+    return cells
 
 
 ONE_READ = 'def kernel(a: Float[Array, "7"], i: Integer):\n    return a[i]\n'
@@ -121,17 +131,21 @@ def test_runtime_read_out_of_bounds_has_no_proof(source, i):
     assert not proves(source, *args)
 
 
-def test_one_runtime_read_is_a_multiplexer():
-    # A single read of 64 slots: 63 selects (8 cells) and a 6-bit
-    # decomposition, against ~17 cells per slot for the one-hot form.
+def test_one_runtime_read_is_a_multiplexer(monkeypatch):
+    # A single read of 64 slots: a multiplexer over the index's bits, no
+    # dearer than any other element read (the one-hot form pays ~17 cells
+    # per slot).
     source = 'def kernel(a: Float[Array, "64"], i: Integer):\n    return a[i]\n'
-    assert read_cells(source) < 64 * 10
+    chosen = program_cells(source)
+    assert chosen == forced_cells(monkeypatch, source, "memory: element by index bits")
+    assert all(chosen <= forced_cells(monkeypatch, source, c) for c in ELEMENT_READS)
 
 
-def test_reads_sharing_a_root_keep_the_one_hot_form():
-    # Four reads on one index share its equality bits (~14 cells per slot
-    # once, ~3 per slot per read: ~1,700 cells), cheaper than four
-    # multiplexers (~2,000).
+def test_reads_sharing_a_root_keep_the_one_hot_form(monkeypatch):
+    # Four reads on one index share its equality bits, cheaper than four
+    # multiplexers.
     arrays = ", ".join(f'{n}: Float[Array, "64"]' for n in "abcd")
     source = f'def kernel({arrays}, i: Integer):\n    return a[i] + b[i] + c[i] + d[i]\n'
-    assert read_cells(source) < 4 * 64 * 7
+    chosen = program_cells(source)
+    assert chosen < forced_cells(monkeypatch, source, "memory: element by index bits")
+    assert all(chosen <= forced_cells(monkeypatch, source, c) for c in ELEMENT_READS)

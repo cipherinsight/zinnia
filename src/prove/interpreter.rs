@@ -287,31 +287,6 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
             IR::ScalarPrecondition { .. } => None,
 
             // ── Memory operations ─────────────────────────────────────
-            IR::AllocateMemory {
-                segment_id,
-                size,
-                init_value,
-            } => {
-                synth.allocate_memory(*segment_id, *size, *init_value)?;
-                None
-            }
-            IR::WriteMemory { segment_id } => {
-                synth.write_memory(*segment_id, &args[0], &args[1])?;
-                None
-            }
-            IR::ReadMemory { segment_id } => Some(synth.read_memory(*segment_id, &args[0])?),
-            IR::ReadTable { segment_id } => Some(synth.read_table(*segment_id, &args[0])?),
-            IR::MemoryTraceEmit {
-                segment_id,
-                is_write,
-            } => {
-                synth.memory_trace_emit(*segment_id, *is_write, &args)?;
-                None
-            }
-            IR::MemoryTraceSeal => {
-                synth.memory_trace_seal()?;
-                None
-            }
 
             // ── Arrays, tables, memories (`crate::ir_array`) ──────────
             IR::ArrayInit { .. } => {
@@ -383,17 +358,6 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
                 max_length,
             } => {
                 synth.assert_dynamic_ndarray_meta(*array_id, *max_rank, *max_length, &args)?;
-                None
-            }
-            IR::DynamicNDArrayGetItem {
-                array_id,
-                segment_id,
-            } => Some(synth.dynamic_ndarray_get_item(*array_id, *segment_id, &args[0])?),
-            IR::DynamicNDArraySetItem {
-                array_id,
-                segment_id,
-            } => {
-                synth.dynamic_ndarray_set_item(*array_id, *segment_id, &args[0], &args[1])?;
                 None
             }
 

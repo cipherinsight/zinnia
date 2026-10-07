@@ -117,11 +117,6 @@ enum Role {
     Selects(Range<usize>),
     /// The result is one of these operands.
     Joins(Vec<usize>),
-    /// Allocates a segment filled with the value.
-    Allocates(u32, i64),
-    Reads(u32),
-    /// Writes its second operand.
-    Writes(u32),
     /// Passes the values to an external function, which computes on them.
     External,
 }
@@ -197,17 +192,6 @@ fn role(ir: &IR, operands: usize) -> Role {
             Some(operands) => Role::Selects(operands),
             None => Role::ValueOnly,
         },
-        IR::AllocateMemory {
-            segment_id,
-            init_value,
-            ..
-        } => Role::Allocates(*segment_id, *init_value),
-        IR::ReadMemory { segment_id } | IR::ReadTable { segment_id } | IR::DynamicNDArrayGetItem { segment_id, .. } => {
-            Role::Reads(*segment_id)
-        }
-        IR::WriteMemory { segment_id } | IR::DynamicNDArraySetItem { segment_id, .. } => {
-            Role::Writes(*segment_id)
-        }
         // An array version is tracked as what its cells hold (the type they
         // share, `Derived` when they differ), and a read as its version:
         // the read is one of the cells. Whether a write may store its value
@@ -270,8 +254,6 @@ fn role(ir: &IR, operands: usize) -> Role {
         | IR::ExposePublicF
         | IR::StructuralPredicate { .. }
         | IR::ScalarPrecondition { .. }
-        | IR::MemoryTraceEmit { .. }
-        | IR::MemoryTraceSeal
         | IR::AllocateDynamicNDArrayMeta { .. }
         | IR::WitnessDynamicNDArrayMeta { .. }
         | IR::AssertDynamicNDArrayMeta { .. }
@@ -345,24 +327,6 @@ impl IRBuilder {
                 if let Some(t) = joined {
                     self.fixed_width.values.insert(stmt, t);
                 }
-            }
-            Role::Allocates(segment, fill) => {
-                let content = if fill == 0 {
-                    Content::Fresh
-                } else {
-                    Content::Untracked
-                };
-                self.fixed_width.segments.insert(segment, content);
-            }
-            Role::Reads(segment) => {
-                if let Content::Tracked(t) = state.content(segment) {
-                    self.fixed_width.values.insert(stmt, t);
-                }
-            }
-            Role::Writes(segment) => {
-                let written = state.of(&operands[1]);
-                let content = after_write(state.content(segment), written, state.suspended);
-                self.fixed_width.segments.insert(segment, content);
             }
         }
     }
@@ -593,12 +557,12 @@ mod tests {
         let zero = b.ir_constant_int(0);
         let segment = b.alloc_filled(2, &zero, crate::types::NumberType::Integer);
         let address = b.ir_constant_int(0);
-        b.ir_write_memory(segment, &address, &v);
-        let read = b.ir_read_memory(segment, &address);
+        b.storage_write_at(segment, &address, &v);
+        let read = b.storage_read_at(segment, &address);
         assert_eq!(b.fixed_width.of(&read), Some(FixedWidth::Exactly(UINT8)));
         // A read at a runtime address too.
         let i = b.ir_read_integer(crate::circuit_input::InputPath::new("i", vec![]), false);
-        let read = b.ir_read_memory(segment, &i);
+        let read = b.storage_read_at(segment, &i);
         assert_eq!(b.fixed_width.of(&read), Some(FixedWidth::Exactly(UINT8)));
     }
 
@@ -610,9 +574,9 @@ mod tests {
         let zero = b.ir_constant_int(0);
         let segment = b.alloc_filled(2, &zero, crate::types::NumberType::Integer);
         let (first, second) = (b.ir_constant_int(0), b.ir_constant_int(1));
-        b.ir_write_memory(segment, &first, &v);
+        b.storage_write_at(segment, &first, &v);
         let plain = b.ir_constant_int(300);
-        b.ir_write_memory(segment, &second, &plain);
+        b.storage_write_at(segment, &second, &plain);
     }
 
     #[test]

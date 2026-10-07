@@ -261,33 +261,6 @@ pub enum IR {
         term_json: String,
     },
 
-    // ── Memory operations ─────────────────────────────────────────────
-    AllocateMemory {
-        segment_id: u32,
-        size: u32,
-        init_value: i64,
-    },
-    WriteMemory {
-        segment_id: u32,
-    },
-    ReadMemory {
-        segment_id: u32,
-    },
-    /// The segment's slot at the runtime address operand, read as a
-    /// memory-argument read: there is no witness for an address outside
-    /// `[0, len)` on any backend (the mock rejects it too), and the segment
-    /// is not written after its first `ReadTable` (the slots form a fixed
-    /// table). halo2-base: a dynamic lookup into the segment's table; Noir:
-    /// a native array read at a checked index (`lower::memory`).
-    ReadTable {
-        segment_id: u32,
-    },
-    MemoryTraceEmit {
-        segment_id: u32,
-        is_write: bool,
-    },
-    MemoryTraceSeal,
-
     // ── Arrays (`crate::ir_array`, `docs/array-ssa.md`) ────────────────
     /// An array version holding its `len` operands, cells of type `elem`.
     ArrayInit { len: u32, elem: ArrayElem },
@@ -336,15 +309,6 @@ pub enum IR {
         max_rank: u32,
         max_length: u32,
     },
-    DynamicNDArrayGetItem {
-        array_id: u32,
-        segment_id: u32,
-    },
-    DynamicNDArraySetItem {
-        array_id: u32,
-        segment_id: u32,
-    },
-
     // ── External function calls ───────────────────────────────────────
     InvokeExternal {
         store_idx: u32,
@@ -753,21 +717,6 @@ impl IR {
                 format!("scalar_precondition[{}]", term_json)
             }
 
-            // Memory
-            IR::AllocateMemory {
-                segment_id,
-                size,
-                init_value,
-            } => format!("allocate_memory[{}][{}][{}]", segment_id, size, init_value),
-            IR::WriteMemory { segment_id } => format!("write_memory[{}]", segment_id),
-            IR::ReadMemory { segment_id } => format!("read_memory[{}]", segment_id),
-            IR::ReadTable { segment_id } => format!("read_table[{}]", segment_id),
-            IR::MemoryTraceEmit {
-                segment_id,
-                is_write,
-            } => format!("memory_trace_emit[{}][{}]", segment_id, is_write),
-            IR::MemoryTraceSeal => "memory_trace_seal".to_string(),
-
             // Arrays
             IR::ArrayInit { len, elem } => format!("array_init[{}][{:?}]", len, elem),
             IR::ArrayWrite(access) => format!("array_write[{}]", access.describe()),
@@ -807,14 +756,6 @@ impl IR {
                 "assert_dynamic_ndarray_meta[{}][{}][{}]",
                 array_id, max_rank, max_length
             ),
-            IR::DynamicNDArrayGetItem {
-                array_id,
-                segment_id,
-            } => format!("dynamic_ndarray_get_item[{}][{}]", array_id, segment_id),
-            IR::DynamicNDArraySetItem {
-                array_id,
-                segment_id,
-            } => format!("dynamic_ndarray_set_item[{}][{}]", array_id, segment_id),
 
             // External
             IR::InvokeExternal { .. } => "invoke_external".to_string(),
@@ -915,17 +856,9 @@ impl IR {
             | IR::ExposePublicI
             | IR::ExposePublicF
             | IR::ReadHash { .. }
-            | IR::AllocateMemory { .. }
-            | IR::WriteMemory { .. }
-            | IR::ReadMemory { .. }
-            | IR::ReadTable { .. }
-            | IR::MemoryTraceEmit { .. }
-            | IR::MemoryTraceSeal
             | IR::AllocateDynamicNDArrayMeta { .. }
             | IR::WitnessDynamicNDArrayMeta { .. }
             | IR::AssertDynamicNDArrayMeta { .. }
-            | IR::DynamicNDArrayGetItem { .. }
-            | IR::DynamicNDArraySetItem { .. }
             | IR::InvokeExternal { .. }
             | IR::ExportExternalI { .. }
             | IR::ExportExternalF { .. }
@@ -1030,12 +963,6 @@ impl IR {
             IR::ScalarPrecondition { .. } => "ScalarPreconditionIR",
             IR::ExposePublicI => "ExposePublicIIR",
             IR::ExposePublicF => "ExposePublicFIR",
-            IR::AllocateMemory { .. } => "AllocateMemoryIR",
-            IR::WriteMemory { .. } => "WriteMemoryIR",
-            IR::ReadMemory { .. } => "ReadMemoryIR",
-            IR::ReadTable { .. } => "ReadTableIR",
-            IR::MemoryTraceEmit { .. } => "MemoryTraceEmitIR",
-            IR::MemoryTraceSeal => "MemoryTraceSealIR",
             IR::ArrayInit { .. } => "ArrayInitIR",
             IR::ArrayWrite(_) => "ArrayWriteIR",
             IR::ArrayRead(_) => "ArrayReadIR",
@@ -1047,8 +974,6 @@ impl IR {
             IR::AllocateDynamicNDArrayMeta { .. } => "AllocateDynamicNDArrayMetaIR",
             IR::WitnessDynamicNDArrayMeta { .. } => "WitnessDynamicNDArrayMetaIR",
             IR::AssertDynamicNDArrayMeta { .. } => "AssertDynamicNDArrayMetaIR",
-            IR::DynamicNDArrayGetItem { .. } => "DynamicNDArrayGetItemIR",
-            IR::DynamicNDArraySetItem { .. } => "DynamicNDArraySetItemIR",
             IR::InvokeExternal { .. } => "InvokeExternalIR",
             IR::ExportExternalI { .. } => "ExportExternalIIR",
             IR::ExportExternalF { .. } => "ExportExternalFIR",
@@ -1129,23 +1054,7 @@ impl IR {
             IR::SelectManyI { len, lane } | IR::SelectManyF { len, lane } => {
                 serde_json::json!({ "len": len, "lane": lane })
             }
-            IR::AllocateMemory {
-                segment_id,
-                size,
-                init_value,
-            } => serde_json::json!({
-                "segment_id": segment_id,
-                "size": size,
-                "init_value": init_value,
-            }),
-            IR::WriteMemory { segment_id } => serde_json::json!({ "segment_id": segment_id }),
-            IR::ReadMemory { segment_id } => serde_json::json!({ "segment_id": segment_id }),
-            IR::ReadTable { segment_id } => serde_json::json!({ "segment_id": segment_id }),
             IR::IndexInBox { rank } => serde_json::json!({ "rank": rank }),
-            IR::MemoryTraceEmit {
-                segment_id,
-                is_write,
-            } => serde_json::json!({ "segment_id": segment_id, "is_write": is_write }),
 
             IR::ArrayInit { len, elem }
             | IR::RomInit { len, elem }
@@ -1186,14 +1095,6 @@ impl IR {
                 "max_rank": max_rank,
                 "max_length": max_length,
             }),
-            IR::DynamicNDArrayGetItem {
-                array_id,
-                segment_id,
-            } => serde_json::json!({ "array_id": array_id, "segment_id": segment_id }),
-            IR::DynamicNDArraySetItem {
-                array_id,
-                segment_id,
-            } => serde_json::json!({ "array_id": array_id, "segment_id": segment_id }),
 
             IR::InvokeExternal {
                 store_idx,
@@ -1462,25 +1363,6 @@ impl IR {
             "ExposePublicIIR" => Ok(IR::ExposePublicI),
             "ExposePublicFIR" => Ok(IR::ExposePublicF),
 
-            "AllocateMemoryIR" => Ok(IR::AllocateMemory {
-                segment_id: data["segment_id"].as_u64().unwrap_or(0) as u32,
-                size: data["size"].as_u64().unwrap_or(0) as u32,
-                init_value: data.get("init_value").and_then(|v| v.as_i64()).unwrap_or(0),
-            }),
-            "WriteMemoryIR" => Ok(IR::WriteMemory {
-                segment_id: data["segment_id"].as_u64().unwrap_or(0) as u32,
-            }),
-            "ReadMemoryIR" => Ok(IR::ReadMemory {
-                segment_id: data["segment_id"].as_u64().unwrap_or(0) as u32,
-            }),
-            "ReadTableIR" => Ok(IR::ReadTable {
-                segment_id: data["segment_id"].as_u64().unwrap_or(0) as u32,
-            }),
-            "MemoryTraceEmitIR" => Ok(IR::MemoryTraceEmit {
-                segment_id: data["segment_id"].as_u64().unwrap_or(0) as u32,
-                is_write: data["is_write"].as_bool().unwrap_or(false),
-            }),
-            "MemoryTraceSealIR" => Ok(IR::MemoryTraceSeal),
 
             "ArrayInitIR" | "RomInitIR" | "RomReadIR" | "RamInitIR" | "RamWriteIR" | "RamReadIR" => {
                 let len = data["len"].as_u64().ok_or("array op without a length")? as u32;
@@ -1520,14 +1402,6 @@ impl IR {
                 array_id: data["array_id"].as_u64().unwrap_or(0) as u32,
                 max_rank: data["max_rank"].as_u64().unwrap_or(0) as u32,
                 max_length: data["max_length"].as_u64().unwrap_or(0) as u32,
-            }),
-            "DynamicNDArrayGetItemIR" => Ok(IR::DynamicNDArrayGetItem {
-                array_id: data["array_id"].as_u64().unwrap_or(0) as u32,
-                segment_id: data["segment_id"].as_u64().unwrap_or(0) as u32,
-            }),
-            "DynamicNDArraySetItemIR" => Ok(IR::DynamicNDArraySetItem {
-                array_id: data["array_id"].as_u64().unwrap_or(0) as u32,
-                segment_id: data["segment_id"].as_u64().unwrap_or(0) as u32,
             }),
 
             "InvokeExternalIR" => {
@@ -1636,15 +1510,6 @@ mod tests {
             "constant_int[42]"
         );
         assert_eq!(
-            IR::AllocateMemory {
-                segment_id: 1,
-                size: 100,
-                init_value: 0,
-            }
-            .signature(),
-            "allocate_memory[1][100][0]"
-        );
-        assert_eq!(
             IR::ReadInteger {
                 path: InputPath::new("x", vec![PathSegment::Index(1)]),
                 is_public: true,
@@ -1665,14 +1530,7 @@ mod tests {
             is_public: true,
         }
         .is_fixed());
-        assert!(IR::AllocateMemory {
-            segment_id: 0,
-            size: 0,
-            init_value: 0,
-        }
-        .is_fixed());
         assert!(IR::Print.is_fixed());
-        assert!(IR::MemoryTraceSeal.is_fixed());
     }
 
     #[test]
@@ -1700,7 +1558,6 @@ mod tests {
             IR::Print,
             IR::PoseidonHash,
             IR::EqHash,
-            IR::MemoryTraceSeal,
             IR::ExposePublicI,
             // The bitwise operators were missing from the import table, so a
             // halo2-base proof of a program using them could not be verified.
@@ -1759,17 +1616,6 @@ mod tests {
             IR::RamInit { len: 9, elem: ArrayElem::Float },
             IR::RamWrite { len: 9, elem: ArrayElem::Float },
             IR::RamRead { len: 9, elem: ArrayElem::Float },
-            IR::AllocateMemory {
-                segment_id: 1,
-                size: 100,
-                init_value: 0,
-            },
-            IR::WriteMemory { segment_id: 2 },
-            IR::ReadMemory { segment_id: 3 },
-            IR::MemoryTraceEmit {
-                segment_id: 4,
-                is_write: true,
-            },
             IR::AllocateDynamicNDArrayMeta {
                 array_id: 0,
                 dtype_name: "Integer".to_string(),
@@ -1786,14 +1632,6 @@ mod tests {
                 array_id: 2,
                 max_rank: 3,
                 max_length: 100,
-            },
-            IR::DynamicNDArrayGetItem {
-                array_id: 0,
-                segment_id: 1,
-            },
-            IR::DynamicNDArraySetItem {
-                array_id: 0,
-                segment_id: 1,
             },
             IR::ExportExternalI {
                 for_which: 0,

@@ -111,8 +111,8 @@ pub(super) fn write_output(b: &mut IRBuilder, result: &Value, target: &Value, ma
             // parts at the same address.
             let imag_segment = imag_segment_id.expect("a complex array has an imaginary storage");
             let (real, imag) = crate::helpers::value_ops::unpack_value_to_complex_parts(b, cell);
-            b.ir_write_memory(*segment_id, &addr, &real);
-            b.ir_write_memory(imag_segment, &addr, &imag);
+            b.storage_write_at(*segment_id, &addr, &real);
+            b.storage_write_at(imag_segment, &addr, &imag);
             continue;
         }
         let value = if *dtype == crate::types::NumberType::Float {

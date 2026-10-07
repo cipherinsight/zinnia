@@ -1351,7 +1351,7 @@ fn np_linspace_bounded(
             val_f
         };
         let i_const_i = b.ir_constant_int(i as i64);
-        b.ir_write_memory(segment_id, &i_const_i, &val);
+        b.storage_write_at(segment_id, &i_const_i, &val);
     }
 
     // 1-D dyn-ndarray with runtime_length = num.

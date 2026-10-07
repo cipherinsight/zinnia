@@ -156,7 +156,7 @@ def test_payload_gathers_match_numpy_with_ties(source, target):
 def test_payload_is_carried_not_read_on_halo2():
     # The gathered matrices move with the sort: no read at a computed index.
     classes = ir_classes(compile_for(PAYLOAD_KERNELS[1], "halo2"))
-    assert "ReadMemoryIR" not in classes
+    assert not {c for c in classes if c.startswith(("Rom", "Ram"))}
     assert "HintIR" not in classes
 
 
@@ -183,7 +183,7 @@ def test_first_match_matches_numpy(target):
         hits = np.flatnonzero((x == a) & (y == b))
         assert outputs[0] == (hits[0] if len(hits) else -1), (a, b)
     # The test of x[r], y[r] is answered by any(h): no read at r.
-    assert "ReadMemoryIR" not in ir_classes(program)
+    assert not {c for c in ir_classes(program) if c.startswith(("Rom", "Ram"))}
 
 
 @pytest.mark.parametrize("target", TARGETS)

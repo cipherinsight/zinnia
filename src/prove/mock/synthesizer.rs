@@ -46,8 +46,6 @@ pub struct MockSynthesizer {
     pub satisfied: bool,
     pub assertion_failures: Vec<String>,
     pub public_outputs: HashMap<String, String>,
-    memories: HashMap<u32, Vec<Fp>>,
-    memory_init: HashMap<u32, Fp>,
     /// The cells of every table and memory version (`IR::Rom*`, `IR::Ram*`).
     vectors: HashMap<StmtId, Vec<Fp>>,
     dyn_meta_bounds: HashMap<u32, (u32, Vec<u32>)>,
@@ -119,8 +117,6 @@ impl MockSynthesizer {
             satisfied: true,
             assertion_failures: Vec::new(),
             public_outputs: HashMap::new(),
-            memories: HashMap::new(),
-            memory_init: HashMap::new(),
             vectors: HashMap::new(),
             dyn_meta_bounds: HashMap::new(),
         }
@@ -543,75 +539,6 @@ impl Synthesizer for MockSynthesizer {
 
     // ── Memory ────────────────────────────────────────────────────────
 
-    fn allocate_memory(
-        &mut self,
-        segment_id: u32,
-        size: u32,
-        init: i64,
-    ) -> Result<(), ProvingError> {
-        let init_fp = kernel::i64_to_fp(init);
-        self.memories
-            .insert(segment_id, vec![init_fp; size as usize]);
-        self.memory_init.insert(segment_id, init_fp);
-        Ok(())
-    }
-
-    fn write_memory(
-        &mut self,
-        segment_id: u32,
-        addr: &MockCell,
-        value: &MockCell,
-    ) -> Result<(), ProvingError> {
-        let a = kernel::fp_to_i64(addr.fp()) as usize;
-        let mem = self
-            .memories
-            .get_mut(&segment_id)
-            .ok_or_else(|| ProvingError::synthesis("Segment not allocated"))?;
-        if a >= mem.len() {
-            return Err(ProvingError::synthesis(format!(
-                "Memory write out of bounds: segment {} addr {} len {}",
-                segment_id,
-                a,
-                mem.len()
-            )));
-        }
-        mem[a] = value.fp();
-        Ok(())
-    }
-
-    fn read_memory(&mut self, segment_id: u32, addr: &MockCell) -> Result<MockCell, ProvingError> {
-        let a = kernel::fp_to_i64(addr.fp()) as usize;
-        let init = self
-            .memory_init
-            .get(&segment_id)
-            .copied()
-            .unwrap_or(Fp::zero());
-        let mem = self
-            .memories
-            .get(&segment_id)
-            .ok_or_else(|| ProvingError::synthesis("Segment not allocated"))?;
-        let val = if a < mem.len() { mem[a] } else { init };
-        Ok(MockCell(val))
-    }
-
-    /// The slot at `addr`; an address outside the segment is unsatisfied
-    /// (every proving backend has no witness for it).
-    fn read_table(&mut self, segment_id: u32, addr: &MockCell) -> Result<MockCell, ProvingError> {
-        let a = kernel::fp_to_i64(addr.fp());
-        let mem = self
-            .memories
-            .get(&segment_id)
-            .ok_or_else(|| ProvingError::synthesis("Segment not allocated"))?;
-        match usize::try_from(a).ok().and_then(|a| mem.get(a)) {
-            Some(value) => Ok(MockCell(*value)),
-            None => {
-                self.satisfied = false;
-                self.assertion_failures.push(format!("table read out of bounds: segment {segment_id} address {a}"));
-                Ok(MockCell(Fp::zero()))
-            }
-        }
-    }
-
     // ── Arrays, tables, memories (`crate::ir_array`) ──────────────────
 
     fn array_write(
@@ -666,13 +593,6 @@ impl Synthesizer for MockSynthesizer {
         self.vector_read(version, address, "memory read")
     }
 
-    fn memory_trace_emit(&mut self, _: u32, _: bool, _: &[MockCell]) -> Result<(), ProvingError> {
-        Ok(())
-    }
-    fn memory_trace_seal(&mut self) -> Result<(), ProvingError> {
-        Ok(())
-    }
-
     // ── Dynamic NDArray ───────────────────────────────────────────────
 
     fn allocate_dynamic_ndarray_meta(
@@ -690,7 +610,7 @@ impl Synthesizer for MockSynthesizer {
         };
         self.dyn_meta_bounds
             .insert(array_id, (max_length, axis_bounds));
-        self.allocate_memory(10000 + array_id, max_length, 0)
+        Ok(())
     }
     fn witness_dynamic_ndarray_meta(
         &mut self,
@@ -763,23 +683,6 @@ impl Synthesizer for MockSynthesizer {
             ));
         }
         Ok(())
-    }
-    fn dynamic_ndarray_get_item(
-        &mut self,
-        array_id: u32,
-        _: u32,
-        index: &MockCell,
-    ) -> Result<MockCell, ProvingError> {
-        self.read_memory(10000 + array_id, index)
-    }
-    fn dynamic_ndarray_set_item(
-        &mut self,
-        array_id: u32,
-        _: u32,
-        index: &MockCell,
-        value: &MockCell,
-    ) -> Result<(), ProvingError> {
-        self.write_memory(10000 + array_id, index, value)
     }
 
     // ── Hash (same Poseidon as halo2) ─────────────────────────────────

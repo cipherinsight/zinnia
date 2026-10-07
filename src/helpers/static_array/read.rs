@@ -1469,7 +1469,7 @@ fn materialise_dynamic_1d_slice(
             let scaled = b.ir_mul_i(&clamped, &stride_val);
             b.ir_add_i(&offset_val, &scaled)
         };
-        let elem = b.ir_read_memory(segment_id, &addr);
+        let elem = b.storage_read_at(segment_id, &addr);
         let masked = if dtype == NumberType::Float {
             b.ir_select_f(&in_bounds, &elem, &default_val)
         } else {
@@ -1927,7 +1927,7 @@ fn materialise_dynamic_axis_slice(
             b.ir_add_i(&other_offset, &axis_contrib)
         };
 
-        let elem = b.ir_read_memory(segment_id, &addr);
+        let elem = b.storage_read_at(segment_id, &addr);
         let masked = match &in_bounds {
             None => elem,
             Some(cond) => {
@@ -2153,7 +2153,7 @@ fn materialise_dynamic_multi_axis_slice(
             };
             leaves.push(masked);
         } else {
-            let elem = b.ir_read_memory(segment_id, &addr);
+            let elem = b.storage_read_at(segment_id, &addr);
             let masked = match combined_mask {
                 None => elem,
                 Some(cond) => {
@@ -2800,8 +2800,8 @@ pub fn read_complex_leaf_dynamic(
     imag_seg: u32,
     addr: &Value,
 ) -> Value {
-    let real_raw = b.ir_read_memory(real_seg, addr);
-    let imag_raw = b.ir_read_memory(imag_seg, addr);
+    let real_raw = b.storage_read_at(real_seg, addr);
+    let imag_raw = b.storage_read_at(imag_seg, addr);
     let real_sv = match crate::ops::dyn_ndarray::retag(&real_raw, NumberType::Float) {
         Value::Float(s) => s,
         _ => unreachable!(),

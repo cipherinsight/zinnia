@@ -209,14 +209,9 @@ pub fn run(graph: &IRGraph) -> BoundMap {
             | IR::ExposePublicF
             | IR::StructuralPredicate { .. }
             | IR::ScalarPrecondition { .. }
-            | IR::AllocateMemory { .. }
-            | IR::WriteMemory { .. }
-            | IR::MemoryTraceEmit { .. }
-            | IR::MemoryTraceSeal
             | IR::AllocateDynamicNDArrayMeta { .. }
             | IR::WitnessDynamicNDArrayMeta { .. }
             | IR::AssertDynamicNDArrayMeta { .. }
-            | IR::DynamicNDArraySetItem { .. }
             | IR::InvokeExternal { .. }
             | IR::ExportExternalI { .. }
             | IR::ExportExternalF { .. } => None,
@@ -229,7 +224,6 @@ pub fn run(graph: &IRGraph) -> BoundMap {
             IR::ArrayRead(_) | IR::RomRead { .. } | IR::RamRead { .. } => arg_bounds[0],
 
             // Memory / dynamic-NDArray reads return witness values — unknown bound.
-            IR::ReadMemory { .. } | IR::ReadTable { .. } | IR::DynamicNDArrayGetItem { .. } => None,
 
             // ── Hash ──────────────────────────────────────────────────
             IR::PoseidonHash | IR::EqHash => None,

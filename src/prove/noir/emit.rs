@@ -40,19 +40,7 @@ use crate::prove::types::ProvingParams;
 use super::inputs::{leaf_expr, noir_param_identifier, LeafLayout};
 
 const Q_BITS: u32 = 32;
-/// bb gates of one `if x == v { 1 } else { 0 }` indicator (an inverse hint
-/// and two arithmetic gates).
-const INDICATOR_GATES: usize = 3;
 const Q_U64: u64 = 1u64 << 32;
-/// Measured `bb gates` of a native array read whose address is checked on its
-/// own (`array_index`'s two range checks and the ROM read), and of one whose
-/// root is checked once for all its reads (the ROM read and the `u32`
-/// address arithmetic; the root's check is shared).
-const NATIVE_READ_GATES: usize = 10;
-const NATIVE_READ_AT_CHECKED_ROOT_GATES: usize = 3;
-/// Measured `bb gates` of checking one root (`array_index`), shared by the
-/// reads at it.
-const ROOT_CHECK_GATES: usize = 8;
 
 /// Output of [`emit_circuit`].
 pub struct EmitOutput {
@@ -98,7 +86,6 @@ pub fn emit_circuit(
     let input_params = derive_input_params(witness);
     let bounds = super::bound_analysis::run(ir);
     let mut emitter = NoirEmitter::new(input_params.clone(), bounds, &ir.provenance);
-    emitter.dynamic_reads_per_epoch = count_dynamic_reads_per_epoch(ir);
     emitter.wrapped_index_ranges = wrapped_index_ranges(ir);
     emitter.asserted_comparisons = asserted_comparisons(ir);
     emitter.implied_comparisons = implied_comparisons(ir, &emitter.asserted_comparisons);
@@ -277,37 +264,6 @@ fn wrapped_index_ranges(ir: &IRGraph) -> HashMap<crate::types::ValueId, (i64, i6
         }
     }
     ranges
-}
-
-/// For every memory segment and write epoch (the writes to the segment seen
-/// so far, the emitter's `write_version`), the number of `ReadMemory`
-/// statements whose address is not an IR constant. A native array read
-/// shares the cost of materializing the epoch's array with these reads.
-fn count_dynamic_reads_per_epoch(ir: &IRGraph) -> HashMap<(u32, u64), usize> {
-    let constants: HashSet<u32> = ir
-        .stmts
-        .iter()
-        .filter(|s| matches!(s.ir, crate::ir_defs::IR::ConstantInt { .. }))
-        .map(|s| s.stmt_id)
-        .collect();
-    let mut epoch: HashMap<u32, u64> = HashMap::new();
-    let mut counts: HashMap<(u32, u64), usize> = HashMap::new();
-    for stmt in &ir.stmts {
-        match &stmt.ir {
-            crate::ir_defs::IR::WriteMemory { segment_id } => {
-                *epoch.entry(*segment_id).or_insert(0) += 1;
-            }
-            crate::ir_defs::IR::ReadMemory { segment_id } => {
-                let dynamic = stmt.arguments.first().is_some_and(|a| !constants.contains(a));
-                if dynamic {
-                    let e = epoch.get(segment_id).copied().unwrap_or(0);
-                    *counts.entry((*segment_id, e)).or_insert(0) += 1;
-                }
-            }
-            _ => {}
-        }
-    }
-    counts
 }
 
 // ---------------------------------------------------------------------------
@@ -650,14 +606,6 @@ fn dce_body(body: &str, exposes: &[String]) -> String {
     out
 }
 
-/// Affine view of an integer cell: `cell == sum(root_i * scale_i) + offset`,
-/// with at most two dynamic roots and non-zero scales.
-#[derive(Clone, Debug, Default)]
-struct AffLin {
-    terms: Vec<(String, i64)>,
-    offset: i64,
-}
-
 /// SSA-style emitter. Each call returns the name of a Noir let-binding
 /// (or a literal expression for cheap constants). The interpreter dispatches
 /// one method per IR statement.
@@ -686,21 +634,6 @@ pub struct NoirEmitter<'a> {
     /// or expression to return (in declaration order) as part of the
     /// final `pub` tuple/array.
     pub exposes: Vec<String>,
-    /// Affine address lineage: var == sum of root_i * scale_i + offset,
-    /// with at most two dynamic roots (mirrors the halo2 backend's
-    /// AffineLin). Lets dynamic-address memory reads gather with shared
-    /// per-root indicators instead of a per-read mux over the segment.
-    affine_of: HashMap<String, AffLin>,
-    /// eq(root, v) indicator bindings, shared across all reads/writes on
-    /// the same root. Roots are SSA names (immutable), so no invalidation.
-    ind_cache: HashMap<(String, i64), String>,
-    /// (root, enumerated value set) one-hot memberships already asserted.
-    membership_done: std::collections::HashSet<(String, Vec<i64>)>,
-    /// Stage-1 gathered planes for factored two-root reads, keyed by
-    /// (segment, write version, root, scale, residual offset).
-    plane_cache: HashMap<(u32, u64, String, i64, i64), String>,
-    /// Bumped on every write to a segment; invalidates plane_cache.
-    write_version: HashMap<u32, u64>,
     /// Comparisons used only by asserts (see `asserted_comparisons`).
     asserted_comparisons: HashSet<u32>,
     /// Asserted `x >= 0` with a later `sqrt(x)` (`crate::prove::guards`).
@@ -735,11 +668,6 @@ pub struct NoirEmitter<'a> {
     /// NumPy's wrap-around lowering (see `wrapped_index_ranges`). Used only
     /// to size comparisons.
     wrapped_index_ranges: HashMap<crate::types::ValueId, (i64, i64)>,
-    /// Dynamic reads per (segment, write epoch), from the IR (see
-    /// `count_dynamic_reads_per_epoch`).
-    dynamic_reads_per_epoch: HashMap<(u32, u64), usize>,
-    /// Native Noir arrays holding a segment's slots, per (segment, epoch).
-    segment_arrays: HashMap<(u32, u64), String>,
     /// The read-only tables (`IR::RomInit`): the Noir array and its cells.
     roms: HashMap<crate::types::StmtId, (String, Vec<String>)>,
     /// The read-write memories (`IR::RamInit`): each memory version's
@@ -748,12 +676,6 @@ pub struct NoirEmitter<'a> {
     /// Hint arrays already computed, by their call expression (see
     /// `prover_hint`).
     hint_arrays: HashMap<String, String>,
-    /// Per-segment value hull: the interval union of every value written
-    /// to the segment (plus its init). `None` once any written value
-    /// lacks a derivable interval. Read results inherit this hull, which
-    /// is what lets comparison chains over gathered values stay on the
-    /// cheap unsigned path.
-    segment_iv: HashMap<u32, Option<(i64, i64)>>,
     /// Constraint-derived signed value intervals (port of the halo2
     /// backend's value_interval): constants exact, select outputs take
     /// the hull of their branches, comparison outputs are [0,1], and
@@ -769,15 +691,6 @@ pub struct NoirEmitter<'a> {
     lt_zero_of: HashMap<String, String>,
     add_const_of: HashMap<String, (String, i64)>,
     norm_index_of: HashMap<String, (String, i64)>,
-    /// In-Rust simulation of Zinnia's segment-keyed scratch memory.
-    /// Each entry maps a (segment_id, addr) to either the most recent
-    /// SSA variable written there (`Some(name)`) or the segment-wide
-    /// init-value as a literal Field. Mirrors the halo2 synthesizer's
-    /// `memories: HashMap<u32, Vec<Fp>>` exactly, but stores names so
-    /// later reads can re-emit `let vN = <writer>` cheaply.
-    memories: HashMap<u32, Vec<String>>,
-    /// segment_id -> init-value-as-Field-decimal-string.
-    memory_init: HashMap<u32, String>,
     /// Cache: division call text -> its (quotient, remainder) names.
     divmod_cache: HashMap<String, (String, String)>,
     /// Pairs `(idx, hi)` already emitted via `assert_u128_lt`. Zinnia's
@@ -955,41 +868,6 @@ impl<'a> NoirEmitter<'a> {
         v
     }
 
-    /// Affine view of a cell: explicit lineage, a literal constant, or a
-    /// fresh single-root term.
-    fn aff_of(&self, var: &str) -> AffLin {
-        if let Some(vid) = self.vid_of_var.get(var) {
-            if let Some(av) = self.prov.affine_of(*vid) {
-                if !av.terms.is_empty() {
-                    let mut terms = Vec::with_capacity(av.terms.len());
-                    let mut ok = true;
-                    for (rvid, scale) in &av.terms {
-                        match self.var_of_vid.get(rvid) {
-                            Some(rv) => terms.push((rv.clone(), *scale)),
-                            None => {
-                                ok = false;
-                                break;
-                            }
-                        }
-                    }
-                    if ok {
-                        return AffLin {
-                            terms,
-                            offset: av.offset,
-                        };
-                    }
-                }
-            }
-        }
-        if let Some(a) = self.affine_of.get(var) {
-            return a.clone();
-        }
-        if let Some(c) = self.s_int_of(var) {
-            return AffLin { terms: vec![], offset: c as i64 };
-        }
-        AffLin { terms: vec![(var.to_string(), 1)], offset: 0 }
-    }
-
     /// Signed interval of a cell, if derivable. IR-level cells read the
     /// provenance table LIVE; emitter-internal cells (and, during the
     /// staged migration, locally-derived entries) fall back to the maps.
@@ -1035,23 +913,6 @@ impl<'a> NoirEmitter<'a> {
         let _ = writeln!(self.body, "    let {}: {} = {};", v, ty, expr);
         self.cse_cache.insert(key, v.clone());
         v
-    }
-
-    /// Tag a memory-read result with the segment's value hull (if known
-    /// and the cell has no tighter interval already).
-    fn apply_segment_iv(&mut self, segment_id: u32, out: &str) {
-        if self.interval_of.contains_key(out) {
-            return;
-        }
-        // Table-first (the builder maintains the hull at every write);
-        // the local map stays as fallback during the staged migration.
-        if let Some(h) = self.prov.segment_hull(segment_id) {
-            self.interval_of.insert(out.to_string(), (h.lo, h.hi));
-            return;
-        }
-        if let Some(Some(iv)) = self.segment_iv.get(&segment_id) {
-            self.interval_of.insert(out.to_string(), *iv);
-        }
     }
 
     /// `a cmp b` as a 0/1 cell, the mock's signed comparison (the sign of
@@ -1872,189 +1733,6 @@ impl<'a> NoirEmitter<'a> {
         acc.unwrap_or_else(|| "0".to_string())
     }
 
-    /// Cached eq(root, v) indicator, shared across all reads/writes on
-    /// the same root. Structural provenance widens the sharing: a
-    /// unit-scale single-root affine view shifts the request
-    /// (`[x + c == v]` is `[x == v - c]`) and a constant clamp forwards
-    /// strictly-inside values to its source (`[min(x,K) == v]` is
-    /// `[x == v]` for `v < K`, and `[x >= K]` at the bound), so the
-    /// per-row one-hots of a windowed gather all collapse onto the
-    /// window start's single indicator family.
-    fn indicator(&mut self, root: &str, v: i64) -> String {
-        if let Some(i) = self.ind_cache.get(&(root.to_string(), v)) {
-            return i.clone();
-        }
-        let mut base = root.to_string();
-        let mut val = v;
-        for _ in 0..8 {
-            let Some(vid) = self.vid_of_var.get(&base).copied() else {
-                break;
-            };
-            if let Some(av) = self.prov.affine_of(vid) {
-                if av.terms.len() == 1 && av.terms[0].1 == 1 && av.offset != 0 {
-                    if let Some(b2) = self.var_of_vid.get(&av.terms[0].0).cloned() {
-                        if b2 != base {
-                            val -= av.offset;
-                            base = b2;
-                            continue;
-                        }
-                    }
-                }
-            }
-            if let Some(cl) = self.prov.clamp_of(vid) {
-                if let Some(b2) = self.var_of_vid.get(&cl.source).cloned() {
-                    if b2 != base {
-                        if (cl.is_min && val < cl.bound) || (!cl.is_min && val > cl.bound) {
-                            base = b2;
-                            continue;
-                        }
-                    }
-                }
-            }
-            break;
-        }
-        let ind = if base != root || val != v {
-            self.indicator(&base, val)
-        } else {
-            let rf = root;
-            let expr = if v >= 0 {
-                format!("if {rf} == {v} {{ 1 }} else {{ 0 }}")
-            } else {
-                format!("if {rf} + {} == 0 {{ 1 }} else {{ 0 }}", -v)
-            };
-            self.bind(&expr)
-        };
-        self.ind_cache.insert((root.to_string(), v), ind.clone());
-        ind
-    }
-
-    /// Assert the indicator family over `values` is one-hot (exactly one
-    /// fires). Replaces per-read bound checks: a witness root outside the
-    /// enumerated set makes the proof fail instead of silently gathering
-    /// the init value. Emitted once per (root, value set).
-    fn assert_one_hot(&mut self, root: &str, values: &[i64]) {
-        let key = (root.to_string(), values.to_vec());
-        if self.membership_done.contains(&key) {
-            return;
-        }
-        let inds: Vec<String> = values.iter().map(|&v| self.indicator(root, v)).collect();
-        let sum = self.bind_sum(&inds);
-        let _ = writeln!(self.body, "    assert({} == 1);", sum);
-        self.membership_done.insert(key);
-    }
-
-    /// Feasible root values v with 0 <= v*scale + resid < len, clipped to
-    /// the root's derived interval when known.
-    fn feasible(scale: i64, resid: i64, len: usize, root_iv: Option<(i64, i64)>) -> Vec<i64> {
-        let mut out = Vec::new();
-        if scale == 0 {
-            return out;
-        }
-        for slot in 0..len as i64 {
-            let num = slot - resid;
-            if num % scale == 0 {
-                let v = num / scale;
-                if let Some((lo, hi)) = root_iv {
-                    if v < lo || v > hi {
-                        continue;
-                    }
-                }
-                out.push(v);
-            }
-        }
-        out.sort_unstable();
-        out.dedup();
-        out
-    }
-
-    /// True when `s1*v + s2*w + offset` lies in [0, len) for every v in
-    /// `vs` and w in `ws` (extremes of an affine form over a box).
-    fn all_combinations_in_range(
-        s1: i64,
-        vs: &[i64],
-        s2: i64,
-        ws: &[i64],
-        offset: i64,
-        len: usize,
-    ) -> bool {
-        let extremes = |s: i64, xs: &[i64]| {
-            let (lo, hi) = (xs[0] * s, xs[xs.len() - 1] * s);
-            (lo.min(hi), lo.max(hi))
-        };
-        let (a_lo, a_hi) = extremes(s1, vs);
-        let (b_lo, b_hi) = extremes(s2, ws);
-        a_lo + b_lo + offset >= 0 && a_hi + b_hi + offset < len as i64
-    }
-
-    /// Whether a single-root dynamic read whose one-hot gather costs about
-    /// `one_hot_gates` is cheaper through a native array (`native_read`).
-    /// Measured costs (bb gates): about 10 per native read (the ROM read and
-    /// `array_index`'s two range checks) plus 3 per element to build the
-    /// epoch's array, which the epoch's dynamic reads share. Two-root reads
-    /// always gather: their stage-1 planes are shared across reads, which
-    /// measured cheaper than native reads on every case that has them.
-    fn prefer_native_read(&self, segment_id: u32, one_hot_gates: usize, read_gates: usize) -> bool {
-        const ARRAY_ELEMENT_GATES: usize = 3;
-        let epoch = self.write_version.get(&segment_id).copied().unwrap_or(0);
-        let len = self.memories.get(&segment_id).map_or(0, |m| m.len());
-        let build = if self.segment_arrays.contains_key(&(segment_id, epoch)) {
-            0
-        } else {
-            (ARRAY_ELEMENT_GATES * len).div_ceil(self.epoch_dynamic_reads(segment_id))
-        };
-        len > 0 && len < (1 << 27) && build + read_gates < one_hot_gates
-    }
-
-    /// `root`'s largest value `last` when the address `root * scale + offset`
-    /// is a valid slot exactly for `root ∈ [0, last]`: `0 <= offset < scale`
-    /// and the feasible roots are `0..=last` (`vs`, from `feasible`). Then
-    /// checking `root` once covers every read at that root.
-    fn checked_root_bound(scale: i64, offset: i64, vs: &[i64]) -> Option<i64> {
-        let last = *vs.last()?;
-        let contiguous = vs.iter().enumerate().all(|(k, v)| *v == k as i64);
-        (scale > 0 && (0..scale).contains(&offset) && contiguous).then_some(last)
-    }
-
-    /// `mem[root * scale + offset]` through a native array, with `root`
-    /// checked into `[0, last]` once (`array_index`, shared by every read at
-    /// that root through the binding cache) and the address computed in
-    /// `u32` from it: `root <= last` keeps it inside the array
-    /// (`checked_root_bound`), so the read needs no check of its own. An
-    /// IR root is an integer, so a valid address implies `root ∈ [0, last]`
-    /// (`offset < scale`, and `last` is the largest root with a valid slot):
-    /// the check rejects exactly the reads the mock rejects.
-    fn native_read_at_root(&mut self, segment_id: u32, root: &str, last: i64, scale: i64, offset: i64) -> String {
-        let array = self.segment_array(segment_id);
-        let index = self.array_index(root, last as u64 + 1);
-        let out = self.bind(&format!("{array}[{index} * {scale} + {offset}]"));
-        self.apply_segment_iv(segment_id, &out);
-        out
-    }
-
-    /// Dynamic reads of the segment's current write epoch (at least 1).
-    fn epoch_dynamic_reads(&self, segment_id: u32) -> usize {
-        let epoch = self.write_version.get(&segment_id).copied().unwrap_or(0);
-        self.dynamic_reads_per_epoch
-            .get(&(segment_id, epoch))
-            .copied()
-            .unwrap_or(1)
-            .max(1)
-    }
-
-    /// `mem[addr]` through a native Noir array (a ROM block in bb). The
-    /// library's `array_index` proves `0 <= addr < len` on its own (an
-    /// out-of-range address fails the proof, as the mock rejects it); it
-    /// does not rely on bb's memory check, which the pinned bb version does
-    /// not enforce for index p - 1 (see `array_index`).
-    fn native_read(&mut self, segment_id: u32, addr: &str) -> String {
-        let array = self.segment_array(segment_id);
-        let len = self.memories[&segment_id].len() as u64;
-        let index = self.array_index(addr, len);
-        let out = self.bind(&format!("{array}[{index}]"));
-        self.apply_segment_iv(segment_id, &out);
-        out
-    }
-
     /// The mutable array and length of a memory version.
     fn ram_version(&self, version: crate::types::StmtId) -> Result<(String, usize), ProvingError> {
         self.rams
@@ -2087,26 +1765,6 @@ impl<'a> NoirEmitter<'a> {
         self.bind_typed(&format!("array_index::<{width}>({af}, {last})"), "u32")
     }
 
-    /// The segment's current slots as a Noir array, built once per write
-    /// epoch.
-    fn segment_array(&mut self, segment_id: u32) -> String {
-        let epoch = self.write_version.get(&segment_id).copied().unwrap_or(0);
-        if let Some(name) = self.segment_arrays.get(&(segment_id, epoch)) {
-            return name.clone();
-        }
-        let cells = self.memories[&segment_id].clone();
-        let name = self.fresh();
-        let _ = writeln!(
-            self.body,
-            "    let {}: [Field; {}] = [{}];",
-            name,
-            cells.len(),
-            cells.join(", ")
-        );
-        self.segment_arrays.insert((segment_id, epoch), name.clone());
-        name
-    }
-
     /// The `width` low bits of an index known to satisfy `0 <= idx < hi`
     /// (with `hi <= 2^width`), emitted once per (idx, width) together with
     /// the bound: `to_le_bits` proves `idx < 2^width`, and a `width`-bit
@@ -2130,41 +1788,6 @@ impl<'a> NoirEmitter<'a> {
         name
     }
 
-    /// Stage-1 plane for factored two-root gathers: sum over feasible v of
-    /// ind(root, v) * mem[v*scale + resid]. Cached by (segment, version,
-    /// root, scale, resid).
-    fn gather_plane(
-        &mut self,
-        segment_id: u32,
-        root: &str,
-        scale: i64,
-        resid: i64,
-        init: &str,
-    ) -> String {
-        let ver = self.write_version.get(&segment_id).copied().unwrap_or(0);
-        let key = (segment_id, ver, root.to_string(), scale, resid);
-        if let Some(p) = self.plane_cache.get(&key) {
-            return p.clone();
-        }
-        let len = self.memories.get(&segment_id).map_or(0, |m| m.len());
-        let root_iv = self.ival(root);
-        let vs = Self::feasible(scale, resid, len, root_iv);
-        let mut parts: Vec<String> = Vec::with_capacity(vs.len());
-        for &v in &vs {
-            let slot = (v * scale + resid) as usize;
-            let cell = self.memories.get(&segment_id).unwrap()[slot].clone();
-            let ind = self.indicator(root, v);
-            parts.push(format!("{} * {}", &ind, &cell));
-        }
-        let plane = if parts.is_empty() {
-            init.to_string()
-        } else {
-            self.bind_sum(&parts)
-        };
-        self.plane_cache.insert(key, plane.clone());
-        plane
-    }
-
     pub fn new(
         inputs: Vec<EmittedInput>,
         stmt_bounds: super::bound_analysis::BoundMap,
@@ -2179,11 +1802,6 @@ impl<'a> NoirEmitter<'a> {
             next_id: 0,
             used_libs: BTreeMap::new(),
             exposes: Vec::new(),
-            affine_of: HashMap::new(),
-            ind_cache: HashMap::new(),
-            membership_done: std::collections::HashSet::new(),
-            plane_cache: HashMap::new(),
-            write_version: HashMap::new(),
             wrapped_index_ranges: HashMap::new(),
             asserted_comparisons: HashSet::new(),
             root_guards: HashSet::new(),
@@ -2196,18 +1814,13 @@ impl<'a> NoirEmitter<'a> {
             implied_comparisons: HashSet::new(),
             current_stmt: None,
             proven_range: HashMap::new(),
-            dynamic_reads_per_epoch: HashMap::new(),
-            segment_arrays: HashMap::new(),
             roms: HashMap::new(),
             rams: HashMap::new(),
             hint_arrays: HashMap::new(),
             interval_of: HashMap::new(),
-            segment_iv: HashMap::new(),
             lt_zero_of: HashMap::new(),
             add_const_of: HashMap::new(),
             norm_index_of: HashMap::new(),
-            memories: HashMap::new(),
-            memory_init: HashMap::new(),
             divmod_cache: HashMap::new(),
             emitted_u128_asserts: HashSet::new(),
             cse_cache: HashMap::new(),
@@ -3261,259 +2874,6 @@ impl Synthesizer for NoirEmitter<'_> {
         Ok(())
     }
 
-    fn allocate_memory(
-        &mut self,
-        segment_id: u32,
-        size: u32,
-        init: i64,
-    ) -> Result<(), ProvingError> {
-        // The init value is a signed Q-scaled int that the IR-gen will
-        // also write into individual cells via WriteMemory before any
-        // ReadMemory hits an unwritten cell, in every case we've seen.
-        // We still need a defined fallback for the empty-cell case to
-        // mirror halo2 synth semantics.
-        let init_field = signed_to_field_decimal(init as i128);
-        self.memory_init.insert(segment_id, init_field.clone());
-        self.segment_iv.insert(segment_id, Some((init, init)));
-        // Each cell starts as a literal; writes overwrite with SSA names.
-        self.memories.insert(
-            segment_id,
-            (0..size as usize).map(|_| init_field.clone()).collect(),
-        );
-        Ok(())
-    }
-    fn write_memory(
-        &mut self,
-        segment_id: u32,
-        addr: &CellRef,
-        value: &CellRef,
-    ) -> Result<(), ProvingError> {
-        *self.write_version.entry(segment_id).or_insert(0) += 1;
-        // Merge the written value into the segment hull.
-        let viv = self.ival(value);
-        let entry = self.segment_iv.entry(segment_id).or_insert(Some((0, 0)));
-        *entry = match (*entry, viv) {
-            (Some((sl, sh)), Some((vl, vh))) => Some((sl.min(vl), sh.max(vh))),
-            _ => None,
-        };
-        if let Some(a) = self.s_int_of(addr) {
-            let mem = self.memories.entry(segment_id).or_default();
-            let slot = usize::try_from(a).ok().filter(|&slot| slot < mem.len());
-            let Some(slot) = slot else {
-                // The mock rejects an out-of-range write; silently dropping
-                // it would prove a different program.
-                return Err(ProvingError::synthesis(format!(
-                    "memory write out of bounds: segment {} address {} length {}",
-                    segment_id,
-                    a,
-                    mem.len()
-                )));
-            };
-            mem[slot] = value.clone();
-            return Ok(());
-        }
-        // Dynamic address: in-circuit scatter. The address's affine lineage
-        // names a root whose eq-indicators are cached and shared with every
-        // other access on the same root; each reachable slot k updates as
-        // old + ind * (value - old). The one-hot assert over the reachable
-        // root values makes an address outside the segment (or outside the
-        // root's interval) fail the proof, as the mock rejects it, instead
-        // of writing nothing.
-        let len = self.memories.get(&segment_id).map_or(0, |m| m.len());
-        let aff = self.aff_of(addr);
-        let (root, scale, offset) = if aff.terms.len() == 1 {
-            (aff.terms[0].0.clone(), aff.terms[0].1, aff.offset)
-        } else {
-            (addr.clone(), 1, 0)
-        };
-        let root_iv = self.ival(&root);
-        let vs = Self::feasible(scale, offset, len, root_iv);
-        if vs.is_empty() {
-            let _ = writeln!(self.body, "    assert(1 == 0);");
-            return Ok(());
-        }
-        self.assert_one_hot(&root, &vs);
-        let vf = value;
-        for &v in &vs {
-            let slot = (v * scale + offset) as usize;
-            let ind = self.indicator(&root, v);
-            let old_v = self.memories.get(&segment_id).unwrap()[slot].clone();
-            let of = &old_v;
-            let indf = &ind;
-            let nv = self.bind(&format!("{of} + {indf} * ({vf} - {of})"));
-            self.memories.get_mut(&segment_id).unwrap()[slot] = nv;
-        }
-        Ok(())
-    }
-    fn read_memory(&mut self, segment_id: u32, addr: &CellRef) -> Result<CellRef, ProvingError> {
-        let init = self
-            .memory_init
-            .get(&segment_id)
-            .cloned()
-            .unwrap_or_else(|| "0".to_string());
-        let Some(a) = self.s_int_of(addr) else {
-            // Dynamic address: honest in-circuit gather via the address's
-            // affine lineage (port of the halo2 backend's machinery).
-            // Single root: flat sum of shared eq-indicators times the
-            // reachable slots, with a one-hot membership assert replacing
-            // per-read bound checks. Two roots: factored two-stage gather
-            // with cached stage-1 planes. No lineage: the address itself
-            // is the root (still flat + shared, never a sequential chain).
-            let len = self.memories.get(&segment_id).map_or(0, |m| m.len());
-            let aff = self.aff_of(addr);
-            if aff.terms.len() == 2 && len > 0 {
-                // Stage-1 over the larger-stride root, stage-2 over the
-                // other; planes cached across reads.
-                let (t0, t1) = (aff.terms[0].clone(), aff.terms[1].clone());
-                let ((r1, s1), (r2, s2)) = if t0.1.abs() >= t1.1.abs() {
-                    (t0, t1)
-                } else {
-                    (t1, t0)
-                };
-                let r1_iv = self.ival(&r1);
-                let r2_iv = self.ival(&r2);
-                let mut w_vals: Vec<i64> = Vec::new();
-                for w in -(len as i64)..=(len as i64) {
-                    if let Some((lo, hi)) = r2_iv {
-                        if w < lo || w > hi {
-                            continue;
-                        }
-                    }
-                    let resid = w * s2 + aff.offset;
-                    if !Self::feasible(s1, resid, len, r1_iv).is_empty() {
-                        w_vals.push(w);
-                    }
-                }
-                if !w_vals.is_empty() {
-                    let mut v_all: Vec<i64> = Vec::new();
-                    for &w in &w_vals {
-                        v_all.extend(Self::feasible(s1, w * s2 + aff.offset, len, r1_iv));
-                    }
-                    v_all.sort_unstable();
-                    v_all.dedup();
-                    self.assert_one_hot(&r1.clone(), &v_all);
-                    self.assert_one_hot(&r2.clone(), &w_vals);
-                    // Each root is now in its set, but a combination of two
-                    // members need not be a valid slot (it would gather 0).
-                    // When some combination falls outside the segment, check
-                    // the full address too.
-                    if !Self::all_combinations_in_range(s1, &v_all, s2, &w_vals, aff.offset, len) {
-                        self.assert_index_in_range(addr, len as i128);
-                    }
-                    let mut parts: Vec<String> = Vec::with_capacity(w_vals.len());
-                    for &w in &w_vals {
-                        let plane = self.gather_plane(
-                            segment_id,
-                            &r1,
-                            s1,
-                            w * s2 + aff.offset,
-                            &init,
-                        );
-                        let ind = self.indicator(&r2, w);
-                        parts.push(format!(
-                            "{} * {}",
-                            &ind,
-                            &plane
-                        ));
-                    }
-                    let out = self.bind_sum(&parts);
-                    self.apply_segment_iv(segment_id, &out);
-                    return Ok(out);
-                }
-            }
-            let (root, scale, offset) = if aff.terms.len() == 1 {
-                (aff.terms[0].0.clone(), aff.terms[0].1, aff.offset)
-            } else {
-                (addr.clone(), 1, 0)
-            };
-            let root_iv = self.ival(&root);
-            let vs = Self::feasible(scale, offset, len, root_iv);
-            if vs.is_empty() {
-                // No reachable slot: any witness fails the membership
-                // assert below; surface it as an explicit contradiction.
-                let _ = writeln!(self.body, "    assert(1 == 0);");
-                return Ok(init);
-            }
-            // One-hot cost of this read: one product per candidate slot, and
-            // one equality per indicator of the root not built yet, which
-            // the epoch's other dynamic reads may share (counted as shared
-            // evenly; reads on another root do not share them, so this
-            // leans toward the one-hot gather).
-            let new_indicators = vs
-                .iter()
-                .filter(|&&v| !self.ind_cache.contains_key(&(root.clone(), v)))
-                .count();
-            let indicator_share =
-                (INDICATOR_GATES * new_indicators).div_ceil(self.epoch_dynamic_reads(segment_id));
-            let checked_root = Self::checked_root_bound(scale, offset, &vs);
-            let native_gates = match checked_root {
-                Some(_) => {
-                    NATIVE_READ_AT_CHECKED_ROOT_GATES + ROOT_CHECK_GATES.div_ceil(self.epoch_dynamic_reads(segment_id))
-                }
-                None => NATIVE_READ_GATES,
-            };
-            if self.prefer_native_read(segment_id, indicator_share + vs.len(), native_gates) {
-                return Ok(match checked_root {
-                    Some(last) => self.native_read_at_root(segment_id, &root, last, scale, offset),
-                    None => self.native_read(segment_id, addr),
-                });
-            }
-            self.assert_one_hot(&root.clone(), &vs);
-            let mut parts: Vec<String> = Vec::with_capacity(vs.len());
-            for &v in &vs {
-                let slot = (v * scale + offset) as usize;
-                let cell = self.memories.get(&segment_id).unwrap()[slot].clone();
-                let ind = self.indicator(&root, v);
-                parts.push(format!(
-                    "{} * {}",
-                    &ind,
-                    &cell
-                ));
-            }
-            let out = self.bind_sum(&parts);
-            self.apply_segment_iv(segment_id, &out);
-            return Ok(out);
-        };
-        let a = a as usize;
-        let mem = self.memories.get(&segment_id);
-        let expr = match mem {
-            Some(m) if a < m.len() => m[a].clone(),
-            _ => init,
-        };
-        // If the stored expression is a single identifier (the memory cell
-        // currently holds the SSA name of an existing binding), reuse that
-        // name directly instead of emitting a vacuous `let vN = vM;`. The
-        // common shape is a slice / reshape that re-reads cells previously
-        // written verbatim — without this, every cell of a 20-element
-        // reshape becomes a no-op rename, bloating both nargo compile time
-        // and the proof's gate count.
-        if is_identifier(&expr) {
-            // Inherit the segment hull only when the cell itself carries
-            // no tighter interval.
-            if !self.interval_of.contains_key(&expr) {
-                self.apply_segment_iv(segment_id, &expr.clone());
-            }
-            return Ok(expr);
-        }
-        // Otherwise the slot holds a literal (the segment's init value).
-        Ok(self.bind(&expr))
-    }
-    /// A native array read at an index `array_index` checks into the
-    /// segment (an address outside fails the proof); a constant address must
-    /// be in bounds at compile time.
-    fn read_table(&mut self, segment_id: u32, addr: &CellRef) -> Result<CellRef, ProvingError> {
-        let len = self.memories.get(&segment_id).map_or(0, |m| m.len());
-        if let Some(a) = self.s_int_of(addr) {
-            return match usize::try_from(a).ok().filter(|&a| a < len) {
-                Some(_) => self.read_memory(segment_id, addr),
-                None => Err(ProvingError::synthesis(format!("table read out of bounds: segment {segment_id} address {a}"))),
-            };
-        }
-        if len == 0 {
-            return Err(ProvingError::synthesis("table read from an empty segment"));
-        }
-        Ok(self.native_read(segment_id, addr))
-    }
     /// A native array holding the cells (a ROM block in bb).
     fn rom_init(&mut self, table: crate::types::StmtId, cells: &[CellRef]) -> Result<(), ProvingError> {
         let name = self.fresh();
@@ -3580,18 +2940,6 @@ impl Synthesizer for NoirEmitter<'_> {
         Ok(out)
     }
 
-    fn memory_trace_emit(
-        &mut self,
-        _segment_id: u32,
-        _is_write: bool,
-        _args: &[CellRef],
-    ) -> Result<(), ProvingError> {
-        Ok(())
-    }
-    fn memory_trace_seal(&mut self) -> Result<(), ProvingError> {
-        Ok(())
-    }
-
     fn allocate_dynamic_ndarray_meta(
         &mut self,
         _array_id: u32,
@@ -3632,23 +2980,6 @@ impl Synthesizer for NoirEmitter<'_> {
         // Overrides the trait default: dyn ndarrays are unsupported on Noir,
         // so signal that rather than emitting the default lowering.
         noop_unsupported!(self, "assert_dynamic_ndarray_meta")
-    }
-    fn dynamic_ndarray_get_item(
-        &mut self,
-        _array_id: u32,
-        _segment_id: u32,
-        _index: &CellRef,
-    ) -> Result<CellRef, ProvingError> {
-        noop_unsupported!(self, "dynamic_ndarray_get_item")
-    }
-    fn dynamic_ndarray_set_item(
-        &mut self,
-        _array_id: u32,
-        _segment_id: u32,
-        _index: &CellRef,
-        _value: &CellRef,
-    ) -> Result<(), ProvingError> {
-        noop_unsupported!(self, "dynamic_ndarray_set_item")
     }
 
     fn poseidon_hash(&mut self, _inputs: &[CellRef]) -> Result<CellRef, ProvingError> {
@@ -4163,17 +3494,6 @@ mod tests {
 
     // M5: a dynamic-address write asserts that the address is one of the
     // reachable slots.
-    #[test]
-    fn dynamic_write_asserts_membership() {
-        let prov = crate::provenance::ProvenanceTable::default();
-        let mut em = bare_emitter(&prov);
-        em.allocate_memory(0, 3, 0).unwrap();
-        em.write_memory(0, &"i".to_string(), &"v".to_string()).unwrap();
-        assert!(em.body.contains("== 1);"), "{}", em.body);
-        for slot in 0..3 {
-            assert!(em.body.contains(&format!("if i == {} {{ 1 }} else {{ 0 }}", slot)));
-        }
-    }
 
     // R06: `annotate_with_analysis_bound` moved out of `bind()` and into
     // `on_stmt_result`. Intermediate cells bound while a statement is

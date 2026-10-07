@@ -492,17 +492,9 @@ impl IROp for IR {
             | IR::RamInit { .. }
             | IR::RamWrite { .. }
             | IR::RamRead { .. }
-            | IR::AllocateMemory { .. }
-            | IR::WriteMemory { .. }
-            | IR::ReadMemory { .. }
-            | IR::ReadTable { .. }
-            | IR::MemoryTraceEmit { .. }
-            | IR::MemoryTraceSeal
             | IR::AllocateDynamicNDArrayMeta { .. }
             | IR::WitnessDynamicNDArrayMeta { .. }
             | IR::AssertDynamicNDArrayMeta { .. }
-            | IR::DynamicNDArrayGetItem { .. }
-            | IR::DynamicNDArraySetItem { .. }
             | IR::InvokeExternal { .. }
             | IR::ExportExternalI { .. }
             | IR::ExportExternalF { .. }

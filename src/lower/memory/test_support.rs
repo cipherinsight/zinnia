@@ -13,7 +13,7 @@ pub(crate) fn two_memories(n: usize, m: usize, target: crate::lower::Target, con
     use crate::circuit_input::InputPath;
     use crate::ir_array::{AccessAxis, ArrayAccess, ArrayElem};
     let mut b = IRBuilder::new();
-    let mut input = |b: &mut IRBuilder, name: &str| b.ir_read_integer(InputPath::new(name, vec![]), false);
+    let input = |b: &mut IRBuilder, name: &str| b.ir_read_integer(InputPath::new(name, vec![]), false);
     let flat = |len: usize| ArrayAccess::new(len as u32, ArrayElem::Int, 0, vec![AccessAxis { len: len as u32, stride: 1 }]);
     let checked = |b: &mut IRBuilder, x: &crate::types::Value, len: usize| {
         crate::optim::resolver::discharge_index_in_range(b, x, 0, len as i64, "test")

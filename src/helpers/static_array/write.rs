@@ -6,7 +6,7 @@
 //! representation.
 //!
 //! The headline win is replacing the legacy `dynamic_list_set_item` mux
-//! chain (O(N) per write) with a single `ir_write_memory(segment_id, addr,
+//! chain (O(N) per write) with a single `storage_write_at(segment_id, addr,
 //! value)` (O(1) per write). For sort / queens / nested-write benchmarks
 //! that loop with dynamic-index writes, this turns "compile timed out" into
 //! "compiles in seconds".
@@ -201,7 +201,7 @@ pub fn static_array_setitem(
         return val.clone();
     }
     // A statically dead mutation must not update either storage or its
-    // cached payload. ir_write_memory intentionally emits no write in this
+    // cached payload. storage_write_at intentionally emits no write in this
     // case; caching its return value would otherwise replace the old cell.
     if b.write_predicate()
         .and_then(|p| p.bool_val().or_else(|| p.int_val().map(|v| v != 0)))
@@ -385,8 +385,8 @@ fn complex_element_setitem(
     if all_static {
         let flat = (offset + constant_element_offset(b, shape, strides, &idx_vals)) as i64;
         let addr = b.ir_constant_int(flat);
-        b.ir_write_memory(real_seg, &addr, &re_v);
-        b.ir_write_memory(imag_seg, &addr, &im_v);
+        b.storage_write_at(real_seg, &addr, &re_v);
+        b.storage_write_at(imag_seg, &addr, &im_v);
         return val.clone();
     }
     // A runtime index: the same checked positions in both storages.
@@ -920,7 +920,7 @@ fn static_array_element_setitem(
     if all_static {
         let abs_offset = offset + constant_element_offset(b, shape, strides, &idx_vals);
         let addr = b.ir_constant_int(abs_offset as i64);
-        b.ir_write_memory(segment_id, &addr, &cast_val);
+        b.storage_write_at(segment_id, &addr, &cast_val);
         return val.clone();
     }
 

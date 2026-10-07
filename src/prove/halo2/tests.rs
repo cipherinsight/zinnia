@@ -748,29 +748,6 @@ fn test_assert_with_eq() {
 }
 
 #[test]
-fn test_memory() {
-    let ir = make_graph(vec![
-        (
-            IR::AllocateMemory {
-                segment_id: 0,
-                size: 4,
-                init_value: 0,
-            },
-            vec![],
-        ),
-        (IR::ConstantInt { value: 0 }, vec![]),
-        (IR::ConstantInt { value: 42 }, vec![]),
-        (IR::WriteMemory { segment_id: 0 }, vec![1, 2]),
-        (IR::ReadMemory { segment_id: 0 }, vec![1]),
-    ]);
-    let params = ProvingParams {
-        k: 5,
-        ..Default::default()
-    };
-    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
-}
-
-#[test]
 fn test_lt() {
     let ir = make_graph(vec![
         (IR::ConstantInt { value: 3 }, vec![]),
@@ -2165,78 +2142,6 @@ fn legacy_floor_division_follows_python() {
         let inputs = int_inputs(&[("a", 7), ("b", -2)], &params);
         mock_prove(&ir, &inputs, &params, vec![kernel::i64_to_fp(expected)]).unwrap();
     }
-}
-
-/// `x[i] = 7; x[0] = 9; return (x[0], x[i])` with i = 0 and i = 2: reads
-/// see the latest write in program order, through constrained one-hot
-/// selects (the backend used to wire the witness-chosen slot directly).
-#[test]
-fn legacy_runtime_memory_addresses_follow_program_order() {
-    let ir = make_graph(vec![
-        (IR::AllocateMemory { segment_id: 1, size: 4, init_value: 0 }, vec![]),
-        read_int("i"),
-        (IR::ConstantInt { value: 7 }, vec![]),
-        (IR::WriteMemory { segment_id: 1 }, vec![1, 2]),
-        (IR::ConstantInt { value: 0 }, vec![]),
-        (IR::ConstantInt { value: 9 }, vec![]),
-        (IR::WriteMemory { segment_id: 1 }, vec![4, 5]),
-        (IR::ReadMemory { segment_id: 1 }, vec![4]),
-        (IR::ExposePublicI, vec![7]),
-        (IR::ReadMemory { segment_id: 1 }, vec![1]),
-        (IR::ExposePublicI, vec![9]),
-    ]);
-    let params = ProvingParams { k: 9, ..Default::default() };
-    for (i, expected) in [(0i64, [9u64, 9]), (2, [9, 7])] {
-        let inputs = int_inputs(&[("i", i)], &params);
-        let publics = expected.iter().map(|v| Fp::from(*v)).collect();
-        mock_prove(&ir, &inputs, &params, publics).unwrap();
-    }
-    // A runtime address outside the segment has no witness.
-    let inputs = int_inputs(&[("i", 4)], &params);
-    assert!(mock_prove(&ir, &inputs, &params, vec![Fp::from(9u64), Fp::zero()]).is_err());
-}
-
-/// Reading a never-written slot at a runtime address returned a free cell
-/// labelled `mem_init`; a prover could make it any value.
-#[test]
-fn legacy_runtime_read_of_unwritten_slot_is_the_init_value() {
-    let ir = make_graph(vec![
-        (IR::AllocateMemory { segment_id: 1, size: 4, init_value: 3 }, vec![]),
-        read_int("i"),
-        (IR::ReadMemory { segment_id: 1 }, vec![1]),
-        (IR::ExposePublicI, vec![2]),
-    ]);
-    let params = ProvingParams { k: 9, ..Default::default() };
-    let inputs = int_inputs(&[("i", 2)], &params);
-    mock_prove(&ir, &inputs, &params, vec![Fp::from(3u64)]).unwrap();
-    let forged = crate::prove::halo2::synthesizer::tamper::with_tamper(&[("mem_init", Fp::one())], || {
-        mock_prove(&ir, &inputs, &params, vec![Fp::from(4u64)])
-    });
-    assert!(forged.is_err(), "an unwritten slot read a prover-chosen value");
-}
-
-/// Constant-address memory still works, and an unwritten slot reads the
-/// init value as a constant rather than a free cell.
-#[test]
-fn legacy_constant_address_memory_reads_written_and_init_values() {
-    let ir = make_graph(vec![
-        (IR::AllocateMemory { segment_id: 1, size: 4, init_value: 3 }, vec![]),
-        (IR::ConstantInt { value: 1 }, vec![]),
-        (IR::ConstantInt { value: 9 }, vec![]),
-        (IR::WriteMemory { segment_id: 1 }, vec![1, 2]),
-        (IR::ReadMemory { segment_id: 1 }, vec![1]),
-        (IR::ExposePublicI, vec![4]),
-        (IR::ConstantInt { value: 2 }, vec![]),
-        (IR::ReadMemory { segment_id: 1 }, vec![6]),
-        (IR::ExposePublicI, vec![7]),
-    ]);
-    let params = ProvingParams { k: 8, ..Default::default() };
-    let expected = vec![Fp::from(9u64), Fp::from(3u64)];
-    mock_prove(&ir, &empty_resolved(&params), &params, expected).unwrap();
-    let forged = crate::prove::halo2::synthesizer::tamper::with_tamper(&[("mem_init", Fp::one())], || {
-        mock_prove(&ir, &empty_resolved(&params), &params, vec![Fp::from(9u64), Fp::from(4u64)])
-    });
-    assert!(forged.is_err(), "an unwritten slot read a prover-chosen value");
 }
 
 /// `sqrt(4.0)` is 2.0; the negative root, which `|y^2 - a| < 0.001`

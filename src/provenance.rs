@@ -30,10 +30,9 @@
 //! 3. **Runtime-axis bound**: each runtime axis of a reshape is bounded
 //!    by `total / product(static dims)`; exceeding it is unsatisfiable
 //!    via the divisibility assert.
-//! 4. **Invalidation**: any structural record derived from segment
-//!    contents is keyed by (segment, write_version); writes bump the
-//!    version unconditionally. A record whose stored version is older
-//!    than the segment's current version is dead.
+//! 4. **Invalidation**: a structural record derived from an array
+//!    storage's contents is dropped when the storage is written
+//!    (`on_segment_write`, called by every store write).
 //! 5. **Membership soundness**: a shared-indicator gather must
 //!    one-hot-assert its enumerated value set once per (root, value-set);
 //!    silently gathering init/zero on an out-of-set witness is the bug
@@ -196,22 +195,6 @@ impl Interval {
     }
 }
 
-/// How a dyn-array buffer is laid out (invariant #1). Every dyn-array
-/// producer must state which layout it built; consumers must not guess
-/// from `runtime_strides` (the confusion that produced the 0415/0416/0418
-/// wrong-output binding bug).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum LayoutKind {
-    /// Content sits at the logical positions of the envelope rectangle;
-    /// `runtime_shape[i] <= logical_shape[i]` on every axis; addressing
-    /// uses the (static) logical strides.
-    Padded,
-    /// Compact buffer in runtime C-order; addressing uses the (dynamic)
-    /// runtime strides; `prod(logical_shape) == total_bound` is the
-    /// padding-rectangle invariant.
-    Compact,
-}
-
 /// Compaction provenance: this segment lane's payload is `keep`-filtered
 /// content packed to the front (zero-padded tail), with `count` kept
 /// elements. `source[i]` is the pre-compaction value at source position
@@ -314,8 +297,6 @@ pub struct ProvenanceTable {
     affine: HashMap<ValueId, AffineView>,
     /// Scalar bounds, keyed by the value they bound.
     interval: HashMap<ValueId, Interval>,
-    /// Buffer layout per segment.
-    layout: HashMap<u32, LayoutKind>,
     /// Compaction provenance per (segment, lane). 1-D compactions use
     /// lane 0; interleaved outputs (argwhere's (count, rank) rows) hold
     /// one record per coordinate lane.
@@ -328,16 +309,6 @@ pub struct ProvenanceTable {
     /// only, like `slice_views`). Eagerly dropped when the segment is
     /// written.
     mask_read_views: HashMap<u32, MaskReadView>,
-    /// Monotone per-segment write counters (invariant #4). Bumped
-    /// unconditionally by `ir_write_memory`; segment-derived records that
-    /// outlive the eager-drop policy must carry the version they were
-    /// built at and compare against this.
-    write_version: HashMap<u32, u64>,
-    /// Per-segment value hull: union of the init value and every written
-    /// value's interval. `None` entry = poisoned (some write had no
-    /// interval). Feeds `ReadMemory` output intervals (the Noir emitter's
-    /// `segment_iv` semantics).
-    segment_hull: HashMap<u32, Option<Interval>>,
     /// Runtime extents of a PADDED slice materialization: the segment's
     /// content occupies the `[0, extent_i)` prefix of axis `i` of its
     /// envelope rectangle (one ValueId per axis; constants for static
@@ -378,31 +349,14 @@ pub struct ProvenanceTable {
 pub struct ProvenanceWire {
     affine: Vec<(StmtId, Vec<(StmtId, i64)>, i64)>,
     interval: Vec<(StmtId, Interval)>,
-    layout: Vec<(u32, LayoutKind)>,
-    compaction: Vec<(u32, usize, CompactionWire)>,
-    write_version: Vec<(u32, u64)>,
-    segment_hull: Vec<(u32, Option<Interval>)>,
-    runtime_extents: Vec<(u32, Vec<StmtId>)>,
     clamps: Vec<(StmtId, StmtId, i64, bool)>,
     block_views: Vec<(StmtId, BlockView)>,
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct CompactionWire {
-    pub keep: Vec<StmtId>,
-    pub source: Vec<StmtId>,
-    pub prefix: Vec<StmtId>,
-    pub count: StmtId,
-    pub sorted: bool,
 }
 
 impl ProvenanceTable {
     /// Serialize against `stmt_of` (vid → producing stmt). Records with
     /// any unresolvable vid are dropped.
     pub fn to_wire(&self, stmt_of: &dyn Fn(ValueId) -> Option<StmtId>) -> ProvenanceWire {
-        let map_all = |vids: &[ValueId]| -> Option<Vec<StmtId>> {
-            vids.iter().map(|v| stmt_of(*v)).collect()
-        };
         let mut affine: Vec<(StmtId, Vec<(StmtId, i64)>, i64)> = self
             .affine
             .iter()
@@ -423,39 +377,6 @@ impl ProvenanceTable {
             .filter_map(|(vid, iv)| Some((stmt_of(*vid)?, *iv)))
             .collect();
         interval.sort_by_key(|(k, _)| *k);
-        let mut layout: Vec<(u32, LayoutKind)> =
-            self.layout.iter().map(|(k, v)| (*k, *v)).collect();
-        layout.sort_by_key(|(k, _)| *k);
-        let mut compaction: Vec<(u32, usize, CompactionWire)> = self
-            .compaction
-            .iter()
-            .filter_map(|((seg, lane), info)| {
-                Some((
-                    *seg,
-                    *lane,
-                    CompactionWire {
-                        keep: map_all(&info.keep)?,
-                        source: map_all(&info.source)?,
-                        prefix: map_all(&info.prefix)?,
-                        count: stmt_of(info.count)?,
-                        sorted: info.sorted,
-                    },
-                ))
-            })
-            .collect();
-        compaction.sort_by_key(|(seg, lane, _)| (*seg, *lane));
-        let mut write_version: Vec<(u32, u64)> =
-            self.write_version.iter().map(|(k, v)| (*k, *v)).collect();
-        write_version.sort_by_key(|(k, _)| *k);
-        let mut segment_hull: Vec<(u32, Option<Interval>)> =
-            self.segment_hull.iter().map(|(k, v)| (*k, *v)).collect();
-        segment_hull.sort_by_key(|(k, _)| *k);
-        let mut runtime_extents: Vec<(u32, Vec<StmtId>)> = self
-            .runtime_extents
-            .iter()
-            .filter_map(|(seg, vids)| Some((*seg, map_all(vids)?)))
-            .collect();
-        runtime_extents.sort_by_key(|(k, _)| *k);
         let mut clamps: Vec<(StmtId, StmtId, i64, bool)> = self
             .clamps
             .iter()
@@ -473,11 +394,6 @@ impl ProvenanceTable {
         ProvenanceWire {
             affine,
             interval,
-            layout,
-            compaction,
-            write_version,
-            segment_hull,
-            runtime_extents,
             clamps,
             block_views,
         }
@@ -487,9 +403,6 @@ impl ProvenanceTable {
     /// in the RECEIVING graph). Entries with unresolvable stmt ids are
     /// dropped.
     pub fn from_wire(w: &ProvenanceWire, vid_of: &dyn Fn(StmtId) -> Option<ValueId>) -> Self {
-        let map_all = |stmts: &[StmtId]| -> Option<Vec<ValueId>> {
-            stmts.iter().map(|s| vid_of(*s)).collect()
-        };
         let mut t = ProvenanceTable::default();
         for (key, terms, offset) in &w.affine {
             let Some(vid) = vid_of(*key) else { continue };
@@ -509,34 +422,6 @@ impl ProvenanceTable {
         for (key, iv) in &w.interval {
             if let Some(vid) = vid_of(*key) {
                 t.interval.insert(vid, *iv);
-            }
-        }
-        t.layout = w.layout.iter().copied().collect();
-        for (seg, lane, info) in &w.compaction {
-            let (Some(keep), Some(source), Some(prefix), Some(count)) = (
-                map_all(&info.keep),
-                map_all(&info.source),
-                map_all(&info.prefix),
-                vid_of(info.count),
-            ) else {
-                continue;
-            };
-            t.compaction.insert(
-                (*seg, *lane),
-                CompactionInfo {
-                    keep,
-                    source,
-                    prefix,
-                    count,
-                    sorted: info.sorted,
-                },
-            );
-        }
-        t.write_version = w.write_version.iter().copied().collect();
-        t.segment_hull = w.segment_hull.iter().copied().collect();
-        for (seg, stmts) in &w.runtime_extents {
-            if let Some(vids) = map_all(stmts) {
-                t.runtime_extents.insert(*seg, vids);
             }
         }
         for (key, src, bound, is_min) in &w.clamps {
@@ -565,12 +450,10 @@ impl ProvenanceTable {
         Self::default()
     }
 
-    /// True when no records are held (write-version counters don't
-    /// count — they're bookkeeping, not records).
+    /// True when no records are held.
     pub fn is_empty(&self) -> bool {
         self.affine.is_empty()
             && self.interval.is_empty()
-            && self.layout.is_empty()
             && self.compaction.is_empty()
             && self.slice_views.is_empty()
             && self.mask_read_views.is_empty()
@@ -581,37 +464,14 @@ impl ProvenanceTable {
 
     // ── Write tracking (invariant #4) ────────────────────────────────
 
-    /// Record a write to `segment`: bumps its version and drops every
-    /// segment-derived record invalidated by the write. Mirrors (and now
-    /// centralizes) the eager invalidation `ir_write_memory` used to do
-    /// inline for slice views.
+    /// Record a write to the array storage `segment`: drops every record
+    /// derived from its old contents (invariant #4).
     pub fn on_segment_write(&mut self, segment: u32) {
-        *self.write_version.entry(segment).or_insert(0) += 1;
         self.slice_views
             .retain(|seg, view| *seg != segment && view.base_segment != segment);
         self.mask_read_views.remove(&segment);
         self.compaction.retain(|(seg, _), _| *seg != segment);
         self.runtime_extents.remove(&segment);
-    }
-
-    // ── Segment value hulls ──────────────────────────────────────────
-
-    pub fn init_segment_hull(&mut self, segment: u32, init: i64) {
-        self.segment_hull.insert(segment, Some(Interval::point(init)));
-    }
-
-    /// Union a written value's interval into the segment hull; `None`
-    /// poisons the hull (unknown write).
-    pub fn widen_segment_hull(&mut self, segment: u32, iv: Option<Interval>) {
-        let entry = self.segment_hull.entry(segment).or_insert(None);
-        *entry = match (entry.take(), iv) {
-            (Some(a), Some(b)) => Some(Interval::union(a, b)),
-            _ => None,
-        };
-    }
-
-    pub fn segment_hull(&self, segment: u32) -> Option<Interval> {
-        self.segment_hull.get(&segment).copied().flatten()
     }
 
     pub fn runtime_extents_of(&self, segment: u32) -> Option<&Vec<ValueId>> {
@@ -670,14 +530,6 @@ impl ProvenanceTable {
 
     pub fn set_clamp(&mut self, vid: ValueId, view: ClampView) {
         self.clamps.insert(vid, view);
-    }
-
-    pub fn layout_of(&self, segment: u32) -> Option<LayoutKind> {
-        self.layout.get(&segment).copied()
-    }
-
-    pub fn set_layout(&mut self, segment: u32, kind: LayoutKind) {
-        self.layout.insert(segment, kind);
     }
 
     pub fn compaction_of(&self, segment: u32, lane: usize) -> Option<&CompactionInfo> {

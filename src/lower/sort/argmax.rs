@@ -297,7 +297,7 @@ mod tests {
                 return crate::lower::gather::element_lane(b, cells, &r).expect("an encoded index");
             }
             let segment = crate::helpers::segment::alloc_and_write_values(b, cells, crate::types::NumberType::Integer);
-            b.ir_read_memory(segment, &r)
+            b.storage_read_at(segment, &r)
         };
         let xr = gathered(&mut b, &x);
         let yr = gathered(&mut b, &y);

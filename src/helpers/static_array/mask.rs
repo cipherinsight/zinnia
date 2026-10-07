@@ -465,8 +465,8 @@ pub fn try_apply_boolean_mask_write(
                 crate::helpers::value_ops::unpack_value_to_complex_parts(b, &arr_cells[i]);
             let sel_re = b.ir_select_f(&mask_bool, &new_re, &cur_re);
             let sel_im = b.ir_select_f(&mask_bool, &new_im, &cur_im);
-            b.ir_write_memory(arr_seg, &addr, &sel_re);
-            b.ir_write_memory(imag_seg, &addr, &sel_im);
+            b.storage_write_at(arr_seg, &addr, &sel_re);
+            b.storage_write_at(imag_seg, &addr, &sel_im);
         }
         return Some(arr.clone());
     }
@@ -538,7 +538,7 @@ pub fn try_apply_boolean_mask_write(
         };
         // Under a runtime execution predicate (`if c: arr[mask] = v`) the
         // store keeps `select(c, selected, old)`.
-        b.ir_write_memory(arr_seg, &addr, &selected);
+        b.storage_write_at(arr_seg, &addr, &selected);
         if matches!(rhs, Rhs::Compacted(_)) && !static_mask {
             let m_i = b.ir_int_cast(&mask_bool);
             prefix = b.ir_add_i(&prefix, &m_i);
@@ -769,7 +769,7 @@ mod tests {
         let mask = make_1d_bool(&mut b, &[true, false, true, false]);
         let zero = b.ir_constant_int(0);
         let out = try_apply_boolean_mask_write(&mut b, &arr, &mask, &zero).expect("native path");
-        // Cache invalidated; next read goes through ir_read_memory. We
+        // Cache invalidated; next read goes through storage_read_at. We
         // don't have an easy way to read post-write here without running
         // the proving backend, so just confirm we got back a StaticArray.
         match out {

@@ -1565,12 +1565,11 @@ mod bounded_tests {
 
     /// Minimal IR walker for tests: evaluates the subset of IR statements
     /// that `dyn_aggregate_all` emits (constants + int arith + comparisons +
-    /// logical + selects + bool cast + memory read/write/allocate) and
+    /// logical + selects + bool cast) and
     /// returns the i64 stored at the result's stmt_id. We model bools as
     /// 0/1 ints so SelectI/SelectB read the predicate uniformly.
     fn eval_at_stmt(b: &IRBuilder, target: crate::types::StmtId) -> i64 {
         let mut vals: HashMap<crate::types::StmtId, i64> = HashMap::new();
-        let mut mem: HashMap<u32, Vec<i64>> = HashMap::new();
         for stmt in &b.stmts {
             let id = stmt.stmt_id;
             let args: Vec<i64> = stmt
@@ -1598,32 +1597,6 @@ mod bounded_tests {
                     Some(if args[0] != 0 { args[1] } else { args[2] })
                 }
                 IR::BoolCast => Some(if args[0] != 0 { 1 } else { 0 }),
-                IR::AllocateMemory {
-                    segment_id,
-                    size,
-                    init_value,
-                } => {
-                    mem.insert(*segment_id, vec![*init_value; *size as usize]);
-                    None
-                }
-                IR::WriteMemory { segment_id } => {
-                    let addr = args[0] as usize;
-                    let v = args[1];
-                    if let Some(seg) = mem.get_mut(segment_id) {
-                        if addr < seg.len() {
-                            seg[addr] = v;
-                        }
-                    }
-                    None
-                }
-                IR::ReadMemory { segment_id } => {
-                    let addr = args[0] as usize;
-                    Some(
-                        mem.get(segment_id)
-                            .and_then(|seg| seg.get(addr).copied())
-                            .unwrap_or(0),
-                    )
-                }
                 IR::Assert => None,
                 _ => None,
             };

@@ -47,13 +47,13 @@ pub fn read_typed(b: &mut IRBuilder, segment_id: u32, address: &Value, dtype: Nu
         let one = b.ir_constant_int(1);
         let real_addr = b.ir_mul_i(address, &two);
         let imag_addr = b.ir_add_i(&real_addr, &one);
-        let real_raw = b.ir_read_memory(segment_id, &real_addr);
-        let imag_raw = b.ir_read_memory(segment_id, &imag_addr);
+        let real_raw = b.storage_read_at(segment_id, &real_addr);
+        let imag_raw = b.storage_read_at(segment_id, &imag_addr);
         let real = crate::ops::dyn_ndarray::retag(&real_raw, NumberType::Float);
         let imag = crate::ops::dyn_ndarray::retag(&imag_raw, NumberType::Float);
         return crate::helpers::value_ops::pack_complex_value(real, imag);
     }
-    let raw = b.ir_read_memory(segment_id, address);
+    let raw = b.storage_read_at(segment_id, address);
     crate::ops::dyn_ndarray::retag(&raw, dtype)
 }
 
@@ -65,11 +65,11 @@ pub fn write_typed(b: &mut IRBuilder, segment_id: u32, address: &Value, value: &
         let real_addr = b.ir_mul_i(address, &two);
         let imag_addr = b.ir_add_i(&real_addr, &one);
         let (real, imag) = crate::helpers::value_ops::unpack_value_to_complex_parts(b, value);
-        b.ir_write_memory(segment_id, &real_addr, &real);
-        b.ir_write_memory(segment_id, &imag_addr, &imag);
+        b.storage_write_at(segment_id, &real_addr, &real);
+        b.storage_write_at(segment_id, &imag_addr, &imag);
         return;
     }
-    b.ir_write_memory(segment_id, address, value);
+    b.storage_write_at(segment_id, address, value);
 }
 
 /// Read all `max_len` elements of a storage as values of `dtype`, in

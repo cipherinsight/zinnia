@@ -8,7 +8,7 @@
 //! for cells and for array storage:
 //!
 //! * a **bool cell** is a `Value::Boolean`, or an integer-typed value that
-//!   holds a NumPy bool: a read from a bool segment (`ir_read_memory`), a
+//!   holds a NumPy bool: a read from a bool segment (`storage_read_at`), a
 //!   select between two bool cells (`value_ops::select_value`), a `Bool`
 //!   parameter element, a cell of a bool array's compile-time cache. The
 //!   record is per statement, and an integer view of a `Boolean` statement

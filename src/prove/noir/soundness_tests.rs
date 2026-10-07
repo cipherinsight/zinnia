@@ -13,7 +13,7 @@ use crate::ir::{IRGraph, IRStatement};
 use crate::ir_defs::IR;
 use crate::prove::traits::ProverBackend;
 use crate::prove::types::ProvingParams;
-use crate::provenance::{AffineView, Interval};
+use crate::provenance::Interval;
 use crate::types::ValueId;
 
 use super::driver::DriverPaths;
@@ -536,154 +536,21 @@ fn selects_of_a_sum_and_its_summand_are_one_product() {
     }
 }
 
-/// M5: a dynamic-address write outside the segment used to update no slot
-/// and succeed; the mock rejects it.
-#[test]
-fn dynamic_write_out_of_range_is_rejected() {
-    if !toolchain_present(false) {
-        return;
-    }
-    let mut g = Graph::default();
-    g.push(
-        IR::AllocateMemory {
-            segment_id: 0,
-            size: 4,
-            init_value: 0,
-        },
-        &[],
-    );
-    let i = g.read_int("i");
-    let seven = g.int(7);
-    g.push(IR::WriteMemory { segment_id: 0 }, &[i, seven]);
-    let zero = g.int(0);
-    let r = g.push(IR::ReadMemory { segment_id: 0 }, &[zero]);
-    g.expose(r);
-    let graph = g.finish();
-    assert_eq!(execute(&graph, &witness(&[("i", 0)])).unwrap(), vec![7]);
-    assert_eq!(execute(&graph, &witness(&[("i", 2)])).unwrap(), vec![0]);
-    assert_rejected(execute(&graph, &witness(&[("i", 4)])));
-    assert_rejected(execute(&graph, &witness(&[("i", -1)])));
-}
-
-/// M5: a constant-address write past the segment end is a compile error
-/// (it used to be dropped silently).
-#[test]
-fn constant_write_out_of_range_is_an_error() {
-    let mut g = Graph::default();
-    g.push(
-        IR::AllocateMemory {
-            segment_id: 0,
-            size: 2,
-            init_value: 0,
-        },
-        &[],
-    );
-    let addr = g.int(5);
-    let v = g.int(1);
-    g.push(IR::WriteMemory { segment_id: 0 }, &[addr, v]);
-    let graph = g.finish();
-    let err = super::emit::emit_circuit(&graph, &witness(&[]), &ProvingParams::default());
-    assert!(err.is_err());
-}
-
-/// M5: a two-root gather checked each root against its own value set but not
-/// the combined address, so an out-of-range combination gathered 0.
-#[test]
-fn two_root_read_out_of_range_is_rejected() {
-    if !toolchain_present(false) {
-        return;
-    }
-    let mut g = Graph::default();
-    g.push(
-        IR::AllocateMemory {
-            segment_id: 0,
-            size: 6,
-            init_value: 0,
-        },
-        &[],
-    );
-    for slot in 0..6 {
-        let a = g.int(slot);
-        let v = g.int(10 + slot);
-        g.push(IR::WriteMemory { segment_id: 0 }, &[a, v]);
-    }
-    let r = g.read_int("r");
-    let c = g.read_int("c");
-    let four = g.int(4);
-    let row = g.push(IR::MulI, &[r, four]);
-    let addr = g.push(IR::AddI, &[row, c]);
-    let read = g.push(IR::ReadMemory { segment_id: 0 }, &[addr]);
-    g.expose(read);
-    let (vr, vc, vaddr) = (g.vid(r), g.vid(c), g.vid(addr));
-    let mut graph = g.finish();
-    graph.provenance.set_affine(
-        vaddr,
-        AffineView {
-            terms: vec![(vr, 4), (vc, 1)],
-            offset: 0,
-        },
-    );
-    assert_eq!(execute(&graph, &witness(&[("r", 1), ("c", 1)])).unwrap(), vec![15]);
-    // r = 1 and c = 3 are each feasible for some slot, but 4*1 + 3 = 7 >= 6.
-    assert_rejected(execute(&graph, &witness(&[("r", 1), ("c", 3)])));
-}
-
-/// Dynamic reads through a native Noir array (chosen when several dynamic
-/// reads share one array): honest addresses read the written values, and
-/// the addresses -1 and len are rejected by `array_index`'s own checks (the
-/// pinned bb does not bound a memory index at p - 1 by itself).
-#[test]
-fn native_array_read_rejects_out_of_range_addresses() {
-    if !toolchain_present(false) {
-        return;
-    }
-    let mut g = Graph::default();
-    g.push(
-        IR::AllocateMemory {
-            segment_id: 0,
-            size: 64,
-            init_value: 0,
-        },
-        &[],
-    );
-    for slot in 0..64 {
-        let a = g.int(slot);
-        let v = g.int(10 + slot);
-        g.push(IR::WriteMemory { segment_id: 0 }, &[a, v]);
-    }
-    let addrs: Vec<u32> = ["x", "y"].iter().map(|n| g.read_int(n)).collect();
-    for addr in addrs {
-        let read = g.push(IR::ReadMemory { segment_id: 0 }, &[addr]);
-        g.expose(read);
-    }
-    let graph = g.finish();
-    let honest = witness(&[("x", 0), ("y", 63)]);
-    let emitted = emit_circuit(&graph, &honest, &ProvingParams::default()).unwrap();
-    assert!(emitted.main_nr.contains("array_index::<8>("), "{}", emitted.main_nr);
-    assert_eq!(execute(&graph, &honest).unwrap(), vec![10, 73]);
-    assert_rejected(execute(&graph, &witness(&[("x", -1), ("y", 5)])));
-    assert_rejected(execute(&graph, &witness(&[("x", 0), ("y", 64)])));
-}
-
-/// `IR::ReadTable` (the memory family's table read) is a native array read
-/// at a checked index on any segment length, a short one included (where
-/// the generic read would gather by a one-hot): every slot reads its value,
-/// an index outside the segment has no witness, and the mock agrees.
+/// `IR::RomRead` (the layer's table read) is a native array read at a
+/// checked index on any table length: every cell reads its value, an index
+/// outside the table has no witness, and the mock agrees.
 #[test]
 fn table_reads_are_native_and_reject_out_of_range() {
     if !toolchain_present(false) {
         return;
     }
+    let elem = crate::ir_array::ArrayElem::Int;
     for n in [2i64, 5, 40] {
         let mut g = Graph::default();
-        g.push(IR::AllocateMemory { segment_id: 0, size: n as u32, init_value: 0 }, &[]);
         let cells: Vec<u32> = (0..n).map(|k| g.read_int(&format!("x{k}"))).collect();
-        for (k, cell) in cells.iter().enumerate() {
-            let a = g.int(k as i64);
-            g.push(IR::WriteMemory { segment_id: 0 }, &[a, *cell]);
-        }
+        let table = g.push(IR::RomInit { len: n as u32, elem }, &cells);
         let index = g.read_int("i");
-        let read = g.push(IR::ReadTable { segment_id: 0 }, &[index]);
+        let read = g.push(IR::RomRead { len: n as u32, elem }, &[table, index]);
         g.expose(read);
         let graph = g.finish();
         let names: Vec<String> = (0..n).map(|k| format!("x{k}")).collect();
@@ -705,7 +572,7 @@ fn table_reads_are_native_and_reject_out_of_range() {
     }
 }
 
-/// M6: logic ops and selects use Python truthiness, as the mock: `not 5` is/// M6: logic ops and selects use Python truthiness, as the mock: `not 5` is
+/// M6: logic ops and selects use Python truthiness, as the mock: `not 5` is
 /// 0 (it was 1 - 5 = -4) and a select on 5 takes the true branch.
 #[test]
 fn logic_ops_use_truthiness() {

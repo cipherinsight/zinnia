@@ -14,14 +14,13 @@ mod bitwise;
 mod fixed_point;
 mod identities;
 mod keys;
-mod memory;
+mod one_hot;
 mod plan;
 mod ranges;
 mod ram;
 mod rom;
 
 use self::fixed_point::Divisor;
-use self::memory::MemoryState;
 use self::plan::Plan;
 use self::ranges::{Comparison, Interval, Operand, TwoValued};
 use crate::circuit_input::{InputPath, ResolvedWitness};
@@ -61,17 +60,19 @@ pub struct Halo2BaseSynthesizer<'a> {
     /// Checks laid out after the verifier's challenges (`circuit.rs`),
     /// registered by the lowerings that need them.
     pub(crate) second_phase: super::circuit::SecondPhase,
-    /// Read-only memory tables and the reads looked up in them
-    /// (`IR::ReadTable`, `circuit/tables.rs`).
+    /// Read-only tables and the reads looked up in them (`IR::RomRead`,
+    /// `circuit/tables.rs`).
     pub(crate) tables: super::circuit::Tables,
-    /// Read-write memory traces (`circuit/ram.rs`) of the segments the plan
-    /// puts in RAM mode.
+    /// The read-write memory trace (`circuit/ram.rs`) of the `IR::Ram*`
+    /// memories.
     pub(crate) ram: super::circuit::Ram,
     witness: Option<ResolvedWitness>,
     params: ProvingParams,
     public_values: Vec<Fp>,
-    /// Memory segments and the caches of dynamic reads (see `memory.rs`).
-    memory: MemoryState,
+    /// The one-hot indicators of select chains (`one_hot.rs`).
+    indicators: one_hot::Indicators,
+    /// The tags of the read-only tables so far (`rom.rs`).
+    table_count: u64,
     /// The read-only tables (`IR::RomInit`), by statement.
     roms: std::collections::HashMap<crate::types::StmtId, rom::Rom>,
     /// The read-write memories (`IR::RamInit`) and their shared trace.
@@ -124,10 +125,7 @@ pub struct Halo2BaseSynthesizer<'a> {
     divisor_signs: HashMap<u64, (Halo2BaseCell, Halo2BaseCell)>,
     // (sign bit, magnitude) per cell id, see `sign_and_abs`.
     sign_abs_cache: HashMap<u64, (Halo2BaseCell, Halo2BaseCell)>,
-    // ValueId ↔ cell correspondence, maintained by `on_stmt_result`, for
-    // consuming the structural-provenance table (affine views and
-    // intervals are derived ONCE in the IRBuilder; see src/provenance.rs).
-    prov: &'a crate::provenance::ProvenanceTable,
+    // ValueId ↔ cell correspondence, maintained by `on_stmt_result`.
     vid_of_cell: HashMap<u64, crate::types::ValueId>,
     cell_of_vid: HashMap<crate::types::ValueId, Halo2BaseCell>,
     /// First assert/bit constraint whose concrete witness violates its
@@ -156,9 +154,6 @@ pub struct Halo2BaseSynthesizer<'a> {
     /// Deferred products by placeholder id: the factors of a `MulI` that the
     /// plan fuses into its one consumer (see `mul_i`).
     deferred: HashMap<u64, (Halo2BaseCell, Halo2BaseCell)>,
-    /// Address values the plan keeps without a cell (`Plan::address_only`),
-    /// by placeholder id; the cell an access computed for one, once it did.
-    address_placeholders: HashMap<u64, Option<Halo2BaseCell>>,
     /// `(cell id, advice length)` right after `gate_from` emitted the cell:
     /// while the length is unchanged, that cell is the context's last one.
     last_output: Option<(u64, usize)>,
@@ -184,7 +179,6 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         builder: &'a mut BaseCircuitBuilder<Fp>,
         witness: Option<ResolvedWitness>,
         params: ProvingParams,
-        provenance: &'a crate::provenance::ProvenanceTable,
     ) -> Self {
         Self {
             builder,
@@ -194,7 +188,8 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             witness,
             params,
             public_values: Vec::new(),
-            memory: MemoryState::default(),
+            indicators: one_hot::Indicators::default(),
+            table_count: 0,
             roms: std::collections::HashMap::new(),
             memories: ram::Memories::default(),
             float_casts: HashMap::new(),
@@ -220,7 +215,6 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             u128_lt_bit_cache: HashMap::new(),
             proven: HashMap::new(),
             sign_abs_cache: HashMap::new(),
-            prov: provenance,
             vid_of_cell: HashMap::new(),
             cell_of_vid: HashMap::new(),
             first_unsat: None,
@@ -229,7 +223,6 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             plan: Plan::default(),
             current_stmt: 0,
             deferred: HashMap::new(),
-            address_placeholders: HashMap::new(),
             last_output: None,
             profile: None,
             #[cfg(test)]
@@ -240,7 +233,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
     /// Read the facts of `ir` the lowering uses ahead of the statements that
     /// establish them (planned bounds, deferred products; see `plan.rs`).
     pub fn plan_ahead(&mut self, ir: &crate::ir::IRGraph) {
-        self.plan = Plan::with_provenance(ir, self.prov);
+        self.plan = Plan::of(ir);
     }
 
     /// Record the advice and lookup cells each statement emits (costly:
@@ -497,23 +490,6 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         self.is_const_cell(a).then(|| a.value != Fp::zero())
     }
 
-    /// The interval that narrows a memory read's choice set: the provenance
-    /// table's interval of an IR value (read live, so later asserts are
-    /// visible) intersected with the cell's proven range. Only for
-    /// narrowing under a membership assertion, where a wrong interval makes
-    /// the circuit unsatisfiable; comparisons use `proven_range` alone.
-    fn interval_of(&self, cell: &Halo2BaseCell) -> Option<Interval> {
-        let provenance = self
-            .vid_of_cell
-            .get(&cell.id)
-            .and_then(|vid| self.prov.interval_of(*vid))
-            .and_then(|iv| Interval::new(iv.lo as i128, iv.hi as i128));
-        match (provenance, self.proven_range(cell)) {
-            (Some(p), Some(r)) => Some(p.intersect(&r).unwrap_or(r)),
-            (p, r) => p.or(r),
-        }
-    }
-
     fn wrap(&mut self, assigned: AssignedValue<Fp>, value: Fp) -> Halo2BaseCell {
         let id = self.next_id;
         self.next_id += 1;
@@ -613,68 +589,6 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         let cell = self.wrap(placeholder, value);
         self.deferred.insert(cell.id, (*a, *b));
         cell
-    }
-
-    /// A stand-in for an address value of `Plan::address_only`: no cell is
-    /// assigned. Memory accesses read it through its affine view; one that
-    /// needs the address as a cell calls [`Self::materialize_address`]. The
-    /// plan admits only values whose every use is an address or another such
-    /// value, so no gate reads the stand-in; if one did, key generation would
-    /// stop on the missing cell instead of building a circuit.
-    fn address_placeholder(&mut self, value: Fp, constant: bool) -> Halo2BaseCell {
-        let placeholder = AssignedValue { value: halo2_base::halo2_proofs::plonk::Assigned::Trivial(value), cell: None };
-        let cell = self.wrap(placeholder, value);
-        if constant {
-            self.const_cell_ids.insert(cell.id);
-        }
-        self.address_placeholders.insert(cell.id, None);
-        cell
-    }
-
-    pub(super) fn is_address_placeholder(&self, cell: &Halo2BaseCell) -> bool {
-        self.address_placeholders.contains_key(&cell.id)
-    }
-
-    /// `cell`, or for an address placeholder the address as a cell: the
-    /// shared constant, or `Σ root·scale + offset` from its affine view
-    /// (computed once per placeholder). The view is the provenance table's
-    /// record of how the IR computed the value, so the cell equals it.
-    pub(super) fn materialize_address(&mut self, cell: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
-        match self.address_placeholders.get(&cell.id) {
-            None => return Ok(*cell),
-            Some(Some(done)) => return Ok(*done),
-            Some(None) => {}
-        }
-        let out = if self.is_const_cell(cell) {
-            let c = self.const_cell(cell.value);
-            c
-        } else {
-            let view = self
-                .vid_of_cell
-                .get(&cell.id)
-                .and_then(|vid| self.prov.affine_of(*vid))
-                .cloned()
-                .ok_or_else(|| ProvingError::synthesis("address placeholder without an affine view"))?;
-            let mut acc: Option<Halo2BaseCell> = None;
-            for (root, scale) in &view.terms {
-                let root = *self.cell_of_vid.get(root).ok_or_else(|| ProvingError::synthesis("address root without a cell"))?;
-                let scale_fp = kernel::i64_to_fp(*scale);
-                let (base_q, base_v) = match &acc {
-                    Some(a) => (a.quantum(), a.value),
-                    None => (QuantumCell::Constant(kernel::i64_to_fp(view.offset)), kernel::i64_to_fp(view.offset)),
-                };
-                let value = base_v + root.value * scale_fp;
-                let next = self.gate_cell(value, |gate, ctx| gate.mul_add(ctx, root.quantum(), QuantumCell::Constant(scale_fp), base_q));
-                acc = Some(next);
-            }
-            let out = acc.ok_or_else(|| ProvingError::synthesis("address placeholder without roots"))?;
-            if let Some(r) = self.proven.get(&cell.id).copied() {
-                self.proven.insert(out.id, r);
-            }
-            out
-        };
-        self.address_placeholders.insert(cell.id, Some(out));
-        Ok(out)
     }
 
     /// The last select of a one-hot chain (plan.rs `OneHotChain`): the inner
@@ -981,9 +895,6 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     type CellRef = Halo2BaseCell;
 
     fn constant_int(&mut self, value: i64) -> Result<Self::CellRef, ProvingError> {
-        if self.plan.address_only.contains(&self.current_stmt) {
-            return Ok(self.address_placeholder(kernel::i64_to_fp(value), true));
-        }
         Ok(self.const_cell(kernel::i64_to_fp(value)))
     }
 
@@ -1001,11 +912,6 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn add_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        if self.plan.address_only.contains(&self.current_stmt) {
-            let out = self.address_placeholder(a.value + b.value, false);
-            self.propagate_range(&out, a, b, Interval::add);
-            return Ok(out);
-        }
         if let Some((x, y)) = self.deferred.get(&b.id).copied() {
             let acc = self.materialize(a);
             return Ok(self.multiply_add(&acc, &x, &y));
@@ -1025,11 +931,6 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn sub_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        if self.plan.address_only.contains(&self.current_stmt) {
-            let out = self.address_placeholder(a.value - b.value, false);
-            self.propagate_range(&out, a, b, Interval::sub);
-            return Ok(out);
-        }
         if let Some((x, y)) = self.deferred.get(&b.id).copied() {
             // `a - x·y` as halo2-base's `[a - x·y, x, y, a]` gate.
             let a = &self.materialize(a);
@@ -1053,11 +954,6 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn mul_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        if self.plan.address_only.contains(&self.current_stmt) {
-            let out = self.address_placeholder(a.value * b.value, false);
-            self.propagate_range(&out, a, b, Interval::mul);
-            return Ok(out);
-        }
         if self.plan.deferred_products.contains(&self.current_stmt) {
             return Ok(self.defer_product(a, b));
         }
@@ -1712,19 +1608,6 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         Ok(())
     }
 
-    fn allocate_memory(&mut self, segment_id: u32, size: u32, init: i64) -> Result<(), ProvingError> {
-        self.memory_allocate(segment_id, size, init);
-        Ok(())
-    }
-    fn write_memory(&mut self, segment_id: u32, addr: &Self::CellRef, value: &Self::CellRef) -> Result<(), ProvingError> {
-        self.memory_write(segment_id, addr, value)
-    }
-    fn read_memory(&mut self, segment_id: u32, addr: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        self.memory_read(segment_id, addr)
-    }
-    fn read_table(&mut self, segment_id: u32, addr: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        self.memory_read_table(segment_id, addr)
-    }
     fn rom_init(&mut self, table: crate::types::StmtId, cells: &[Self::CellRef]) -> Result<(), ProvingError> {
         self.rom_init_cells(table, cells)
     }
@@ -1740,13 +1623,11 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn ram_read(&mut self, version: crate::types::StmtId, address: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         self.ram_read_cell(version, address)
     }
-    fn memory_trace_emit(&mut self, _: u32, _: bool, _: &[Self::CellRef]) -> Result<(), ProvingError> { Ok(()) }
-    fn memory_trace_seal(&mut self) -> Result<(), ProvingError> { Ok(()) }
 
     fn allocate_dynamic_ndarray_meta(&mut self, array_id: u32, _: &str, max_length: u32, max_rank: u32, max_shape: &[u32]) -> Result<(), ProvingError> {
         let axis_bounds = if max_shape.is_empty() { vec![max_length; max_rank as usize] } else { max_shape.to_vec() };
         self.dyn_meta_bounds.insert(array_id, (max_length, axis_bounds));
-        self.allocate_memory(10000 + array_id, max_length, 0)
+        Ok(())
     }
     fn witness_dynamic_ndarray_meta(&mut self, _: u32, _: u32, _: &str, _: &[Self::CellRef]) -> Result<(), ProvingError> { Ok(()) }
     fn dyn_meta_axis_bounds(&self, array_id: u32, max_rank: u32, max_length: u32) -> (u32, Vec<u32>) {
@@ -1756,12 +1637,6 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
             .unwrap_or_else(|| (max_length, vec![max_length; max_rank as usize]))
     }
     // assert_dynamic_ndarray_meta uses the trait-default lowering (was a no-op).
-    fn dynamic_ndarray_get_item(&mut self, array_id: u32, _: u32, index: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        self.read_memory(10000 + array_id, index)
-    }
-    fn dynamic_ndarray_set_item(&mut self, array_id: u32, _: u32, index: &Self::CellRef, value: &Self::CellRef) -> Result<(), ProvingError> {
-        self.write_memory(10000 + array_id, index, value)
-    }
 
     fn poseidon_hash(&mut self, inputs: &[Self::CellRef]) -> Result<Self::CellRef, ProvingError> {
         let mut state = [self.constant_int(0)?, self.constant_int(0)?, self.constant_int(0)?];

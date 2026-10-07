@@ -13,7 +13,7 @@
 //!   carry their payload as `Vec<ScalarValue<i64>>` in `elements`; the
 //!   ZKRAM lowering happens in the backend. When the segment-based
 //!   payload model lands (Phase 2+), this helper grows an
-//!   `ir_allocate_memory` + `ir_write_memory` step.
+//!   `ir_allocate_memory` + `storage_write_at` step.
 
 use crate::builder::IRBuilder;
 use crate::ops::dyn_ndarray::value_to_scalar_i64;

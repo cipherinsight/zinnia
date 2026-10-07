@@ -828,7 +828,7 @@ mod tests {
         let p = opaque_bool(&mut b, false);
         b.swap_write_predicate(Some(p.clone()));
         let addr = opaque_int(&mut b, 9);
-        b.ir_read_memory(storage, &addr);
+        b.storage_read_at(storage, &addr);
         let read = b.stmts.last().unwrap().clone();
         assert!(matches!(read.ir, IR::ArrayRead(_)));
         let guarded = &b.stmts[read.arguments[1] as usize];
