@@ -577,6 +577,13 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
     are the same on the base; `zero` and `mandel` build 1,024 x 1,024 lists from runtime-bounded
     loops, which the compiler unrolls to their bounds, so an uncapped compile grows without
     limit. Not a bug of this branch; reported.
+  - Validation against b0edb4da (`array-ssa-data/costs_af1.json`, `costs_fix.json`, `fix/`):
+    IR and `main.nr` digests identical on 355 of 356 case-targets; `insertion_sort`
+    halo2-base 9,642 -> 9,704 cells (+62: the per-access RAM bound on reads and writes whose
+    positions the loop's structure proves, with no in-circuit check to make the bound free);
+    acceptance 327 outcomes identical; check_outputs 100/100 on both backends;
+    noir_differential 100/100; costs_halo2 `--check` 100/100; Python suite 3,686 passed; Rust
+    lib the known 18 failures; determinism 200/200 and 158/158 stable over 3 processes.
 
 ### Open
 - Dynamic-array lanes beyond the runtime length: `1.0 / x[x > 0]` and `x[x > 0] ** -1.5` used to
