@@ -267,6 +267,13 @@ fn prove_atomic_with_facts(term: &ContractTerm, facts: &[Fact], paths: &[Fact], 
     // path: each per-iteration `i < hi` discharge query names freshly
     // minted SSA wires that no fact relates. Decomposition + this
     // check lets us skip the Z3 call entirely on those.
+    //
+    // The query is then asked over the facts of its component only: a fact
+    // sharing no variable with it cannot change whether it is entailed or
+    // contradicted (unless the other facts contradict each other, which is
+    // no reason to conclude anything about the query). Fewer facts keep
+    // each Z3 query small however many unrelated facts a program has.
+    let mut relevant: Option<(Vec<Fact>, Vec<Fact>)> = None;
     if let Some(refs) = collect_concrete_var_refs(term) {
         if !refs.is_empty() {
             let mut uf = UnionFind::default();
@@ -300,8 +307,21 @@ fn prove_atomic_with_facts(term: &ContractTerm, facts: &[Fact], paths: &[Fact], 
                 PROVE_FASTPATH_HITS.fetch_add(1, Ordering::Relaxed);
                 return ProveOutcome::Unknown;
             }
+            let mut in_component = |f: &Fact| {
+                let mut hit = false;
+                fact_walk_vars(f, &mut |v| hit |= query_roots.contains(&uf.find(v)));
+                hit
+            };
+            relevant = Some((
+                facts.iter().filter(|f| in_component(f)).cloned().collect(),
+                paths.iter().filter(|f| in_component(f)).cloned().collect(),
+            ));
         }
     }
+    let (facts, paths) = match &relevant {
+        Some((facts, paths)) => (facts.as_slice(), paths.as_slice()),
+        None => (facts, paths),
+    };
 
     let rlimit = std::env::var("ZINNIA_SMT_PROVE_RLIMIT")
         .ok()
@@ -765,6 +785,32 @@ mod tests {
             lhs: Box::new(l),
             rhs: Box::new(r),
         }
+    }
+
+    /// The query is asked over the facts of its own component: facts about
+    /// other values, even contradictory ones, prove nothing about it.
+    #[test]
+    fn unrelated_contradictory_facts_prove_nothing() {
+        let facts = vec![
+            cmp(CmpOp::Ge, vref(1), lit(0)),
+            cmp(CmpOp::Gt, vref(2), lit(1)),
+            cmp(CmpOp::Lt, vref(2), lit(0)),
+        ];
+        assert_eq!(prove_with_facts(&cmp(CmpOp::Gt, vref(1), lit(5)), &facts, &[]), ProveOutcome::Unknown);
+        assert_eq!(prove_with_facts(&cmp(CmpOp::Ge, vref(1), lit(-1)), &facts, &[]), ProveOutcome::Proved);
+    }
+
+    /// A float is a real: `x > -0.5` does not entail `x >= 0`, and
+    /// `-0.5 < x < 0.5` does not entail `x == 0`.
+    #[test]
+    fn float_facts_are_over_the_reals() {
+        let half = || ContractTerm::LitFloat(crate::optim::predicates::formula::ContractFloat(0.5));
+        let minus_half = || ContractTerm::LitFloat(crate::optim::predicates::formula::ContractFloat(-0.5));
+        let zero = || ContractTerm::LitFloat(crate::optim::predicates::formula::ContractFloat(0.0));
+        let facts = vec![cmp(CmpOp::Gt, vref(1), minus_half()), cmp(CmpOp::Lt, vref(1), half())];
+        assert_eq!(prove_with_facts(&cmp(CmpOp::Ge, vref(1), zero()), &facts, &[]), ProveOutcome::Unknown);
+        assert_eq!(prove_with_facts(&cmp(CmpOp::Ne, vref(1), zero()), &facts, &[]), ProveOutcome::Unknown);
+        assert_eq!(prove_with_facts(&cmp(CmpOp::Lt, vref(1), lit(1)), &facts, &[]), ProveOutcome::Proved);
     }
 
     #[test]
