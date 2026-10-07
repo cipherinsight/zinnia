@@ -1900,3 +1900,80 @@ fn reversed_positive_guard_without_bound_is_rejected() {
     cfg.loop_limit = 32;
     let _graph = IRGenerator::generate_from_json(cfg, &json).unwrap();
 }
+
+/// The backstop of a `while` loop the compiler stops on a fact: with the
+/// fact's own check removed (a fact that does not hold), the guard is still
+/// true after the last unrolled iteration, and the circuit has no witness
+/// instead of proving a truncated loop.
+#[test]
+fn while_loop_stopped_by_a_fact_is_backstopped() {
+    use crate::circuit_input::{CircuitInputs, InputNode, InputParam, ResolvedWitness};
+    use crate::prove::mock::MockProverBackend;
+    use crate::prove::traits::ProverBackend;
+    use crate::prove::types::ProvingParams;
+
+    // assert 0 <= n; assert n <= 3; while n * 2 > 10: n = n - 1
+    // (not a counted loop: the guard's left side is no counter). The facts
+    // make the guard false before the first iteration.
+    let circuit = serde_json::json!({
+        "__class__": "ASTCircuit",
+        "inputs": [int_input("n")],
+        "block": [
+            assert_cmp("gte", load("n"), int_const(0)),
+            assert_cmp("lte", load("n"), int_const(3)),
+            {"__class__": "ASTWhileStatement",
+             "test_expr": cmp_expr("gt",
+                 serde_json::json!({"__class__": "ASTBinaryOperator", "operator": "mul", "lhs": load("n"), "rhs": int_const(2)}),
+                 int_const(10)),
+             "block": [{"__class__": "ASTAssignStatement",
+                        "targets": [{"__class__": "ASTNameAssignTarget", "name": "n"}],
+                        "value": {"__class__": "ASTBinaryOperator", "operator": "sub",
+                                  "lhs": load("n"), "rhs": int_const(1)}}],
+             "orelse": []}
+        ]
+    });
+    let mut cfg = IRGenConfig::default();
+    cfg.loop_limit = 64;
+    let graph = IRGenerator::generate_from_json(cfg, &circuit.to_string()).unwrap();
+
+    let satisfied = |graph: &crate::ir::IRGraph, n: i64| {
+        let inputs = CircuitInputs {
+            params: vec![InputParam {
+                name: "n".into(),
+                is_public: false,
+                dtype: serde_json::json!("Integer"),
+                value: InputNode::Int(n),
+            }],
+        };
+        let params = ProvingParams::default();
+        let witness = ResolvedWitness::new(inputs, params.precision_bits);
+        MockProverBackend.prove(graph, &witness, &params).unwrap().proof_bytes == "mock_satisfied"
+    };
+    assert!(satisfied(&graph, 2));
+    assert!(!satisfied(&graph, 5));
+
+    // Drop the user's `n <= 3` check: the fact the loop stopped on no longer
+    // holds for n = 5, and only the backstop rejects it.
+    let upper_check: Vec<crate::types::StmtId> = graph
+        .stmts
+        .iter()
+        .filter(|s| matches!(s.ir, IR::Assert))
+        .filter(|s| {
+            // `assert_value` asserts `select(execution, cmp, true)`.
+            let mut cond = &graph.stmts[s.arguments[0] as usize];
+            if matches!(cond.ir, IR::SelectI) {
+                cond = &graph.stmts[cond.arguments[1] as usize];
+            }
+            matches!(cond.ir, IR::LteI)
+                && cond.arguments.get(1).is_some_and(|&c| matches!(graph.stmts[c as usize].ir, IR::ConstantInt { value: 3 }))
+        })
+        .map(|s| s.stmt_id)
+        .collect();
+    assert_eq!(upper_check.len(), 1, "the user's `n <= 3` check");
+    let mut without_fact_check = graph.clone();
+    without_fact_check.remove_stmt_bunch(&upper_check);
+    assert!(satisfied(&without_fact_check, 3));
+    // n = 7 enters the loop (Python runs it twice); skipping it must have no
+    // witness.
+    assert!(!satisfied(&without_fact_check, 7), "a truncated loop must have no witness");
+}
