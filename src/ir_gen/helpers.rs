@@ -540,6 +540,20 @@ impl IRGenerator {
                     param_name.to_string(),
                     &runtime_shape_values,
                 );
+                // Each runtime extent lies in `[0, max_shape[axis]]`: the
+                // array type's invariant, which the compiler assumes when it
+                // bounds a loop over an extent (`note_extent_bounds`), so it
+                // is checked here, where the extent enters the circuit. (The
+                // product check below does not imply it: `(-2, -3)` has
+                // product 6.)
+                for (extent, &axis_bound) in runtime_shape_values.iter().zip(&max_shape) {
+                    let zero = self.builder.ir_constant_int(0);
+                    let bound = self.builder.ir_constant_int(axis_bound as i64);
+                    let non_negative = self.builder.ir_greater_than_or_equal_i(extent, &zero);
+                    self.builder.ir_assert(&non_negative);
+                    let within = self.builder.ir_less_than_or_equal_i(extent, &bound);
+                    self.builder.ir_assert(&within);
+                }
                 let runtime_length_value = if runtime_shape_values.is_empty() {
                     self.builder.ir_constant_int(1)
                 } else {

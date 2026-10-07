@@ -104,6 +104,9 @@ pub struct SmtResolver {
     /// the resolver returns `None`, counted as
     /// `queries_skipped_oversized` in telemetry.
     max_formula_size: usize,
+    /// Assume the program's own facts (`program_facts_over`) on every
+    /// query: on for the IR generator, off for a pass that drops checks.
+    program_facts: bool,
     /// P5 telemetry. Shared across the layered resolver so range and SMT
     /// counters land in one summary. Defaults to a fresh, isolated
     /// instance (so an `SmtResolver` constructed in a test sees its own
@@ -127,6 +130,7 @@ impl SmtResolver {
             rlimit: z3_budget::RESOLVER_RLIMIT,
             disabled: false,
             max_formula_size: usize::MAX,
+            program_facts: true,
             telemetry: SmtTelemetry::new(),
         }
     }
@@ -141,6 +145,15 @@ impl SmtResolver {
     /// `n` IR statements. Larger formulas abort early.
     pub fn with_max_formula_size(mut self, n: usize) -> Self {
         self.max_formula_size = n;
+        self
+    }
+
+    /// Do not assume the program's structural predicates and scalar
+    /// preconditions. A resolver that decides whether a check may be dropped
+    /// needs this: each of those facts holds only because some check
+    /// enforces it, and that check may be the one being decided.
+    pub fn without_program_facts(mut self) -> Self {
+        self.program_facts = false;
         self
     }
 
@@ -226,6 +239,7 @@ impl SmtResolver {
             self.rlimit,
             want_bool,
             max_size,
+            self.program_facts,
         );
         let dur = t0.elapsed();
         self.telemetry.record_smt_duration(dur);
@@ -342,6 +356,7 @@ impl Resolver for SmtResolver {
             self.rlimit,
             /*max=*/ true,
             max_size,
+            self.program_facts,
         );
         let dur = t0.elapsed();
         self.telemetry.record_smt_duration(dur);
@@ -395,6 +410,7 @@ impl Resolver for SmtResolver {
             self.rlimit,
             /*max=*/ false,
             max_size,
+            self.program_facts,
         );
         let dur = t0.elapsed();
         self.telemetry.record_smt_duration(dur);
@@ -462,6 +478,7 @@ fn smt_query_with_budget(
     rlimit: u32,
     want_bool: bool,
     max_formula_size: Option<usize>,
+    program_facts: bool,
 ) -> SmtQueryOut {
     let mut walker = Walker::new(stmts, cache);
     walker.max_size = max_formula_size;
@@ -488,75 +505,9 @@ fn smt_query_with_budget(
     for c in walker.constraints.drain(..) {
         solver.assert(&c);
     }
-    // Structural-predicate integration (foundation contracts card).
-    // Surface all `IR::StructuralPredicate` atoms — they are global facts
-    // that constrain the program regardless of reachability from `root`.
-    // The discharger assembles their Z3 clauses + meta-facts; the input-
-    // name bridge reuses the walker's encodings for the actual SSA Z3
-    // terms, so e.g. `nnz(x) == k` ties to the real `k` symbol the
-    // walker produced for the `ReadInteger` statement.
-    {
-        use crate::optim::predicates::{
-            build_input_array_lengths, build_input_name_index, Discharger,
-        };
-        use z3::ast::Int;
-
-        let input_idx = build_input_name_index(stmts);
-        let input_lengths = build_input_array_lengths(stmts);
-
-        // Pre-resolve each scalar input's Z3 Int via the walker so we can
-        // close over a plain map (Discharger's closure can't hold
-        // the walker mutably — borrow-check).
-        let mut name_to_int: BTreeMap<String, Int> = BTreeMap::new();
-        for (name, producer_id) in &input_idx {
-            if let Some(term) = walker.encode(*producer_id) {
-                name_to_int.insert(name.clone(), term.as_int());
-            }
-        }
-
-        let discharger = Discharger::new();
-        let pred_c = discharger.collect_predicate_constraints(stmts, &input_lengths, |name| {
-            if let Some(t) = name_to_int.get(name) {
-                t.clone()
-            } else if let Ok(n) = name.parse::<i64>() {
-                Int::from_i64(n)
-            } else {
-                // Unknown name (not a scalar input, not a literal).
-                // Mint a fresh symbolic; the predicate's facts still
-                // hold but they're not tied to a specific SSA.
-                Int::fresh_const(&format!("sp_unknown_{name}_"))
-            }
-        });
-        for c in &pred_c.clauses {
-            solver.assert(c);
-        }
-        for f in &pred_c.meta_facts {
-            solver.assert(f);
-        }
-
-        // Scalar-precondition discharge: deserialize each
-        // ContractTerm-shaped atom, lower it to a Z3 Bool via the
-        // existing `formula::lower_bool` infrastructure (using the
-        // already-built name_to_int as the substitution), and assert
-        // on the solver.
-        use crate::optim::predicates::{find_scalar_preconditions, formula};
-        for term_json in find_scalar_preconditions(stmts) {
-            let term: formula::ContractTerm = match serde_json::from_str(term_json) {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            let mut subst = formula::Substitution::new();
-            for (name, int_term) in &name_to_int {
-                subst = subst.with_input(name.clone(), int_term.clone());
-            }
-            if let Ok(out) = formula::lower_bool(&term, &subst) {
-                solver.assert(&out.term);
-                for (_, facts) in &out.meta_fact_sets {
-                    for f in facts {
-                        solver.assert(f);
-                    }
-                }
-            }
+    if program_facts {
+        for fact in program_facts_over(stmts, &mut walker) {
+            solver.assert(&fact);
         }
     }
 
@@ -620,6 +571,65 @@ fn smt_query_with_budget(
     }
 }
 
+/// The program's own facts over `walker`'s encodings of the inputs: the
+/// clauses and meta-facts of its structural predicates
+/// (`IR::StructuralPredicate`) and its scalar preconditions
+/// (`IR::ScalarPrecondition`). Each holds wherever the program runs because a
+/// check in the program enforces it, so a resolver may assume them while
+/// that check stays; a resolver that decides whether a check can be dropped
+/// must not ([`SmtResolver::without_program_facts`]), since the fact may be
+/// that check's own.
+fn program_facts_over(stmts: &[IRStatement], walker: &mut Walker) -> Vec<z3::ast::Bool> {
+    use crate::optim::predicates::{
+        build_input_array_lengths, build_input_name_index, find_scalar_preconditions, formula, Discharger,
+    };
+    use z3::ast::Int;
+
+    let input_idx = build_input_name_index(stmts);
+    let input_lengths = build_input_array_lengths(stmts);
+    // Each integer scalar input's Z3 Int from the walker, so a predicate
+    // such as `nnz(x) == k` ties to the real `k` of the `ReadInteger`
+    // statement. A float input has no symbol here: the walker encodes it as
+    // an unconstrained `Int`, and its preconditions over that `Int` would
+    // assume integrality (`2.5 <= x <= 3.5` would give `x == 3`); a term
+    // naming it does not lower and is left out.
+    let mut name_to_int: BTreeMap<String, Int> = BTreeMap::new();
+    for (name, producer_id) in &input_idx {
+        if !matches!(stmts[*producer_id as usize].ir, crate::ir_defs::IR::ReadInteger { .. }) {
+            continue;
+        }
+        if let Some(term) = walker.encode(*producer_id) {
+            name_to_int.insert(name.clone(), term.as_int());
+        }
+    }
+    let mut facts = Vec::new();
+    let predicates = Discharger::new().collect_predicate_constraints(stmts, &input_lengths, |name| {
+        if let Some(t) = name_to_int.get(name) {
+            t.clone()
+        } else if let Ok(n) = name.parse::<i64>() {
+            Int::from_i64(n)
+        } else {
+            // Not a scalar input nor a literal: a fresh symbol (the
+            // predicate's facts still hold, tied to no statement).
+            Int::fresh_const(&format!("sp_unknown_{name}_"))
+        }
+    });
+    facts.extend(predicates.clauses);
+    facts.extend(predicates.meta_facts);
+    for term_json in find_scalar_preconditions(stmts) {
+        let Ok(term) = serde_json::from_str::<formula::ContractTerm>(term_json) else { continue };
+        let mut subst = formula::Substitution::new();
+        for (name, int_term) in &name_to_int {
+            subst = subst.with_input(name.clone(), int_term.clone());
+        }
+        if let Ok(out) = formula::lower_bool(&term, &subst) {
+            facts.push(out.term);
+            facts.extend(out.meta_fact_sets.into_iter().flat_map(|(_, f)| f));
+        }
+    }
+    facts
+}
+
 /// Discharge an `Optimize` query: maximise (or minimise) the wire at
 /// `root` over the constraints from its reverse-reachable subgraph.
 ///
@@ -632,6 +642,7 @@ fn smt_extreme(
     rlimit: u32,
     maximise: bool,
     max_formula_size: Option<usize>,
+    program_facts: bool,
 ) -> (Option<i64>, usize, bool) {
     let mut walker = Walker::new(stmts, cache);
     walker.max_size = max_formula_size;
@@ -649,64 +660,12 @@ fn smt_extreme(
         opt.assert(&c);
     }
 
-    // Structural-predicate integration for the `resolve_max` / `resolve_min`
-    // path. Mirrors the one in `smt_query_with_budget` — without this, the
-    // optimiser does not see the predicate-derived facts, so e.g. a query
-    // for max(k) given `nnz(x) == k` and `len(x) == 1024` would return
-    // unbounded.
-    {
-        use crate::optim::predicates::{
-            build_input_array_lengths, build_input_name_index, Discharger,
-        };
-        use z3::ast::Int;
-
-        let input_idx = build_input_name_index(stmts);
-        let input_lengths = build_input_array_lengths(stmts);
-
-        let mut name_to_int: BTreeMap<String, Int> = BTreeMap::new();
-        for (name, producer_id) in &input_idx {
-            if let Some(term) = walker.encode(*producer_id) {
-                name_to_int.insert(name.clone(), term.as_int());
-            }
-        }
-
-        let discharger = Discharger::new();
-        let pred_c = discharger.collect_predicate_constraints(stmts, &input_lengths, |name| {
-            if let Some(t) = name_to_int.get(name) {
-                t.clone()
-            } else if let Ok(n) = name.parse::<i64>() {
-                Int::from_i64(n)
-            } else {
-                Int::fresh_const(&format!("sp_unknown_{name}_"))
-            }
-        });
-        for c in &pred_c.clauses {
-            opt.assert(c);
-        }
-        for f in &pred_c.meta_facts {
-            opt.assert(f);
-        }
-
-        // Scalar-precondition discharge for the Optimize path (parallel
-        // to the Solver path in smt_query_with_budget).
-        use crate::optim::predicates::{find_scalar_preconditions, formula};
-        for term_json in find_scalar_preconditions(stmts) {
-            let term: formula::ContractTerm = match serde_json::from_str(term_json) {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            let mut subst = formula::Substitution::new();
-            for (name, int_term) in &name_to_int {
-                subst = subst.with_input(name.clone(), int_term.clone());
-            }
-            if let Ok(out) = formula::lower_bool(&term, &subst) {
-                opt.assert(&out.term);
-                for (_, facts) in &out.meta_fact_sets {
-                    for f in facts {
-                        opt.assert(f);
-                    }
-                }
-            }
+    // The program's facts on the `resolve_max` / `resolve_min` path too:
+    // without them, a query for max(k) given `nnz(x) == k` and
+    // `len(x) == 1024` would return unbounded.
+    if program_facts {
+        for fact in program_facts_over(stmts, &mut walker) {
+            opt.assert(&fact);
         }
     }
 
@@ -764,52 +723,9 @@ fn smt_extreme(
             for c2 in walker2.constraints.drain(..) {
                 verifier.assert(&c2);
             }
-            // Replay structural-predicate constraints + scalar precondi-
-            // tions, same shape as the Optimize side above.
-            use crate::optim::predicates::{
-                build_input_array_lengths, build_input_name_index, find_scalar_preconditions,
-                formula, Discharger,
-            };
-            use z3::ast::Int;
-
-            let input_idx = build_input_name_index(stmts);
-            let input_lengths = build_input_array_lengths(stmts);
-            let mut name_to_int: BTreeMap<String, Int> = BTreeMap::new();
-            for (name, producer_id) in &input_idx {
-                if let Some(term) = walker2.encode(*producer_id) {
-                    name_to_int.insert(name.clone(), term.as_int());
-                }
-            }
-            let discharger = Discharger::new();
-            let pred_c = discharger.collect_predicate_constraints(stmts, &input_lengths, |name| {
-                if let Some(t) = name_to_int.get(name) {
-                    t.clone()
-                } else if let Ok(n) = name.parse::<i64>() {
-                    Int::from_i64(n)
-                } else {
-                    Int::fresh_const(&format!("sp_unknown_{name}_"))
-                }
-            });
-            for cc in &pred_c.clauses {
-                verifier.assert(cc);
-            }
-            for f in &pred_c.meta_facts {
-                verifier.assert(f);
-            }
-            for term_json in find_scalar_preconditions(stmts) {
-                if let Ok(term) = serde_json::from_str::<formula::ContractTerm>(term_json) {
-                    let mut subst = formula::Substitution::new();
-                    for (name, int_term) in &name_to_int {
-                        subst = subst.with_input(name.clone(), int_term.clone());
-                    }
-                    if let Ok(out) = formula::lower_bool(&term, &subst) {
-                        verifier.assert(&out.term);
-                        for (_, facts) in &out.meta_fact_sets {
-                            for f in facts {
-                                verifier.assert(f);
-                            }
-                        }
-                    }
+            if program_facts {
+                for fact in program_facts_over(stmts, &mut walker2) {
+                    verifier.assert(&fact);
                 }
             }
             // The "is the candidate actually a bound?" question.

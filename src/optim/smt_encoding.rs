@@ -36,7 +36,6 @@
 //! - `LogicalAnd / LogicalOr / LogicalNot`
 //! - `SelectI / SelectB`
 //! - `BoolCast` (int→bool: `If(int != 0, true, false)`)
-//! - `IntCast` (bool→int: `If(bool, 1, 0)`)
 //! - `AbsI / SignI`
 //! - `InvI` (constraint form: `out * in = 1`)
 //! - `PowI` (only when the exponent's term is itself a Z3 literal we can
@@ -52,7 +51,8 @@
 //! - All bitwise ops (`BitAndI`, `ShlI`, …) — Z3's Int sort doesn't
 //!   directly support bitwise; they'd need `BV` translation. P2's range
 //!   analysis will catch most cases.
-//! - `FloatCast` — leaves the integer domain.
+//! - `FloatCast` — leaves the integer domain; `IntCast` (float → int) —
+//!   floats are not encoded, so neither is their truncation.
 //! - All transcendental, string, IO, memory, dyn-ndarray, external,
 //!   hashing ops — not on the integer-resolver hot path.
 //!
@@ -190,7 +190,7 @@ pub trait IROp {
 /// `fresh_unconstrained()` with a comment naming the reason.
 /// For `a` and `b`: (whether the floor result differs from the
 /// Euclidean one, i.e. `b < 0` and `a mod b != 0`; the Euclidean `a mod b`).
-fn floor_adjustment(a: &Int, b: &Int) -> (Bool, Int) {
+pub(crate) fn floor_adjustment(a: &Int, b: &Int) -> (Bool, Int) {
     let zero = Int::from_i64(0);
     let r = a.modulo(b);
     let shift = Bool::and(&[&b.lt(&zero), &r.eq(&zero).not()]);
@@ -229,10 +229,16 @@ impl IROp for IR {
             // Euclidean remainder, the floor quotient is one less and the
             // remainder `mod + b`. `DivI` is exact division, where all
             // conventions agree.
+            // `DivI` is exact division in the field: `a / b` when `b`
+            // divides `a`, else the field element `a * b^-1`, which is no
+            // integer of the window. Only the first case is encoded; the
+            // other is left unconstrained.
             IR::DivI => {
                 let a = args[0].as_int();
                 let b = args[1].as_int();
-                Z3Term::Int(a.div(&b))
+                let zero = Int::from_i64(0);
+                let exact = Bool::and(&[&b.eq(&zero).not(), &a.modulo(&b).eq(&zero)]);
+                Z3Term::Int(exact.ite(&a.div(&b), &Int::fresh_const("div_i_inexact_")))
             }
             IR::FloorDivI | IR::FloorDivIPinned { .. } => {
                 let a = args[0].as_int();
@@ -428,12 +434,12 @@ impl IROp for IR {
             }
 
             // ── Cast ───────────────────────────────────────────────────
-            IR::IntCast => {
-                // The most useful IntCast at the integer resolver is
-                // bool→int (`If(b, 1, 0)`); it's free-of-charge through
-                // `as_int`.
-                Z3Term::Int(args[0].as_int())
-            }
+            // `IntCast` is the float -> integer conversion (truncation; a
+            // Boolean never reaches it, `IRBuilder::ir_int_cast`). Floats are
+            // not encoded (they are unconstrained symbols), so neither is
+            // their truncation: the identity on the float's symbol would
+            // claim `int(x) == x`.
+            IR::IntCast => ctx.fresh_unconstrained(),
             IR::BoolCast => {
                 // int→bool: per spec, `If(int != 0, true, false)`. The
                 // `as_bool` helper does exactly that.

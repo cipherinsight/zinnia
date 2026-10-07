@@ -537,12 +537,20 @@ fn lower_num_inner(
             } else {
                 let li = l.as_int();
                 let ri = r.as_int();
+                // `/` of two integers is true division (Python), a real;
+                // `//` and `%` follow Python's floor convention, which
+                // differs from SMT-LIB's Euclidean `div`/`mod` for a
+                // negative divisor (`smt_encoding::floor_adjustment`). The
+                // circuit enforces these terms with the same semantics
+                // (`IRBuilder::emit_term_as_num_value`, `FloorDivI`, `ModI`).
+                let (shift, remainder) = crate::optim::smt_encoding::floor_adjustment(&li, &ri);
                 Ok(Z3Term::Int(match op {
                     ArithOp::Add => Int::add(&[&li, &ri]),
                     ArithOp::Sub => Int::sub(&[&li, &ri]),
                     ArithOp::Mul => Int::mul(&[&li, &ri]),
-                    ArithOp::Div | ArithOp::FloorDiv => li.div(&ri),
-                    ArithOp::Mod => li.modulo(&ri),
+                    ArithOp::Div => return Ok(Z3Term::Real(li.to_real().div(&ri.to_real()))),
+                    ArithOp::FloorDiv => shift.ite(&Int::sub(&[&li.div(&ri), &Int::from_i64(1)]), &li.div(&ri)),
+                    ArithOp::Mod => shift.ite(&Int::add(&[&remainder, &ri]), &remainder),
                     // Pow: fresh Int (sound, imprecise) — same as pre-Phase
                     // float-contracts behaviour.
                     ArithOp::Pow => Int::fresh_const("pow_result_"),

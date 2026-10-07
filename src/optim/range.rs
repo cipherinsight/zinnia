@@ -121,34 +121,6 @@ impl IntInterval {
         Self { min: lo, max: hi }
     }
 
-    /// Truncating integer division (`/` in Rust). If `b` straddles zero or
-    /// touches zero we conservatively return unbounded — division by zero
-    /// would be UB at runtime, and a divisor crossing zero produces
-    /// arbitrarily large quotients near 0.
-    pub fn div(a: Self, b: Self) -> Self {
-        if b.contains(0) {
-            return Self::unbounded();
-        }
-        // Both endpoints have the same sign; consider all 4 corners.
-        let candidates = [
-            sat_div_trunc(a.min, b.min),
-            sat_div_trunc(a.min, b.max),
-            sat_div_trunc(a.max, b.min),
-            sat_div_trunc(a.max, b.max),
-        ];
-        let mut lo = candidates[0];
-        let mut hi = candidates[0];
-        for &c in &candidates[1..] {
-            if c < lo {
-                lo = c;
-            }
-            if c > hi {
-                hi = c;
-            }
-        }
-        Self { min: lo, max: hi }
-    }
-
     /// Floor division (`//`, the IR's `FloorDivI`, Python semantics like
     /// `kernel::fp_floor_div`). For a divisor that may be negative the
     /// upper end is widened by one, so the interval also covers the
@@ -297,17 +269,6 @@ fn sat_mul(a: i64, b: i64) -> i64 {
     }
 }
 
-/// Truncating integer division, saturating on the `i64::MIN / -1` overflow.
-/// Caller must ensure `b != 0`.
-fn sat_div_trunc(a: i64, b: i64) -> i64 {
-    if b == -1 && a == i64::MIN {
-        // i64::MIN / -1 overflows.
-        i64::MAX
-    } else {
-        a / b
-    }
-}
-
 /// Python-style floor division, saturating on overflow. Caller must ensure
 /// `b != 0`.
 fn sat_div_floor(a: i64, b: i64) -> i64 {
@@ -423,7 +384,10 @@ impl RangeResolver {
             IR::AddI => self.binop(stmt, stmts, IntInterval::add),
             IR::SubI => self.binop(stmt, stmts, IntInterval::sub),
             IR::MulI => self.binop(stmt, stmts, IntInterval::mul),
-            IR::DivI => self.binop(stmt, stmts, IntInterval::div),
+            // `DivI` is exact division in the field: for a divisor that
+            // does not divide it is the field element `a * b^-1`, which no
+            // interval of integers bounds (`smt_encoding`, `DivI`).
+            IR::DivI => IntInterval::unbounded(),
             IR::FloorDivI => self.binop(stmt, stmts, IntInterval::floor_div),
             IR::ModI => self.binop(stmt, stmts, IntInterval::modulo),
 
@@ -740,15 +704,6 @@ mod tests {
         // i64::MAX * 2 overflows; must saturate, NEVER wrap.
         let r = IntInterval::mul(iv(i64::MAX, i64::MAX), iv(2, 2));
         assert_eq!(r, iv(i64::MAX, i64::MAX));
-    }
-
-    #[test]
-    fn div_zero_crossing_returns_unbounded() {
-        // Divisor crosses zero — result is unbounded.
-        assert_eq!(
-            IntInterval::div(iv(10, 20), iv(-5, 5)),
-            IntInterval::unbounded()
-        );
     }
 
     #[test]

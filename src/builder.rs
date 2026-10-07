@@ -1057,6 +1057,12 @@ impl IRBuilder {
             ContractTerm::Arith { op, lhs, rhs } => {
                 let l = self.emit_term_as_num_value(lhs)?;
                 let r = self.emit_term_as_num_value(rhs)?;
+                // `/` is true division (a float) whatever the operands, as in
+                // Python and in the facts the term states (`formula::lower`).
+                if *op == ArithOp::Div {
+                    let (l, r) = (self.ir_float_cast(&l), self.ir_float_cast(&r));
+                    return Some(self.ir_div_f(&l, &r));
+                }
                 let any_float = matches!(l, Value::Float(_)) || matches!(r, Value::Float(_));
                 let ir = if any_float {
                     match op {
@@ -1073,7 +1079,7 @@ impl IRBuilder {
                         ArithOp::Add => IR::AddI,
                         ArithOp::Sub => IR::SubI,
                         ArithOp::Mul => IR::MulI,
-                        ArithOp::Div => IR::DivI,
+                        ArithOp::Div => unreachable!("true division is handled above"),
                         ArithOp::FloorDiv => IR::FloorDivI,
                         ArithOp::Mod => IR::ModI,
                         ArithOp::Pow => IR::PowI,
@@ -1095,6 +1101,12 @@ impl IRBuilder {
     /// (sound for the witness-fallback path: the worst case is using an
     /// `*I` op on a wire that would have benefited from an `*F` form,
     /// which still produces a deterministic boolean answer).
+    /// Whether statement `sid` computes a float (see
+    /// [`Self::value_from_stmt_id_for_value`]).
+    pub(crate) fn is_float_stmt(&self, sid: StmtId) -> bool {
+        matches!(self.value_from_stmt_id_for_value(sid, crate::types::ValueId(0)), Value::Float(_))
+    }
+
     fn value_from_stmt_id_for_value(&self, sid: StmtId, value_id: crate::types::ValueId) -> Value {
         let stmt = match self.stmts.get(sid as usize) {
             Some(s) => s,
@@ -1763,6 +1775,16 @@ impl IRBuilder {
             }
         }
         out
+    }
+
+    /// Python's and NumPy's true division `a / b` of two integers: a float
+    /// (`np.divide(7, 2)` is `3.5`). Not [`Self::ir_div_i`], which is exact
+    /// division in the field: for a divisor that does not divide it is the
+    /// field element `a * b^-1`, not a number NumPy would produce.
+    pub fn ir_true_div_i(&mut self, a: &Value, b: &Value) -> Value {
+        let a = self.ir_float_cast(a);
+        let b = self.ir_float_cast(b);
+        self.ir_div_f(&a, &b)
     }
 
     ir_binary!(

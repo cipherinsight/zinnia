@@ -74,6 +74,16 @@ fn is_domain_comparison(stmts: &[IRStatement], cmp: StmtId, read: StmtId) -> boo
     }
 }
 
+/// Whether the Boolean statement `cmp` is the comparison of an input
+/// read's domain check (`x >= i64::MIN` or `x <= i64::MAX` of a
+/// `ReadInteger`/`ReadFloat`).
+pub(crate) fn is_domain_check(stmts: &[IRStatement], cmp: StmtId) -> bool {
+    stmts[cmp as usize].arguments.first().is_some_and(|&read| {
+        matches!(stmts[read as usize].ir, IR::ReadInteger { .. } | IR::ReadFloat { .. })
+            && is_domain_comparison(stmts, cmp, read)
+    })
+}
+
 /// Whether `stmts[index]` is part of an input's domain check: a domain
 /// comparison of an input read, the `Assert` of one, or an `AssertBit` of an
 /// input read. For tests that count the other comparisons and assertions.

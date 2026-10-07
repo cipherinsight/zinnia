@@ -164,6 +164,13 @@ fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32, target: Targe
     Some(out)
 }
 
+/// Whether the measurement switch `name` (an environment variable) is set
+/// to `1`. The ablation switches are documented in `docs/ablations.md`; unset,
+/// they change nothing.
+pub(crate) fn ablated(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|v| v.trim() == "1")
+}
+
 fn compile_phase_trace_enabled() -> bool {
     std::env::var("ZINNIA_COMPILE_PHASE_TRACE")
         .ok()
@@ -421,7 +428,10 @@ fn compile_circuit_impl(
     if dead_code_elimination {
         passes.push("DeadCodeElimination");
     }
-    if always_satisfied_elimination {
+    // Measurement only: `ZINNIA_ABLATE_CHECK_ELIM=1` leaves out the two
+    // passes that drop program checks (this one and `AssertSubsumption`).
+    let check_elimination = !ablated("ZINNIA_ABLATE_CHECK_ELIM");
+    if always_satisfied_elimination && check_elimination {
         passes.push("AlwaysSatisfiedElimination");
     }
     if duplicate_code_elimination {
@@ -474,7 +484,9 @@ fn compile_circuit_impl(
     // Collapse `AssertU128Lt(stride_k + base, hi)` chains to the tightest
     // (max-stride) member: see `optim/assert_subsumption.rs`. Runs after
     // DCE so the redundant asserts are visible side-by-side.
-    passes.push("AssertSubsumption");
+    if check_elimination {
+        passes.push("AssertSubsumption");
+    }
     if backend == "halo2" && enable_memory_consistency {
         passes.push("DynamicNDArrayMemoryLowering");
         passes.push("DynamicNDArrayMetaAssertInjection");

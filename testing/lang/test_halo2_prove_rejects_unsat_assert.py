@@ -8,9 +8,11 @@ runs an always-on, O(asserts) witness-satisfaction check during synthesis
 instead. (The legacy halo2-IPA backend, which had the same check, is
 retired.)
 
-A kernel asserting an always-false predicate (`v == v + 1`) compiles fine —
-the contradiction is only visible once a concrete witness flows through — so
-the failure must surface at prove(), not compile().
+A kernel asserting a predicate the witness violates (`v == 3`, proved with
+`v = 7`) compiles fine — the violation is only visible once a concrete witness
+flows through — so the failure must surface at prove(), not compile(). (An
+always-false predicate such as `v == v + 1` is rejected earlier, at compile
+time: `AlwaysSatisfiedElimination` proves it false from its definitions.)
 """
 import pytest
 
@@ -22,10 +24,21 @@ HALO2_PARAMS = {"k": 12, "precision_bits": 32, "lookup_bits": 8}
 
 @zk_circuit
 def asserts_false(v: Integer) -> Integer:
-    # Always false for any v: pins an `assert` gate cell to 0, which the
+    # False for the witness below: pins an `assert` gate cell to 0, which the
     # gate requires to be 1.
+    assert v == 3
+    return v
+
+
+@zk_circuit
+def asserts_always_false(v: Integer) -> Integer:
     assert v == v + 1
     return v
+
+
+def test_always_false_assert_is_rejected_at_compile_time():
+    with pytest.raises(Exception, match="provably unsatisfiable"):
+        ZKCircuit.from_method(asserts_always_false).compile()
 
 
 def test_halo2_prove_rejects_unsat_assert():
