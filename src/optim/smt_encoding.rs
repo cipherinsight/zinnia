@@ -36,7 +36,6 @@
 //! - `LogicalAnd / LogicalOr / LogicalNot`
 //! - `SelectI / SelectB`
 //! - `BoolCast` (int→bool: `If(int != 0, true, false)`)
-//! - `IntCast` (bool→int: `If(bool, 1, 0)`)
 //! - `AbsI / SignI`
 //! - `InvI` (constraint form: `out * in = 1`)
 //! - `PowI` (only when the exponent's term is itself a Z3 literal we can
@@ -52,7 +51,8 @@
 //! - All bitwise ops (`BitAndI`, `ShlI`, …) — Z3's Int sort doesn't
 //!   directly support bitwise; they'd need `BV` translation. P2's range
 //!   analysis will catch most cases.
-//! - `FloatCast` — leaves the integer domain.
+//! - `FloatCast` — leaves the integer domain; `IntCast` (float → int) —
+//!   floats are not encoded, so neither is their truncation.
 //! - All transcendental, string, IO, memory, dyn-ndarray, external,
 //!   hashing ops — not on the integer-resolver hot path.
 //!
@@ -434,12 +434,12 @@ impl IROp for IR {
             }
 
             // ── Cast ───────────────────────────────────────────────────
-            IR::IntCast => {
-                // The most useful IntCast at the integer resolver is
-                // bool→int (`If(b, 1, 0)`); it's free-of-charge through
-                // `as_int`.
-                Z3Term::Int(args[0].as_int())
-            }
+            // `IntCast` is the float -> integer conversion (truncation; a
+            // Boolean never reaches it, `IRBuilder::ir_int_cast`). Floats are
+            // not encoded (they are unconstrained symbols), so neither is
+            // their truncation: the identity on the float's symbol would
+            // claim `int(x) == x`.
+            IR::IntCast => ctx.fresh_unconstrained(),
             IR::BoolCast => {
                 // int→bool: per spec, `If(int != 0, true, false)`. The
                 // `as_bool` helper does exactly that.

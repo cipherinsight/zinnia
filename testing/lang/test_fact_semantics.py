@@ -223,3 +223,23 @@ def test_float_precondition_does_not_force_a_divisor_to_zero():
     satisfied, _, values = prove(divide_by_small, 0.25, 1.0)
     assert satisfied and values == [round(4.0 * Q32)]
     assert not prove(divide_by_small, 0.0, 1.0)[0]
+
+
+# The IR generator's SMT resolver encoded a float input as an integer symbol
+# and `int(x)` as the identity on it, so under `2.5 <= x <= 3.5` it resolved
+# `int(x)` to the constant 3: the circuit's output was the constant
+# `arange(4).sum() == 6` for every x, and x = 2.7 (NumPy: 3) had a proof of 6.
+
+@zk_circuit
+@requires(lambda x: x >= 2.5)
+@requires(lambda x: x <= 3.5)
+def truncated_bound(x: float):
+    n = int(x)
+    return np.arange(n + 1).sum()
+
+
+def test_float_preconditions_do_not_make_a_truncation_constant():
+    # `int(x)` has no static value: the array size is rejected (no bound on a
+    # float's truncation is derived), never compiled to a constant.
+    with pytest.raises(Exception, match="compile-time constant"):
+        ZKCircuit.from_method(truncated_bound).compile()

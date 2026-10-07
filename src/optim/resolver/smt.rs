@@ -587,10 +587,17 @@ fn program_facts_over(stmts: &[IRStatement], walker: &mut Walker) -> Vec<z3::ast
 
     let input_idx = build_input_name_index(stmts);
     let input_lengths = build_input_array_lengths(stmts);
-    // Each scalar input's Z3 Int from the walker, so a predicate such as
-    // `nnz(x) == k` ties to the real `k` of the `ReadInteger` statement.
+    // Each integer scalar input's Z3 Int from the walker, so a predicate
+    // such as `nnz(x) == k` ties to the real `k` of the `ReadInteger`
+    // statement. A float input has no symbol here: the walker encodes it as
+    // an unconstrained `Int`, and its preconditions over that `Int` would
+    // assume integrality (`2.5 <= x <= 3.5` would give `x == 3`); a term
+    // naming it does not lower and is left out.
     let mut name_to_int: BTreeMap<String, Int> = BTreeMap::new();
     for (name, producer_id) in &input_idx {
+        if !matches!(stmts[*producer_id as usize].ir, crate::ir_defs::IR::ReadInteger { .. }) {
+            continue;
+        }
         if let Some(term) = walker.encode(*producer_id) {
             name_to_int.insert(name.clone(), term.as_int());
         }
