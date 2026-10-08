@@ -75,6 +75,12 @@ pub(super) fn append(
         "no_facts": options.no_facts,
         "forcing": options.forcing.names(),
         "estimated_cost": selected.iter().map(|&i| nodes[i].node.cost).sum::<u64>(),
+        // Each selected node's estimated cost, for comparing the cost
+        // model with measurements node by node.
+        "selected": selected
+            .iter()
+            .map(|&i| json!({ "name": nodes[i].name, "group": nodes[i].group, "cost": nodes[i].node.cost }))
+            .collect::<Vec<_>>(),
         "groups": rows,
     });
     let mut file = std::fs::OpenOptions::new()

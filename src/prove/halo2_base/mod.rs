@@ -405,6 +405,31 @@ pub fn committed_polys(stats: &CellStats, k: u32, lookup_bits: u32) -> Option<us
     )
 }
 
+/// The polynomials the prover commits to for `ir` at `params`, counted on
+/// the constraint system the real circuit configures (every phase, the
+/// challenge column, the memory tables and RAM traces): its advice columns,
+/// three per lookup argument (halo2's permuted input, permuted table and
+/// product), one product per shuffle, the permutation argument's products
+/// (`degree - 2` columns each), and the quotient pieces and blinder. A
+/// measurement aid for `committed_polys`, which estimates the same from cell
+/// counts without a synthesis of the circuit. Returns JSON with the parts.
+pub fn configured_polys(ir: &IRGraph, params: &ProvingParams) -> Result<serde_json::Value, ProvingError> {
+    use halo2_base::halo2_proofs::plonk::{Circuit, ConstraintSystem};
+    let (mut circuit, _) = build_circuit(ir, None, params, CircuitBuilderStage::Keygen, None)?;
+    let mut meta = ConstraintSystem::<Fp>::default();
+    let _config = Halo2BaseCircuit::configure_with_params(&mut meta, circuit.params());
+    circuit.builder.clear();
+    let degree = meta.degree().max(3);
+    let (advice, lookups, shuffles) = (meta.num_advice_columns(), meta.lookups().len(), meta.shuffles().len());
+    let permutation = meta.permutation().get_columns().len();
+    let permutation_products = permutation.div_ceil(degree - 2);
+    let polys = advice + 3 * lookups + shuffles + permutation_products + (degree - 1) + 1;
+    Ok(serde_json::json!({
+        "k": params.k, "degree": degree, "advice_columns": advice, "lookups": lookups, "shuffles": shuffles,
+        "permutation_columns": permutation, "committed_polys": polys, "poly_cost": (polys as u64) << params.k,
+    }))
+}
+
 /// Cell counts of one synthesized circuit (witness-independent).
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct CellStats {

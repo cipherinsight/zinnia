@@ -75,9 +75,12 @@ pub(crate) struct UnitCosts {
     key_link: u32,
     /// One term of a count of the keys below or above a key.
     key_count_term: u32,
-    /// One element's terms in an order statistic's two counts (a
-    /// comparison, an equality test and two additions).
+    /// An order statistic (`emit::order_statistic`): per element its terms
+    /// in the two counts (a comparison, an equality test and two
+    /// additions); once, the hinted value and the two checks of the rank
+    /// against the counts.
     rank_count_term: u32,
+    rank_count_fixed: u32,
     /// The minimum's (maximum's) pin: per element an asserted comparison
     /// (one range check of its gap) and a factor of the membership
     /// product; once, the hint's range check and the product's zero test.
@@ -142,11 +145,16 @@ pub(crate) struct RoutingCosts {
 /// argsort of 3 carrying payloads of 0355 / 0358); a read at a hinted index
 /// is a selection over the slots (`prove/halo2_base/synthesizer/memory.rs`):
 /// 13 + 8.24 cells per slot measured for 5 to 100 slots, priced 20 + 8 per
-/// slot; `KeyLess` is about 55 cells; an order
-/// statistic of 100 about 4,700-6,500; the extreme pin about 42 cells per
-/// element plus 38 (fitted on maxima of 5 and minima of 48 values in the
-/// perf cases 0436 and 0314), against 47-51 per scan step, so a scan stays
-/// cheaper below 10 values.
+/// slot; `KeyLess` is about 55 cells; an order statistic 56 cells per
+/// element and 14 once (a comparison of 43-46, an equality test of 7, two
+/// additions of 3; a second statistic of `np.sort(a)` at a runtime rank adds
+/// 617, 1,177, 2,857 and 5,657 cells at 10, 20, 50 and 100 elements,
+/// `eval-redo/layer/cost-model-misses.md`); the extreme pin 42 cells per
+/// element plus 31 (fitted on maxima of 5 and minima of 48 values in the
+/// perf cases 0436 and 0314 as 42 plus 38; row maxima and minima of 3 to
+/// 100 elements cost exactly 7 cells less than that at every length),
+/// against 47 per scan step (a comparison of 43 and a select of 4), so a
+/// scan stays cheaper below 16 values.
 const HALO2_BASE: UnitCosts = UnitCosts {
     compare: 43,
     compare_select: 4,
@@ -169,9 +177,10 @@ const HALO2_BASE: UnitCosts = UnitCosts {
     table_read: Some(3),
     key_link: 55,
     key_count_term: 59,
-    rank_count_term: 50,
+    rank_count_term: 56,
+    rank_count_fixed: 14,
     extreme_term: 42,
-    extreme_fixed: 38,
+    extreme_fixed: 31,
     masked_extreme_term: 41,
     masked_extreme_fixed: 30,
     routing: Some(HALO2_BASE_ROUTING),
@@ -200,8 +209,12 @@ const HALO2_BASE_ROUTING: RoutingCosts = RoutingCosts { switch: 16, carried: 12,
 /// native read per key, the array built once, an asserted `KeyLess` per
 /// link), by Batcher's network 26,100 (24 per exchange); a sort's exchange
 /// is 17; the 7 largest of 100 cost 1,000 (one count of 100 key terms); an
-/// order statistic of 100 about 840; the extreme pin about 5 per element
-/// plus 3 (a maximum of 3 values costs 15 gates less than its scan).
+/// order statistic 9 gates per element and 6 once (a second statistic of
+/// `np.sort(a)` at a runtime rank adds 99, 191, 465 and 922 gates at 10, 20,
+/// 50 and 100 elements: 9.1 per element and 7.6 once, of which the kernel's
+/// own subtraction and addition take one or two); the extreme pin about 5
+/// per element plus 3 (a maximum of 3 values costs 15 gates less than its
+/// scan).
 const NOIR: UnitCosts = UnitCosts {
     // A compare-exchange of 17 gates whether or not its selects are used
     // (not recalibrated per select).
@@ -224,6 +237,7 @@ const NOIR: UnitCosts = UnitCosts {
     key_link: 6,
     key_count_term: 10,
     rank_count_term: 9,
+    rank_count_fixed: 6,
     extreme_term: 5,
     extreme_fixed: 3,
     masked_extreme_term: 5,
@@ -408,7 +422,7 @@ impl UnitCosts {
 
     /// One value pinned by `count(a < v) <= r < count(a <= v)`.
     fn order_statistic(&self, n: usize) -> u64 {
-        n as u64 * u64::from(self.rank_count_term)
+        n as u64 * u64::from(self.rank_count_term) + u64::from(self.rank_count_fixed)
     }
 
     /// The smallest or largest of `n` values.
