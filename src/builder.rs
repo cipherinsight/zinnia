@@ -2558,11 +2558,24 @@ impl IRBuilder {
         cells: &[Value],
         basis: &[Value],
     ) -> Value {
+        self.ir_array_fact_scoped(kind, cells, basis, None)
+    }
+
+    /// [`IRBuilder::ir_array_fact`] for a claim that holds where the Boolean
+    /// `predicate` holds (`Some`: a fact derived under an execution
+    /// predicate, the layer's `Scope::When`), or everywhere (`None`).
+    pub fn ir_array_fact_scoped(
+        &mut self,
+        kind: crate::lower::array_facts::ArrayFactKind,
+        cells: &[Value],
+        basis: &[Value],
+        predicate: Option<&Value>,
+    ) -> Value {
         if cells.is_empty() {
             return Value::None;
         }
-        let spec = crate::lower::array_facts::ArrayFactSpec { kind, len: cells.len() as u32 };
-        let operands: Vec<Value> = cells.iter().chain(basis).map(|v| self.ensure_ptr(v)).collect();
+        let spec = crate::lower::array_facts::ArrayFactSpec { kind, len: cells.len() as u32, scoped: predicate.is_some() };
+        let operands: Vec<Value> = cells.iter().chain(basis).chain(predicate).map(|v| self.ensure_ptr(v)).collect();
         self.create_ir(&IR::ArrayFact(spec), &operands)
     }
 

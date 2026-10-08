@@ -169,3 +169,41 @@ call this configuration `abl_array_facts` (`benchmarking/ablations/common.py`).
   "zero past position `k`") is stated on the sublist of its cells when they are known.
 - `CountBound` and `Distinct` have no construction of their own (an output capacity sized by
   `nnz` would be the IR generator's decision, before the layer).
+
+## 8. From the frontend's fact store (section by branch `array-facts-port`)
+
+*Written by the array-facts-port agent; not part of the fact-rules commits.*
+
+The frontend's store (branch `array-facts-port`, `docs/array-facts.md` there) has the same
+model as `IR::ArrayFact`: a fact describes the cells it lists (SSA values) or an IR array
+version, and every query reads the array's current cells, so nothing expires on a write.
+(The sentence of section 4 that the store "keys them by array" describes fact-staleness's
+value-id records, which array-facts-port replaced.) The interface fits, with three limits:
+
+1. **Scope.** Each store fact carries a guard: `Always`, or the conjuncts of the execution
+   predicate it was derived under (a range derived inside `if c:` from a check made there).
+   `IR::ArrayFact` has no scope, so the store can state only its `Always` facts. An optional
+   predicate operand (the layer's `Scope::When(p)`) would let it state the others.
+2. **Basis.** The store does not record which program checks a derived fact rests on (a range
+   transferred through `a + 1` from a `forall(a, in_range(...))`). It can state with an empty
+   basis only the facts that hold by the constraints computing the cells, and with a basis the
+   `@requires` element facts (the Booleans the witness emitter asserts).
+3. **Vocabulary.** Segmentations with a runtime cut (`{0} live {count} padding {n}`) and
+   symbolic ends (`<= count - 1`) have no claim; the store can state the constant hull of a
+   whole list, or a prefix cut at a constant.
+
+What the store would state through `ir_array_fact`, once both branches are in one tree (a call
+next to each source's `state_defined_facts`, `builder/array_facts.rs`):
+
+| source | `ArrayFactKind`, cells, basis |
+|---|---|
+| `np.nonzero` / `np.flatnonzero` lane, `np.argwhere` | `ElementsWithin { 0, extent - 1 }` on the lane's cells (padding 0 included), no basis |
+| `np.unique` inverse | `ElementsWithin { 0, n - 1 }` (the constant hull of `[0, count - 1]`), no basis |
+| `np.unique` values | none (the order holds on the live prefix only, cut at the runtime count) |
+| sort / argsort lines | none (the layer's `definitional` already has them; the store's `FreeFacts::is_argsort_line` is subsumed by it and should go at the merge) |
+| `@requires(forall(a, in_range(lo, hi)))` (constant ends), `lt_bound`, `is_nonneg`, `eq_const` | `ElementsWithin` on the input's cells, basis: the asserted comparisons |
+| Boolean input arrays | `ElementsWithin { 0, 1 }`, basis: the domain checks |
+| `np.linspace` with a runtime `num`, constant ascending endpoints | none (ordered on the live prefix only) |
+
+Nothing measured needs these yet (the perf cases' facts are all established by the layer's own
+routes), so array-facts-port does not emit any; the calls are a few lines each.

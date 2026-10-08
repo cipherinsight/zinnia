@@ -485,18 +485,23 @@ pub enum ArrayFactKind {
     Permutation,
 }
 
-/// The payload of `IR::ArrayFact`: the claim and how many of the
-/// statement's operands are the list (the rest are its basis).
+/// The payload of `IR::ArrayFact`: the claim, how many of the statement's
+/// operands are the list (the rest are its basis), and whether the last
+/// operand is a predicate the claim holds under (`Scope::When`; the basis
+/// then ends before it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ArrayFactSpec {
     pub kind: ArrayFactKind,
     pub len: u32,
+    #[serde(default)]
+    pub scoped: bool,
 }
 
 impl ArrayFactSpec {
     /// The statement's printed form.
     pub fn describe(&self) -> String {
-        format!("array_fact[{:?}][{}]", self.kind, self.len)
+        let scope = if self.scoped { "[when]" } else { "" };
+        format!("array_fact[{:?}][{}]{scope}", self.kind, self.len)
     }
 
     /// The claim about `list`.
@@ -528,7 +533,7 @@ pub struct Stated {
 /// permutation of `0..n` gives `[0, n - 1]`.
 pub fn value_bounds(stated: &[Stated], asserted: impl Fn(StmtId) -> bool) -> Vec<Fact> {
     let mut bounds = Vec::new();
-    for s in stated.iter().filter(|s| s.basis.iter().all(|&c| asserted(c))) {
+    for s in stated.iter().filter(|s| s.fact.scope == Scope::Everywhere && s.basis.iter().all(|&c| asserted(c))) {
         let (list, lo, hi) = match s.fact.claim {
             Claim::ElementsWithin { list, lo, hi } => (list, lo, hi),
             Claim::Permutation(p, q) if range_len(q).is_some() => (p, Some(0), Some(p.len() as i64 - 1)),
@@ -552,7 +557,11 @@ pub fn stated(graph: &IRGraph) -> Vec<Stated> {
             IR::ArrayFact(spec) => {
                 let len = spec.len as usize;
                 let list = ListId::of_stmts(&s.arguments[..len]);
-                Some(Stated { fact: everywhere(spec.claim(list)), basis: s.arguments[len..].to_vec() })
+                let (basis, scope) = match (spec.scoped, s.arguments[len..].split_last()) {
+                    (true, Some((&p, basis))) => (basis.to_vec(), Scope::When(p)),
+                    _ => (s.arguments[len..].to_vec(), Scope::Everywhere),
+                };
+                Some(Stated { fact: Fact { claim: spec.claim(list), scope }, basis })
             }
             _ => None,
         })
