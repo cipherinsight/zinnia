@@ -11,6 +11,7 @@ mod pattern_match_optim;
 mod predicated_simplification;
 mod select_merge;
 mod select_chain_forwarding;
+pub mod array_facts;
 pub mod predicates;
 pub mod prove;
 pub mod range;
