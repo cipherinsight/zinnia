@@ -169,7 +169,7 @@ pub fn dyn_aggregate_all(b: &mut IRBuilder, data: &DynamicNDArrayData, agg: DynA
         data: data.clone(),
         agg,
     };
-    let set = dyn_aggregate_all_strategies(&inputs);
+    let set = dyn_aggregate_all_strategies(b, &inputs);
     crate::optim::dispatch_strategy(b, "dyn_aggregate_all", &inputs, &set)
 }
 
@@ -224,8 +224,9 @@ pub(crate) struct DynAggAllInputs {
 
 /// Strategy set for full reduction (axis=None). Gated strategies:
 ///
-/// * `boundary-read-on-sorted` — `is_sorted(input)` ⇒ closed-form max/
-///   min/argmax/argmin via a single read at index 0 or `len - 1`.
+/// * `boundary-read-on-sorted` — `is_sorted(input)` ⇒ max/min/argmin by
+///   a single read at index 0 or `len - 1` (or the constant 0), argmax by
+///   equality tests of neighbours (`first_position_of_last_value`).
 /// * `sum_all_zero` — `forall_eq_const(arr, 0)` ⇒ sum is constant 0.
 /// * `sum_all_one` — `forall_eq_const(arr, 1)` ⇒ sum is `runtime_length`
 ///   (cast to float when dtype is Float).
@@ -256,6 +257,7 @@ pub(crate) struct DynAggAllInputs {
 /// matches the op it lowers. Mirrors the `boundary-read-on-sorted` shape
 /// already in place for max/min/argmax/argmin.
 fn dyn_aggregate_all_strategies(
+    b: &IRBuilder,
     inputs: &DynAggAllInputs,
 ) -> crate::optim::OpStrategySet<DynAggAllInputs, Value> {
     use crate::optim::predicates::formula::{ContractTerm, ContractVar};
@@ -275,11 +277,16 @@ fn dyn_aggregate_all_strategies(
     // Level-2 short-circuit: `is_sorted(arr)` ⇒ closed-form for the four
     // monotone-respecting reductions. The precondition is constructed
     // against the concrete input ValueId — strategies are per-call sets,
-    // not contract templates, so we embed `Var(Value(_))` directly.
+    // not contract templates, so we embed `Var(Value(_))` directly. The
+    // fact describes the elements when it was stated, so the strategy is
+    // offered only while the array has not been written since (an
+    // in-place write through another name keeps the value id).
     if matches!(
         inputs.agg,
         DynAggKind::Max | DynAggKind::Min | DynAggKind::Argmax | DynAggKind::Argmin
-    ) {
+    ) && is_flat_buffer(&inputs.data)
+        && b.sorted_fact_is_current(arr_vid)
+    {
         strategies.push(OpStrategy {
             name: "boundary-read-on-sorted",
             precondition: ContractTerm::PredicateApp {
@@ -375,11 +382,24 @@ fn lower_dyn_prod_one(b: &mut IRBuilder, inputs: &DynAggAllInputs) -> Value {
     }
 }
 
-/// Boundary-read fast path. Sound iff `is_sorted(arr)` (ascending) holds:
+/// A one-dimensional array whose element `i` is slot `i` of its segment,
+/// as the boundary reads below address it.
+fn is_flat_buffer(data: &DynamicNDArrayData) -> bool {
+    data.meta.logical_shape.len() == 1
+        && data.meta.logical_offset == 0
+        && data.meta.logical_strides == [1]
+}
+
+/// Boundary-read fast path. Sound iff `is_sorted(arr)` (non-decreasing)
+/// holds:
 ///   max(arr)    = arr[runtime_length - 1]
 ///   min(arr)    = arr[0]
-///   argmax(arr) = runtime_length - 1
+///   argmax(arr) = the first position holding arr[runtime_length - 1]
 ///   argmin(arr) = 0
+///
+/// NumPy's argmax and argmin are the first position of the extreme value.
+/// For argmin that is 0; for argmax it is `runtime_length - 1` only when
+/// the last value is not repeated (`np.linspace(c, c, n)` has argmax 0).
 ///
 /// `dyn_aggregate_all` has already required `runtime_length != 0`, so the
 /// `len - 1` read is in range.
@@ -400,8 +420,7 @@ fn lower_boundary_read_on_sorted(b: &mut IRBuilder, inputs: &DynAggAllInputs) ->
             idx
         }
         DynAggKind::Argmax => {
-            let one = b.ir_constant_int(1);
-            let idx = b.ir_sub_i(&runtime_length_v, &one);
+            let idx = first_position_of_last_value(b, data);
             if let (Some(idx_vid), Some(len_vid)) = (idx.value_id(), len_arr_vid) {
                 let mut formals = std::collections::HashMap::new();
                 formals.insert("len_arr".to_string(), len_vid);
@@ -420,6 +439,33 @@ fn lower_boundary_read_on_sorted(b: &mut IRBuilder, inputs: &DynAggAllInputs) ->
         }
         _ => unreachable!("boundary-read-on-sorted only registered for max/min/argmax/argmin"),
     }
+}
+
+/// `argmax` of a non-empty non-decreasing flat array: the first position
+/// whose element equals the last one.
+///
+/// A position `j >= 1` starts a new value when it is active (`j <
+/// runtime_length`) and `x[j] != x[j - 1]`, which on a non-decreasing
+/// prefix means `x[j] > x[j - 1]`. The last value starts at the last such
+/// position, or at 0 when there is none, so the result is a `LastSet` scan
+/// over these flags with position 0 always set (which also meets the
+/// scan's precondition that some flag is set). The scan costs one equality
+/// test per element, where the generic sweep pays an ordered comparison
+/// and two selects.
+fn first_position_of_last_value(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
+    let len = data.meta.logical_shape[0];
+    let values = crate::helpers::segment::read_all_typed(b, data.segment_id, len, data.dtype);
+    let mut starts = Vec::with_capacity(len);
+    starts.push(b.ir_constant_bool(true));
+    for j in 1..len {
+        let changes = match data.dtype {
+            NumberType::Float => b.ir_not_equal_f(&values[j], &values[j - 1]),
+            _ => b.ir_not_equal_i(&values[j], &values[j - 1]),
+        };
+        let active = build_flat_active_check(b, j, &data.meta.runtime_length);
+        starts.push(b.ir_logical_and(&active, &changes));
+    }
+    crate::lower::gather::scan_lane(b, crate::lower::gather::ScanKind::Last, &starts)
 }
 
 /// Generic O(N) sweep — the unconditional fall-through. Bounded-aware:
@@ -1807,12 +1853,11 @@ mod sorted_short_circuit_tests {
     use super::*;
     use crate::ir_defs::IR;
     use crate::ops::dyn_ndarray::constructors::dyn_from_values_with_active_nd;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
 
     /// Build a Layout-A 1-D unbounded `DynamicNDArray` with the supplied
     /// integer payload. `runtime_shape == logical_shape == [len]`, so the
     /// existing reduction path is the **fast path** (no mask-and-include).
-    /// Caller can either plant `is_sorted(data.value_id)` or not.
+    /// Caller can either state `is_sorted(data)` or not.
     fn make_1d_unbounded(b: &mut IRBuilder, values: Vec<i64>) -> DynamicNDArrayData {
         let n = values.len();
         let sv: Vec<ScalarValue<i64>> = values
@@ -1835,15 +1880,9 @@ mod sorted_short_circuit_tests {
         }
     }
 
-    /// Plant `is_sorted(arr_vid)` on the FactStack at `arr_vid`. Mirrors
-    /// the `@requires(is_sorted(arr))` ingestion path in
-    /// `ir_gen/mod.rs:425-432` for one anchor.
-    fn plant_is_sorted(b: &mut IRBuilder, arr_vid: crate::types::ValueId) {
-        let fact = ContractTerm::PredicateApp {
-            kind: "is_sorted".to_string(),
-            args: vec![ContractTerm::Var(ContractVar::Value(arr_vid))],
-        };
-        b.facts.insert_for(arr_vid, fact);
+    /// State `is_sorted(data)` as the sorted constructors do.
+    fn state_sorted(b: &mut IRBuilder, data: &DynamicNDArrayData) {
+        b.state_sorted(&Value::DynamicNDArray(data.clone()), "sort_is_sorted");
     }
 
     /// The number of `IR::ArrayRead` statements in `b.stmts`.
@@ -1867,7 +1906,7 @@ mod sorted_short_circuit_tests {
         // chain over the cells.
         let mut b = IRBuilder::new();
         let data = make_1d_unbounded(&mut b, vec![1, 2, 3, 4, 5]);
-        plant_is_sorted(&mut b, data.value_id);
+        state_sorted(&mut b, &data);
         let result = dyn_aggregate_all(&mut b, &data, DynAggKind::Max);
         assert_eq!(result.int_val(), Some(5), "max of a sorted array is its last cell");
         assert_eq!(count_array_reads(&b), 0, "a known cell needs no read");
@@ -1879,7 +1918,7 @@ mod sorted_short_circuit_tests {
         // is_sorted ascending ⇒ min == arr[0].
         let mut b = IRBuilder::new();
         let data = make_1d_unbounded(&mut b, vec![1, 2, 3, 4, 5]);
-        plant_is_sorted(&mut b, data.value_id);
+        state_sorted(&mut b, &data);
         let result = dyn_aggregate_all(&mut b, &data, DynAggKind::Min);
         assert_eq!(result.int_val(), Some(1), "min of a sorted array is its first cell");
         assert_eq!(count_array_reads(&b), 0, "a known cell needs no read");
@@ -1887,50 +1926,28 @@ mod sorted_short_circuit_tests {
     }
 
     #[test]
-    fn dyn_argmax_on_sorted_short_circuits_to_len_minus_one() {
-        // is_sorted ascending ⇒ argmax == runtime_length - 1. The result
-        // should be an IR::SubI of (runtime_length_v, ConstantInt 1).
+    fn dyn_argmax_on_sorted_scans_for_the_start_of_the_last_value() {
+        // is_sorted ⇒ argmax is the first position holding the last value,
+        // which ties put before len - 1: a `LastSet` scan over "position j
+        // starts a new value" flags, built from equality tests, with no
+        // ordered comparison and no select chain.
         let mut b = IRBuilder::new();
-        let data = make_1d_unbounded(&mut b, vec![1, 2, 3, 4, 5]);
-        plant_is_sorted(&mut b, data.value_id);
+        let data = make_1d_unbounded(&mut b, vec![1, 3, 3, 3]);
+        state_sorted(&mut b, &data);
 
         let result = dyn_aggregate_all(&mut b, &data, DynAggKind::Argmax);
         let target = result.stmt_id().expect("argmax result has stmt_id");
-
-        let final_stmt = b
-            .stmts
-            .iter()
-            .find(|s| s.stmt_id == target)
-            .expect("target stmt present");
+        let final_stmt = b.stmts.iter().find(|s| s.stmt_id == target).expect("target stmt present");
         assert!(
-            matches!(final_stmt.ir, IR::SubI),
-            "short-circuit argmax should be a SubI (len - 1), got {:?}",
+            matches!(&final_stmt.ir, IR::ArrayOp(op)
+                if op.kind == crate::lower::OpKind::LastSet && op.shared == 4),
+            "argmax of a sorted array should be a LastSet scan over 4 flags, got {:?}",
             final_stmt.ir
         );
-        // Second operand should be ConstantInt(1).
-        let one_id = final_stmt.arguments[1];
-        let one_stmt = b
-            .stmts
-            .iter()
-            .find(|s| s.stmt_id == one_id)
-            .expect("operand stmt present");
+        assert_eq!(count_select_i(&b), 0, "the scan replaces the select chain");
         assert!(
-            matches!(one_stmt.ir, IR::ConstantInt { value: 1 }),
-            "argmax len-1 second operand should be ConstantInt(1), got {:?}",
-            one_stmt.ir
-        );
-        // No select-chain.
-        assert_eq!(
-            count_select_i(&b),
-            0,
-            "short-circuit argmax must not emit any SelectI"
-        );
-        // No memory reads either: argmax/argmin return the index, not the
-        // element.
-        assert_eq!(
-            count_array_reads(&b),
-            0,
-            "short-circuit argmax must not read the array"
+            !b.stmts.iter().any(|s| matches!(s.ir, IR::GtI | IR::LtI)),
+            "the flags are equality tests, not ordered comparisons"
         );
     }
 
@@ -1940,7 +1957,7 @@ mod sorted_short_circuit_tests {
         // IR::ConstantInt(0).
         let mut b = IRBuilder::new();
         let data = make_1d_unbounded(&mut b, vec![1, 2, 3, 4, 5]);
-        plant_is_sorted(&mut b, data.value_id);
+        state_sorted(&mut b, &data);
 
         let result = dyn_aggregate_all(&mut b, &data, DynAggKind::Argmin);
         let target = result.stmt_id().expect("argmin result has stmt_id");
@@ -1965,6 +1982,23 @@ mod sorted_short_circuit_tests {
             0,
             "short-circuit argmin must not read the array"
         );
+    }
+
+    #[test]
+    fn dyn_max_on_sorted_written_since_uses_loop() {
+        // A write after the fact (as through another name for the array,
+        // which keeps its value id) makes the fact stale: the reduction
+        // must not read the last cell as the maximum.
+        let mut b = IRBuilder::new();
+        let data = make_1d_unbounded(&mut b, vec![1, 2, 3, 4, 5]);
+        state_sorted(&mut b, &data);
+        let address = b.ir_constant_int(0);
+        let hundred = b.ir_constant_int(100);
+        b.storage_write_at(data.segment_id, &address, &hundred);
+
+        let result = dyn_aggregate_all(&mut b, &data, DynAggKind::Max);
+        assert_ne!(result.int_val(), Some(5), "a stale is_sorted fact was used");
+        assert!(count_select_i(&b) >= 1, "max of a written array should take the loop");
     }
 
     #[test]

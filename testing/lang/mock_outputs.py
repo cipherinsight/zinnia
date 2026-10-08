@@ -62,7 +62,8 @@ def run_mock(program, *args):
 
 
 def numpy_kernel(source: str):
-    """The same kernel source as a plain NumPy function (annotations dropped)."""
+    """The same kernel source as a plain NumPy function (annotations and
+    decorators such as ``@requires`` dropped)."""
     import ast
 
     tree = ast.parse(source)
@@ -71,6 +72,7 @@ def numpy_kernel(source: str):
             node.annotation = None
         if isinstance(node, ast.FunctionDef):
             node.returns = None
+            node.decorator_list = []
     env = {"np": np}
     exec(compile(ast.fix_missing_locations(tree), "<kernel>", "exec"), env)
     return env["kernel"]

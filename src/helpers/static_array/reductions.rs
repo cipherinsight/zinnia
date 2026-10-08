@@ -1182,7 +1182,7 @@ impl ArrayContents {
     }
 
     /// The array still holds what it held when this was recorded.
-    fn unchanged(&self, b: &IRBuilder) -> bool {
+    pub(crate) fn unchanged(&self, b: &IRBuilder) -> bool {
         self.storages.iter().all(|&s| !b.storage_written_since(s, self.clock))
     }
 }

@@ -5,7 +5,7 @@
 //! 1. Direct unit tests for `dispatch_strategy`'s wiring: gated-on-Proved,
 //!    fallthrough-on-Unknown, first-declared-wins.
 //! 2. A regression test for the `dyn_aggregate_all` refactor: the
-//!    is_sorted short-circuit still fires when the fact is planted.
+//!    is_sorted short-circuit still fires when the fact is stated.
 
 #[cfg(test)]
 mod tests {
@@ -124,7 +124,7 @@ mod tests {
     }
 
     /// Regression test for the `dyn_aggregate_all` refactor: with
-    /// `is_sorted(arr_vid)` planted, calling `dyn_aggregate_all(Max)` must
+    /// `is_sorted(arr_vid)` stated, calling `dyn_aggregate_all(Max)` must
     /// still take the boundary-read fast path, producing a single
     /// `IR::ReadMemory` as the result (no select-chain).
     #[test]
@@ -153,13 +153,8 @@ mod tests {
             _ => unreachable!(),
         };
 
-        // Plant is_sorted(arr_vid) — same anchor path that user @requires
-        // would deposit it on.
-        let is_sorted_fact = ContractTerm::PredicateApp {
-            kind: "is_sorted".to_string(),
-            args: vec![ContractTerm::Var(ContractVar::Value(data.value_id))],
-        };
-        b.facts.insert_for(data.value_id, is_sorted_fact);
+        // State is_sorted(arr) as the sorted constructors do.
+        b.state_sorted(&Value::DynamicNDArray(data.clone()), "sort_is_sorted");
 
         let result = dyn_aggregate_all(&mut b, &data, DynAggKind::Max);
         // The last cell, read from the array's storage (known: no IR).

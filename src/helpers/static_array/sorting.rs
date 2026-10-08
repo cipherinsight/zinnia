@@ -5,8 +5,6 @@
 //! `lower::sort` lowers the live ones (a sorting network or pinned
 //! prover hints, by a cost rule).
 
-use std::collections::HashMap;
-
 use crate::builder::IRBuilder;
 use crate::helpers::shape_arith::{decode_coords, encode_coords, row_major_strides};
 use crate::types::{NumberType, SliceIndex, Value};
@@ -122,9 +120,7 @@ pub fn try_apply_sort(
     // The available `is_sorted` vocabulary is whole-array/flattened. Axis-local
     // N-D sort is only row/column-local, so do not claim that global fact.
     if !argsort && result_shape_is_globally_sorted(&result) {
-        if let Some(vid) = result.value_id() {
-            b.fire_contract("sort_is_sorted", vid, &HashMap::new());
-        }
+        b.state_sorted(&result, "sort_is_sorted");
     }
     Some(result)
 }

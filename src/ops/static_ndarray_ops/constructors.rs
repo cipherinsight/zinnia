@@ -795,9 +795,7 @@ fn np_arange_int(b: &mut IRBuilder, args: &[Value]) -> Value {
                     // 1-arg form: step is implicit 1 ⇒ always ascending ⇒
                     // is_sorted(out) holds. Fire on the array's value_id
                     // (not the length-bearing scalar).
-                    if let Some(vid) = result.value_id() {
-                        b.fire_contract("arange_is_sorted", vid, &std::collections::HashMap::new());
-                    }
+                    b.state_sorted(&result, "arange_is_sorted");
                     result
                 }
                 BoundedInt::Neither => {
@@ -832,9 +830,7 @@ fn np_arange_int(b: &mut IRBuilder, args: &[Value]) -> Value {
                     );
                     length.fire_length_contract(b, &result, &start_constant, stop_val);
                     // 2-arg form: step is implicit 1 ⇒ always ascending.
-                    if let Some(vid) = result.value_id() {
-                        b.fire_contract("arange_is_sorted", vid, &std::collections::HashMap::new());
-                    }
+                    b.state_sorted(&result, "arange_is_sorted");
                     result
                 }
                 BoundedInt::Neither => {
@@ -894,9 +890,7 @@ fn np_arange_int(b: &mut IRBuilder, args: &[Value]) -> Value {
                     // (the `step < 0` branch above already panicked), so the
                     // direction check has effectively been made — fire
                     // unconditionally here.
-                    if let Some(vid) = result.value_id() {
-                        b.fire_contract("arange_is_sorted", vid, &std::collections::HashMap::new());
-                    }
+                    b.state_sorted(&result, "arange_is_sorted");
                     result
                 }
                 BoundedInt::Neither => {
@@ -982,9 +976,7 @@ fn arange_static(b: &mut IRBuilder, start: i64, stop: i64, step: i64) -> Value {
     // static composite — but if a future revision attaches an identity
     // to static arrays, the fact will start landing automatically.
     if step > 0 {
-        if let Some(vid) = result.value_id() {
-            b.fire_contract("arange_is_sorted", vid, &std::collections::HashMap::new());
-        }
+        b.state_sorted(&result, "arange_is_sorted");
     }
     result
 }
@@ -1284,9 +1276,7 @@ fn np_linspace_static(
     // symmetry and forward-compatibility with consumers that one day
     // attach identity to static arrays.
     if start <= stop {
-        if let Some(vid) = result.value_id() {
-            b.fire_contract("linspace_is_sorted", vid, &std::collections::HashMap::new());
-        }
+        b.state_sorted(&result, "linspace_is_sorted");
     }
     result
 }
@@ -1391,9 +1381,7 @@ fn np_linspace_bounded(
     // SSA identities. Soundness: `start > stop` would produce a descending
     // sequence; we simply skip the fire in that case (no false claim).
     if start <= stop {
-        if let Some(vid) = result.value_id() {
-            b.fire_contract("linspace_is_sorted", vid, &std::collections::HashMap::new());
-        }
+        b.state_sorted(&result, "linspace_is_sorted");
     }
 
     result
