@@ -218,7 +218,36 @@ preconditions are fixed once they exist).
 - The old branch's per-storage write history (`StorageFacts`) is replaced by the
   version facts; its `read_ranges` snapshot is the version a read names.
 
-## 9. Tests
+## 9. Interface to the lowering layer (proposal)
+
+The lowering layer (branch `fact-rules`) states array claims over lists of IR values
+(`ElementsWithin`, `NonDecreasing`, `StrictlyIncreasing`, `Distinct`, `CountBound`,
+`Permutation`) and establishes them from definitions read off the graph (sort lanes,
+argsort) and from the program's checks. The frontend's store knows more (facts derived
+by transfer through operators, `np.unique`'s and `np.nonzero`'s segmentations, the
+`@requires` element predicates, the facts of written versions), but it lives only in
+the IR builder. A fact the store proves can reach the layer as an IR statement:
+
+- `IR::ArrayFact { claim }` with operands `[guard, x_0, ..., x_{n-1}]` (or a scope
+  `Everywhere` without the guard operand): "on every accepted witness where `guard`
+  holds, `claim` holds of the values `x_k` in this order"; `claim` carries the
+  segmentation's vocabulary for the layer's claims (a range with constant or operand
+  ends, an order, a permutation of `0..n`, a cut at an operand).
+- Emitted by the builder when a fact is stated (`state_array_facts`,
+  `state_version`), with the stated guard's conjunction as the guard operand. A fact is
+  about values, which never change, so it needs no expiry in the IR: the facts of an
+  array after a write are about other values (the new cells, or the new version).
+- Not a use: dead-code elimination drops an `ArrayFact` whose operands are otherwise
+  dead and never keeps an operand alive for it; `DuplicateCodeElimination` and
+  `ConstantFold` rewrite its operands like any statement's. The layer collects them
+  into `Fact { claim, scope }` and removes them; no backend sees one.
+
+Not built: no measured case needs a fact the layer cannot already establish, and the
+interface is the layer's to define (`docs/array-facts-lowering.md` on `fact-rules`).
+On merge, the layer's `array_facts::definitional` subsumes `FreeFacts::is_argsort_line`
+(the argsort permutation), which should then be removed.
+
+## 10. Tests
 
 - `src/optim/array_facts/tests.rs`: domain, segmentations (cuts, slices, the write
   rules, merges), the store (runs, AF-1, guards), constants.
