@@ -215,6 +215,9 @@ fn run_pass_pipeline(
     let mut g = graph;
     for pass_name in passes {
         let pass_started = std::time::Instant::now();
+        if *pass_name == "ArrayLowering" {
+            dump_layer_input(&g);
+        }
         match apply_pass(g, pass_name, target) {
             Some(mut result) => {
                 if let Some(t) = astgen.as_ref() {
@@ -229,6 +232,23 @@ fn run_pass_pipeline(
         }
     }
     g
+}
+
+/// Debugging aid, not an ablation (`docs/ablations.md`):
+/// `ZINNIA_LAYER_INPUT=<path>` appends the IR the array lowering layer
+/// receives to `<path>`, one statement per line. The compiled program does
+/// not depend on it.
+fn dump_layer_input(graph: &IRGraph) {
+    let Some(path) = std::env::var_os("ZINNIA_LAYER_INPUT").filter(|p| !p.is_empty()) else { return };
+    let mut text = String::from("── array lowering input ──\n");
+    for stmt in &graph.stmts {
+        let args: Vec<String> = stmt.arguments.iter().map(|a| format!("%{a}")).collect();
+        text.push_str(&format!("%{} = {}({})\n", stmt.stmt_id, stmt.ir.signature(), args.join(", ")));
+    }
+    use std::io::Write;
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = file.write_all(text.as_bytes());
+    }
 }
 
 /// Compile a circuit: generate IR from AST and run all optimization passes.

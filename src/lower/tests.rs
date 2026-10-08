@@ -245,11 +245,22 @@ fn checked_twice(bounds: [i64; 2]) -> IRGraph {
 
 #[test]
 fn a_check_an_earlier_check_implies_is_not_emitted() {
-    let lowered = |bounds| super::emit::lower(&checked_twice(bounds), Target::Halo2Base, &super::registry()).unwrap();
-    assert_eq!(index_checks(&lowered([4, 8])), 1);
+    let lowered = |bounds, no_array_facts| {
+        let options = super::emit::Options { no_array_facts, ..super::emit::Options::default() };
+        super::emit::lower_with(&checked_twice(bounds), Target::Halo2Base, &super::registry(), &options).unwrap()
+    };
+    assert_eq!(index_checks(&lowered([4, 8], true)), 1);
     // A weaker check first keeps both: dropping it would leave the
     // statements between the two without the bound it proves.
-    assert_eq!(index_checks(&lowered([8, 4])), 2);
+    assert_eq!(index_checks(&lowered([8, 4], true)), 2);
+    // Unless the two are merged into one check of the tighter bound
+    // (`checks::range_merges`), which stands where the first stood.
+    let merged = lowered([8, 4], false);
+    assert_eq!(index_checks(&merged), 1);
+    let check = merged.stmts.iter().find(|s| matches!(s.ir, IR::AssertU128Lt)).expect("one check");
+    assert!(matches!(merged.stmts[check.arguments[1] as usize].ir, IR::ConstantInt { value: 4 }));
+    let sort_read = merged.stmts.iter().position(|s| matches!(s.ir, IR::ReadInteger { ref path, .. } if path.display() == "a0"));
+    assert!(sort_read.is_some_and(|read| (check.stmt_id as usize) < read), "the check stands first");
 }
 
 /// One side of a window is not the other: `x >= c` does not imply `x <= d`

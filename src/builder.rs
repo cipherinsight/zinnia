@@ -1493,15 +1493,29 @@ impl IRBuilder {
                 }
             }
             IR::AssertU128Lt => {
-                // `0 <= idx < hi` with a static hi tightens idx.
+                // `0 <= idx < hi` with a static hi tightens idx, and the
+                // value `x` when `idx` is `x + c` (`x` in `[-c, hi - 1 - c]`):
+                // the merged range check of `x - lo` (`lower::checks::
+                // range_merges`) bounds `x` itself.
                 if let (Some(idx_vid), Some(hi)) = (args[0].value_id(), static_int(&args[1])) {
                     if hi > 0 {
-                        let bound = Interval { lo: 0, hi: hi - 1 };
-                        let tightened = match self.provenance.interval_of(idx_vid) {
-                            Some(prev) => Interval::intersect(prev, bound),
-                            None => bound,
-                        };
-                        self.provenance.set_interval(idx_vid, tightened);
+                        let mut bounded = vec![(idx_vid, Interval { lo: 0, hi: hi - 1 })];
+                        let root = self.provenance.affine_of(idx_vid).and_then(|a| match a.terms.as_slice() {
+                            [(x, 1)] if *x != idx_vid => Some((*x, a.offset)),
+                            _ => None,
+                        });
+                        if let Some((x, c)) = root {
+                            if let (Some(lo), Some(top)) = (0i64.checked_sub(c), (hi - 1).checked_sub(c)) {
+                                bounded.push((x, Interval { lo, hi: top }));
+                            }
+                        }
+                        for (vid, bound) in bounded {
+                            let tightened = match self.provenance.interval_of(vid) {
+                                Some(prev) => Interval::intersect(prev, bound),
+                                None => bound,
+                            };
+                            self.provenance.set_interval(vid, tightened);
+                        }
                     }
                 }
             }

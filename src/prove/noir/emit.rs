@@ -700,6 +700,10 @@ pub struct NoirEmitter<'a> {
     /// as u128) < (b as u128))` line saves a per-cmp u128 cast + compare
     /// (~2 ACIR gates each, ~80 gates on the 0345 mux-indexed kernel).
     emitted_u128_asserts: HashSet<(String, String)>,
+    /// Range checks of `0 <= x < hi` whose exact width would need a lookup
+    /// table of its own, their width settled when the circuit is rendered
+    /// (`settle_range_widths`).
+    deferred_widths: Vec<DeferredWidth>,
     /// CSE cache: expression text -> existing SSA name that binds it.
     /// Common in unrolled patterns where the IR builder re-emits
     /// `v_const_a + v_const_b` for the same constants. CSE here saves
@@ -1708,6 +1712,13 @@ impl<'a> NoirEmitter<'a> {
         let bits = (128 - ((hi - 1) as u128).leading_zeros()).max(1);
         let t = self.fresh();
         let _ = writeln!(self.body, "    let {}: Field = {};", t, cell);
+        if needs_table_of_its_own(bits) {
+            let id = self.deferred_widths.len();
+            let _ = writeln!(self.body, "    {t}.assert_max_bit_size::<__W{id}__>();");
+            let _ = writeln!(self.body, "    __TOP{id}__;");
+            self.deferred_widths.push(DeferredWidth { bits, cell: t, top: hi - 1, exact_power: hi == 1i128 << bits });
+            return;
+        }
         let _ = writeln!(self.body, "    {}.assert_max_bit_size::<{}>();", t, bits);
         if hi == 1i128 << bits {
             return;
@@ -1823,6 +1834,7 @@ impl<'a> NoirEmitter<'a> {
             norm_index_of: HashMap::new(),
             divmod_cache: HashMap::new(),
             emitted_u128_asserts: HashSet::new(),
+            deferred_widths: Vec::new(),
             cse_cache: HashMap::new(),
             cell_bound: HashMap::new(),
             literal_vals: HashMap::new(),
@@ -3131,6 +3143,146 @@ impl Synthesizer for NoirEmitter<'_> {
 /// Render `main.nr`. Returns the source text; `main` returns the exposed
 /// values in IR order (plus, for a circuit with no output and no body, one
 /// synthetic return value; see below).
+/// A range check `0 <= x < top + 1` emitted with its width left open
+/// (`NoirEmitter::assert_index_in_range`).
+struct DeferredWidth {
+    /// The exact width, `bit_length(top)`.
+    bits: u32,
+    /// The checked cell.
+    cell: String,
+    top: i128,
+    /// `top + 1 == 2^bits`: one check of the exact width suffices.
+    exact_power: bool,
+}
+
+/// Whether a range check of `bits` bits needs a lookup table that no
+/// usual check shares. bb checks a value of more than 14 bits in 14-bit
+/// limbs plus a final limb of the remaining bits, and a value of at most 14
+/// bits against a table of that width; each width's table costs about
+/// `2^w / 6` gates once (measured: 8 bits 43, 11 bits 340, 13 bits 1,350,
+/// 14 bits 2,700). Every circuit with a 64-bit check (`4 * 14 + 8`) has the
+/// 14-bit and the 8-bit tables; widths up to 8 need small ones.
+fn needs_table_of_its_own(bits: u32) -> bool {
+    bits > 8 && bits % 14 != 0 && bits < 64
+}
+
+/// The body with every deferred range check's width settled: when the
+/// circuit already uses the 14-bit table (`uses_wide_table`), the check is
+/// made at the next multiple of 14 bits, on the value and on `top - value`
+/// (each check fails for a value outside `[0, top]`: a negative one is a
+/// field element of about 254 bits); otherwise at its exact width, as
+/// before (one check when `top + 1` is a power of two). Both forms admit
+/// exactly `[0, top]`; the first adds no table.
+fn settle_range_widths(body: &str, deferred: &[DeferredWidth]) -> String {
+    if deferred.is_empty() {
+        return body.to_string();
+    }
+    let wide = uses_wide_table(body);
+    // Per exact width: round its checks up when the table it would add costs
+    // more than the second checks rounding adds (one per check whose bound
+    // is a power of two; a check of another bound has two either way), and
+    // the body has no check of that width already (its table is paid).
+    let rounded = |bits: u32| {
+        let own_table_cost = 1u64 << bits.saturating_sub(3);
+        let extra_checks = deferred.iter().filter(|d| d.bits == bits && d.exact_power).count() as u64;
+        wide && extra_checks < own_table_cost && !body.contains(&format!("assert_max_bit_size::<{bits}>"))
+    };
+    let width = |d: &DeferredWidth| if rounded(d.bits) { d.bits.div_ceil(14) * 14 } else { d.bits };
+    let mut out = String::with_capacity(body.len());
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if let Some(id) = trimmed.strip_prefix("__TOP").and_then(|r| r.strip_suffix("__;")).and_then(|n| n.parse::<usize>().ok()) {
+            let d = &deferred[id];
+            let width = width(d);
+            if width != d.bits || !d.exact_power {
+                let _ = writeln!(out, "    let {}_top: Field = {} - {};", d.cell, d.top, d.cell);
+                let _ = writeln!(out, "    {}_top.assert_max_bit_size::<{}>();", d.cell, width);
+            }
+            continue;
+        }
+        if let Some(start) = line.find("::<__W") {
+            let rest = &line[start + 6..];
+            if let Some(end) = rest.find("__>") {
+                if let Ok(id) = rest[..end].parse::<usize>() {
+                    let _ = writeln!(out, "{}::<{}>{}", &line[..start], width(&deferred[id]), &rest[end + 3..]);
+                    continue;
+                }
+            }
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+/// Whether the circuit range-checks some value of 14 bits or more, which
+/// makes bb build its 14-bit table: a literal width of 14 or more in the
+/// body (`assert_max_bit_size`, `qlt_bits`), a checked conversion to 16 bits
+/// or more, or a call of a library function that does either
+/// ([`wide_library_functions`]).
+fn uses_wide_table(body: &str) -> bool {
+    let wide_literal = |marker: &str| {
+        body.match_indices(marker).any(|(at, _)| {
+            let digits: String = body[at + marker.len()..].chars().take_while(char::is_ascii_digit).collect();
+            digits.parse::<u32>().is_ok_and(|w| w >= 14)
+        })
+    };
+    if wide_literal("assert_max_bit_size::<") || wide_literal("qlt_bits::<") {
+        return true;
+    }
+    if ["checked_u16(", "checked_u32(", "checked_u64("].iter().any(|c| body.contains(c)) {
+        return true;
+    }
+    wide_library_functions().iter().any(|name| {
+        body.match_indices(name.as_str()).any(|(at, _)| {
+            let before = body[..at].chars().next_back();
+            let after = body[at + name.len()..].chars().next();
+            !before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') && after == Some('(')
+        })
+    })
+}
+
+/// The functions of `noir_fpc` that range-check a value at 14 bits or more:
+/// a literal width of 14 or more, a checked conversion to 16 bits or more,
+/// or a call of such a function (read off the library's source once).
+fn wide_library_functions() -> &'static Vec<String> {
+    static WIDE: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    WIDE.get_or_init(|| {
+        let source = include_str!("../../../benchmarking/noir_fpc/src/lib.nr");
+        // (name, body) of every function, a body running to the next `fn`.
+        let mut functions: Vec<(String, String)> = Vec::new();
+        let starts: Vec<usize> = source.match_indices("fn ").map(|(at, _)| at).collect();
+        for (k, &at) in starts.iter().enumerate() {
+            let head = &source[at + 3..];
+            let name: String = head.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+            if name.is_empty() {
+                continue;
+            }
+            let end = starts.get(k + 1).copied().unwrap_or(source.len());
+            functions.push((name, source[at..end].to_string()));
+        }
+        let literal_wide = |text: &str| {
+            text.match_indices("assert_max_bit_size::<").any(|(at, m)| {
+                let digits: String = text[at + m.len()..].chars().take_while(char::is_ascii_digit).collect();
+                digits.parse::<u32>().is_ok_and(|w| w >= 14)
+            }) || ["checked_u16(", "checked_u32(", "checked_u64("].iter().any(|c| text.contains(c))
+        };
+        let mut wide: Vec<String> = functions.iter().filter(|(_, b)| literal_wide(b)).map(|(n, _)| n.clone()).collect();
+        loop {
+            let more: Vec<String> = functions
+                .iter()
+                .filter(|(n, _)| !wide.contains(n))
+                .filter(|(_, b)| wide.iter().any(|w| b.contains(&format!("{w}("))))
+                .map(|(n, _)| n.clone())
+                .collect();
+            if more.is_empty() {
+                break wide;
+            }
+            wide.extend(more);
+        }
+    })
+}
+
 fn render_main_nr(inputs: &[EmittedInput], emitter: &NoirEmitter) -> String {
     let mut out = String::new();
     out.push_str(&emitter.render_use_decls());
@@ -3160,7 +3312,7 @@ fn render_main_nr(inputs: &[EmittedInput], emitter: &NoirEmitter) -> String {
     // resulting circuit has at least one constraint that touches a witness.
     // nargo folds `let _ = x[N-1];` and `assert(x[N-1] == x[N-1])` to nothing,
     // so we promote to a pub return — that emission survives DCE.
-    let pruned_body = dce_body(&emitter.body, &emitter.exposes);
+    let pruned_body = settle_range_widths(&dce_body(&emitter.body, &emitter.exposes), &emitter.deferred_widths);
     let mut synthetic_exposes: Vec<String> = Vec::new();
     if pruned_body.trim().is_empty() && emitter.exposes.is_empty() {
         if let Some(inp) = inputs

@@ -70,11 +70,16 @@ impl IRPass for ArrayLowering {
 /// # Panics
 /// When array operations are left after `MAX_ROUNDS` rounds.
 pub fn lower_rounds(graph: IRGraph, target: Target, first: &[&dyn Construction]) -> IRGraph {
+    lower_rounds_with(graph, target, first, &Options::from_env())
+}
+
+/// [`lower_rounds`] with explicit switches.
+pub fn lower_rounds_with(graph: IRGraph, target: Target, first: &[&dyn Construction], options: &Options) -> IRGraph {
     let registry = super::registry();
     let mut graph = graph;
     for round in 0..MAX_ROUNDS {
         let constructions = if round == 0 { first } else { &registry };
-        let Some(lowered) = lower(&graph, target, constructions) else {
+        let Some(lowered) = lower_with(&graph, target, constructions, options) else {
             return graph;
         };
         let simplified = crate::optim::PatternMatchOptim.exec(lowered);
@@ -114,6 +119,10 @@ pub struct Options {
     /// precondition fact gets a check node and every program check is kept as
     /// the IR generator emitted it.
     pub no_facts: bool,
+    /// `ZINNIA_ABLATE_ARRAY_FACTS=1`: no array claim (`super::array_facts`):
+    /// none is established, implied or composed, so the constructions keyed
+    /// on them do not apply.
+    pub no_array_facts: bool,
     /// `ZINNIA_ABLATE_JOINT=1`: each group chooses its construction on its
     /// own instead of all groups together (`super::local`).
     pub local: bool,
@@ -129,6 +138,7 @@ impl Options {
     pub fn from_env() -> Options {
         Options {
             no_facts: crate::ablated("ZINNIA_ABLATE_LAYER_FACTS"),
+            no_array_facts: crate::ablated("ZINNIA_ABLATE_ARRAY_FACTS"),
             local: crate::ablated("ZINNIA_ABLATE_JOINT"),
             forcing: Forcing::from_env(),
             report: std::env::var_os("ZINNIA_LAYER_REPORT").filter(|p| !p.is_empty()).map(Into::into),
@@ -145,14 +155,23 @@ pub fn lower_with(
 ) -> Option<IRGraph> {
     // Claims' value lists are numbered per lowering (`ListId`).
     super::graph::ListId::reset();
+    super::array_facts::set_enabled(!options.no_array_facts);
     let (groups, direct) = collect_groups(graph);
     let facts = if options.no_facts { FreeFacts::none(graph) } else { FreeFacts::new(graph) };
     let program_checks = if options.no_facts { Vec::new() } else { checks::program_checks(graph) };
     let mut freely_proven = checks::dominated(&program_checks);
+    let kept_for_backend = checks::kept_for_backend(graph, &program_checks, target);
     freely_proven.extend(
-        program_checks.iter().filter(|c| c.forms.iter().any(|f| facts.established_by_gadget(f))).map(|c| c.stmt),
+        program_checks
+            .iter()
+            .filter(|c| !kept_for_backend.contains(&c.stmt))
+            .filter(|c| c.forms.iter().any(|f| facts.established_by_gadget(f)))
+            .map(|c| c.stmt),
     );
-    if groups.is_empty() && direct.is_empty() && freely_proven.is_empty() {
+    // Checks that each realize a value's two-sided range (`checks::
+    // range_merges`), offered in place of the program checks they imply.
+    let merges = checks::range_merges(&program_checks, target);
+    if groups.is_empty() && direct.is_empty() && freely_proven.is_empty() && merges.is_empty() {
         return None;
     }
 
@@ -164,6 +183,7 @@ pub fn lower_with(
         graph,
         groups: &groups,
         facts: &facts,
+        checks: &program_checks,
         users: &users,
         lane_group: &lane_group,
         alone: options.local,
@@ -174,6 +194,11 @@ pub fn lower_with(
     let mut released: BTreeSet<GroupId> = BTreeSet::new();
     let (nodes, selected, offers) = loop {
         let (mut nodes, offers) = offer(&groups, &cx, constructions, &options.forcing, &released);
+        add_composition_nodes(&mut nodes, &facts);
+        for &(fact, cost) in &merges {
+            let node = Node { pre: Vec::new(), post: vec![Requirement::Fact(fact)], cost };
+            nodes.push(NodeEntry { name: "merged range check", group: None, node, kind: NodeKind::Check(fact) });
+        }
         let (roots, check_roots) = root_requirements(&groups, &program_checks, &freely_proven, &mut nodes, target);
         add_check_nodes(&mut nodes, target, options.no_facts);
         add_program_nodes(&mut nodes, target);
@@ -209,7 +234,35 @@ pub fn lower_with(
     }
     let mut dropped = freely_proven;
     dropped.extend(unselected_checks(&nodes, &selected));
-    Some(emit(graph, &groups, &direct, nodes, &selected, &dropped))
+    let in_place = checks_in_place_of(graph, &nodes, &selected, &program_checks, &dropped);
+    Some(emit(graph, &groups, &direct, nodes, &selected, &dropped, &in_place))
+}
+
+/// Where each selected check stands that replaces dropped program checks
+/// (a merged range check, `checks::range_merges`, or a precondition's check
+/// that also implies a program check): at the first of the program checks
+/// it implies that are dropped, by statement position. Its subjects are
+/// lowered there, as that check's condition reads them.
+fn checks_in_place_of(
+    graph: &IRGraph,
+    nodes: &[NodeEntry],
+    selected: &[usize],
+    program_checks: &[ProgramCheck],
+    dropped: &HashSet<StmtId>,
+) -> HashMap<StmtId, Vec<Fact>> {
+    let position: HashMap<StmtId, usize> = graph.stmts.iter().enumerate().map(|(i, s)| (s.stmt_id, i)).collect();
+    let mut in_place: HashMap<StmtId, Vec<Fact>> = HashMap::new();
+    for &i in selected {
+        let NodeKind::Check(fact) = nodes[i].kind else { continue };
+        let first = program_checks
+            .iter()
+            .filter(|c| dropped.contains(&c.stmt) && c.forms.iter().any(|f| fact.implies(f)))
+            .min_by_key(|c| position[&c.stmt]);
+        if let Some(check) = first {
+            in_place.entry(check.stmt).or_default().push(fact);
+        }
+    }
+    in_place
 }
 
 /// What the constructions offered one group: the constructions with
@@ -405,6 +458,10 @@ pub(super) enum NodeKind {
     /// The producer of a program-wide requirement (`challenge`): nothing to
     /// emit here (the backend lays out what the consumers' IR needs).
     Program,
+    /// An array claim composed of the scalar facts that are its basis
+    /// (`super::array_facts::basis`): nothing to emit; the checks its basis
+    /// needs are emitted before the nodes that rely on the claim.
+    Composition,
 }
 
 impl NodeEntry {
@@ -447,6 +504,21 @@ fn facts_of(requirements: &[Requirement]) -> impl Iterator<Item = Fact> + '_ {
         Requirement::Fact(f) => Some(*f),
         _ => None,
     })
+}
+
+/// A composition node for every array claim some node relies on that no
+/// free fact proves: it establishes the claim from the scalar facts of its
+/// basis (`super::array_facts::basis`), at no cost. Those facts are then
+/// justified like any precondition (by the program's checks, typically).
+fn add_composition_nodes(nodes: &mut Vec<NodeEntry>, facts: &FreeFacts) {
+    let wanted: BTreeSet<Fact> =
+        nodes.iter().flat_map(|n| n.pre_facts()).filter(|f| f.claim.is_array_claim()).collect();
+    for fact in wanted {
+        let Some(basis) = super::array_facts::basis_facts(&fact) else { continue };
+        let pre = basis.into_iter().filter(|f| !facts.proves(f)).map(Requirement::Fact).collect();
+        let node = Node { pre, post: vec![Requirement::Fact(fact)], cost: 0 };
+        nodes.push(NodeEntry { name: "array claim", group: None, node, kind: NodeKind::Composition });
+    }
 }
 
 /// A check node for every precondition fact no node establishes (with
@@ -789,6 +861,7 @@ fn emit(
     nodes: Vec<NodeEntry>,
     selected: &[usize],
     dropped: &HashSet<StmtId>,
+    in_place: &HashMap<StmtId, Vec<Fact>>,
 ) -> IRGraph {
     let selected_set: HashSet<usize> = selected.iter().copied().collect();
     let mut lane_producer: HashMap<StmtId, usize> = HashMap::new();
@@ -805,6 +878,16 @@ fn emit(
         .filter_map(|&i| match nodes[i].kind {
             NodeKind::Check(f) => Some(f),
             _ => None,
+        })
+        .collect();
+    // The selected compositions: each array claim with the facts it is
+    // composed of.
+    let compositions: Vec<(Fact, Vec<Fact>)> = selected
+        .iter()
+        .filter(|&&i| matches!(nodes[i].kind, NodeKind::Composition))
+        .filter_map(|&i| {
+            let post = nodes[i].post_facts().next()?;
+            Some((post, nodes[i].pre_facts().collect()))
         })
         .collect();
     let mut starts: Vec<usize> = Vec::new();
@@ -832,9 +915,10 @@ fn emit(
             .pre
             .iter()
             .filter_map(|r| match r {
-                Requirement::Fact(f) => check_facts.iter().find(|c| c.implies(f)).copied(),
+                Requirement::Fact(f) => Some(f),
                 _ => None,
             })
+            .flat_map(|f| checks_justifying(f, &check_facts, &compositions))
             .collect();
         state.checks_for.insert(i, needed);
         // A version's cells (`SharedAt { at: version }`) are built from its
@@ -887,6 +971,11 @@ fn emit(
                 } else if let Some(cell) = direct.get(&s) {
                     lookup[cell].clone()
                 } else if dropped.contains(&s) {
+                    for fact in in_place.get(&s).into_iter().flatten() {
+                        if state.emitted_checks.insert(*fact) {
+                            checks::emit(&mut b, fact, &lookup);
+                        }
+                    }
                     Value::None
                 } else {
                     let stmt = &graph.stmts[s as usize];
@@ -898,6 +987,21 @@ fn emit(
         }
     }
     b.export_ir_graph()
+}
+
+/// The selected check facts that justify `fact`: the check that implies it,
+/// or, for an array claim a selected composition establishes, the checks of
+/// the facts it is composed of (each emitted before the node relying on the
+/// claim starts).
+fn checks_justifying(fact: &Fact, checks: &[Fact], compositions: &[(Fact, Vec<Fact>)]) -> Vec<Fact> {
+    if let Some(check) = checks.iter().find(|c| c.implies(fact)) {
+        return vec![*check];
+    }
+    compositions
+        .iter()
+        .find(|(post, _)| post.implies(fact))
+        .map(|(_, basis)| basis.iter().flat_map(|f| checks.iter().find(|c| c.implies(f)).copied()).collect())
+        .unwrap_or_default()
 }
 
 /// Statements in their order, each node's start placed right before the

@@ -109,6 +109,10 @@ pub struct Halo2BaseSynthesizer<'a> {
     /// Comparisons size their checks by them and skip window checks the
     /// constraints already imply.
     proven: HashMap<u64, Interval>,
+    /// Cells known to equal another cell plus a constant (`x + c`, `x - c`),
+    /// by cell id: a range proven for the sum is carried back to `x`
+    /// (`prove_range`).
+    offsets: HashMap<u64, (Halo2BaseCell, i128)>,
     /// Pinned sign bits `[x < 0]` by cell id (sign tests, `sign_and_abs`).
     sign_bits: HashMap<u64, Halo2BaseCell>,
     /// The int64 window checks emitted so far, by the checked cell's id
@@ -214,6 +218,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             select_many_cache: HashMap::new(),
             u128_lt_bit_cache: HashMap::new(),
             proven: HashMap::new(),
+            offsets: HashMap::new(),
             sign_abs_cache: HashMap::new(),
             vid_of_cell: HashMap::new(),
             cell_of_vid: HashMap::new(),
@@ -924,6 +929,8 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         // its summands needs no difference gate (see `select_bit`).
         self.differences.entry((out.id, a.id)).or_insert(*b);
         self.differences.entry((out.id, b.id)).or_insert(*a);
+        self.record_offset(&out, a, b, 1);
+        self.record_offset(&out, b, a, 1);
         self.propagate_range(&out, a, b, Interval::add);
         self.propagate_two_valued(&out, a, b, |x, c| x.checked_add(c));
         self.propagate_two_valued(&out, b, a, |x, c| x.checked_add(c));
@@ -947,6 +954,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         let out = self.gate_cell(a.value - b.value, |gate, ctx| gate.sub(ctx, a.quantum(), b.quantum()));
         self.differences.entry((a.id, b.id)).or_insert(out);
         self.differences.entry((a.id, out.id)).or_insert(*b); // a - out = b
+        self.record_offset(&out, a, b, -1);
         self.propagate_range(&out, a, b, Interval::sub);
         self.propagate_two_valued(&out, a, b, |x, c| x.checked_sub(c));
         self.propagate_two_valued(&out, b, a, |x, c| c.checked_sub(x));

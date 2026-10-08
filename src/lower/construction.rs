@@ -105,6 +105,8 @@ pub struct Context<'a> {
     pub graph: &'a IRGraph,
     pub groups: &'a [Group],
     pub(super) facts: &'a FreeFacts<'a>,
+    /// The program's checks (none under `ZINNIA_ABLATE_LAYER_FACTS`).
+    pub(super) checks: &'a [super::checks::ProgramCheck],
     pub(super) users: &'a HashMap<StmtId, Vec<StmtId>>,
     pub(super) lane_group: &'a HashMap<StmtId, GroupId>,
     /// Price every group as if it were the only one (the local selection,
@@ -119,6 +121,24 @@ impl Context<'_> {
     /// anyway (a scalar gadget's postcondition).
     pub fn proves(&self, fact: &Fact) -> bool {
         self.facts.proves(fact)
+    }
+
+    /// `true` when `fact` holds on every accepted witness without a new
+    /// check: a free fact, a fact one of the program's checks states, or an
+    /// array claim composed of such facts (`super::array_facts::basis`). A
+    /// construction that relies on an assumption about its input (rather
+    /// than an obligation of NumPy's semantics, which the framework checks
+    /// when nothing proves it) offers its candidate only when this holds,
+    /// and lists the fact among its preconditions: the selection then keeps
+    /// the checks it rests on.
+    pub fn established(&self, fact: &Fact) -> bool {
+        let stated = |f: &Fact| {
+            self.facts.proves(f)
+                || self.checks.iter().any(|c| c.forms.iter().chain(&c.consequences).any(|form| form.implies(f)))
+        };
+        stated(fact)
+            || (fact.claim.is_array_claim()
+                && super::array_facts::basis_facts(fact).is_some_and(|basis| basis.iter().all(stated)))
     }
 
     pub fn stmt(&self, id: StmtId) -> &IRStatement {

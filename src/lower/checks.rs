@@ -159,6 +159,22 @@ fn condition_claim(graph: &IRGraph, c: StmtId, constant: &dyn Fn(StmtId) -> Opti
         (IR::LteI, &[x, c]) | (IR::GteI, &[c, x]) if constant(c).is_some() => {
             Some(Claim::Within { x, lo: None, hi: constant(c) })
         }
+        // `x < c` is `x <= c - 1`, `x > c` is `x >= c + 1` (an element
+        // predicate `forall(a, lt_bound(c))`).
+        (IR::LtI, &[x, c]) | (IR::GtI, &[c, x]) if super::array_facts::enabled() && constant(c).is_some() => {
+            Some(Claim::Within { x, lo: None, hi: constant(c)?.checked_sub(1) })
+        }
+        (IR::GtI, &[x, c]) | (IR::LtI, &[c, x]) if super::array_facts::enabled() && constant(c).is_some() => {
+            Some(Claim::Within { x, lo: constant(c)?.checked_add(1), hi: None })
+        }
+        // The order of two values (`@requires(is_sorted(a))` asserts each
+        // adjacent pair); floats are ordered as their codes.
+        (IR::LteI | IR::LteF, &[x, y]) | (IR::GteI | IR::GteF, &[y, x]) if super::array_facts::enabled() => {
+            Some(Claim::Ordered { x, y, strict: false })
+        }
+        (IR::LtI | IR::LtF, &[x, y]) | (IR::GtI | IR::GtF, &[y, x]) if super::array_facts::enabled() => {
+            Some(Claim::Ordered { x, y, strict: true })
+        }
         _ => None,
     }
 }
@@ -174,7 +190,7 @@ pub fn dominated(checks: &[ProgramCheck]) -> HashSet<StmtId> {
     let mut dominated = HashSet::new();
     for check in checks {
         let implied = check.forms.iter().any(|form| {
-            let subject = form.claim.subjects()[0];
+            let Some(&subject) = form.claim.subjects().first() else { return false };
             known.get(&subject).is_some_and(|facts| facts.iter().any(|k| k.implies(form)))
         });
         if implied {
@@ -182,7 +198,9 @@ pub fn dominated(checks: &[ProgramCheck]) -> HashSet<StmtId> {
             continue;
         }
         for form in check.forms.iter().chain(&check.consequences) {
-            known.entry(form.claim.subjects()[0]).or_default().push(*form);
+            if let Some(&subject) = form.claim.subjects().first() {
+                known.entry(subject).or_default().push(*form);
+            }
         }
     }
     dominated
@@ -213,6 +231,22 @@ pub fn cost(claim: &Claim, target: Target) -> u64 {
         (Claim::Within { .. }, Target::Halo2Base) => 17,
         (Claim::Within { .. }, Target::Noir) => 3,
         (&Claim::Permutation(a, _), target) => super::permutation::hit_count_cost(a.entries().len() as u64, target, false),
+        (Claim::Ordered { .. }, Target::Halo2Base) => 34,
+        (Claim::Ordered { .. }, Target::Noir) => 7,
+        // The array claims are checked value by value (`emit_claim`).
+        (&Claim::ElementsWithin { list, lo, hi }, target) => {
+            let sides = u64::from(lo.is_some()) + u64::from(hi.is_some());
+            list.stmts().len() as u64 * sides * cost(&Claim::Within { x: 0, lo: Some(0), hi: None }, target)
+        }
+        (&Claim::NonDecreasing(list) | &Claim::StrictlyIncreasing(list), target) => {
+            list.len().saturating_sub(1) as u64 * cost(&Claim::Ordered { x: 0, y: 0, strict: false }, target)
+        }
+        (&Claim::Distinct(list), target) => {
+            let n = list.len() as u64;
+            n * n.saturating_sub(1) / 2 * cost(&Claim::NonZero(0), target)
+        }
+        (&Claim::CountBound { list, .. }, Target::Halo2Base) => 12 * list.len() as u64 + 34,
+        (&Claim::CountBound { list, .. }, Target::Noir) => 3 * list.len() as u64 + 7,
     }
 }
 
@@ -282,5 +316,188 @@ fn emit_claim(b: &mut IRBuilder, claim: &Claim, lookup: &HashMap<StmtId, Value>)
                 b.ir_assert(&below);
             }
         }
+        Claim::Ordered { x, y, strict } => {
+            let (x, y) = (v(x), v(y));
+            let holds = match (strict, matches!(x, Value::Float(_)) || matches!(y, Value::Float(_))) {
+                (false, false) => b.ir_less_than_or_equal_i(&x, &y),
+                (true, false) => b.ir_less_than_i(&x, &y),
+                (false, true) => b.ir_less_than_or_equal_f(&x, &y),
+                (true, true) => b.ir_less_than_f(&x, &y),
+            };
+            b.ir_assert(&holds);
+        }
+        Claim::ElementsWithin { list, lo, hi } => {
+            for x in list.stmts() {
+                emit_claim(b, &Claim::Within { x, lo, hi }, lookup);
+            }
+        }
+        Claim::NonDecreasing(list) | Claim::StrictlyIncreasing(list) => {
+            let strict = matches!(claim, Claim::StrictlyIncreasing(_));
+            let values = entry_values(b, list, lookup);
+            for pair in values.windows(2) {
+                let holds = if strict { less(b, &pair[0], &pair[1]) } else { less_or_equal(b, &pair[0], &pair[1]) };
+                b.ir_assert(&holds);
+            }
+        }
+        Claim::Distinct(list) => {
+            let values = entry_values(b, list, lookup);
+            for i in 0..values.len() {
+                for j in i + 1..values.len() {
+                    let differ = if matches!(values[i], Value::Float(_)) || matches!(values[j], Value::Float(_)) {
+                        b.ir_not_equal_f(&values[i], &values[j])
+                    } else {
+                        b.ir_not_equal_i(&values[i], &values[j])
+                    };
+                    b.ir_assert(&differ);
+                }
+            }
+        }
+        Claim::CountBound { list, max_nonzero } => {
+            let mut count = b.ir_constant_int(0);
+            for value in entry_values(b, list, lookup) {
+                let zero = b.ir_constant_int(0);
+                let nonzero = b.ir_not_equal_i(&value, &zero);
+                let nonzero = b.ir_int_cast(&nonzero);
+                count = b.ir_add_i(&count, &nonzero);
+            }
+            let bound = b.ir_constant_int(i64::from(max_nonzero));
+            let holds = b.ir_less_than_or_equal_i(&count, &bound);
+            b.ir_assert(&holds);
+        }
     }
+}
+
+/// The lowered values of a list's entries (constants for its integers).
+fn entry_values(b: &mut IRBuilder, list: super::ListId, lookup: &HashMap<StmtId, Value>) -> Vec<Value> {
+    list.entries()
+        .iter()
+        .map(|entry| match *entry {
+            super::ListEntry::Stmt(s) => lookup[&s].clone(),
+            super::ListEntry::Int(c) => b.ir_constant_int(c),
+        })
+        .collect()
+}
+
+fn less(b: &mut IRBuilder, x: &Value, y: &Value) -> Value {
+    if matches!(x, Value::Float(_)) || matches!(y, Value::Float(_)) {
+        b.ir_less_than_f(x, y)
+    } else {
+        b.ir_less_than_i(x, y)
+    }
+}
+
+fn less_or_equal(b: &mut IRBuilder, x: &Value, y: &Value) -> Value {
+    if matches!(x, Value::Float(_)) || matches!(y, Value::Float(_)) {
+        b.ir_less_than_or_equal_f(x, y)
+    } else {
+        b.ir_less_than_or_equal_i(x, y)
+    }
+}
+
+// ── Merged range checks ─────────────────────────────────────────────────
+
+/// One check `lo <= x <= hi` (`InRange { x, lo, hi + 1 }`) for every value
+/// `x` the program bounds on both sides by checks that hold everywhere, with
+/// its cost on `target`: the *range realization* of an element range. The
+/// check implies each of the checks it merges (an input's int64 window, the
+/// two sides `forall(a, in_range(lo, hi))` asserts, an index bound), so the
+/// selection may keep it in their place when it is cheaper; it is emitted
+/// where the first of the checks it replaces stood (`emit`).
+///
+/// It is also how a narrow range becomes visible to the backends, which
+/// size a comparison by the range the constraints prove (halo2-base) or by
+/// the intervals the asserts deposit (Noir): the one `w`-bit check of
+/// `x - lo` proves `x` in `[lo, hi]` (both backends carry a range across a
+/// constant offset), where two one-sided checks of a 64-bit value prove
+/// nothing narrower than the window. Comparisons, selects, sorts and sums
+/// over `x` then work at `w` bits.
+///
+/// Only ranges narrower than the int64 window are merged (the window alone
+/// is the input-domain check, kept as the IR generator emits it).
+pub fn range_merges(checks: &[ProgramCheck], target: Target) -> Vec<(Fact, u64)> {
+    if !super::array_facts::enabled() {
+        return Vec::new();
+    }
+    // Per value: the tightest bounds the checks state, in statement order.
+    let mut bounds: Vec<(StmtId, Option<i64>, Option<i64>)> = Vec::new();
+    let mut index: HashMap<StmtId, usize> = HashMap::new();
+    for check in checks {
+        for form in check.forms.iter().filter(|f| f.scope == Scope::Everywhere) {
+            let (x, lo, hi) = match form.claim {
+                Claim::Within { x, lo, hi } => (x, lo, hi),
+                Claim::InRange { x, lo, hi: Bound::Const(h) } => (x, Some(lo), h.checked_sub(1)),
+                Claim::NonNegative(x) => (x, Some(0), None),
+                _ => continue,
+            };
+            let slot = *index.entry(x).or_insert_with(|| {
+                bounds.push((x, None, None));
+                bounds.len() - 1
+            });
+            let entry = &mut bounds[slot];
+            entry.1 = match (entry.1, lo) {
+                (Some(a), Some(b)) => Some(a.max(b)),
+                (a, b) => a.or(b),
+            };
+            entry.2 = match (entry.2, hi) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+        }
+    }
+    bounds
+        .into_iter()
+        .filter_map(|(x, lo, hi)| {
+            let (lo, hi) = (lo?, hi?);
+            let span = (hi as i128) - (lo as i128);
+            // Narrower than the window (and not empty: an empty range has no
+            // proof, which the checks as written already say).
+            if !(0..1i128 << 62).contains(&span) {
+                return None;
+            }
+            let fact = Fact::everywhere(Claim::InRange { x, lo, hi: Bound::Const(hi.checked_add(1)?) });
+            Some((fact, range_check_cost(span as u64 + 1, lo != 0, target)))
+        })
+        .collect()
+}
+
+/// The cost of checking `0 <= x - lo < size` (`AssertU128Lt`): halo2-base
+/// range-checks the value, and for a size that is no power of two also the
+/// gap below it, each `RC(w)` cells at lookup width 8 (limbs, their
+/// recombination, a partial top limb), plus the subtraction of `lo`; Noir
+/// one range check, or two for a size that is no power of two (as
+/// `cost(InRange)` says).
+pub fn range_check_cost(size: u64, offset: bool, target: Target) -> u64 {
+    let width = u64::from(64 - (size.max(2) - 1).leading_zeros());
+    let checks = if size.is_power_of_two() { 1 } else { 2 };
+    match target {
+        Target::Halo2Base => {
+            let limbs = width.div_ceil(8);
+            let recombine = if limbs == 1 { 0 } else { 3 * limbs - 2 };
+            let partial = if width % 8 == 0 { 0 } else { 5 };
+            checks * (limbs + recombine + partial) + u64::from(offset) + 2
+        }
+        Target::Noir => checks + u64::from(offset),
+    }
+}
+
+/// Program checks a gadget's postcondition or a definition may imply but
+/// that `target`'s backend uses beyond the fact they state, so they are not
+/// dropped as established: on Noir, a check `x >= 0` of a value whose root
+/// the program takes (`np.sqrt(x)`) also proves `x` below `2^64`, which lets
+/// the root take its form without a sign (`qsqrt_of(false, x)`); without
+/// the check the root pays for the sign itself, more than the check costs.
+/// (halo2-base's root proves its own range at about the check's cost, so
+/// there a check `x >= 0` that `x`'s definition implies, such as a sum of
+/// squares, is dropped.)
+pub fn kept_for_backend(graph: &IRGraph, checks: &[ProgramCheck], target: Target) -> HashSet<StmtId> {
+    if target != Target::Noir || !super::array_facts::enabled() {
+        return HashSet::new();
+    }
+    let rooted: HashSet<StmtId> =
+        graph.stmts.iter().filter(|s| matches!(s.ir, IR::SqrtF)).filter_map(|s| s.arguments.first().copied()).collect();
+    checks
+        .iter()
+        .filter(|c| c.forms.iter().any(|f| matches!(f.claim, Claim::NonNegative(x) if rooted.contains(&x))))
+        .map(|c| c.stmt)
+        .collect()
 }

@@ -177,12 +177,36 @@ impl Halo2BaseSynthesizer<'_> {
 
     /// Record that the constraints force `x` into `range` (intersected with
     /// what is already known). Callers state the constraint next to the call.
+    ///
+    /// When `x` is a cell `y + c` for a constant `c` (`record_offset`), `y` is
+    /// forced into `range - c` too: the gate makes `y = x - c` in the field,
+    /// and with `x` in `range` (within `±2^120`) and `|c| < 2^64` that is
+    /// the integer `x - c`, far from wrapping. (A merged range check of
+    /// `x - lo` so proves `x` in `[lo, hi]`, `checks::range_merges`.)
     pub(super) fn prove_range(&mut self, x: &Halo2BaseCell, range: Interval) {
         let range = match self.proven.get(&x.id) {
             Some(known) => known.intersect(&range).unwrap_or(range),
             None => range,
         };
         self.proven.insert(x.id, range);
+        if let Some((base, c)) = self.offsets.get(&x.id).copied() {
+            if let Some(shifted) = range.offset(-c) {
+                if self.proven.get(&base.id).is_none_or(|known| !known.within(&shifted)) {
+                    self.prove_range(&base, shifted);
+                }
+            }
+        }
+    }
+
+    /// Record `out = x + sign * c` when `c` is a constant cell (`|c| < 2^64`),
+    /// so a range later proven for `out` is carried back to `x`.
+    pub(super) fn record_offset(&mut self, out: &Halo2BaseCell, x: &Halo2BaseCell, c: &Halo2BaseCell, sign: i128) {
+        if self.is_const_cell(x) || !self.is_const_cell(c) {
+            return;
+        }
+        if let Some(c) = kernel::fp_to_i128(c.value).filter(|c| c.unsigned_abs() < 1u128 << 64) {
+            self.offsets.insert(out.id, (*x, sign * c));
+        }
     }
 
     /// Record `out`'s range from its operands' ranges, when both are known.

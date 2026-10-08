@@ -177,6 +177,22 @@ pub enum Claim {
     /// The two lists of values are equal as multisets (`is_permutation(p)`
     /// is `Permutation(p, [0, 1, ..., n - 1])`).
     Permutation(ListId, ListId),
+    /// `x <= y`, or `x < y` when `strict`, for two integers or two floats'
+    /// fixed-point codes (the codes are ordered as the floats).
+    Ordered { x: StmtId, y: StmtId, strict: bool },
+    // ── Array claims (`super::array_facts`): over the values of a list ──
+    /// Every value of the list lies in `[lo, hi]` (`None`: an open end).
+    /// `NonNegativeElements(list)` is `ElementsWithin { list, lo: Some(0),
+    /// hi: None }`.
+    ElementsWithin { list: ListId, lo: Option<i64>, hi: Option<i64> },
+    /// `list[0] <= list[1] <= ...`.
+    NonDecreasing(ListId),
+    /// `list[0] < list[1] < ...`.
+    StrictlyIncreasing(ListId),
+    /// No two values of the list are equal.
+    Distinct(ListId),
+    /// At most `max_nonzero` values of the list are nonzero.
+    CountBound { list: ListId, max_nonzero: u32 },
 }
 
 /// A list of values a claim is about, interned (claims are small `Copy`
@@ -198,7 +214,9 @@ pub enum ListEntry {
     Int(i64),
 }
 
-type Interned = (Vec<Arc<[ListEntry]>>, HashMap<Arc<[ListEntry]>, u32>);
+/// The lists by id, the ids by list, and each list's statement positions
+/// (`ListId::positions`, built on demand).
+type Interned = (Vec<Arc<[ListEntry]>>, HashMap<Arc<[ListEntry]>, u32>, HashMap<u32, Arc<HashMap<StmtId, Vec<usize>>>>);
 
 thread_local! {
     static LISTS: RefCell<Interned> = RefCell::new(Default::default());
@@ -238,6 +256,50 @@ impl ListId {
     pub fn entries(self) -> Arc<[ListEntry]> {
         LISTS.with(|lists| lists.borrow().0[self.0 as usize].clone())
     }
+
+    pub fn len(self) -> usize {
+        self.entries().len()
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.len() == 0
+    }
+
+    /// The statements among the list's values, in list order.
+    pub fn stmts(self) -> Vec<StmtId> {
+        self.entries()
+            .iter()
+            .filter_map(|entry| match *entry {
+                ListEntry::Stmt(s) => Some(s),
+                ListEntry::Int(_) => None,
+            })
+            .collect()
+    }
+
+    /// The positions of each statement in the list (computed once per list
+    /// and lowering).
+    pub fn positions(self) -> Arc<HashMap<StmtId, Vec<usize>>> {
+        LISTS.with(|lists| {
+            let mut lists = lists.borrow_mut();
+            if let Some(index) = lists.2.get(&self.0) {
+                return index.clone();
+            }
+            let mut index: HashMap<StmtId, Vec<usize>> = HashMap::new();
+            for (k, entry) in lists.0[self.0 as usize].iter().enumerate() {
+                if let ListEntry::Stmt(s) = entry {
+                    index.entry(*s).or_default().push(k);
+                }
+            }
+            let index = Arc::new(index);
+            lists.2.insert(self.0, index.clone());
+            index
+        })
+    }
+
+    /// Whether the statement `s` is one of the list's values.
+    pub fn contains(self, s: StmtId) -> bool {
+        self.positions().contains_key(&s)
+    }
 }
 
 impl Fact {
@@ -264,7 +326,8 @@ impl Fact {
 
 impl Claim {
     /// `true` when `self` implies `other` syntactically (the same
-    /// statements, a narrower constant range).
+    /// statements, a narrower constant range; for array claims, see
+    /// `super::array_facts::implies`).
     pub fn implies(&self, other: &Claim) -> bool {
         use Claim::*;
         match (*self, *other) {
@@ -283,10 +346,28 @@ impl Claim {
             }
             (InRange { x, lo, .. }, NonNegative(y)) => x == y && lo >= 0,
             (InRange { x, lo, .. }, NonZero(y)) => x == y && lo >= 1,
+            (Within { x, lo, .. }, NonNegative(y)) => x == y && lo.is_some_and(|l| l >= 0),
+            (Within { x, lo, hi }, NonZero(y)) => x == y && (lo.is_some_and(|l| l >= 1) || hi.is_some_and(|h| h <= -1)),
             (Equal(a, b), Equal(c, d)) => (a, b) == (c, d) || (a, b) == (d, c),
-            (Permutation(a, b), Permutation(c, d)) => (a, b) == (c, d) || (a, b) == (d, c),
+            (Ordered { x, y, strict }, Ordered { x: x2, y: y2, strict: strict2 }) => {
+                (x, y) == (x2, y2) && (strict || !strict2)
+            }
+            (a, b) if a.is_array_claim() || matches!(a, Permutation(..)) => super::array_facts::implies(&a, &b),
             (a, b) => a == b,
         }
+    }
+
+    /// Whether the claim is about a list's values as a whole (the claims of
+    /// `super::array_facts`; `Permutation` relates two lists).
+    pub fn is_array_claim(&self) -> bool {
+        matches!(
+            self,
+            Claim::ElementsWithin { .. }
+                | Claim::NonDecreasing(_)
+                | Claim::StrictlyIncreasing(_)
+                | Claim::Distinct(_)
+                | Claim::CountBound { .. }
+        )
     }
 
     /// The statements the claim is about.
@@ -294,15 +375,13 @@ impl Claim {
         match *self {
             Claim::InRange { x, hi: Bound::Stmt(h), .. } => vec![x, h],
             Claim::InRange { x, .. } | Claim::NonNegative(x) | Claim::NonZero(x) | Claim::Within { x, .. } => vec![x],
-            Claim::Equal(a, b) => vec![a, b],
-            Claim::Permutation(a, b) => [a, b]
-                .iter()
-                .flat_map(|list| list.entries().to_vec())
-                .filter_map(|entry| match entry {
-                    ListEntry::Stmt(s) => Some(s),
-                    ListEntry::Int(_) => None,
-                })
-                .collect(),
+            Claim::Equal(a, b) | Claim::Ordered { x: a, y: b, .. } => vec![a, b],
+            Claim::Permutation(a, b) => [a, b].iter().flat_map(|list| list.stmts()).collect(),
+            Claim::ElementsWithin { list, .. }
+            | Claim::NonDecreasing(list)
+            | Claim::StrictlyIncreasing(list)
+            | Claim::Distinct(list)
+            | Claim::CountBound { list, .. } => list.stmts(),
         }
     }
 }

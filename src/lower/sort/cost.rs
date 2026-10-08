@@ -395,7 +395,7 @@ impl UnitCosts {
     /// halo2-base a table read (`memory::ElementByTable`: a cell per slot,
     /// three per read, a table group's columns) wins for many reads of a
     /// long line, which this estimate weighs against the per-read cost.
-    fn reads(&self, n: usize, count: usize) -> u64 {
+    pub(super) fn reads(&self, n: usize, count: usize) -> u64 {
         if count == 0 {
             return 0;
         }

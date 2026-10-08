@@ -18,7 +18,7 @@ use crate::ir::IRGraph;
 use crate::optim::{RangeResolver, Resolver};
 use crate::types::{ScalarValue, StmtId, Value};
 
-use super::graph::{Bound, Claim, Fact};
+use super::graph::{Bound, Claim, Fact, ListEntry};
 
 pub struct FreeFacts<'a> {
     graph: &'a IRGraph,
@@ -44,12 +44,16 @@ impl<'a> FreeFacts<'a> {
         !self.disabled && (self.established_by_gadget(fact) || self.proves_by_bounds(&fact.claim))
     }
 
-    /// `true` when a scalar gadget's postcondition implies `fact`. Program
-    /// checks are discharged only this way: a check that bounds alone prove
-    /// is the job of `AlwaysSatisfiedElimination`, which runs earlier with
-    /// the same range engine and SMT.
+    /// `true` when a scalar gadget's postcondition implies `fact`, or it
+    /// holds by the definition of its statements (`array_facts::
+    /// definitional`: a sort's order, a square's sign). Program checks are
+    /// discharged only this way: a check that bounds alone prove is the job
+    /// of `AlwaysSatisfiedElimination`, which runs earlier with the same
+    /// range engine and SMT.
     pub fn established_by_gadget(&self, fact: &Fact) -> bool {
-        !self.disabled && self.established.iter().any(|f| f.implies(fact))
+        !self.disabled
+            && (self.established.iter().any(|f| f.implies(fact))
+                || super::array_facts::definitional(self.graph, &fact.claim))
     }
 
     fn proves_by_bounds(&self, claim: &Claim) -> bool {
@@ -66,10 +70,57 @@ impl<'a> FreeFacts<'a> {
             Claim::NonZero(x) => self.bounds(x).is_some_and(|(min, max)| min > 0 || max < 0),
             Claim::Equal(a, b) => a == b,
             Claim::Permutation(a, b) => a == b,
-            Claim::Within { x, lo, hi } => {
-                self.bounds(x).is_some_and(|(min, max)| lo.is_none_or(|l| l <= min) && hi.is_none_or(|u| max <= u))
+            Claim::Within { x, lo, hi } => self.within(x, lo, hi),
+            Claim::Ordered { x, y, strict } => {
+                x == y && !strict
+                    || matches!((self.max(x), self.min(y)), (Some(a), Some(b)) if if strict { a < b } else { a <= b })
             }
+            _ if !super::array_facts::enabled() => false,
+            Claim::ElementsWithin { list, lo, hi } => list.entries().iter().all(|entry| match *entry {
+                ListEntry::Stmt(x) => self.within(x, lo, hi),
+                ListEntry::Int(c) => lo.is_none_or(|l| l <= c) && hi.is_none_or(|u| c <= u),
+            }),
+            Claim::NonDecreasing(list) | Claim::StrictlyIncreasing(list) => {
+                let strict = matches!(claim, Claim::StrictlyIncreasing(_));
+                list.entries().windows(2).all(|pair| {
+                    let (a, b) = (self.entry_bounds(pair[0]), self.entry_bounds(pair[1]));
+                    matches!((a.1, b.0), (Some(a), Some(b)) if if strict { a < b } else { a <= b })
+                })
+            }
+            Claim::CountBound { list, max_nonzero } => list.len() <= max_nonzero as usize,
+            Claim::Distinct(_) => false,
         }
+    }
+
+    /// Whether the bounds of `x` lie in `[lo, hi]` (an open end bounds
+    /// nothing; each end is resolved on its own).
+    fn within(&self, x: StmtId, lo: Option<i64>, hi: Option<i64>) -> bool {
+        lo.is_none_or(|l| self.min(x).is_some_and(|m| l <= m)) && hi.is_none_or(|u| self.max(x).is_some_and(|m| m <= u))
+    }
+
+    fn entry_bounds(&self, entry: ListEntry) -> (Option<i64>, Option<i64>) {
+        match entry {
+            ListEntry::Int(c) => (Some(c), Some(c)),
+            ListEntry::Stmt(s) => (self.min(s), self.max(s)),
+        }
+    }
+
+    /// The least value of an integer statement, when known.
+    fn min(&self, stmt: StmtId) -> Option<i64> {
+        if self.disabled {
+            return None;
+        }
+        let value = Value::Integer(ScalarValue::new(None, Some(stmt)));
+        self.range.borrow_mut().resolve_min_with_stmts(&value, &self.graph.stmts)
+    }
+
+    /// The greatest value of an integer statement, when known.
+    fn max(&self, stmt: StmtId) -> Option<i64> {
+        if self.disabled {
+            return None;
+        }
+        let value = Value::Integer(ScalarValue::new(None, Some(stmt)));
+        self.range.borrow_mut().resolve_max_with_stmts(&value, &self.graph.stmts)
     }
 
     /// Bounds of an integer statement's value, when known.

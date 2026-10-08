@@ -42,6 +42,7 @@ mod routed;
 pub(crate) mod search;
 mod table;
 mod semantics;
+mod sorted_input;
 pub mod waksman;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -58,6 +59,7 @@ pub use argmax::ArgmaxQueries;
 pub use counts::SortCountQueries;
 pub use table::ConstantTableReads;
 pub use payload::payload_at_argsort_lane;
+pub use sorted_input::SortedInput;
 pub use semantics::{SortSemantics, COUNT_AT_MOST, COUNT_BELOW, INDICES, PAYLOAD, VALUES};
 
 use std::collections::{BTreeSet, HashMap};
@@ -72,8 +74,15 @@ use super::{Candidate, Construction, Context, EmitCx, Emitter, Group, Lane, OpKi
 
 /// The sort family's constructions, in the order the selection breaks ties.
 pub fn constructions() -> Vec<&'static dyn Construction> {
-    let mut all: Vec<&'static dyn Construction> =
-        vec![&SortingNetwork, &RankSelection, &PermutationCheck, &PinnedSelection, &RoutedPermutation, &GrandProductPermutation];
+    let mut all: Vec<&'static dyn Construction> = vec![
+        &SortingNetwork,
+        &RankSelection,
+        &PermutationCheck,
+        &PinnedSelection,
+        &RoutedPermutation,
+        &GrandProductPermutation,
+        &sorted_input::SortedInput,
+    ];
     all.extend(search::constructions());
     all
 }
