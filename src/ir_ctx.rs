@@ -93,6 +93,16 @@ impl IRContext {
         self.scopes[n - 1].set_local(key.to_string(), store);
     }
 
+    /// Make `key` a name of the innermost comprehension (its target), so
+    /// that binding it does not touch a name of the enclosing scope.
+    pub fn declare_comprehension_target(&mut self, key: &str) {
+        let top = self.scopes.last_mut().expect("a scope");
+        assert!(matches!(top, Scope::Generator(_)), "a comprehension target outside a comprehension");
+        if !top.exists_local(key) {
+            top.set_local(key.to_string(), ValueStore::new(Value::None));
+        }
+    }
+
     /// Whether `key` is bound in a scope below index `top` of the current
     /// function.
     fn exists_below(&self, top: usize, key: &str) -> bool {

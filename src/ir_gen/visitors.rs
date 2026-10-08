@@ -2039,6 +2039,11 @@ impl IRGenerator {
         let gen = &generators[idx];
         let items = self.with_guard(active, |this| this.iteration_items(&gen.iter_expr));
 
+        let mut target_names = BTreeSet::new();
+        Self::collect_assigned_names_from_target(&gen.target, &mut target_names);
+        for name in &target_names {
+            self.ctx.declare_comprehension_target(name);
+        }
         for item in &items {
             self.do_recursive_assign(&gen.target, item.value.clone(), false);
 
