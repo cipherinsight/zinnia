@@ -41,21 +41,34 @@ pub const CHALLENGE_NAME: &str = "verifier challenge";
 /// The program-wide requirement "verifier challenges are available".
 pub const CHALLENGE: Requirement = Requirement::Program { name: CHALLENGE_NAME };
 
+/// The cells one halo2-base column holds at `k = 9`, the size the layer's
+/// halo2-base prices assume: `2^9` rows less the 20 rows halo2-base keeps
+/// unusable (`prove/halo2_base/mod.rs`, `UNUSABLE_ROWS`).
+pub const HALO2_BASE_COLUMN_CELLS: u64 = 512 - 20;
+
 /// The one-time cost of enabling the second phase on halo2-base, in cells.
 ///
-/// Its own cells are few (one challenge cell each; the powers and shifts a
-/// check precomputes are priced by the check), but the second phase adds
-/// committed polynomials: the challenge column, at least one second-phase
-/// gate column, their share of the permutation argument, and a selector per
-/// challenge, about four columns. At `k = 9` (every perf case that can use
-/// a challenge construction) that is about 2,000 cells. Measured
-/// (`eval-redo/layer/layer-challenge.md`, argsorts of 64 to 160 elements,
-/// interleaved proofs at `k = 9`): the grand-product sort of 64 saves 4,300
-/// cells against the routed network and proves in about the same time, of
-/// 100 saves 7,900 cells and proves about 1.5 times faster. Above `k = 9`
-/// a column holds more cells, but the constructions' savings grow faster
-/// (the scaling tables there).
-pub const HALO2_BASE_CHALLENGE_COST: u64 = 2_000;
+/// The second phase's own cells (the challenge powers, the checks' factors)
+/// are priced by the constructions that lay them out. What the phase adds
+/// beyond them is columns its cells do not fill: the challenge column (one
+/// cell per challenge), and the unused rows of the second phase's last gate
+/// column, which is rounded up separately from the first phase's columns
+/// (half a column on average). Both are advice columns with equality
+/// enabled, so each carries its share of the permutation argument like any
+/// column of cells. One and a half columns of cells: 738 cells at `k = 9`.
+///
+/// Measured on the circuits as configured
+/// (`prove::halo2_base::configured_polys`,
+/// `eval-redo/layer/cost-model-misses.md`): for the nine grand-product
+/// sorts among the oracle's compiles of the perf programs, laying the
+/// second-phase cells out in the first phase and dropping the challenge
+/// column would commit 1 to 3 fewer polynomials (mean 1.8), where one and a
+/// half columns are 2.25 (a column of cells is 1.5 committed polynomials
+/// with its permutation share). The earlier price, 2,000 cells (about four
+/// columns), came from proving times on a loaded machine
+/// (`eval-redo/layer/layer-challenge.md`) that could not resolve a
+/// difference of this size.
+pub const HALO2_BASE_CHALLENGE_COST: u64 = HALO2_BASE_COLUMN_CELLS * 3 / 2;
 
 /// The name of the program-wide RAM trace (halo2-base,
 /// `lower::memory::versions::RamTrace`).

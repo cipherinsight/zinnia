@@ -55,8 +55,9 @@ fn in_bounds(index: StmtId, n: usize) -> Requirement {
 /// `i` is 0 or 1 (an index outside has no witness, as NumPy raises), and
 /// selects `x[i]`.
 ///
-/// **Cost** (`cost::index_bits_read`): `n - 1` selects of two variable
-/// branches per read (`n = 2`: one `select_bit`).
+/// **Cost** (`cost::index_bits_reads`): `n - 1` selects of two variable
+/// branches per read (`n = 2`: one `select_bit`), the first level's branch
+/// differences shared by the group's reads.
 pub struct ElementByIndexBits;
 
 /// The bound `0 <= i < n` and `i`'s `w = ceil(log2 n)` bits
@@ -120,7 +121,7 @@ impl Construction for ElementByIndexBits {
         }
         let indices = distinct_indices(group);
         let lanes = group.lanes.iter().map(|l| Requirement::Lane(l.stmt));
-        let cost = group.lanes.len() as u64 * cost::index_bits_read(n as u64, cx.target);
+        let cost = cost::index_bits_reads(n as u64, group.lanes.len() as u64, cx.target);
         let emitter = Box::new(BitsEmitter { cells: group.cells() });
         if n == 2 {
             let post = lanes.chain(indices.into_iter().map(|i| in_bounds(i, n)));

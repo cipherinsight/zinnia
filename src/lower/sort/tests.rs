@@ -317,11 +317,14 @@ fn cost_rule_picks_by_target_and_live_outputs() {
         choose_plan(&three, &noir).0,
         Plan::Hinted { runs: vec![Run { first: 0, last: 2, pin: Pin::Keys }] }
     );
-    // A maximum: a scan of 5 values on halo2-base, the extreme pin for 48
-    // values there and for any length on Noir.
+    // A maximum: a scan of up to 15 values on halo2-base, the extreme pin
+    // from 16 values there (measured: 703 cells against the scan's 705 per
+    // row of 16) and for any length on Noir.
     let max_of = |n: usize| demand(n, &[n - 1], &[], 0);
     assert_eq!(choose_plan(&max_of(5), &halo2).0, Plan::Network { network: Network::AdjacentSwapValues });
+    assert_eq!(choose_plan(&max_of(15), &halo2).0, Plan::Network { network: Network::AdjacentSwapValues });
     let pinned = |n: usize| Plan::Hinted { runs: vec![Run { first: n - 1, last: n - 1, pin: Pin::Extreme }] };
+    assert_eq!(choose_plan(&max_of(16), &halo2).0, pinned(16));
     assert_eq!(choose_plan(&max_of(48), &halo2).0, pinned(48));
     for n in [2, 5, 48] {
         assert_eq!(choose_plan(&max_of(n), &noir).0, pinned(n));

@@ -4,12 +4,13 @@
 //! forced (`ZINNIA_FORCE_CONSTRUCTION`) at several line lengths
 //! (`eval-redo/layer/layer-memory-data/scale.py`, 169 reads at distinct
 //! indices over lines of 2..16 cells): a halo2-base select of two variable
-//! branches in the multiplexer costs 8 cells, the bound and `w` index bits
-//! `4 + 7w` (`7w` when `n` is a power of two), a `select_bit` 12; on Noir 2
-//! gates per select, the bits `4 + 2w` (`2w`), a `select_bit` 3. halo2-base
-//! costs move with `k` (a range check's lookup cells depend on the lookup
-//! width `k - 1`); the formulas fit `k = 7..9`. The Noir native array's costs are the gather
-//! family's (`gather::cost::units`).
+//! branches in the multiplexer costs 8 cells (reads of one line share the
+//! first level's branch differences, `index_bits_reads`), the bound and `w`
+//! index bits `4 + 7w` (`7w` when `n` is a power of two), a `select_bit` 12;
+//! on Noir 2 gates per select, the bits `4 + 2w` (`2w`), a `select_bit` 3.
+//! halo2-base costs move with `k` (a range check's lookup cells depend on
+//! the lookup width `k - 1`); the formulas fit `k = 7..9`. The Noir native
+//! array's costs are the gather family's (`gather::cost::units`).
 
 use crate::lower::gather::cost::units;
 use crate::lower::{Context, Group, OpKind, Target};
@@ -20,18 +21,35 @@ fn width(n: u64) -> u64 {
     u64::from(u64::BITS - (n - 1).leading_zeros())
 }
 
-/// One read of `n >= 2` cells by the multiplexer: `n - 1` selects of two
-/// variable branches; for `n = 2` one `select_bit` (the select and the bit
-/// assertion).
-pub fn index_bits_read(n: u64, target: Target) -> u64 {
-    let (select, select_bit) = match target {
-        Target::Halo2Base => (8, 12),
-        Target::Noir => (2, 3),
-    };
-    if n == 2 {
-        return select_bit;
+/// `reads` reads of one line of `n >= 2` cells by the multiplexer, each at
+/// its own index: per read `n - 1` selects of two variable branches; for
+/// `n = 2` one `select_bit` (the select and the bit assertion).
+///
+/// On halo2-base a select is a multiply-add (4 cells) on the difference of
+/// its branches (4 cells), and the synthesizer computes the difference of a
+/// pair of branches once (`prove/halo2_base/synthesizer/ranges.rs`,
+/// `difference`). The tree's first level selects between the same
+/// neighbouring cells of the line for every read, so its `n / 2`
+/// differences are computed once for the group; the higher levels select
+/// between the read's own entries. A `select_bit` adds the bit's assertion
+/// (4). Measured on `pythran_make_decision` (two lines of 8 cells, 16 reads
+/// each): 1,312 cells of selects, as this prices them (the price of one
+/// read, 56 cells, would give 1,792). Noir: 2 gates per select, 3 per
+/// `select_bit`.
+pub fn index_bits_reads(n: u64, reads: u64, target: Target) -> u64 {
+    match target {
+        Target::Halo2Base => {
+            let (multiply_add, difference, assert_bit) = (4, 4, 4);
+            let shared = n / 2;
+            let per_read = if n == 2 {
+                assert_bit + multiply_add
+            } else {
+                (n - 1) * multiply_add + (n - 1 - shared) * difference
+            };
+            reads * per_read + shared * difference
+        }
+        Target::Noir => reads * if n == 2 { 3 } else { (n - 1) * 2 },
     }
-    (n - 1) * select
 }
 
 /// The bound `i < n` and `i`'s `w = ceil(log2 n)` bits

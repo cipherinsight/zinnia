@@ -171,3 +171,23 @@ fn the_local_selection_reads_numpys_element_on_both_targets() {
     }
 }
 
+
+/// The multiplexer's price on halo2-base: one read of a line costs a select
+/// of two variable branches (8 cells) per level entry, and reads of one line
+/// share the first level's branch differences. The prices of 16 reads of a
+/// line of `n` are the select cells measured on `x[idx]` with 16 indices
+/// (`eval-redo/layer/cost-model-misses.md`).
+#[test]
+fn reads_of_one_line_share_the_multiplexers_first_level() {
+    use super::cost::index_bits_reads;
+    for n in [3u64, 4, 5, 8, 16, 32] {
+        assert_eq!(index_bits_reads(n, 1, Target::Halo2Base), 8 * (n - 1), "one read of {n}");
+    }
+    assert_eq!(index_bits_reads(2, 1, Target::Halo2Base), 12, "one select_bit");
+    for (n, measured) in [(3u64, 196), (4, 264), (5, 392), (8, 656), (16, 1440), (32, 3008)] {
+        assert_eq!(index_bits_reads(n, 16, Target::Halo2Base), measured, "16 reads of {n}");
+    }
+    for n in [2u64, 3, 8] {
+        assert_eq!(index_bits_reads(n, 5, Target::Noir), 5 * index_bits_reads(n, 1, Target::Noir), "Noir shares nothing");
+    }
+}
