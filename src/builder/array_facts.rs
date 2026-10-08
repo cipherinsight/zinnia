@@ -99,6 +99,28 @@ thread_local! {
     static READ_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
+/// One level deeper in a chain of lookups through reads and arithmetic, for
+/// as long as the guard lives (restored even when a compile error unwinds
+/// through it, so a later compilation on the thread starts at depth 0).
+struct Deeper;
+
+impl Deeper {
+    /// `None` at the deepest level allowed.
+    fn enter() -> Option<Deeper> {
+        let depth = READ_DEPTH.with(|d| d.get());
+        (depth < MAX_READ_DEPTH).then(|| {
+            READ_DEPTH.with(|d| d.set(depth + 1));
+            Deeper
+        })
+    }
+}
+
+impl Drop for Deeper {
+    fn drop(&mut self) {
+        READ_DEPTH.with(|d| d.set(d.get() - 1));
+    }
+}
+
 impl IRBuilder {
     // ── Contexts ──────────────────────────────────────────────────────
 
@@ -369,20 +391,12 @@ impl IRBuilder {
         if !matches!(s.ir, IR::AddI | IR::SubI | IR::MulI) || s.arguments.len() != 2 {
             return None;
         }
-        let depth = READ_DEPTH.with(|d| d.get());
-        if depth >= MAX_READ_DEPTH {
-            return None;
-        }
         let (a, b) = (self.int_value_of_stmt(s.arguments[0])?, self.int_value_of_stmt(s.arguments[1])?);
+        let _deeper = Deeper::enter()?;
         let fact_range = |v: &Value| -> Range {
             match v.int_val() {
                 Some(c) => Range::point(c),
-                None => {
-                    READ_DEPTH.with(|d| d.set(depth + 1));
-                    let r = Cell::of(v).map_or(Range::TOP, |c| self.array_fact_range(&c, v, at));
-                    READ_DEPTH.with(|d| d.set(depth));
-                    r
-                }
+                None => Cell::of(v).map_or(Range::TOP, |c| self.array_fact_range(&c, v, at)),
             }
         };
         if a.int_val().is_none() && b.int_val().is_none() {
@@ -405,11 +419,7 @@ impl IRBuilder {
     fn read_range(&self, stmt: StmtId, at: Where) -> Option<Range> {
         let s = self.stmts.get(stmt as usize)?;
         let IR::ArrayRead(access) = &s.ir else { return None };
-        let depth = READ_DEPTH.with(|d| d.get());
-        if depth >= MAX_READ_DEPTH {
-            return None;
-        }
-        READ_DEPTH.with(|d| d.set(depth + 1));
+        let _deeper = Deeper::enter()?;
         let operands = ReadOperands::split(&s.arguments, access.rank());
         let positions: Vec<Value> = operands.positions.iter().filter_map(|&p| self.int_value_of_stmt(p)).collect();
         let (from, to) = self.access_reach(access, &positions);
@@ -418,7 +428,6 @@ impl IRBuilder {
             .version_facts(*operands.version, at)
             .iter()
             .fold(Range::TOP, |acc, facts| acc.meet(&facts.over(from, to, &oracle).range, &oracle));
-        READ_DEPTH.with(|d| d.set(depth));
         (!range.is_top()).then_some(range)
     }
 
