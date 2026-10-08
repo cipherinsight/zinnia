@@ -725,6 +725,42 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
     and `r2/q_*.py` reproducer matches NumPy, is a compile error, or has no proof where
     Python raises.
 
+- Fourth soundness review fixes (branch `array-ssa-fix4`,
+  `eval-redo/layer/array-ssa-review/REVIEW-4.md`; regression tests
+  `testing/lang/test_array_ssa_review4.py`, every `r4/q4_*.py` reproducer on the mock,
+  halo2-base and Noir):
+  - R1 (introduced by fix2): a write through a name under a runtime condition that builds
+    the new contents in another storage (`rebind_subscript_target`, a list `append`)
+    binds the name to `select(cond, updated, old)`, a third storage that had no links, so
+    a later write through the name missed the arrays the old one shared memory with (a
+    mask write in a branch to a merge of a view and a copy lost a later write to the
+    view's base). The merge is now recorded as a path-dependent alias of both sides, and
+    a merge link skips a source only under a constant condition or for the source whose
+    storage the merge itself is.
+  - B4 generalized (R2, FR4): every first binding of a name under a runtime predicate is
+    recorded with the predicates of its assignments (`IRContext::note_assignment`), not
+    only one in a loop body after a `break`. The records flow through each arm of a
+    runtime `if` from their state before it; at the join each arm contributes the
+    predicates it added, and where both arms bind the name on every path through them (an
+    assignment whose literals are the arm's own) the `if`'s predicate replaces them
+    (`join_assignment_records`). A loop target is recorded as assigned where its iteration
+    starts, so a loop of a runtime trip count (`range(n % 3)`, a runtime-shaped array,
+    `np.nonzero(...)[0]`) that runs no iteration leaves it unbound. A comprehension's own
+    target is never asserted. This caught a further pre-existing case: a `break` inside an
+    arm before the arm's binding (`for ...: if c: if p: break; b = 1 else: b = 2`).
+  - R3: after a loop, the target names hold their values at the end of the last iteration
+    that started, merged under each iteration's start condition (`break` included), and
+    their values before the loop where none started; they were the last item's.
+  - R4: a return guarantee from a loop body or its `else` block holds after the loop only
+    if no `break` can have left it (`IRContext::loop_may_break`; also for `while`). The
+    `else` block runs after the loop as `if not broken: ...` (`visit_branches`), so a
+    `break` or `continue` in it is the enclosing loop's (found by the name-binding fuzzer:
+    it applied to the loop itself), and its names stay bound where it ran.
+  - R5: comprehension targets are bound in a generator scope, local to the comprehension.
+  - IR digests are unaffected: the merges and predicates these add are dead unless read
+    and removed before export, and no evaluated program reads a name where it may be
+    unbound.
+
 ### Open
 - Dynamic-array lanes beyond the runtime length: `1.0 / x[x > 0]` and `x[x > 0] ** -1.5` used to
   be compile errors (the division's or power's precondition could not be stated over the
