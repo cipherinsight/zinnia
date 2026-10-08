@@ -18,7 +18,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 use super::keys::{keygen, keygen_or_next_k, prove_with_keys, verify_with_keys, Halo2BaseKeys, KeyRole, LoadTimings};
-use super::{cell_profile, cell_stats, committed_polys, fp_from_hex, fp_to_hex, Halo2BaseProverBackend};
+use super::{cell_profile, cell_stats, committed_polys, configured_polys, fp_from_hex, fp_to_hex, Halo2BaseProverBackend};
 use crate::prove::traits::ProverBackend;
 use crate::prove::types::ProvingParams;
 use crate::CompiledIR;
@@ -158,6 +158,17 @@ fn halo2_base_cell_stats(compiled_ir: &CompiledIR, params_json: Option<&str>) ->
     .to_string())
 }
 
+/// The committed polynomials of the circuit as configured
+/// (`configured_polys`), at `params_json` or the estimate's parameters. A
+/// measurement aid.
+#[pyfunction]
+#[pyo3(signature = (compiled_ir, params_json=None))]
+fn halo2_base_configured_polys(compiled_ir: &CompiledIR, params_json: Option<&str>) -> PyResult<String> {
+    let params = params_or_estimate(compiled_ir, params_json)?;
+    let polys = configured_polys(&compiled_ir.graph, &params).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    Ok(polys.to_string())
+}
+
 /// Advice and lookup cells per IR statement at `lookup_bits` (default 8):
 /// JSON list of `[statement id, advice, lookup]`. A measurement aid.
 #[pyfunction]
@@ -269,6 +280,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(halo2_base_load_keys, m)?)?;
     m.add_function(wrap_pyfunction!(halo2_base_cell_stats, m)?)?;
     m.add_function(wrap_pyfunction!(halo2_base_cell_profile, m)?)?;
+    m.add_function(wrap_pyfunction!(halo2_base_configured_polys, m)?)?;
     m.add_function(wrap_pyfunction!(halo2_base_prove, m)?)?;
     m.add_function(wrap_pyfunction!(halo2_base_verify, m)?)?;
     Ok(())
