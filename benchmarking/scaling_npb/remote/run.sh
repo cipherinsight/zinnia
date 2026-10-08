@@ -10,16 +10,17 @@
 #      (`harness build` / the copy from zinnia-post, as for every other session).
 #   V  validation of the points this study could not validate locally ($DATA/validate_on_remote.txt,
 #      lines "<cap> <case> <system>"): the scaling_npb validate check (mock outputs vs NumPy) with
-#      the timing settings' memory cap and timeout; untimed, all CPUs  -> $OUT/validate/
+#      the timing settings' memory cap and the count timeout; untimed, all CPUs  -> $OUT/validate/
 #   P  thread probe: one short SP1 and one RISC Zero run on all 64 CPUs (--threads 64), watched
 #      by thread_probe.py (threads per prover, busiest interval in CPUs) -> $OUT/probe/
 #   A  counts (untimed, nothing timed runs): per cap, measure.py with configuration `final`
 #      (halo2-base cells and Noir gates as Zinnia chooses) and `fix_delegate` (the same with the
-#      backend's own array lowering), on all 64 CPUs               -> $OUT/counts/
+#      backend's own array lowering), on all 64 CPUs, then the cap's per-step timeout and an
+#      estimate of stage B's wall time      -> $OUT/counts/, $OUT/timeout_cap<C>, $OUT/estimate_cap<C>.json
 #   B  Zinnia timing, every cap, 8 shards per cap, as a job queue over four slots of 8 physical
 #      cores (CPUs 8j..8j+7; their siblings 32+8j.. stay idle), threads 8, memory cap 30G, repeats
 #      $REPEATS_<cap> (5; never below 3, the same for every system at a point), per-step timeout
-#      $TIMEOUT. Only these four timed jobs run. Per shard (`scaling_npb plan`): zinnia_halo2 +
+#      of the cap (timeout_of: from stage A). Only these four timed jobs run. Per shard (`scaling_npb plan`): zinnia_halo2 +
 #      zinnia_noir on every point                                   -> $RES/<date>-scnpb-z-cap<C>-s<K>
 #      then each delegate system (Zinnia with the backend's own array lowering) on the points whose
 #      @delegate circuit for that target differs from Zinnia's (stage A digests: halo2 IR, Noir
@@ -32,7 +33,7 @@
 #      (original-size remote sessions, identical circuits: Zinnia/delegate 1.005 halo2, 0.998 Noir on
 #      DS-1000; 0.991, 1.006 on NPBench/Pythran). Stage B therefore needs stage A's counts.
 #   C  zkVM timing: sp1 + risc0, one harness run per cap, one at a time on the whole machine
-#      (taskset 0-63, threads 64, memory cap $ZKVM_MEMORY), repeats 1, the same per-step timeout.
+#      (taskset 0-63, threads 64, memory cap $ZKVM_MEMORY), repeats 1, the cap's per-step timeout.
 #      Nothing else runs.                                            -> $RES/<date>-scnpb-k-cap<C>
 #
 # The asymmetry is deliberate (author's rule): Zinnia (all four systems) gets 8 cores and 30G
@@ -49,7 +50,7 @@ OUT=${OUT:-$RUN/scaling-npb}                # counts, probe, logs
 RES=${RES:-$OUT/results}                    # harness epochs
 ZK_SEED=${ZK_SEED:-$RUN/zinnia-src}         # a checkout whose sp1/risc0 target dirs seed the build
 CAPS=${CAPS:-32 64 128}
-TIMEOUT=${TIMEOUT:-14400}                   # per step, every system (as the NPB perf sessions)
+COUNT_TIMEOUT=${COUNT_TIMEOUT:-21600}       # stage A (and V): a compile beyond 6 h is a resource limit
 REPEATS_32=${REPEATS_32:-5}
 REPEATS_64=${REPEATS_64:-5}
 REPEATS_128=${REPEATS_128:-5}
@@ -64,6 +65,11 @@ mkdir -p $OUT/logs $OUT/counts $RES
 cd $WT
 
 case_set() { echo $DATA/case_sets/npbench_pythran_cap$1.json; }
+counts_of() { echo $OUT/counts/measure_final_cap$1.json $OUT/counts/measure_fix_delegate_cap$1.json; }
+# The per-step timeout of a cap, the same for every system (Zinnia, delegates, zkVMs) at its points:
+# 3 x (compile + estimated prove) of the slowest step stage A measured, never below 14,400 s
+# (`scaling_npb timeout`, written by stage A to $OUT/timeout_cap<C>). TIMEOUT=<s> overrides it.
+timeout_of() { echo ${TIMEOUT:-$(cat $OUT/timeout_cap$1)}; }
 repeats() { local v=REPEATS_$1; echo ${!v}; }
 log() { echo "$* $(date -Is)"; }
 
@@ -90,7 +96,7 @@ probe() {  # one small scaled point per zkVM, whole machine, as stage C runs it
     $PY -m benchmarking.scaling_npb.thread_probe --out $OUT/probe/$s.json -- \
       taskset -c 0-63 $PY -m benchmarking.harness run --label scnpb-probe-$s --case-set $(case_set 32) \
       --cases npbench_polybench_gemm_gemm__kernel_cap32 --systems $s --repeats 1 --threads 64 \
-      --memory-max $ZKVM_MEMORY --timeout $TIMEOUT --results-dir $OUT/probe/results > $OUT/logs/probe-$s.log 2>&1
+      --memory-max $ZKVM_MEMORY --timeout 14400 --results-dir $OUT/probe/results > $OUT/logs/probe-$s.log 2>&1
     log "probe $s exit $?"
   done
 }
@@ -104,7 +110,7 @@ validate_remote() {  # untimed: the points listed in $DATA/validate_on_remote.tx
       cases=$(awk -v c=$c -v s=$system '$1 == c && $3 == s {print $2}' $list | paste -sd,)
       [[ -z $cases ]] && continue
       taskset -c 0-63 $PY -m benchmarking.scaling_npb validate --data $DATA --cap $c --cases $cases \
-        --systems $system --jobs 6 --memory 30G --timeout $TIMEOUT \
+        --systems $system --jobs 6 --memory 30G --timeout $COUNT_TIMEOUT \
         --out $OUT/validate/validate_cap${c}_$system.jsonl > $OUT/logs/validate-cap$c-$system.log 2>&1
       log "validate cap $c $system exit $?"
     done
@@ -115,23 +121,27 @@ counts() {  # untimed: every cap, both configurations, all CPUs
   for c in $CAPS; do
     for config in final fix_delegate; do
       taskset -c 0-63 $PY benchmarking/ablations/measure.py --config $config --case-sets $(case_set $c) \
-        --targets halo2,noir --gates --jobs 6 --timeout $((TIMEOUT + 100)) \
-        --wrap "$PY benchmarking/ablations/capped.py 30G $TIMEOUT" \
+        --targets halo2,noir --gates --jobs 6 --timeout $((COUNT_TIMEOUT + 100)) \
+        --wrap "$PY benchmarking/ablations/capped.py 30G $COUNT_TIMEOUT" \
         --out $OUT/counts/measure_${config}_cap$c.json > $OUT/logs/counts-${config}-cap$c.log 2>&1
       log "counts $config cap $c exit $?"
     done
+    $PY -m benchmarking.scaling_npb timeout $(counts_of $c) > $OUT/timeout_cap$c 2> $OUT/timeout_cap$c.why
+    $PY -m benchmarking.scaling_npb estimate --data $DATA --cap $c --repeats $(repeats $c) \
+      --heavy-repeats $HEAVY_REPEATS $(counts_of $c) > $OUT/estimate_cap$c.json
+    log "cap $c: per-step timeout $(cat $OUT/timeout_cap$c) s ($(cat $OUT/timeout_cap$c.why)); stage B estimate $(cat $OUT/estimate_cap$c.json)"
   done
 }
 
 zinnia_job() {  # zinnia_job <cap> <shard> <cpus>: the shard's runs as `plan` lists them
   local suffix systems count cases label
   $PY -m benchmarking.scaling_npb plan --data $DATA --cap $1 --shard $2/$SHARDS --repeats $(repeats $1) \
-    --heavy-repeats $HEAVY_REPEATS $OUT/counts/measure_{final,fix_delegate}_cap$1.json > $OUT/logs/plan-cap$1-s$2.txt
+    --heavy-repeats $HEAVY_REPEATS $(counts_of $1) > $OUT/logs/plan-cap$1-s$2.txt
   while read -r suffix systems count cases; do
     label=scnpb-z-cap$1-s$2
     [[ $suffix == - ]] || label+=$suffix
     taskset -c $3 $PY -m benchmarking.harness run --label $label --case-set $(case_set $1) --cases $cases \
-      --systems $systems --repeats $count --threads 8 --memory-max 30G --timeout $TIMEOUT \
+      --systems $systems --repeats $count --threads 8 --memory-max 30G --timeout $(timeout_of $1) \
       --results-dir $RES > $OUT/logs/$label.log 2>&1
     log "$label exit $? cpus $3"
   done < $OUT/logs/plan-cap$1-s$2.txt
@@ -159,7 +169,7 @@ zkvm_runs() {  # one cap at a time, the whole machine
   for c in $CAPS; do
     local label=scnpb-k-cap$c
     taskset -c 0-63 $PY -m benchmarking.harness run --label $label --case-set $(case_set $c) \
-      --systems sp1,risc0 --repeats 1 --threads 64 --memory-max $ZKVM_MEMORY --timeout $TIMEOUT \
+      --systems sp1,risc0 --repeats 1 --threads 64 --memory-max $ZKVM_MEMORY --timeout $(timeout_of $c) \
       --results-dir $RES > $OUT/logs/$label.log 2>&1
     log "$label exit $?"
   done

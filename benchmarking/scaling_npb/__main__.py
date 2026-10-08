@@ -7,6 +7,8 @@
                                                [--memory 16G] [--timeout S] [--max-elements N] [--cases ...]
     python -m benchmarking.scaling_npb remote-list --data DATA FILE.jsonl...
     python -m benchmarking.scaling_npb plan --data DATA --cap C --shard K/N [--repeats 5] [--heavy-repeats 3] MEASURE.json...
+    python -m benchmarking.scaling_npb timeout MEASURE.json...
+    python -m benchmarking.scaling_npb estimate --data DATA --cap C MEASURE.json...
     python -m benchmarking.scaling_npb delegate-cases --target halo2|noir --case-set FILE MEASURE.json...
     python -m benchmarking.scaling_npb table --data DATA [--validation FILE ...]
     python -m benchmarking.scaling_npb analyze --data DATA [--zinnia EPOCH...] [--zkvm EPOCH...] \\
@@ -99,6 +101,21 @@ def cmd_plan(args: argparse.Namespace) -> int:
     return plan.main(args.data.resolve(), args.cap, shard, shards, args.counts, args.repeats, args.heavy_repeats)
 
 
+def cmd_timeout(args: argparse.Namespace) -> int:
+    from benchmarking.scaling_npb import plan
+    seconds, why = plan.timeout(args.counts)
+    print(seconds)
+    print(why, file=sys.stderr)
+    return 0
+
+
+def cmd_estimate(args: argparse.Namespace) -> int:
+    from benchmarking.scaling_npb import plan
+    print(json.dumps(plan.estimate(args.data.resolve(), args.cap, args.shards, args.counts, args.repeats,
+                                   args.heavy_repeats)))
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     top = argparse.ArgumentParser(prog="python -m benchmarking.scaling_npb", description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -156,6 +173,19 @@ def parser() -> argparse.ArgumentParser:
     pl.add_argument("--heavy-repeats", type=int, default=3)
     pl.add_argument("counts", type=Path, nargs="+", help="stage-A measure.py outputs of the cap")
     pl.set_defaults(func=cmd_plan)
+
+    to = sub.add_parser("timeout", help="the cap's per-step timeout from the stage-A counts")
+    to.add_argument("counts", type=Path, nargs="+")
+    to.set_defaults(func=cmd_timeout)
+
+    es = sub.add_parser("estimate", help="stage B's wall time at a cap from the stage-A counts")
+    es.add_argument("--data", type=Path, required=True)
+    es.add_argument("--cap", type=int, required=True)
+    es.add_argument("--shards", type=int, default=8)
+    es.add_argument("--repeats", type=int, default=5)
+    es.add_argument("--heavy-repeats", type=int, default=3)
+    es.add_argument("counts", type=Path, nargs="+")
+    es.set_defaults(func=cmd_estimate)
 
     ana = sub.add_parser("analyze", help="Zinnia vs zkVM prove time and Zinnia vs @delegate gates")
     ana.add_argument("--data", type=Path, required=True)
