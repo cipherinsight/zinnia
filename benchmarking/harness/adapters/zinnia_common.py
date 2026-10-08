@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
-from typing import Any
+import os
+from typing import Any, Iterator
 
 from benchmarking.harness.adapters.base import StepFailure
 from benchmarking.harness.case_sets import PerfCase
@@ -13,6 +15,31 @@ from benchmarking.harness.outputs import (LOGICAL, ZINNIA_EXPOSURE, DecodedPubli
                                           decode_exposed, decode_with_layout)
 
 _EXPOSE_KINDS = {"ExposePublicIIR": "i", "ExposePublicFIR": "f"}
+
+#: The compiler setting of the delegate systems: every array access at a runtime index goes
+#: through the backend's own memory (Noir's ROM/RAM, halo2-base's lookup table or RAM trace)
+#: instead of the construction the array-lowering layer chooses (`src/lower/forcing.rs`,
+#: `docs/ablations.md`). Everything else is the default compiler.
+DELEGATE_FORCING = ("ZINNIA_FORCE_CONSTRUCTION", "@delegate")
+
+
+@contextlib.contextmanager
+def delegate_forcing() -> Iterator[None]:
+    """Compile with the backend's own array lowering inside the block only.
+
+    Scoped rather than set once: the harness also builds every adapter in the parent
+    process, whose environment every other system's step inherits.
+    """
+    name, value = DELEGATE_FORCING
+    saved = os.environ.get(name)
+    os.environ[name] = value
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = saved
 
 
 def compile_case(case: PerfCase, backend: str) -> Any:

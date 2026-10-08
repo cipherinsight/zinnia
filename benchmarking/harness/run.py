@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 from benchmarking.harness import build, environment, isolation, manifest, paths, toolchains
-from benchmarking.harness.adapters import ZINNIA_SYSTEMS, get_adapter
+from benchmarking.harness.adapters import EXTENSION_SYSTEMS, get_adapter
 from benchmarking.harness.adapters import noir_toolchain
 from benchmarking.harness.case_sets import PerfCase
 from benchmarking.harness.protocol import CaseProtocol, Epoch, RunConfig, StepRunner
@@ -33,7 +33,7 @@ def epoch_directory(label: str, results_dir: Path = paths.RESULTS) -> Path:
 
 def _check_preconditions(config: RunConfig) -> tuple[dict | None, list[toolchains.Probe]]:
     record, problems = build.installed_build_problems()
-    if problems and set(config.systems) & set(ZINNIA_SYSTEMS):
+    if problems and set(config.systems) & set(EXTENSION_SYSTEMS):
         raise RunRefused("the extension cannot be timed: " + "; ".join(problems))
     probes = toolchains.check_environment()
     failed = toolchains.failures_for(probes, config.systems)
@@ -103,7 +103,7 @@ def run_epoch(label: str, cases: list[PerfCase], config: RunConfig,
     adapters = [get_adapter(name) for name in config.systems]
     protocol = CaseProtocol(StepRunner(epoch, config), config, rng)
     with environment.indexer_paused(record["indexer"]):
-        if {"zinnia_noir", "noir_hw"} & set(config.systems):
+        if set(toolchains.NOIR_SYSTEMS) & set(config.systems):
             record["calibration"]["bb"] = calibrate_bb(root / "work" / "_calibration")
         for position, case in enumerate(order, 1):
             print(f"[{position}/{len(order)}] {case.case}", flush=True)
