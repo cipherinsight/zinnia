@@ -6,6 +6,7 @@
     python -m benchmarking.scaling_npb validate --data DATA --cap C --out FILE.jsonl [--systems S,..] [--jobs N]
                                                [--memory 16G] [--timeout S] [--max-elements N] [--cases ...]
     python -m benchmarking.scaling_npb remote-list --data DATA FILE.jsonl...
+    python -m benchmarking.scaling_npb plan --data DATA --cap C --shard K/N [--repeats 5] [--heavy-repeats 3] MEASURE.json...
     python -m benchmarking.scaling_npb delegate-cases --target halo2|noir --case-set FILE MEASURE.json...
     python -m benchmarking.scaling_npb table --data DATA [--validation FILE ...]
     python -m benchmarking.scaling_npb analyze --data DATA [--zinnia EPOCH...] [--zkvm EPOCH...] \\
@@ -92,6 +93,12 @@ def cmd_delegate_cases(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_plan(args: argparse.Namespace) -> int:
+    from benchmarking.scaling_npb import plan
+    shard, shards = (int(x) for x in args.shard.split("/"))
+    return plan.main(args.data.resolve(), args.cap, shard, shards, args.counts, args.repeats, args.heavy_repeats)
+
+
 def parser() -> argparse.ArgumentParser:
     top = argparse.ArgumentParser(prog="python -m benchmarking.scaling_npb", description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -140,6 +147,15 @@ def parser() -> argparse.ArgumentParser:
     dc.add_argument("--case-set", type=Path, required=True, help="the cap's case set")
     dc.add_argument("counts", type=Path, nargs="+", help="measure.py outputs of final and fix_delegate")
     dc.set_defaults(func=cmd_delegate_cases)
+
+    pl = sub.add_parser("plan", help="the Zinnia timing runs of one shard (stage B)")
+    pl.add_argument("--data", type=Path, required=True)
+    pl.add_argument("--cap", type=int, required=True)
+    pl.add_argument("--shard", required=True, help="K/N")
+    pl.add_argument("--repeats", type=int, default=5)
+    pl.add_argument("--heavy-repeats", type=int, default=3)
+    pl.add_argument("counts", type=Path, nargs="+", help="stage-A measure.py outputs of the cap")
+    pl.set_defaults(func=cmd_plan)
 
     ana = sub.add_parser("analyze", help="Zinnia vs zkVM prove time and Zinnia vs @delegate gates")
     ana.add_argument("--data", type=Path, required=True)
