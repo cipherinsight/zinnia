@@ -742,7 +742,7 @@ fn try_fancy_subscript(
 /// Basic indexing with compile-time scalar indices and nonnegative strides
 /// returns a NumPy view. This includes strided columns and mixed scalar/slice
 /// indexing; copying these loses mutations through aliases and ufunc out=.
-fn static_basic_view(b: &mut IRBuilder, value: &Value, indices: &[SliceIndex]) -> Option<Value> {
+fn static_basic_view(_b: &mut IRBuilder, value: &Value, indices: &[SliceIndex]) -> Option<Value> {
     let Value::StaticArray { dtype, shape, segment_id, strides, offset,
         imag_segment_id, .. } = value else { return None };
     if indices.len() > shape.len() { return None; }
@@ -798,7 +798,6 @@ fn static_basic_view(b: &mut IRBuilder, value: &Value, indices: &[SliceIndex]) -
     let out = Value::StaticArray { dtype: *dtype, shape: out_shape,
         segment_id: *segment_id, strides: out_strides, offset: out_offset,
         imag_segment_id: *imag_segment_id, value_id: ValueId::next() };
-    crate::optim::resolver::relay_forall_eq_const_from_input(b, &value, &out);
     Some(out)
 }
 
@@ -1348,7 +1347,6 @@ fn slice_axis_static_or_dynamic_1d(
             }
         }
     };
-    crate::optim::resolver::relay_forall_eq_const_from_input(b, &src, &out);
     out
 }
 
@@ -1686,7 +1684,6 @@ fn slice_axis(
             super::base::build_static_array_from_flat(b, leaves, new_shape, dtype)
         }
     };
-    crate::optim::resolver::relay_forall_eq_const_from_input(b, &src, &out);
     out
 }
 

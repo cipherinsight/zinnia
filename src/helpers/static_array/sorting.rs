@@ -319,6 +319,5 @@ pub fn try_apply_take(
     }
 
     let result = build_static_array_from_flat(b, out, out_shape, dtype);
-    crate::optim::resolver::relay_forall_eq_const_from_input(b, &arr, &result);
     Some(result)
 }

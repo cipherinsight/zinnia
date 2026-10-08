@@ -262,7 +262,6 @@ pub fn subscript_with_index_array(b: &mut IRBuilder, val: &Value, idx: &Value) -
             // The selection is an ndarray: as the nested list it is built
             // as, `2 * v[[0, 2]]` repeated it instead of doubling.
             let out = super::static_array::base::to_static_array(b, &out).unwrap_or(out);
-            crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
             return Some(out);
         }
     }
@@ -539,7 +538,7 @@ fn lower_sum_generic_sweep(b: &mut IRBuilder, inputs: &ReductionInputs) -> Value
     acc
 }
 
-/// Strategy A for `sum`: `forall_eq_const(arr, 0)` ⇒ output is constant 0.
+/// Strategy A for `sum`: every element is 0 ⇒ output is constant 0.
 /// Sound because every element equals 0, so `0 + 0 + ... + 0 == 0`.
 fn lower_sum_constant_zero(b: &mut IRBuilder, inputs: &ReductionInputs) -> Value {
     if inputs.any_float {
@@ -549,7 +548,7 @@ fn lower_sum_constant_zero(b: &mut IRBuilder, inputs: &ReductionInputs) -> Value
     }
 }
 
-/// Strategy B for `sum`: `forall_eq_const(arr, 1)` ⇒ output is constant N.
+/// Strategy B for `sum`: every element is 1 ⇒ output is constant N.
 /// Sound because every element equals 1, so the sum is N (the element
 /// count). Guarded by `builtin_reduce`'s empty-input short-circuit, so
 /// N >= 1 here.
@@ -575,7 +574,7 @@ fn lower_prod_generic_sweep(b: &mut IRBuilder, inputs: &ReductionInputs) -> Valu
     acc
 }
 
-/// Strategy A for `prod`: `forall_eq_const(arr, 0)` ⇒ output is constant 0.
+/// Strategy A for `prod`: every element is 0 ⇒ output is constant 0.
 /// Sound because `0 * x == 0` for any `x` (and N >= 1 here).
 fn lower_prod_constant_zero(b: &mut IRBuilder, inputs: &ReductionInputs) -> Value {
     if inputs.any_float {
@@ -585,7 +584,7 @@ fn lower_prod_constant_zero(b: &mut IRBuilder, inputs: &ReductionInputs) -> Valu
     }
 }
 
-/// Strategy B for `prod`: `forall_eq_const(arr, 1)` ⇒ output is constant 1.
+/// Strategy B for `prod`: every element is 1 ⇒ output is constant 1.
 /// Sound because `1 * 1 * ... * 1 == 1` for any N >= 1.
 fn lower_prod_constant_one(b: &mut IRBuilder, inputs: &ReductionInputs) -> Value {
     if inputs.any_float {
@@ -595,62 +594,31 @@ fn lower_prod_constant_one(b: &mut IRBuilder, inputs: &ReductionInputs) -> Value
     }
 }
 
-/// Build the `OpStrategySet` for sum/prod gated on `forall_eq_const(arr, k)`
-/// for k ∈ {0, 1}. The op author embeds the concrete `arr_vid` in each
-/// precondition; the dispatcher walks declared order and short-circuits
-/// on the first `Proved` outcome.
+/// The strategies of sum/prod: a constant (0 or 1) or the element count
+/// when every element of `val` is 0 or 1 (offered only when the array facts
+/// of its current contents decide it, `builder/array_facts.rs`), in that
+/// order.
 fn reduction_strategy_set(
-    arr_vid: crate::types::ValueId,
+    b: &IRBuilder,
+    val: &Value,
     op: &str,
 ) -> crate::optim::OpStrategySet<ReductionInputs, Value> {
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::{CostHint, OpStrategy, OpStrategySet};
+    use crate::optim::{decided, CostHint, OpStrategy, OpStrategySet};
 
-    let pred_eq_k = |k: i64| ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(arr_vid)),
-            ContractTerm::LitInt(k),
-        ],
-    };
-
-    match op {
-        "sum" => OpStrategySet {
-            strategies: vec![
-                OpStrategy {
-                    name: "forall_eq_const_zero",
-                    precondition: pred_eq_k(0),
-                    cost_hint: CostHint::O1,
-                    lower: lower_sum_constant_zero,
-                },
-                OpStrategy {
-                    name: "forall_eq_const_one",
-                    precondition: pred_eq_k(1),
-                    cost_hint: CostHint::O1,
-                    lower: lower_sum_length_times_one,
-                },
-            ],
-            default: lower_sum_generic_sweep,
-        },
-        "prod" => OpStrategySet {
-            strategies: vec![
-                OpStrategy {
-                    name: "forall_eq_const_zero",
-                    precondition: pred_eq_k(0),
-                    cost_hint: CostHint::O1,
-                    lower: lower_prod_constant_zero,
-                },
-                OpStrategy {
-                    name: "forall_eq_const_one",
-                    precondition: pred_eq_k(1),
-                    cost_hint: CostHint::O1,
-                    lower: lower_prod_constant_one,
-                },
-            ],
-            default: lower_prod_generic_sweep,
-        },
+    type Lower = fn(&mut IRBuilder, &ReductionInputs) -> Value;
+    let (zero, one, default): (Lower, Lower, Lower) = match op {
+        "sum" => (lower_sum_constant_zero, lower_sum_length_times_one, lower_sum_generic_sweep),
+        "prod" => (lower_prod_constant_zero, lower_prod_constant_one, lower_prod_generic_sweep),
         _ => unreachable!("reduction_strategy_set called with unsupported op `{}`", op),
+    };
+    let mut strategies = Vec::new();
+    if b.array_all_equal(val, 0) {
+        strategies.push(OpStrategy { name: "forall_eq_const_zero", precondition: decided(), cost_hint: CostHint::O1, lower: zero });
     }
+    if b.array_all_equal(val, 1) {
+        strategies.push(OpStrategy { name: "forall_eq_const_one", precondition: decided(), cost_hint: CostHint::O1, lower: one });
+    }
+    OpStrategySet { strategies, default }
 }
 
 pub fn builtin_reduce(b: &mut IRBuilder, op: &str, val: &Value) -> Value {
@@ -692,7 +660,7 @@ pub fn builtin_reduce(b: &mut IRBuilder, op: &str, val: &Value) -> Value {
             let op_name: &'static str = if op == "sum" { "sum" } else { "prod" };
             match val.value_id() {
                 Some(_) => {
-                    let set = reduction_strategy_set(inputs.arr_vid, op_name);
+                    let set = reduction_strategy_set(b, val, op_name);
                     crate::optim::dispatch_strategy(b, op_name, &inputs, &set)
                 }
                 None => {

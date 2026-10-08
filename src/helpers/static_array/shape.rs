@@ -224,7 +224,6 @@ pub fn try_apply_reshape(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Opti
             b.link_storages(*out_segment, segment_id, crate::builder::COPIED_VIEW);
         }
     }
-    crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
     Some(out)
 }
 
@@ -388,7 +387,7 @@ fn transpose_materialise(b: &mut IRBuilder, val: &Value, perm: &[usize]) -> Valu
 
 /// Try to apply `transpose` (or `.T`) natively. Returns `Some(result)` for
 /// the migrated case; `None` otherwise.
-pub fn try_apply_transpose(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Option<Value> {
+pub fn try_apply_transpose(_b: &mut IRBuilder, val: &Value, args: &[Value]) -> Option<Value> {
     let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
         Value::StaticArray {
             dtype,
@@ -428,13 +427,12 @@ pub fn try_apply_transpose(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Op
         imag_segment_id: imag_seg,
         value_id: ValueId::next(),
     };
-    crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
     Some(out)
 }
 
 /// Try to apply `moveaxis` natively. Returns `Some(result)` for the migrated
 /// case; `None` otherwise. `args` is `[source, dest]`.
-pub fn try_apply_moveaxis(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Option<Value> {
+pub fn try_apply_moveaxis(_b: &mut IRBuilder, val: &Value, args: &[Value]) -> Option<Value> {
     let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
         Value::StaticArray {
             dtype,
@@ -489,7 +487,6 @@ pub fn try_apply_moveaxis(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Opt
         imag_segment_id: imag_seg,
         value_id: ValueId::next(),
     };
-    crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
     Some(out)
 }
 
@@ -551,7 +548,6 @@ pub fn try_apply_expand_dims(
         imag_segment_id: imag_seg,
         value_id: ValueId::next(),
     };
-    crate::optim::resolver::relay_forall_eq_const_from_input(_b, &val, &out);
     Some(out)
 }
 
@@ -650,7 +646,6 @@ pub fn try_apply_squeeze(
             value_id: ValueId::next(),
         }
     };
-    crate::optim::resolver::relay_forall_eq_const_from_input(_b, &val, &out);
     Some(out)
 }
 
@@ -713,7 +708,6 @@ pub fn try_apply_flatten(b: &mut IRBuilder, val: &Value, copy: bool) -> Option<V
         let flat = materialise_to_flat(b, val);
         build_static_array_from_flat(b, flat, vec![total], dtype)
     };
-    crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
     Some(out)
 }
 

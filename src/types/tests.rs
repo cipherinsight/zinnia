@@ -358,8 +358,6 @@ mod tests {
         };
         let vid = arr.value_id().expect("static array now has a value_id");
 
-        b.fire_contract("zeros_content", vid, &HashMap::new());
-
         let q = ContractTerm::PredicateApp {
             kind: "forall_eq_const".to_string(),
             args: vec![
@@ -367,6 +365,7 @@ mod tests {
                 ContractTerm::LitInt(0),
             ],
         };
+        b.facts.insert_for(vid, q.clone());
         assert!(matches!(b.prove(&q), ProveOutcome::Proved));
 
         // Two distinct constructions must yield distinct identities.

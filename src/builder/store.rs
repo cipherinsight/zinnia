@@ -612,6 +612,19 @@ impl IRBuilder {
         }
     }
 
+    /// The cells of `storage` when it is in `Cells` state (either part of a
+    /// complex array too), without building IR; `None` for a version or a
+    /// deferred product.
+    pub(super) fn storage_raw_cells(&self, storage: u32) -> Option<Vec<Value>> {
+        if self.static_array_product_provenance.contains_key(&storage) {
+            return None;
+        }
+        match &self.storage(storage).state {
+            State::Cells(cells) => Some(cells.clone()),
+            State::Version { .. } => None,
+        }
+    }
+
     /// Whether the cells of `storage` are what NumPy would show on every
     /// path: it is not stale and its shape is known (`builder/stale.rs`).
     pub(super) fn storage_is_current(&self, storage: u32) -> bool {

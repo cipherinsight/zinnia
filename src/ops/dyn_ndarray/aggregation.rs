@@ -224,13 +224,19 @@ pub(crate) struct DynAggAllInputs {
 
 /// Strategy set for full reduction (axis=None). Gated strategies:
 ///
-/// * `boundary-read-on-sorted` — `is_sorted(input)` ⇒ max/min/argmin by
-///   a single read at index 0 or `len - 1` (or the constant 0), argmax by
-///   equality tests of neighbours (`first_position_of_last_value`).
-/// * `sum_all_zero` — `forall_eq_const(arr, 0)` ⇒ sum is constant 0.
-/// * `sum_all_one` — `forall_eq_const(arr, 1)` ⇒ sum is `runtime_length`
+/// * `boundary-read-on-sorted` — the live elements are non-decreasing ⇒
+///   max/min/argmin by a single read at index 0 or `len - 1` (or the
+///   constant 0), argmax by equality tests of neighbours
+///   (`first_position_of_last_value`).
+/// * `sum_all_zero` — every element is 0 ⇒ sum is constant 0.
+/// * `sum_all_one` — every element is 1 ⇒ sum is `runtime_length`
 ///   (cast to float when dtype is Float).
-/// * `prod_all_one` — `forall_eq_const(arr, 1)` ⇒ prod is constant 1.
+/// * `prod_all_one` — every element is 1 ⇒ prod is constant 1.
+///
+/// Each is offered only when the array facts of the array's current
+/// contents decide its property (`builder/array_facts.rs`), so a write
+/// through any name of the array is seen; its precondition is then that
+/// answer (`optim::decided`).
 ///
 /// **Empty-N safety (mirrors static-side Group 3d, adapted for dyn).**
 /// Dyn arrays have runtime-symbolic length N, so each strategy is only
@@ -260,71 +266,42 @@ fn dyn_aggregate_all_strategies(
     b: &IRBuilder,
     inputs: &DynAggAllInputs,
 ) -> crate::optim::OpStrategySet<DynAggAllInputs, Value> {
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::{CostHint, OpStrategy, OpStrategySet};
+    use crate::optim::{decided, CostHint, OpStrategy, OpStrategySet};
 
     let mut strategies: Vec<OpStrategy<DynAggAllInputs, Value>> = Vec::new();
-
-    let arr_vid = inputs.data.value_id;
-    let pred_forall_eq_const = |k: i64| ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(arr_vid)),
-            ContractTerm::LitInt(k),
-        ],
-    };
+    let array = Value::DynamicNDArray(inputs.data.clone());
 
     // Level-2 short-circuit: the live elements are non-decreasing ⇒
-    // closed-form for the four monotone-respecting reductions. Whether they
-    // are is asked of the array facts of the array's current contents
-    // (`builder/array_facts.rs`), so a write through any name of the array
-    // makes the strategy unavailable; the strategy's precondition is then
-    // that answer.
+    // closed-form for the four monotone-respecting reductions.
     let live = Value::Integer(inputs.data.meta.runtime_length.clone());
     if matches!(
         inputs.agg,
         DynAggKind::Max | DynAggKind::Min | DynAggKind::Argmax | DynAggKind::Argmin
     ) && is_flat_buffer(&inputs.data)
-        && b.live_prefix_has_order(
-            &Value::DynamicNDArray(inputs.data.clone()),
-            &live,
-            crate::optim::array_facts::Order::NonDecreasing,
-            crate::builder::Where::Here,
-        )
+        && b.live_prefix_has_order(&array, &live, crate::optim::array_facts::Order::NonDecreasing, crate::builder::Where::Here)
     {
         strategies.push(OpStrategy {
             name: "boundary-read-on-sorted",
-            precondition: ContractTerm::LitBool(true),
+            precondition: decided(),
             cost_hint: CostHint::O1,
             lower: lower_boundary_read_on_sorted,
         });
     }
 
-    // forall_eq_const fast paths for sum / prod (the safe-for-any-N
+    // Constant-content fast paths for sum / prod (the safe-for-any-N
     // subset of Group 3d's static-side coverage). See the function-level
     // doc-comment for the empty-N reasoning and the deliberately-omitted
     // strategies.
-    if matches!(inputs.agg, DynAggKind::Sum) {
-        strategies.push(OpStrategy {
-            name: "sum_all_zero",
-            precondition: pred_forall_eq_const(0),
-            cost_hint: CostHint::O1,
-            lower: lower_dyn_sum_zero,
-        });
-        strategies.push(OpStrategy {
-            name: "sum_all_one",
-            precondition: pred_forall_eq_const(1),
-            cost_hint: CostHint::O1,
-            lower: lower_dyn_sum_length,
-        });
+    let all_zero = || b.array_all_equal(&array, 0);
+    let all_one = || b.array_all_equal(&array, 1);
+    if matches!(inputs.agg, DynAggKind::Sum) && all_zero() {
+        strategies.push(OpStrategy { name: "sum_all_zero", precondition: decided(), cost_hint: CostHint::O1, lower: lower_dyn_sum_zero });
     }
-    if matches!(inputs.agg, DynAggKind::Prod) {
-        strategies.push(OpStrategy {
-            name: "prod_all_one",
-            precondition: pred_forall_eq_const(1),
-            cost_hint: CostHint::O1,
-            lower: lower_dyn_prod_one,
-        });
+    if matches!(inputs.agg, DynAggKind::Sum) && all_one() {
+        strategies.push(OpStrategy { name: "sum_all_one", precondition: decided(), cost_hint: CostHint::O1, lower: lower_dyn_sum_length });
+    }
+    if matches!(inputs.agg, DynAggKind::Prod) && all_one() {
+        strategies.push(OpStrategy { name: "prod_all_one", precondition: decided(), cost_hint: CostHint::O1, lower: lower_dyn_prod_one });
     }
 
     OpStrategySet {

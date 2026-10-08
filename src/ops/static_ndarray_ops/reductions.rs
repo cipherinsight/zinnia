@@ -204,50 +204,33 @@ fn lower_mean_generic(b: &mut IRBuilder, inputs: &MeanInputs) -> Value {
     mean
 }
 
-/// Strategy A for `mean`: `forall_eq_const(arr, 0)` ⇒ output is `0.0`.
+/// Strategy A for `mean`: every element is 0 ⇒ output is `0.0`.
 /// Sound because `(0 + 0 + ... + 0) / N == 0.0` for N >= 1 (guaranteed
 /// here by `builtin_reduce`'s empty short-circuit).
 fn lower_mean_constant_zero(b: &mut IRBuilder, _inputs: &MeanInputs) -> Value {
     b.ir_constant_float(0.0)
 }
 
-/// Strategy B for `mean`: `forall_eq_const(arr, 1)` ⇒ output is `1.0`.
+/// Strategy B for `mean`: every element is 1 ⇒ output is `1.0`.
 /// Sound because `(1 + 1 + ... + 1) / N == N / N == 1.0` for N >= 1.
 fn lower_mean_constant_one(b: &mut IRBuilder, _inputs: &MeanInputs) -> Value {
     b.ir_constant_float(1.0)
 }
 
-fn mean_strategy_set(
-    arr_vid: crate::types::ValueId,
-) -> crate::optim::OpStrategySet<MeanInputs, Value> {
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::{CostHint, OpStrategy, OpStrategySet};
+/// The strategies of `mean`: the constant `0.0` or `1.0` when every element
+/// of the array is 0 or 1 (offered only when the array facts of its current
+/// contents decide it, `builder/array_facts.rs`).
+fn mean_strategy_set(b: &IRBuilder, val: &Value) -> crate::optim::OpStrategySet<MeanInputs, Value> {
+    use crate::optim::{decided, CostHint, OpStrategy, OpStrategySet};
 
-    let pred_eq_k = |k: i64| ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(arr_vid)),
-            ContractTerm::LitInt(k),
-        ],
-    };
-
-    OpStrategySet {
-        strategies: vec![
-            OpStrategy {
-                name: "forall_eq_const_zero",
-                precondition: pred_eq_k(0),
-                cost_hint: CostHint::O1,
-                lower: lower_mean_constant_zero,
-            },
-            OpStrategy {
-                name: "forall_eq_const_one",
-                precondition: pred_eq_k(1),
-                cost_hint: CostHint::O1,
-                lower: lower_mean_constant_one,
-            },
-        ],
-        default: lower_mean_generic,
+    let mut strategies = Vec::new();
+    if b.array_all_equal(val, 0) {
+        strategies.push(OpStrategy { name: "forall_eq_const_zero", precondition: decided(), cost_hint: CostHint::O1, lower: lower_mean_constant_zero });
     }
+    if b.array_all_equal(val, 1) {
+        strategies.push(OpStrategy { name: "forall_eq_const_one", precondition: decided(), cost_hint: CostHint::O1, lower: lower_mean_constant_one });
+    }
+    OpStrategySet { strategies, default: lower_mean_generic }
 }
 
 /// `np.mean(arr, axis=None)` — element-wise mean. With no axis, the result
@@ -284,7 +267,7 @@ pub fn np_mean(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
         };
         match val.value_id() {
             Some(_) => {
-                let set = mean_strategy_set(inputs.arr_vid);
+                let set = mean_strategy_set(b, val);
                 crate::optim::dispatch_strategy(b, "mean", &inputs, &set)
             }
             None => lower_mean_generic(b, &inputs),

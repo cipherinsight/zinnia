@@ -75,11 +75,20 @@ cells), and a view that is still a run of the old cells keeps them, correctly.
 on any path, has no facts (`storage_is_current`); reading its cells is a compile error
 anyway.
 
-This replaces every value-id keyed array fact of the base (AF-1: a `forall` bound
-outlived `a[0] = x`; the `is_sorted` fact outlived `y = x; y[0] = 100`): the
-`array_in_range` predicate and its write-clock records, the `forall` name scan, the
-storage cell bounds of `np.nonzero`, the known-permutation list, and the `is_sorted`
-records and contracts.
+This replaces every fact about an array's elements that the base keyed by the
+array's value id, which a write through another name keeps (AF-1: a `forall` bound
+outlived `a[0] = x`; the `is_sorted` and zeros/ones facts outlived `y = x; y[0] =
+100`): the `array_in_range` predicate, the `forall` name scan, the storage cell
+bounds of `np.nonzero`, the known-permutation list, the `is_sorted`,
+`forall_eq_const` (zeros, ones, full) and `is_identity` facts with their contracts and
+the ~45 relays that copied the zeros/ones fact through shape operations, and the
+write-clock records (`ArrayContents`) with which branch `fact-staleness` had made those
+facts lapse. One mechanism is left: a fact describes an array value, and a query reads
+the array's current value. "Every element is `k`" and "an identity matrix" need no
+stated fact at all: the cells of `np.zeros`, `np.ones`, `np.full`, `np.identity` and
+`np.eye` are constants, and so are the cells of every copy, view, reshape, transpose,
+slice, broadcast, tile, concatenation or gather of them (`array_all_equal`,
+`array_is_identity`; a read of an array of constants is one of them, `cell_is`).
 
 ## 3. Where facts hold
 
@@ -179,6 +188,8 @@ predicate.
 | non-empty reduction, integer power | `aggregation.rs::require_non_empty`, `ir_pow_i` | skip the check when proved | decision query |
 | permutation scatter | `lower/gather` via `is_known_permutation` | `inv[p] = v` without a permutation check when `p`'s cells are a stated permutation (an asserted `is_permutation`, an argsort line) | the permutation holds of exactly those cells in that order (`list_facts` requires the whole list) |
 | boundary reads of a sorted runtime-shaped array | `aggregation.rs` (`live_prefix_has_order`) | `min = x[0]`, `max = x[len - 1]`, `argmin = 0`, `argmax` = first position of the last value | the live prefix lies in an ordered segment of the array's current contents (a segment over the whole capacity holds it: the live length never exceeds the capacity, and a read past it has no witness) |
+| constant-content strategies | `helpers/ndarray.rs::reduction_strategy_set` (sum, prod), `static_ndarray_ops/reductions.rs::mean_strategy_set`, `elementwise.rs::where_strategy_set`, `matmul.rs::matmul_strategy_set`, `dyn_ndarray/aggregation.rs` (sum, prod of a runtime-shaped array) | a constant result, an operand, or the element count when every element is 0 or 1 (or the condition is all true or all false, or an operand is an identity matrix); offered only when `array_all_equal` / `array_is_identity` say so, with the precondition `optim::decided()` | the property holds of the array's current cells where the code runs (constants, or array facts that hold there) |
+| bounds of a runtime-shaped gather | `array_ops/indexing.rs::dyn_gather_rows` | skip the per-index checks when every index is in `[0, n)` (`array_within`) | the indices' facts hold where the gather runs |
 | layer: argsort permutation | `lower/facts.rs::is_argsort_line` | `Claim::Permutation(p, 0..n)` free when `p` is the `n` argsort lanes of one sort instance, every rank once | the sort construction's lemma, read off the graph (no fact table survives the passes' renumbering) |
 
 ## 7. The query tiers
@@ -205,10 +216,6 @@ preconditions are fixed once they exist).
 
 ## 8. Not done, and differences from the old branch
 
-- **Zeros/ones content facts** (`forall_eq_const`, relayed through ~50 view operators,
-  `optim/resolver/relays.rs`) are still value-id facts; branch `fact-staleness` makes
-  them expire on writes. They are a candidate for the store (a range `[c, c]`), to be
-  reconciled when that branch lands.
 - **Runtime-shaped merges**: a merge of two runtime-shaped arrays gets no merged
   facts (only static arrays of one shape do).
 - **Float ranges** are not facts (they would be about the fixed-point encoding, and

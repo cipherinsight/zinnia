@@ -563,7 +563,6 @@ impl IRGenerator {
                     values: flat,
                     value_id: ValueId::next(),
                 });
-                crate::optim::resolver::relay_forall_eq_const_from_input(&mut self.builder, &target_orig, &out);
                 out
             }
             "reshape" => {

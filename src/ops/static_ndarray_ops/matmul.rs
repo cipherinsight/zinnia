@@ -49,11 +49,11 @@ pub fn matmul(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
     let use_complex = lhs_flat.iter().any(|v| matches!(v, Value::Complex { .. }))
         || rhs_flat.iter().any(|v| matches!(v, Value::Complex { .. }));
 
-    // Phase F strategy dispatch: if either operand is provably all-zeros
-    // (forall_eq_const(_, 0)), the matmul output is the zero matrix of the
-    // broadcast shape. Falls through to the generic body when no fact is
-    // visible or when either operand lacks a `value_id`.
-    let result = if let (Some(lhs_vid), Some(rhs_vid)) = (lhs.value_id(), rhs.value_id()) {
+    // Phase F strategy dispatch: if either operand is all zeros, the matmul
+    // output is the zero matrix of the broadcast shape; if one is an
+    // identity matrix, the other one. Falls through to the generic body when
+    // the array facts decide neither, or when an operand lacks a `value_id`.
+    let result = if let (Some(_), Some(_)) = (lhs.value_id(), rhs.value_id()) {
         let out_shape = compute_matmul_output_shape(&lhs_shape, &rhs_shape);
         let inputs = MatmulInputs {
             lhs: lhs.clone(),
@@ -62,7 +62,7 @@ pub fn matmul(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
             use_float,
             use_complex,
         };
-        let set = matmul_strategy_set(lhs_vid, rhs_vid);
+        let set = matmul_strategy_set(b, &inputs);
         crate::optim::dispatch_strategy(b, "matmul", &inputs, &set)
     } else {
         matmul_generic(b, lhs, rhs)
@@ -169,10 +169,8 @@ struct MatmulInputs {
 }
 
 /// Build a nested `Value::List` of zeros with the requested shape. Scalar
-/// shape `[]` returns a plain int/float/complex zero. For non-empty
-/// shapes, the outermost composite's `value_id` is published via the
-/// `zeros_content` ensure so downstream consumers see
-/// `forall_eq_const(out, 0)` planted on the output.
+/// shape `[]` returns a plain int/float/complex zero. (Its cells are the
+/// constant zero, which the array facts read off them.)
 fn build_zeros_of_shape(
     b: &mut IRBuilder,
     shape: &[usize],
@@ -226,9 +224,7 @@ fn build_zeros_of_shape(
         })
     }
     let mut leaf = scalar_zero;
-    let out = build_level(b, shape, &mut leaf);
-    b.state_array_fact(&out, "zeros_content");
-    out
+    build_level(b, shape, &mut leaf)
 }
 
 /// Strategy lowering shared by `lhs_all_zero` and `rhs_all_zero`: emit a
@@ -257,58 +253,24 @@ fn lower_matmul_rhs_identity_returns_lhs(_b: &mut IRBuilder, inp: &MatmulInputs)
     inp.lhs.clone()
 }
 
-/// Build the `OpStrategySet` for `matmul` gated on
-/// `forall_eq_const(lhs, 0)` and `forall_eq_const(rhs, 0)`. Either match
-/// short-circuits to a zeros composite.
-fn matmul_strategy_set(
-    lhs_vid: ValueId,
-    rhs_vid: ValueId,
-) -> crate::optim::OpStrategySet<MatmulInputs, Value> {
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::{CostHint, OpStrategy, OpStrategySet};
+/// Build the `OpStrategySet` for `matmul`: a zeros composite when either
+/// operand is all zeros, the other operand when one is an identity matrix
+/// (each offered only when the array facts of the operands' current
+/// contents decide it, `builder/array_facts.rs`).
+fn matmul_strategy_set(b: &IRBuilder, inputs: &MatmulInputs) -> crate::optim::OpStrategySet<MatmulInputs, Value> {
+    use crate::optim::{decided, CostHint, OpStrategy, OpStrategySet};
 
-    let pred_eq_zero = |vid: ValueId| ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(vid)),
-            ContractTerm::LitInt(0),
-        ],
+    let mut strategies = Vec::new();
+    let mut offer = |holds: bool, name: &'static str, lower: fn(&mut IRBuilder, &MatmulInputs) -> Value| {
+        if holds {
+            strategies.push(OpStrategy { name, precondition: decided(), cost_hint: CostHint::O1, lower });
+        }
     };
-
-    let pred_is_identity = |vid: ValueId| ContractTerm::PredicateApp {
-        kind: "is_identity".to_string(),
-        args: vec![ContractTerm::Var(ContractVar::Value(vid))],
-    };
-
-    OpStrategySet {
-        strategies: vec![
-            OpStrategy {
-                name: "lhs_all_zero",
-                precondition: pred_eq_zero(lhs_vid),
-                cost_hint: CostHint::O1,
-                lower: lower_matmul_zero,
-            },
-            OpStrategy {
-                name: "rhs_all_zero",
-                precondition: pred_eq_zero(rhs_vid),
-                cost_hint: CostHint::O1,
-                lower: lower_matmul_zero,
-            },
-            OpStrategy {
-                name: "lhs_is_identity",
-                precondition: pred_is_identity(lhs_vid),
-                cost_hint: CostHint::O1,
-                lower: lower_matmul_lhs_identity_returns_rhs,
-            },
-            OpStrategy {
-                name: "rhs_is_identity",
-                precondition: pred_is_identity(rhs_vid),
-                cost_hint: CostHint::O1,
-                lower: lower_matmul_rhs_identity_returns_lhs,
-            },
-        ],
-        default: lower_matmul_generic,
-    }
+    offer(b.array_all_equal(&inputs.lhs, 0), "lhs_all_zero", lower_matmul_zero);
+    offer(b.array_all_equal(&inputs.rhs, 0), "rhs_all_zero", lower_matmul_zero);
+    offer(b.array_is_identity(&inputs.lhs), "lhs_is_identity", lower_matmul_lhs_identity_returns_rhs);
+    offer(b.array_is_identity(&inputs.rhs), "rhs_is_identity", lower_matmul_rhs_identity_returns_lhs);
+    OpStrategySet { strategies, default: lower_matmul_generic }
 }
 
 /// Generic matmul body, lifted from the original `matmul` so it can run

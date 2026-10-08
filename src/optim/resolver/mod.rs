@@ -45,8 +45,7 @@ pub use intervals::{interval_fact_for_float_binary, interval_fact_for_int_binary
 pub use layered::LayeredResolver;
 pub use relays::{
     prod_interval_int_for_static_len, relay_arccos_output_interval, relay_arctan2_output_interval,
-    relay_exp_output_interval, relay_forall_eq_const_from_all_inputs,
-    relay_forall_eq_const_from_input, relay_log_output_interval, relay_mean_tight_interval_float,
+    relay_exp_output_interval, relay_log_output_interval, relay_mean_tight_interval_float,
     relay_prod_output_interval_int, relay_reduction_output_interval_int,
     relay_sqrt_output_interval,
 };

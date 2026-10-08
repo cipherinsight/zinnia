@@ -17,49 +17,6 @@ use crate::helpers::static_args::{static_bool_arg, static_int_arg};
 
 // ── Numpy-like helpers ────────────────────────────────────────────
 
-/// Fire the `forall_eq_const` content fact for `np.zeros` / `np.ones`
-/// (and their `*_like` variants) on the output value. No-op for fill
-/// values other than 0 and 1 — `np.full(shape, k)` for arbitrary k is
-/// handled by Group 4b's multi-formal contract. No-op when the output
-/// Value carries no `value_id` (e.g., the static-array codepath).
-fn fire_fill_content_contract(b: &mut IRBuilder, out: &Value, fill_value: i64) {
-    let name = match fill_value {
-        0 => "zeros_content",
-        1 => "ones_content",
-        _ => return,
-    };
-    b.state_array_fact(out, name);
-}
-
-fn fire_full_static_content_fact(b: &mut IRBuilder, out: &Value, fill: &Value) {
-    let Some(out_vid) = out.value_id() else {
-        return;
-    };
-    let term = match fill {
-        Value::Integer(_) | Value::Boolean(_) => {
-            let Some(k) = fill.int_val() else {
-                return;
-            };
-            ContractTerm::LitInt(k)
-        }
-        Value::Float(_) => {
-            let Some(k) = fill.float_val() else {
-                return;
-            };
-            ContractTerm::LitFloat(k.into())
-        }
-        _ => return,
-    };
-    b.record_array_contents(out);
-    b.facts.insert_for(
-        out_vid,
-        ContractTerm::PredicateApp {
-            kind: "forall_eq_const".to_string(),
-            args: vec![ContractTerm::Var(ContractVar::Value(out_vid)), term],
-        },
-    );
-}
-
 /// The fill value of `np.full` / `np.full_like` converted into the dtype.
 fn fill_of_dtype(b: &mut IRBuilder, fill: &Value, dtype: Dtype) -> Value {
     if dtype == Dtype::Complex || matches!(fill, Value::Complex { .. }) {
@@ -169,13 +126,10 @@ fn fill_array(
                                     vec![n as usize],
                                     crate::types::NumberType::Integer,
                                 );
-                            fire_fill_content_contract(b, &out, fill_value);
                             return out;
                         } else {
                             crate::types::NumberType::Integer
                         };
-                    // dyn_fill_with_active itself fires the content contract
-                    // (zeros_content / ones_content) when fill_value is 0 or 1.
                     return crate::ops::dyn_ndarray::constructors::dyn_fill_with_active(
                         b,
                         max as usize,
@@ -270,7 +224,6 @@ fn fill_array(
                                 n,
                                 dtype,
                             );
-                            fire_fill_content_contract(b, &out, fill_value);
                             return out;
                         }
                     }
@@ -285,7 +238,6 @@ fn fill_array(
                                 total_bound,
                                 dtype,
                             );
-                            fire_fill_content_contract(b, &out, fill_value);
                             return out;
                         }
                     }
@@ -300,7 +252,6 @@ fn fill_array(
                     runtime_length,
                     dtype,
                 );
-                fire_fill_content_contract(b, &out, fill_value);
                 return out;
             }
             max_shape
@@ -321,7 +272,6 @@ fn fill_array(
         let out = crate::helpers::static_array::base::build_static_array_from_flat_complex(
             b, reals, imags, shape,
         );
-        fire_fill_content_contract(b, &out, fill_value);
         return out;
     }
 
@@ -342,7 +292,6 @@ fn fill_array(
     // P1 segarr-foundation: numeric constructors emit Value::StaticArray.
     let out =
         crate::helpers::static_array::base::build_static_array_from_flat(b, values, shape, dtype);
-    fire_fill_content_contract(b, &out, fill_value);
     out
 }
 
@@ -359,7 +308,6 @@ pub fn np_full(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
         .unwrap_or_else(|| dtype_of_fill(fill_arg));
     let fill_value = fill_of_dtype(b, fill_arg, dtype);
     let out = np_full_with_value(b, shape_arg, &fill_value, dtype.storage());
-    fire_full_static_content_fact(b, &out, &fill_value);
     mark_array_dtype(b, out, dtype)
 }
 
@@ -528,7 +476,6 @@ pub fn np_fill_like(
         let out = crate::helpers::static_array::base::build_static_array_from_flat_complex(
             b, reals, imags, shape,
         );
-        fire_fill_content_contract(b, &out, fill_value);
         return out;
     }
     let fill = match dtype {
@@ -544,7 +491,6 @@ pub fn np_fill_like(
     // P1 segarr-foundation: numeric constructors emit Value::StaticArray.
     let out =
         crate::helpers::static_array::base::build_static_array_from_flat(b, values, shape, dtype);
-    fire_fill_content_contract(b, &out, fill_value);
     out
 }
 
@@ -597,7 +543,6 @@ pub fn np_full_like(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, 
         }
     };
     let out = np_full_with_value(b, &shape_arg, &fill_value, dtype.storage());
-    fire_full_static_content_fact(b, &out, &fill_value);
     mark_array_dtype(b, out, dtype)
 }
 
@@ -632,7 +577,6 @@ pub fn np_identity(b: &mut IRBuilder, args: &[Value]) -> Value {
                 vec![n, n],
                 crate::types::NumberType::Integer,
             );
-            b.state_array_fact(&out, "identity_content");
             out
         }
         BoundedInt::Bounded { max, .. } => {
@@ -670,7 +614,6 @@ pub fn np_identity(b: &mut IRBuilder, args: &[Value]) -> Value {
             let mut formals = std::collections::HashMap::new();
             formals.insert("N".to_string(), n_vid);
             b.fire_contract("dyn_identity", runtime_length_vid, &formals);
-            b.state_array_fact(&result, "identity_content");
             result
         }
         BoundedInt::Neither => {

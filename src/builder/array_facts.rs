@@ -713,6 +713,166 @@ impl IRBuilder {
     }
 }
 
+/// The deepest chain of reads through which [`IRBuilder::cell_is`] looks
+/// for the cells a read can return.
+const MAX_CONSTANT_DEPTH: u32 = 4;
+
+impl IRBuilder {
+    // ── Constant contents ─────────────────────────────────────────────
+
+    /// Whether every element of `arr` is the number `k` where the current
+    /// code runs: `arr` is an array, a list or tuple of numbers (at any
+    /// depth), or a number. An element qualifies when it is the constant `k`
+    /// (constants carry their own facts: `np.zeros`, `np.ones`, `np.full`
+    /// and every copy, view, reshape, concatenation, tile or slice of them,
+    /// whose cells are those constants), a read of an array all of whose
+    /// cells qualify, or an integer whose array facts give it the range
+    /// `[k, k]`. A runtime-shaped array's capacity cells all count, the
+    /// padding included (more than its live elements need). A complex
+    /// element qualifies when its real part is `k` and its imaginary part 0.
+    ///
+    /// Like every array-fact query, this asks about the array's current
+    /// contents, so a write through any name of the array is seen.
+    pub fn array_all_equal(&self, arr: &Value, k: i64) -> bool {
+        if self.array_facts.off {
+            return false;
+        }
+        match self.contents(arr) {
+            Contents::Cells(cells) => !cells.is_empty() && cells.iter().all(|c| self.cell_is(c, k, 0)),
+            Contents::Facts(n) => {
+                n > 0 && self.array_range(arr, Where::Here) == Range::point(k)
+            }
+            Contents::Unknown => false,
+        }
+    }
+
+    /// Whether `arr` is an identity matrix (`n x n`, ones on the diagonal
+    /// and zeros elsewhere) where the current code runs: its cells are those
+    /// constants (`np.identity`, `np.eye`, and their copies and views). For
+    /// a runtime-shaped array, its `m x m` capacity laid out row-major (the
+    /// `n x n` runtime matrix, `n <= m`, reads the cell `i * m + j` for
+    /// `(i, j)`: one exactly on the diagonal).
+    pub fn array_is_identity(&self, arr: &Value) -> bool {
+        if self.array_facts.off {
+            return false;
+        }
+        let side = match arr {
+            Value::StaticArray { shape, .. } if shape.len() == 2 && shape[0] == shape[1] => shape[0],
+            Value::DynamicNDArray(d) => {
+                let m = d.meta.logical_shape.first().copied().unwrap_or(0);
+                let row_major = d.meta.logical_shape == [m, m]
+                    && d.meta.logical_strides == [m, 1]
+                    && d.meta.logical_offset == 0
+                    && d.meta.runtime_offset.static_val == Some(0)
+                    && d.meta.runtime_strides.iter().map(|s| s.static_val).eq([Some(m as i64), Some(1)]);
+                if !row_major {
+                    return false;
+                }
+                m
+            }
+            Value::List(_) | Value::Tuple(_) => match crate::helpers::composite::get_composite_shape(arr).as_slice() {
+                [r, c] if r == c => *r,
+                _ => return false,
+            },
+            _ => return false,
+        };
+        let Contents::Cells(cells) = self.contents(arr) else { return false };
+        side > 0
+            && cells.len() == side * side
+            && cells.iter().enumerate().all(|(flat, c)| self.cell_is(c, i64::from(flat / side == flat % side), 0))
+    }
+
+    /// Whether every element of `arr` (an array, or a list or tuple of
+    /// integers) lies in `[lo, hi]` where the current code runs.
+    pub fn array_within(&self, arr: &Value, lo: i64, hi: i64) -> bool {
+        let range = self.range_of(arr, Where::Here);
+        matches!(range.interval(&self.oracle(Where::Here)), (Some(a), Some(b)) if lo <= a && b <= hi)
+    }
+
+    /// The elements of `arr` as the queries above read them: its cells when
+    /// the frontend knows them (a static array or a view of one, a
+    /// runtime-shaped array's capacity, the leaves of a list or tuple), else
+    /// how many there are when only an array version's facts describe them.
+    fn contents(&self, arr: &Value) -> Contents {
+        match arr {
+            Value::StaticArray { dtype: NumberType::Complex, segment_id, imag_segment_id: Some(imag), .. } => {
+                if !self.storage_is_current(*segment_id) {
+                    return Contents::Unknown;
+                }
+                match (self.storage_raw_cells(*segment_id), self.storage_raw_cells(*imag)) {
+                    (Some(re), Some(im)) if re.len() == im.len() => Contents::Cells(
+                        re.into_iter()
+                            .zip(im)
+                            .map(|(r, i)| match (r, i) {
+                                (Value::Float(real), Value::Float(imag)) => Value::Complex { real, imag },
+                                (r, _) => r,
+                            })
+                            .collect(),
+                    ),
+                    _ => Contents::Unknown,
+                }
+            }
+            Value::StaticArray { shape, segment_id, .. } => match self.leaf_cells(arr) {
+                Some(cells) => Contents::Cells(cells),
+                None if self.storage_is_current(*segment_id) => Contents::Facts(shape.iter().product()),
+                None => Contents::Unknown,
+            },
+            Value::DynamicNDArray(d) => {
+                if !self.storage_is_current(d.segment_id) {
+                    return Contents::Unknown;
+                }
+                match self.storage_raw_cells(d.segment_id) {
+                    Some(cells) => Contents::Cells(cells),
+                    None => Contents::Facts(d.max_length()),
+                }
+            }
+            Value::List(_) | Value::Tuple(_) => match self.leaf_cells(arr) {
+                Some(cells) => Contents::Cells(cells),
+                None => Contents::Unknown,
+            },
+            Value::Integer(_) | Value::Boolean(_) | Value::Float(_) | Value::Complex { .. } => {
+                Contents::Cells(vec![arr.clone()])
+            }
+            _ => Contents::Unknown,
+        }
+    }
+
+    /// Whether the cell `v` is the number `k` on every accepted witness
+    /// where the current code runs (see [`Self::array_all_equal`]).
+    fn cell_is(&self, v: &Value, k: i64, depth: u32) -> bool {
+        if let Value::Complex { real, imag } = v {
+            return real.static_val == Some(k as f64) && imag.static_val == Some(0.0);
+        }
+        if v.int_val() == Some(k) || v.float_val() == Some(k as f64) {
+            return true;
+        }
+        let Some(stmt) = v.stmt_id() else { return false };
+        // A read returns one of the cells of the version it reads.
+        if let Some(IR::ArrayRead(_)) = self.stmts.get(stmt as usize).map(|s| &s.ir) {
+            let version = self.stmts[stmt as usize].arguments[0];
+            if depth < MAX_CONSTANT_DEPTH && matches!(self.stmts.get(version as usize).map(|s| &s.ir), Some(IR::ArrayInit { .. })) {
+                if let Some(cells) = self.array_defs.get(&version) {
+                    if cells.iter().all(|c| self.cell_is(c, k, depth + 1)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        !matches!(v, Value::Float(_))
+            && Cell::of(v).is_some_and(|cell| self.array_fact_range(&cell, v, Where::Here) == Range::point(k))
+    }
+}
+
+/// What [`IRBuilder::contents`] knows of an array's elements.
+enum Contents {
+    /// Every element, as a value.
+    Cells(Vec<Value>),
+    /// Only the facts of an array version, over this many elements.
+    Facts(usize),
+    /// Nothing (a stale array, or not an array).
+    Unknown,
+}
+
 /// A view's addresses in its storage, in row-major order.
 fn view_addresses(shape: &[usize], strides: &[usize], offset: usize) -> Vec<usize> {
     let n: usize = shape.iter().product();
@@ -752,88 +912,6 @@ pub(crate) enum StorageValue {
     Version(StmtId),
 }
 
-
-// ── Facts about an array's elements keyed by its value id ────────────────
-//
-// (Branch fact-staleness, 55cf31f9.) A `FactStack` fact about the elements
-// of an array (`forall_eq_const`, `is_identity`) is keyed by the array's
-// value id, which a write through another name keeps; whoever states one
-// records the array's storages and the store's write clock, and `prove`
-// leaves the fact out once those storages were written.
-
-use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-use crate::types::ValueId;
-
-/// What an array held at some point: its storages (a complex static array
-/// has two) and the store's write clock then.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ArrayContents {
-    storages: Vec<u32>,
-    clock: u64,
-}
-
-impl ArrayContents {
-    /// The contents of `arr` now; `None` for a value without storage (a
-    /// list or a scalar).
-    pub(crate) fn of(b: &IRBuilder, arr: &Value) -> Option<ArrayContents> {
-        let storage = match arr {
-            Value::StaticArray { segment_id, .. } => *segment_id,
-            Value::DynamicNDArray(d) => d.segment_id,
-            _ => return None,
-        };
-        let storages = std::iter::once(storage).chain(b.imag_storage(storage)).collect();
-        Some(ArrayContents { storages, clock: b.storage_write_clock() })
-    }
-
-    /// The array still holds what it held when this was recorded.
-    pub(crate) fn unchanged(&self, b: &IRBuilder) -> bool {
-        self.storages.iter().all(|&s| !b.storage_written_since(s, self.clock))
-    }
-}
-
-impl IRBuilder {
-    /// Fire `contract`, whose postconditions are facts about the elements
-    /// of its output, on the array `arr`, and record what `arr` holds now.
-    pub(crate) fn state_array_fact(&mut self, arr: &Value, contract: &str) {
-        let Some(vid) = arr.value_id() else { return };
-        self.record_array_contents(arr);
-        self.fire_contract(contract, vid, &std::collections::HashMap::new());
-    }
-
-    /// Record what `arr` holds now, before stating a fact about its
-    /// elements, unless a fact was stated about it before (see the module
-    /// docs). Nothing to record for a value without storage: a list is
-    /// rebound, not written in place.
-    pub(crate) fn record_array_contents(&mut self, arr: &Value) {
-        let (Some(vid), Some(contents)) = (arr.value_id(), ArrayContents::of(self, arr)) else {
-            return;
-        };
-        self.array_fact_records.entry(vid).or_insert(contents);
-    }
-
-    /// Whether facts about the elements of the array with value id `vid`
-    /// still hold: true when none was recorded (a value that is not an
-    /// array with storage), else whether its storages are unwritten since.
-    pub(crate) fn array_facts_are_current(&self, vid: ValueId) -> bool {
-        self.array_fact_records.get(&vid).is_none_or(|contents| contents.unchanged(self))
-    }
-
-    /// Whether `fact` still holds as far as array writes go: every
-    /// predicate in it (`forall_eq_const(x, 0)`, `is_sorted(x)`, ...) is
-    /// about arrays whose element facts are current. Facts about scalars
-    /// never lapse: a scalar is not written in place.
-    pub(crate) fn fact_is_current(&self, fact: &ContractTerm) -> bool {
-        match fact {
-            ContractTerm::PredicateApp { args, .. } => args.iter().all(|arg| match arg {
-                ContractTerm::Var(ContractVar::Value(vid)) => self.array_facts_are_current(*vid),
-                _ => true,
-            }),
-            ContractTerm::BoolComb { operands, .. } => operands.iter().all(|o| self.fact_is_current(o)),
-            ContractTerm::Not(inner) => self.fact_is_current(inner),
-            _ => true,
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -1052,87 +1130,5 @@ mod tests {
         let mut swapped = cells.clone();
         swapped.swap(0, 1);
         assert!(!b.is_known_permutation(&swapped), "another order of the cells is another list");
-    }
-}
-
-#[cfg(test)]
-mod value_id_fact_tests {
-    use crate::builder::IRBuilder;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use crate::types::{NumberType, ScalarValue, Value};
-
-    /// A one-dimensional runtime-shaped integer array of `len` zeros.
-    fn zeros(b: &mut IRBuilder, len: usize) -> Value {
-        let cells = vec![ScalarValue::new(Some(0), None); len];
-        let length = b.ir_constant_int(len as i64);
-        crate::ops::dyn_ndarray::constructors::dyn_from_values_with_active_nd(
-            b,
-            cells,
-            vec![len],
-            vec![ScalarValue::new(Some(len as i64), None)],
-            length,
-            NumberType::Integer,
-        )
-    }
-
-    fn all_equal(arr: &Value, k: i64) -> ContractTerm {
-        ContractTerm::PredicateApp {
-            kind: "forall_eq_const".to_string(),
-            args: vec![ContractTerm::Var(ContractVar::Value(arr.value_id().unwrap())), ContractTerm::LitInt(k)],
-        }
-    }
-
-    /// Write 5 into the first cell, as a write through another name for the
-    /// array does: the storage changes, the value id stays.
-    fn write_through_alias(b: &mut IRBuilder, arr: &Value) {
-        let Value::DynamicNDArray(data) = arr else { unreachable!() };
-        let address = b.ir_constant_int(0);
-        let five = b.ir_constant_int(5);
-        b.storage_write_at(data.segment_id, &address, &five);
-    }
-
-    #[test]
-    fn a_fact_about_a_written_array_is_not_proved() {
-        let mut b = IRBuilder::new();
-        let x = zeros(&mut b, 4);
-        b.state_array_fact(&x, "zeros_content");
-        assert_eq!(b.prove(&all_equal(&x, 0)), ProveOutcome::Proved);
-        write_through_alias(&mut b, &x);
-        assert_eq!(b.prove(&all_equal(&x, 0)), ProveOutcome::Unknown);
-    }
-
-    #[test]
-    fn a_relay_from_a_written_array_states_nothing() {
-        let mut b = IRBuilder::new();
-        let x = zeros(&mut b, 4);
-        b.state_array_fact(&x, "zeros_content");
-        write_through_alias(&mut b, &x);
-        let copy = zeros(&mut b, 4);
-        assert!(!crate::optim::resolver::relay_forall_eq_const_from_input(&mut b, &x, &copy));
-        assert_eq!(b.prove(&all_equal(&copy, 0)), ProveOutcome::Unknown);
-    }
-
-    #[test]
-    fn a_relayed_fact_lapses_when_its_own_array_is_written() {
-        let mut b = IRBuilder::new();
-        let x = zeros(&mut b, 4);
-        b.state_array_fact(&x, "zeros_content");
-        let copy = zeros(&mut b, 4);
-        assert!(crate::optim::resolver::relay_forall_eq_const_from_input(&mut b, &x, &copy));
-        write_through_alias(&mut b, &copy);
-        assert_eq!(b.prove(&all_equal(&copy, 0)), ProveOutcome::Unknown);
-        assert_eq!(b.prove(&all_equal(&x, 0)), ProveOutcome::Proved, "the source was not written");
-    }
-
-    #[test]
-    fn a_later_fact_does_not_bring_back_an_earlier_one() {
-        let mut b = IRBuilder::new();
-        let x = zeros(&mut b, 4);
-        b.state_array_fact(&x, "zeros_content");
-        write_through_alias(&mut b, &x);
-        b.state_array_fact(&x, "ones_content");
-        assert_eq!(b.prove(&all_equal(&x, 0)), ProveOutcome::Unknown);
-        assert_eq!(b.prove(&all_equal(&x, 1)), ProveOutcome::Unknown);
     }
 }

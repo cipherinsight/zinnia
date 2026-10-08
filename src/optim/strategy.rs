@@ -78,6 +78,16 @@ pub struct OpStrategy<Inputs, Output> {
     pub lower: fn(&mut IRBuilder, &Inputs) -> Output,
 }
 
+/// The precondition of a strategy that is offered only when its property
+/// holds. Properties of an array's elements (all zero, all one, an identity
+/// matrix, sorted, in a range) are array facts (`builder/array_facts.rs`),
+/// which describe the array's current contents and never reach `prove`: the
+/// strategy set asks them when it is built, so the dispatcher has nothing
+/// left to prove.
+pub fn decided() -> ContractTerm {
+    ContractTerm::LitBool(true)
+}
+
 /// An ordered set of alternative lowerings for one op invocation plus a
 /// `default` that runs when no gated strategy fires.
 ///

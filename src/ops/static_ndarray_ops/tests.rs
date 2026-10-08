@@ -455,7 +455,9 @@ fn np_take_static_array_axis_one_and_negative_indices() {
 }
 
 #[test]
-fn np_full_static_known_fill_fires_forall_eq_const() {
+fn np_full_static_known_fill_is_constant() {
+    // The cells are the fill constant: every element is 7 (array facts read
+    // it off them).
     let mut b = IRBuilder::new();
     let shape = Value::Tuple(CompositeData {
         elements_type: vec![ZinniaType::Integer; 2],
@@ -464,14 +466,8 @@ fn np_full_static_known_fill_fires_forall_eq_const() {
     });
     let fill = b.ir_constant_int(7);
     let out = np_full(&mut b, &[shape, fill], &std::collections::HashMap::new());
-    let term = ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(out.value_id().unwrap())),
-            ContractTerm::LitInt(7),
-        ],
-    };
-    assert_eq!(b.prove(&term), ProveOutcome::Proved);
+    assert!(b.array_all_equal(&out, 7));
+    assert!(!b.array_all_equal(&out, 0));
 }
 
 #[test]
