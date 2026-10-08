@@ -1187,6 +1187,12 @@ MORE = {
     # R1: a write through a name rebound in a branch reaches every array it may be.
     "R1 list append in a branch, then a base write": H + '    L = [x[::2]]\n    if c:\n        L.append(x * 1)\n    x[2] = 50\n    return L[0]\n',
     "R1 element write in a branch, then a write through the name": H + '    a = x[1:4]\n    if c:\n        a = x * 1\n        a[a > 2] = 0\n    a[0] = 77\n    return x\n',
+    # A name rebound in a branch to a view of another array of a different
+    # shape is a stand-in; an update of that array in place must reach the
+    # view (found by fuzz_rebind seed 703, wrong output on d691e6cf).
+    "op= of an array a stand-in views": 'def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], c: Boolean):\n    if c:\n        x = m.T\n        m += 1\n        x[0, 0] = 99\n    return m\n',
+    "op= then putmask through the stand-in": 'def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], c: Boolean):\n    if c:\n        x = m.T\n        m += 1\n        np.putmask(x, x > 2, 0)\n    return m\n',
+    "op= then a read through the stand-in": 'def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], c: Boolean):\n    s = 0\n    if c:\n        x = m.T\n        m += 1\n        s = x[1, 2]\n    return s\n',
     # R2, R3: loop targets after the loop.
     "R3 find the first negative": H + '    for j in range(6):\n        if x[j] < 0:\n            break\n    return j\n',
     "R3 find the first negative, else": H + '    for j in range(6):\n        if x[j] < 0:\n            break\n    else:\n        j = -1\n    return j\n',
@@ -1215,11 +1221,17 @@ MORE = {
 }
 
 
+M34 = np.arange(12, dtype=np.int64).reshape(3, 4)
+
+
 @pytest.mark.parametrize("name", list(MORE))
 @pytest.mark.parametrize("x", range(len(INPUTS)))
 @pytest.mark.parametrize("c", [False, True])
 def test_more_cases_are_never_wrong(name, x, c):
-    assert_never_wrong(MORE[name], INPUTS[x], c)
+    if "m: Integer" in MORE[name]:
+        assert_never_wrong(MORE[name], INPUTS[x], M34 - 5, c)
+    else:
+        assert_never_wrong(MORE[name], INPUTS[x], c)
 
 
 @pytest.mark.parametrize("name", ["R3 find the first negative", "R3 tuple target", "R4 return in else", "R5 comprehension shadows a name",

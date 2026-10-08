@@ -372,11 +372,7 @@ impl IRGenerator {
     /// rebinding `name` to `updated` is equivalent.
     pub(crate) fn write_back_if_shared(&mut self, name: &str, current: &Value, updated: &Value) -> Option<Value> {
         let segment = super::detached_copies::array_segment(current)?;
-        let shared = self.is_caller_visible_segment(segment)
-            || self
-                .ctx
-                .find_other_binding(name, |v| super::detached_copies::array_segment(v) == Some(segment))
-                .is_some();
+        let shared = self.is_caller_visible_segment(segment) || self.other_binding_holds(name, segment);
         if !shared {
             return None;
         }

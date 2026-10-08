@@ -759,6 +759,11 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
   - R5: comprehension targets are bound in a generator scope, local to the comprehension;
     another name assigned while evaluating it (a list of the function mutated by a method
     call) is still the enclosing scope's (`IRContext::set`).
+  - Found by fuzzing (fix3 code, `fuzz_rebind` seed 703): a name rebound in a branch to a
+    view of another array of a different shape (`x = m.T` with `x` a vector) is a stand-in,
+    which hid that view from the in-place update check, so `m += 1` rebound `m` to a new
+    storage and a later write through `x` missed it. An array a stand-in stands for now
+    counts as held by that binding (`other_binding_holds`).
   - IR digests are unaffected: the merges and predicates these add are dead unless read
     and removed before export, and no evaluated program reads a name where it may be
     unbound.

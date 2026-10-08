@@ -76,13 +76,7 @@ impl IRGenerator {
                 }
                 let segment = *segment_id;
                 // The caller sees an in-place kernel's array arguments.
-                let shared = self.is_caller_visible_segment(segment)
-                    || self
-                        .ctx
-                        .find_other_binding(name, |v| {
-                            super::detached_copies::array_segment(v) == Some(segment)
-                        })
-                        .is_some();
+                let shared = self.is_caller_visible_segment(segment) || self.other_binding_holds(name, segment);
                 if !shared {
                     // The caller rebinds `name` to `result`.
                     self.note_array_moved(&current, result);

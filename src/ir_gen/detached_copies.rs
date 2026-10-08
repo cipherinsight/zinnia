@@ -242,6 +242,24 @@ impl IRGenerator {
         Some(stand_in)
     }
 
+    /// Whether a binding other than `name`'s own holds the array of
+    /// `segment`: directly, or as one of the arrays a stand-in for arrays of
+    /// different shapes stands for (a name bound to `m.T` on one path still
+    /// shares `m`'s memory there, so an update of `m` must be written into
+    /// it in place).
+    pub(crate) fn other_binding_holds(&self, name: &str, segment: u32) -> bool {
+        let merges = &self.different_shape_merges;
+        fn holds(value: &Value, segment: u32, merges: &std::collections::HashMap<u32, (Value, Value, Value)>, depth: usize) -> bool {
+            let Some(own) = array_segment(value) else { return false };
+            own == segment
+                || (depth < 64
+                    && merges.get(&own).is_some_and(|(_, a, b)| {
+                        holds(a, segment, merges, depth + 1) || holds(b, segment, merges, depth + 1)
+                    }))
+        }
+        self.ctx.find_other_binding(name, |v| holds(v, segment, merges, 0)).is_some()
+    }
+
     /// The array a name bound to `value` holds where the current code runs:
     /// `value` itself, or for a stand-in of arrays of different shapes the
     /// merged array the current path selects, when its condition is decided
