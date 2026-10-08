@@ -76,7 +76,22 @@ impl OperatorSemantics for ArgExtremeSemantics {
 // ── Constructions ───────────────────────────────────────────────────────
 
 pub(super) fn constructions() -> Vec<&'static dyn Construction> {
-    vec![&ArgExtremeBySelects, &ArgExtremeOfSorted]
+    vec![&ArgExtremeBySelects, &ArgExtremeOfSorted, &ArgExtremeOfSortedByPosition]
+}
+
+/// [`ArgExtremeOfSorted`]'s hinted position, a construction of its own so
+/// that measurements can force it (the count, the constants and the argmin
+/// are [`ArgExtremeOfSorted`]'s).
+pub struct ArgExtremeOfSortedByPosition;
+
+impl Construction for ArgExtremeOfSortedByPosition {
+    fn name(&self) -> &'static str {
+        "argextreme: sorted line by a hinted position"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        sorted_candidates(group, cx).into_iter().filter(|(how, _)| matches!(how, How::Hinted)).map(|(_, c)| c).collect()
+    }
 }
 
 /// The running extreme: for `j = 1, ..., n - 1`, `c = a_j > best` (`<` for
@@ -150,7 +165,7 @@ impl Construction for ArgExtremeOfSorted {
     }
 
     fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
-        sorted_candidates(group, cx).into_iter().map(|(_, candidate)| candidate).collect()
+        sorted_candidates(group, cx).into_iter().filter(|(how, _)| !matches!(how, How::Hinted)).map(|(_, c)| c).collect()
     }
 }
 

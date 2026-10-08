@@ -45,6 +45,8 @@ pub fn constructions() -> Vec<&'static dyn Construction> {
     vec![
         &ScanByRunningProducts,
         &ScanBySelectChain,
+        &ScanOfMonotoneFlags,
+        &ScanOfMonotoneFlagsByPosition,
         &ScatterByHits,
         &WindowShift,
         &ElementOfWrite,
@@ -97,6 +99,220 @@ impl Construction for ScanBySelectChain {
             cost: cost::scan_select_chain(group.shared.len() as u64, cx.target),
             emitter: Box::new(ScanEmitter { kind, flags: group.shared.clone(), by_products: false, result: None }),
         }]
+    }
+}
+
+/// A scan of flags that are monotone along the line: rising (all unset,
+/// then all set) or falling (all set, then all unset).
+///
+/// * Monotone flags come from comparisons `x_k > t` (`>=`, `t < x_k`,
+///   `t <= x_k`: rising; `<`, `<=`: falling) of a line `x` with one value
+///   `t`, where `NonDecreasing(x)` is established (`Context::established`,
+///   an assumption about the input), or from flags stated non-decreasing
+///   themselves (`NonDecreasing(flags)` rising, of the reversed flags
+///   falling).
+/// * Postconditions: the lane.
+/// * Rising flags with `s` set: the first set position is `n - s`, NumPy's
+///   argmax `n - s` when `s > 0` and 0 otherwise, the last set position
+///   `n - 1`. Falling flags: the first set position and the argmax are 0,
+///   the last set position `s - 1`. (`FirstSet` and `LastSet` have a set
+///   flag where used, the operator's precondition.)
+/// * Two candidates: **by a count**, `s` the sum of the flags; and, for
+///   flags from comparisons, **by a hinted position**, the count of the
+///   flags' complement found in the sorted `x` as `np.searchsorted(x, t)`
+///   does (`sort::search::position_in_sorted`: two reads and two
+///   comparisons, the flags unread). The second is credited with the
+///   flags' comparisons when nothing else reads them (they die).
+/// * Soundness: no hint for the count; the position's hint is pinned
+///   (`position_in_sorted`). Given the order of `x`, `x_k > t` holds exactly
+///   for the `k` at or past the first `x_k > t`, so the flags are rising and
+///   their unset prefix has `#{x_k <= t}` positions (the strict case;
+///   `#{x_k < t}` for `>=`); falling flags mirror it. The order is the
+///   precondition, kept by the selection.
+pub struct ScanOfMonotoneFlags;
+
+/// [`ScanOfMonotoneFlags`] by a hinted position in the compared line (its
+/// second candidate, a construction of its own so that measurements can
+/// force either).
+pub struct ScanOfMonotoneFlagsByPosition;
+
+/// How the flags of a scan are monotone, and what they compare.
+struct Monotone {
+    rising: bool,
+    /// For flags comparing a line with one value: the line, the value, and
+    /// whether the comparison is strict (`>` or `<`).
+    comparison: Option<(Vec<StmtId>, StmtId, bool)>,
+    /// The established order the monotonicity rests on.
+    order: Fact,
+}
+
+/// The comparisons `x_k cmp t` behind the flags, all of one kind with one
+/// `t`: `(x, t, rising, strict)`.
+fn compared_line(cx: &Context, flags: &[StmtId]) -> Option<(Vec<StmtId>, StmtId, bool, bool)> {
+    // `a cmp b` as (a, b, `a > b` or `a >= b`, strict).
+    let comparison = |flag: StmtId| {
+        let stmt = cx.stmt(flag);
+        let &[a, b] = stmt.arguments.as_slice() else { return None };
+        match stmt.ir {
+            IR::GtI | IR::GtF => Some((a, b, true, true)),
+            IR::GteI | IR::GteF => Some((a, b, true, false)),
+            IR::LtI | IR::LtF => Some((a, b, false, true)),
+            IR::LteI | IR::LteF => Some((a, b, false, false)),
+            _ => None,
+        }
+    };
+    let comparisons: Vec<(StmtId, StmtId, bool, bool)> = flags.iter().map(|&f| comparison(f)).collect::<Option<_>>()?;
+    // The value `t` is the operand every comparison shares (`x_k cmp t` or
+    // `t cmp x_k`, the latter the mirrored order: rising for `t < x_k`).
+    let (a0, b0, _, _) = comparisons[0];
+    let shared = [a0, b0].into_iter().find(|&t| comparisons.iter().all(|&(a, b, _, _)| (a == t) != (b == t)))?;
+    let oriented: Vec<(StmtId, bool, bool)> = comparisons
+        .iter()
+        .map(|&(a, b, greater, strict)| if b == shared { (a, greater, strict) } else { (b, !greater, strict) })
+        .collect();
+    let (_, rising, strict) = oriented[0];
+    if oriented.iter().any(|&(_, r, s)| (r, s) != (rising, strict)) {
+        return None;
+    }
+    Some((oriented.into_iter().map(|(x, _, _)| x).collect(), shared, rising, strict))
+}
+
+fn monotone(group: &Group, cx: &Context) -> Option<Monotone> {
+    use crate::lower::{Claim, ListId};
+    let flags = &group.shared;
+    if flags.len() < 2 {
+        return None;
+    }
+    if let Some((line, t, rising, strict)) = compared_line(cx, flags) {
+        let order = Fact::everywhere(Claim::NonDecreasing(ListId::of_stmts(&line)));
+        if cx.established(&order) {
+            return Some(Monotone { rising, comparison: Some((line, t, strict)), order });
+        }
+    }
+    let rising = Fact::everywhere(Claim::NonDecreasing(ListId::of_stmts(flags)));
+    if cx.established(&rising) {
+        return Some(Monotone { rising: true, comparison: None, order: rising });
+    }
+    let reversed: Vec<StmtId> = flags.iter().rev().copied().collect();
+    let falling = Fact::everywhere(Claim::NonDecreasing(ListId::of_stmts(&reversed)));
+    cx.established(&falling).then_some(Monotone { rising: false, comparison: None, order: falling })
+}
+
+impl Construction for ScanOfMonotoneFlags {
+    fn name(&self) -> &'static str {
+        "gather: scan of monotone flags by a count"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        monotone_candidates(group, cx, false)
+    }
+}
+
+impl Construction for ScanOfMonotoneFlagsByPosition {
+    fn name(&self) -> &'static str {
+        "gather: scan of monotone flags by a hinted position"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        monotone_candidates(group, cx, true)
+    }
+}
+
+fn monotone_candidates(group: &Group, cx: &Context, by_position: bool) -> Vec<Candidate> {
+    {
+        let Some(kind) = ScanKind::of(group.kind) else { return Vec::new() };
+        let Some(monotone) = monotone(group, cx) else { return Vec::new() };
+        let n = group.shared.len() as u64;
+        let u = cost::units(cx.target);
+        let candidate = |how: MonotoneBy, cost: u64| Candidate {
+            pre: vec![Requirement::Fact(monotone.order)],
+            post: lanes(group).collect(),
+            cost,
+            emitter: Box::new(MonotoneScanEmitter { kind, rising: monotone.rising, flags: group.shared.clone(), how }),
+        };
+        if !by_position {
+            return vec![candidate(MonotoneBy::Count, n * u.add + u.select)];
+        }
+        let mut out = Vec::new();
+        if let Some((line, t, strict)) = monotone.comparison {
+            let entries = n + 2;
+            let position = match cx.target {
+                crate::lower::Target::Halo2Base => 2 * (10 + 17 * entries) + 120,
+                crate::lower::Target::Noir => 2 * 3 * entries + 2 * 7 + 30,
+            };
+            // The flags' comparisons die with the scan when it is their
+            // only reader.
+            let only_here = group.shared.iter().all(|&f| cx.users(f).iter().all(|u| group.lanes.iter().any(|l| l.stmt == *u)));
+            let credit = if only_here { n * u.less_than } else { 0 };
+            out.push(candidate(MonotoneBy::Position { line, t, strict }, position.saturating_sub(credit)));
+        }
+        out
+    }
+}
+
+/// How [`ScanOfMonotoneFlags`] finds the count of set flags.
+#[derive(Clone)]
+enum MonotoneBy {
+    Count,
+    /// The sorted line, the value and the strictness the flags compare.
+    Position { line: Vec<StmtId>, t: StmtId, strict: bool },
+}
+
+struct MonotoneScanEmitter {
+    kind: ScanKind,
+    rising: bool,
+    flags: Vec<StmtId>,
+    how: MonotoneBy,
+}
+
+impl Emitter for MonotoneScanEmitter {
+    fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, _lane: &Lane) -> Value {
+        let n = self.flags.len() as i64;
+        // The number of set flags.
+        let set = match &self.how {
+            MonotoneBy::Count => {
+                let flags = cx.values(&self.flags);
+                let mut total = b.ir_constant_int(0);
+                for flag in &flags {
+                    let bit = b.ir_int_cast(flag);
+                    total = b.ir_add_i(&total, &bit);
+                }
+                total
+            }
+            MonotoneBy::Position { line, t, strict } => {
+                // Rising flags `x_k > t` are unset for the `#{x_k <= t}`
+                // first positions (`>=`: `#{x_k < t}`); falling flags
+                // `x_k < t` are set for the `#{x_k < t}` first positions
+                // (`<=`: `#{x_k <= t}`).
+                let entries = cx.values(line);
+                let t = cx.value(*t);
+                let right = self.rising == *strict;
+                let extended = crate::lower::sort::search::extended_runtime_table(b, &entries);
+                let found = crate::lower::sort::search::position_in_sorted(b, &entries, extended, &t, right);
+                if self.rising {
+                    let len = b.ir_constant_int(n);
+                    b.ir_sub_i(&len, &found)
+                } else {
+                    found
+                }
+            }
+        };
+        let len = b.ir_constant_int(n);
+        match (self.kind, self.rising) {
+            (ScanKind::First, true) => b.ir_sub_i(&len, &set),
+            (ScanKind::Argmax, true) => {
+                let zero = b.ir_constant_int(0);
+                let none = b.ir_equal_i(&set, &zero);
+                let first = b.ir_sub_i(&len, &set);
+                b.ir_select_i(&none, &zero, &first)
+            }
+            (ScanKind::Last, true) => b.ir_constant_int(n - 1),
+            (ScanKind::First | ScanKind::Argmax, false) => b.ir_constant_int(0),
+            (ScanKind::Last, false) => {
+                let one = b.ir_constant_int(1);
+                b.ir_sub_i(&set, &one)
+            }
+        }
     }
 }
 

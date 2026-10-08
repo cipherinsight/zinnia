@@ -18,7 +18,14 @@ use super::cost;
 /// The family's constructions, in the order the selection breaks ties.
 pub fn constructions() -> Vec<&'static dyn Construction> {
     let mut all: Vec<&'static dyn Construction> =
-        vec![&ElementByIndexBits, &IndexBitsNode, &ElementByTable, &super::wrap::WrapByPinnedSign, &super::wrap::WrapByPositionHits];
+        vec![
+            &ElementByIndexBits,
+            &IndexBitsNode,
+            &ElementByTable,
+            &super::wrap::WrapByPinnedSign,
+            &super::wrap::WrapByPositionHits,
+            &super::wrap::WrapOfNonNegative,
+        ];
     all.extend(super::versions::constructions());
     all
 }

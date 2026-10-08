@@ -610,7 +610,11 @@ fn add_check_nodes(nodes: &mut Vec<NodeEntry>, target: Target, every: bool) {
     let mut added: HashSet<Fact> = HashSet::new();
     for fact in wanted {
         let required = Requirement::Fact(fact);
-        let produced = nodes.iter().any(|n| n.node.post.iter().any(|p| justifies(p, &required)));
+        // A node that needs the fact itself does not produce it (an array
+        // claim implies each fact of its basis).
+        let produced = nodes.iter().any(|n| {
+            n.node.post.iter().any(|p| justifies(p, &required)) && !n.node.pre.contains(&required)
+        });
         if (every || !produced) && added.insert(fact) {
             let node = Node { pre: Vec::new(), post: vec![required], cost: checks::cost(&fact.claim, target) };
             nodes.push(NodeEntry { name: "check", group: None, node, kind: NodeKind::Check(fact) });

@@ -1,11 +1,18 @@
-//! `np.searchsorted` over a constant sorted table (`OpKind::SearchSorted`).
+//! `np.searchsorted` over a sorted table (`OpKind::SearchSorted`).
 //!
 //! The operator: for a non-decreasing table `Y_0 <= ... <= Y_{n-1}` (the
 //! shared operands) and a query `t` (each lane's own operand), the number
 //! `u` of entries `<= t` (`right`) or `< t` (left). It is how the frontend
-//! lowers `(Y > t).argmax()` and its mirrored forms when `Y` is a constant
-//! sorted array (`ecdf`'s `np.arange(1, n + 1) / n`): `u`, or 0 when
-//! `u == n`.
+//! lowers `np.searchsorted(Y, t, side)`, and `(Y > t).argmax()` and its
+//! mirrored forms when `Y` is a constant sorted array (`ecdf`'s
+//! `np.arange(1, n + 1) / n`): `u`, or 0 when `u == n`.
+//!
+//! The order of the table is NumPy's precondition (its binary search
+//! assumes it): every construction lists `NonDecreasing(Y)` among its
+//! preconditions. It holds by definition for a sorted constant table and
+//! for the outputs of a sort, is established by the program's checks for a
+//! table it asserts sorted (`@requires(is_sorted(Y))`), and is otherwise
+//! checked (no proof for an unsorted table, as for an index out of range).
 //!
 //! Terms. A table entry and the query are compared as their *codes*: the
 //! integer, or the Q32 fixed-point encoding of a float (`round(v * 2^32)`),
@@ -39,6 +46,10 @@ impl OperatorSemantics for SearchSortedSemantics {
         let n = op.shared as usize;
         let query = number(args.get(n)?)?;
         let entries: Vec<f64> = args[..n].iter().map(number).collect::<Option<_>>()?;
+        // An unsorted table has no proof (its order is checked).
+        if !entries.windows(2).all(|w| w[0] <= w[1]) {
+            return None;
+        }
         let count = entries.iter().filter(|&&y| if right { y <= query } else { y < query }).count();
         Some(Constant::Int(count as i64))
     }
@@ -69,7 +80,7 @@ pub(super) fn constructions() -> Vec<&'static dyn Construction> {
 
 /// `u` as a sum of comparisons: `n - #{t < Y_k}` (right) or `#{Y_k < t}`.
 ///
-/// * Preconditions: none beyond the operator's (a non-decreasing table).
+/// * Preconditions: the operator's, `NonDecreasing(Y)`.
 /// * Postconditions: every lane.
 /// * Cost per lane: `n` comparisons with a constant and their sum
 ///   (halo2-base 45 cells, Noir 9 gates per entry).
@@ -79,9 +90,12 @@ pub struct SearchByCount;
 
 /// `u` hinted and pinned by the entries on either side of it.
 ///
-/// * Preconditions: the table is a constant non-decreasing sequence (checked
-///   here), its codes inside the window with one to spare (for `Y + 1`,
-///   `Y - 1`).
+/// * Preconditions: `NonDecreasing(Y)`; for a constant table its codes
+///   inside the window with one to spare (for `Y + 1`, `Y - 1`; checked
+///   here). A runtime table is read at the hinted position; its codes stay
+///   in the window as values of the program do, and `Y + 1`, `Y - 1` are
+///   compared as field elements no wider than `2^64 + 1`, inside every
+///   comparison's domain on both backends (`emit_order`).
 /// * Postconditions: every lane.
 /// * Emission per lane (right; left in brackets): `u` = the prover's count
 ///   (`HintKind::CountAtMost`), `u <= n` asserted; `lo = t` when `u == 0`,
@@ -118,8 +132,19 @@ impl Construction for SearchByCount {
             Target::Noir => 9,
         };
         let emitter = CountEmitter { right, table: group.shared.clone() };
-        vec![every_lane(group, n * per_entry * group.lanes.len() as u64, Box::new(emitter))]
+        vec![sorted_table(group, cx, every_lane(group, n * per_entry * group.lanes.len() as u64, Box::new(emitter)))]
     }
+}
+
+/// `candidate` with the operator's precondition, the table's order, unless
+/// the table is a sorted constant one (`Table::of` checks it here).
+fn sorted_table(group: &Group, cx: &Context, mut candidate: Candidate) -> Candidate {
+    if Table::of(group, cx).is_none() {
+        let list = crate::lower::ListId::of_stmts(&group.shared);
+        let order = crate::lower::Fact::everywhere(crate::lower::Claim::NonDecreasing(list));
+        candidate.pre.push(Requirement::Fact(order));
+    }
+    candidate
 }
 
 impl Construction for SearchByPosition {
@@ -129,8 +154,21 @@ impl Construction for SearchByPosition {
 
     fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
         let OpKind::SearchSorted { right } = group.kind else { return Vec::new() };
-        let Some(table) = Table::of(group, cx) else { return Vec::new() };
+        if group.shared.is_empty() {
+            return Vec::new();
+        }
         let entries = group.shared.len() as u64 + 2;
+        let lanes = group.lanes.len() as u64;
+        let Some(table) = Table::of(group, cx) else {
+            // A runtime table, read at the hinted position (as a constant
+            // one that is not affine).
+            let cost = match cx.target {
+                Target::Halo2Base => (2 * (10 + 17 * entries) + 120) * lanes,
+                Target::Noir => 2 * 3 * entries + (2 * 7 + 30) * lanes,
+            };
+            let emitter = RuntimePositionEmitter { right, table: group.shared.clone(), extended: None };
+            return vec![sorted_table(group, cx, every_lane(group, cost, Box::new(emitter)))];
+        };
         let evaluator = match AffineForm::find(&table.codes) {
             Some(form) => Evaluator::Affine(form),
             None => Evaluator::Read { segments: Vec::new() },
@@ -143,7 +181,7 @@ impl Construction for SearchByPosition {
             (Evaluator::Read { .. }, Target::Noir) => 2 * 3 * entries + (2 * 7 + 30) * lanes,
         };
         let emitter = PositionEmitter { right, table_stmts: group.shared.clone(), table, evaluator };
-        vec![every_lane(group, cost, Box::new(emitter))]
+        vec![sorted_table(group, cx, every_lane(group, cost, Box::new(emitter)))]
     }
 }
 
@@ -367,6 +405,85 @@ impl PositionEmitter {
             code
         }
     }
+}
+
+/// `np.searchsorted` of a runtime non-decreasing table by a hinted position
+/// (`position_in_sorted`), the extended table built once per group.
+struct RuntimePositionEmitter {
+    right: bool,
+    table: Vec<StmtId>,
+    extended: Option<u32>,
+}
+
+impl Emitter for RuntimePositionEmitter {
+    fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, lane: &Lane) -> Value {
+        let entries = cx.values(&self.table);
+        let t = cx.value(lane.own[0]);
+        let extended = *self.extended.get_or_insert_with(|| extended_runtime_table(b, &entries));
+        position_in_sorted(b, &entries, extended, &t, self.right)
+    }
+}
+
+/// A segment holding the codes `[Y_0, Y_0, Y_1, ..., Y_{n-1}, Y_{n-1}]` of a
+/// runtime table: entry `j` is `Y_{j-1}` clamped to the table, so the reads
+/// at `u` and `u + 1` stay in bounds for every `u` in `[0, n]`.
+pub(crate) fn extended_runtime_table(b: &mut IRBuilder, entries: &[Value]) -> u32 {
+    let n = entries.len();
+    let codes: Vec<Value> = (0..n + 2).map(|j| code_of(&entries[j.saturating_sub(1).min(n - 1)])).collect();
+    crate::helpers::segment::alloc_and_write_values(b, &codes, NumberType::Integer)
+}
+
+/// The number `u` of entries `<= t` (`right`) or `< t` of the non-decreasing
+/// `entries` (a precondition the caller establishes), hinted and pinned as
+/// [`SearchByPosition`] says: `u` is the prover's count, `u <= n` asserted,
+/// `lo = t` at `u == 0` else `Y_{u-1}` (left: `Y_{u-1} + 1`), `hi = t` at
+/// `u == n` else `Y_u - 1` (left: `Y_u`), `lo <= t <= hi` asserted, the two
+/// entries read from `extended` (`extended_runtime_table`). The comparisons
+/// are of codes. For the honest `u` the compared values lie in the window
+/// (`Y_{u-1} + 1 <= t` and `t <= Y_u - 1` bound them by `t`); for any other
+/// `u` a check fails, or a value one past the window fails the
+/// comparison's own window (halo2-base) or is compared exactly (Noir's
+/// 64-bit gap holds a difference of `2^64`).
+pub(crate) fn position_in_sorted(b: &mut IRBuilder, entries: &[Value], extended: u32, t: &Value, right: bool) -> Value {
+    let n = entries.len() as i64;
+    let query = if right {
+        code_of(t)
+    } else {
+        let one = b.ir_constant_int(1);
+        b.ir_sub_i(&code_of(t), &one)
+    };
+    let codes: Vec<Value> = entries.iter().map(code_of).collect();
+    let u = b.ir_hint(HintKind::CountAtMost, &codes, &query);
+    let bound = b.ir_constant_int(n + 1);
+    b.ir_assert_u128_lt(&u, &bound);
+    let zero = b.ir_constant_int(0);
+    let len = b.ir_constant_int(n);
+    let first = b.ir_equal_i(&u, &zero);
+    let last = b.ir_equal_i(&u, &len);
+    let (below_adjust, above_adjust) = if right { (0, -1) } else { (1, 0) };
+    let one = b.ir_constant_int(1);
+    let next = b.ir_add_i(&u, &one);
+    let below = crate::helpers::segment::read_typed(b, extended, &u, NumberType::Integer);
+    let below = adjusted(b, below, below_adjust);
+    let above = crate::helpers::segment::read_typed(b, extended, &next, NumberType::Integer);
+    let above = adjusted(b, above, above_adjust);
+    let code = code_of(t);
+    let lo = b.ir_select_i(&first, &code, &below);
+    let hi = b.ir_select_i(&last, &code, &above);
+    let lo_holds = b.ir_less_than_or_equal_i(&lo, &code);
+    b.ir_assert(&lo_holds);
+    let hi_holds = b.ir_less_than_or_equal_i(&code, &hi);
+    b.ir_assert(&hi_holds);
+    u
+}
+
+/// `code + adjust` (the code itself for 0).
+fn adjusted(b: &mut IRBuilder, code: Value, adjust: i64) -> Value {
+    if adjust == 0 {
+        return code;
+    }
+    let c = b.ir_constant_int(adjust);
+    b.ir_add_i(&code, &c)
 }
 
 /// A segment holding `adjust + [Y_0, Y_0, ..., Y_{n-1}, Y_{n-1}]` as codes.

@@ -2061,6 +2061,20 @@ impl IRGenerator {
                     )
                 }
             }
+            ("np", "searchsorted") => {
+                ensure_no_kwargs("np.searchsorted", _visited_kwargs, &["side"]);
+                let side = visited_args_orig.get(2).or_else(|| _visited_kwargs.get("side"));
+                let right = match side.map(|s| s.string_val()) {
+                    None => false,
+                    Some(Some("left")) => false,
+                    Some(Some("right")) => true,
+                    Some(_) => panic!("np.searchsorted: side must be 'left' or 'right'"),
+                };
+                let (Some(table), Some(queries)) = (visited_args_orig.first(), visited_args_orig.get(1)) else {
+                    panic!("np.searchsorted takes the sorted array and the values");
+                };
+                crate::helpers::static_array::reductions::np_searchsorted(&mut self.builder, table, queries, right)
+            }
             ("np", "cumsum") => crate::ops::static_ndarray_ops::np_cumsum(
                 &mut self.builder,
                 visited_args,

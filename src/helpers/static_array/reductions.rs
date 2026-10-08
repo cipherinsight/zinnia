@@ -1889,3 +1889,55 @@ mod tests {
         assert!(try_apply_reduce(&mut b, "sum", &lst, None, false).is_none());
     }
 }
+
+// ────────────────────────────────────────────────────────────────────────
+// np.searchsorted
+// ────────────────────────────────────────────────────────────────────────
+
+/// `np.searchsorted(table, queries, side)` for a one-dimensional static
+/// `table` and a numeric scalar or static array of `queries`: per query the
+/// number of entries `< q` (`side='left'`) or `<= q` (`'right'`), as an
+/// Integer of the queries' shape. Each is an `OpKind::SearchSorted`
+/// placeholder over the table's cells (`lower::sort::search`), whose
+/// constructions require the table's order, NumPy's precondition: for a
+/// table not known to be sorted the circuit checks it (no proof for an
+/// unsorted one). Integers meet floats as floats (codes compared as the
+/// floats).
+pub fn np_searchsorted(b: &mut IRBuilder, table: &Value, queries: &Value, right: bool) -> Value {
+    let Value::StaticArray { shape, .. } = table else {
+        panic!("np.searchsorted: the sorted array must be a static array");
+    };
+    if shape.len() != 1 {
+        panic!("np.searchsorted: the sorted array must be one-dimensional");
+    }
+    let entries = payload_cells(b, table);
+    let (query_cells, query_shape) = match queries {
+        Value::StaticArray { shape, .. } => (payload_cells(b, queries), Some(shape.clone())),
+        Value::Integer(_) | Value::Float(_) | Value::Boolean(_) => (vec![queries.clone()], None),
+        other => panic!("np.searchsorted: unsupported values {other:?}"),
+    };
+    let float = entries.iter().chain(&query_cells).any(|v| matches!(v, Value::Float(_)));
+    let as_number = |b: &mut IRBuilder, v: &Value| if float { b.ir_float_cast(v) } else { b.ir_int_cast(v) };
+    let entries: Vec<Value> = entries.iter().map(|v| as_number(b, v)).collect();
+    let shared: std::sync::Arc<[Value]> = entries.iter().map(|v| b.ensure_ptr(v)).collect();
+    let counts: Vec<Value> = query_cells
+        .iter()
+        .map(|q| {
+            if shared.is_empty() {
+                return b.ir_constant_int(0);
+            }
+            let q = as_number(b, q);
+            let op = crate::lower::ArrayOp {
+                kind: crate::lower::OpKind::SearchSorted { right },
+                shared: shared.len() as u32,
+                output: 0,
+                position: None,
+            };
+            b.ir_array_op(op, &shared, &[q])
+        })
+        .collect();
+    match query_shape {
+        None => counts.into_iter().next().expect("one query"),
+        Some(shape) => build_static_array_from_flat(b, counts, shape, NumberType::Integer),
+    }
+}

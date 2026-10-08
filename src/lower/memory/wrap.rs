@@ -146,6 +146,90 @@ impl Construction for WrapByPinnedSign {
     }
 }
 
+/// NumPy's position of an index known to be non-negative: the index
+/// itself (`w = i`), `[w == k]` an equality test each.
+///
+/// **Preconditions.** `NonNegative(i)`, established without a new check
+/// (`Context::established`: a merged range check of `i`, a `@requires`
+/// bound, a permutation's values): an assumption about the input, not an
+/// obligation (NumPy accepts a negative index).
+///
+/// **Postconditions.** Every lane; with `encoding`, the one-hot `ENCODING`.
+///
+/// **Soundness and completeness.** For `i >= 0`, NumPy's position is `i`
+/// when `i < n`, and NumPy raises otherwise, where the program's check
+/// `0 <= w < n` (kept) has no witness. No hint.
+///
+/// **Cost**: an equality test per bit produced.
+pub struct WrapOfNonNegative;
+
+impl Construction for WrapOfNonNegative {
+    fn name(&self) -> &'static str {
+        "memory: wrap of a non-negative index"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        let Some(n) = axis_len(group) else { return Vec::new() };
+        let index = group.shared[0];
+        let non_negative = Fact::everywhere(Claim::NonNegative(index));
+        if !cx.established(&non_negative) {
+            return Vec::new();
+        }
+        let eq = crate::lower::gather::cost::element_units(cx.target).eq_const;
+        let hits = group.lanes.iter().filter(|l| l.output == HIT).count() as u64;
+        let emitter = || Box::new(IdentityEmitter { index, n, hits: Vec::new() });
+        let plain = Candidate {
+            pre: vec![Requirement::Fact(non_negative)],
+            post: lanes(group).collect(),
+            cost: hits * eq,
+            emitter: emitter(),
+        };
+        let encoded = Candidate {
+            pre: vec![Requirement::Fact(non_negative)],
+            post: lanes(group).chain([Requirement::Shared { group: group.id, name: ENCODING }]).collect(),
+            cost: n as u64 * eq,
+            emitter: emitter(),
+        };
+        vec![plain, encoded]
+    }
+}
+
+struct IdentityEmitter {
+    index: StmtId,
+    n: usize,
+    /// `[i == k]` once emitted.
+    hits: Vec<Option<Value>>,
+}
+
+impl IdentityEmitter {
+    fn hit(&mut self, b: &mut IRBuilder, cx: &EmitCx, k: usize) -> Value {
+        if self.hits.is_empty() {
+            self.hits = vec![None; self.n];
+        }
+        if let Some(hit) = &self.hits[k] {
+            return hit.clone();
+        }
+        let constant = b.ir_constant_int(k as i64);
+        let hit = b.ir_equal_i(&cx.value(self.index), &constant);
+        self.hits[k] = Some(hit.clone());
+        hit
+    }
+}
+
+impl Emitter for IdentityEmitter {
+    fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, lane: &Lane) -> Value {
+        match lane.output {
+            POSITION => cx.value(self.index),
+            _ => self.hit(b, cx, lane.position.expect("a hit lane has a position") as usize),
+        }
+    }
+
+    fn shared(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, _group: crate::lower::GroupId, _name: &'static str) -> Rc<dyn Any> {
+        let onehot: Vec<Value> = (0..self.n).map(|k| self.hit(b, cx, k)).collect();
+        Rc::new(vec![IndexEncoding { lo: 0, onehot, below: None }] as Encodings)
+    }
+}
+
 struct SignEmitter {
     /// The index operand.
     index: StmtId,
