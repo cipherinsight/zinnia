@@ -3143,16 +3143,19 @@ impl Synthesizer for NoirEmitter<'_> {
 /// Render `main.nr`. Returns the source text; `main` returns the exposed
 /// values in IR order (plus, for a circuit with no output and no body, one
 /// synthetic return value; see below).
+#[cfg(test)]
+pub(super) use self::{settle_range_widths as settle_range_widths_for_tests, DeferredWidth as DeferredWidthForTests};
+
 /// A range check `0 <= x < top + 1` emitted with its width left open
 /// (`NoirEmitter::assert_index_in_range`).
-struct DeferredWidth {
+pub(super) struct DeferredWidth {
     /// The exact width, `bit_length(top)`.
-    bits: u32,
+    pub(super) bits: u32,
     /// The checked cell.
-    cell: String,
-    top: i128,
+    pub(super) cell: String,
+    pub(super) top: i128,
     /// `top + 1 == 2^bits`: one check of the exact width suffices.
-    exact_power: bool,
+    pub(super) exact_power: bool,
 }
 
 /// Whether a range check of `bits` bits needs a lookup table that no
@@ -3173,7 +3176,7 @@ fn needs_table_of_its_own(bits: u32) -> bool {
 /// field element of about 254 bits); otherwise at its exact width, as
 /// before (one check when `top + 1` is a power of two). Both forms admit
 /// exactly `[0, top]`; the first adds no table.
-fn settle_range_widths(body: &str, deferred: &[DeferredWidth]) -> String {
+pub(super) fn settle_range_widths(body: &str, deferred: &[DeferredWidth]) -> String {
     if deferred.is_empty() {
         return body.to_string();
     }

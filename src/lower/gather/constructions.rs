@@ -48,6 +48,7 @@ pub fn constructions() -> Vec<&'static dyn Construction> {
         &ScanOfMonotoneFlags,
         &ScanOfMonotoneFlagsByPosition,
         &ScatterByHits,
+        &ScatterByWrites,
         &WindowShift,
         &ElementOfWrite,
         &ElementByOneHot,
@@ -235,15 +236,15 @@ fn monotone_candidates(group: &Group, cx: &Context, by_position: bool) -> Vec<Ca
         }
         let mut out = Vec::new();
         if let Some((line, t, strict)) = monotone.comparison {
-            let entries = n + 2;
-            let position = match cx.target {
-                crate::lower::Target::Halo2Base => 2 * (10 + 17 * entries) + 120,
-                crate::lower::Target::Noir => 2 * 3 * entries + 2 * 7 + 30,
-            };
+            let position = crate::lower::sort::search::runtime_position_cost(line.len(), 1, cx.target);
             // The flags' comparisons die with the scan when it is their
-            // only reader.
+            // only reader (priced at the full width, or the narrow one of
+            // an established range of the line and the value).
             let only_here = group.shared.iter().all(|&f| cx.users(f).iter().all(|u| group.lanes.iter().any(|l| l.stmt == *u)));
-            let credit = if only_here { n * u.less_than } else { 0 };
+            let mut compared = line.clone();
+            compared.push(t);
+            let width = cx.element_range(&compared).map_or(64, |(lo, hi, _)| 64 - ((hi - lo) as u64).leading_zeros());
+            let credit = if only_here { n * crate::lower::checks::comparison_cost(width, cx.target) } else { 0 };
             out.push(candidate(MonotoneBy::Position { line, t, strict }, position.saturating_sub(credit)));
         }
         out
@@ -404,12 +405,97 @@ impl Construction for ScatterByHits {
             post.push(Requirement::Shared { group: group.id, name: ENCODING });
         }
         let permutation = crate::lower::permutation::permutation_fact(&group.shared[..n]);
+        // The hits are the permutation check's equality tests when the
+        // program checks `p` (deduplicated); an argsort, a permutation by
+        // definition, has no check, and the scatter pays for them.
+        let checked = cx.sharing_groups(group).any(|g| g.kind == OpKind::IsPermutation && g.shared[..] == group.shared[..n]);
+        let tests = if checked { 0 } else { (n * n) as u64 * cost::units(cx.target).eq_const };
         vec![Candidate {
             pre: vec![Requirement::Fact(permutation)],
             post,
-            cost: cost::permutation_scatter(n as u64, cx.target),
+            cost: cost::permutation_scatter(n as u64, cx.target) + tests,
             emitter: Box::new(ScatterEmitter { operands: group.shared.clone(), offset, hits: Vec::new(), cells: Vec::new() }),
         }]
+    }
+}
+
+/// `c[p] = v` for a permutation `p` as `n` writes into a fresh array of `n`
+/// cells, its cells read at constant addresses: an array version chain the
+/// memory family lowers in the next round (a RAM trace on halo2-base, the
+/// native RAM on Noir, or an overlay of selects), linear in `n` where the
+/// hits are quadratic.
+///
+/// * Preconditions: `Permutation(p, 0..n)` (every write lands in the array,
+///   and every cell is written exactly once, so its value does not depend
+///   on the order of the writes or the initial zeros); on halo2-base the
+///   RAM trace (`memory::versions::RAM`, paid once), which the next round's
+///   lowering most likely uses (its estimate here).
+/// * Postconditions: every cell.
+/// * Soundness: the writes and reads are the array semantics the memory
+///   constructions implement; with `p` a permutation, cell `j` holds the
+///   `v_k` with `p_k = j` (NumPy's `c[p] = v`).
+/// * Cost: the memory family's estimate of the chain (`memory::versions`):
+///   halo2-base 8 cells per initial row and per access (`n` writes, `n`
+///   reads); Noir's native RAM `3n + 3.5n` gates per access.
+pub struct ScatterByWrites;
+
+impl Construction for ScatterByWrites {
+    fn name(&self) -> &'static str {
+        "gather: permutation scatter by writes"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        if group.kind != OpKind::PermutationScatter {
+            return Vec::new();
+        }
+        let n = group.shared.len() / 2;
+        let permutation = crate::lower::permutation::permutation_fact(&group.shared[..n]);
+        let (pre, cost) = match cx.target {
+            crate::lower::Target::Halo2Base => {
+                (vec![Requirement::Fact(permutation), crate::lower::memory::versions::RAM], 8 * 3 * n as u64)
+            }
+            crate::lower::Target::Noir => {
+                let n = n as u64;
+                (vec![Requirement::Fact(permutation)], 3 * n + (7 * n).div_ceil(2) * 2 * n)
+            }
+        };
+        vec![Candidate {
+            pre,
+            post: lanes(group).collect(),
+            cost,
+            emitter: Box::new(WritesEmitter { operands: group.shared.clone(), version: None }),
+        }]
+    }
+}
+
+struct WritesEmitter {
+    operands: Vec<StmtId>,
+    /// The array after the writes.
+    version: Option<(Value, crate::ir_array::ArrayElem)>,
+}
+
+impl Emitter for WritesEmitter {
+    fn begin(&mut self, b: &mut IRBuilder, cx: &mut EmitCx) {
+        use crate::ir_array::{ArrayAccess, ArrayElem};
+        let values = cx.values(&self.operands);
+        let n = values.len() / 2;
+        let (p, v) = values.split_at(n);
+        let elem = if dtype_of(v) == NumberType::Float { ArrayElem::Float } else { ArrayElem::Int };
+        let zeros: Vec<Value> =
+            (0..n).map(|_| if elem == ArrayElem::Float { b.ir_constant_float(0.0) } else { b.ir_constant_int(0) }).collect();
+        let always = b.ir_constant_bool(true);
+        let mut version = b.ir_array_init(&zeros, elem);
+        for (pk, vk) in p.iter().zip(v) {
+            version = b.ir_array_write(&version, ArrayAccess::flat(n as u32, elem), std::slice::from_ref(pk), vk, &always);
+        }
+        self.version = Some((version, elem));
+    }
+
+    fn lane(&mut self, b: &mut IRBuilder, _cx: &mut EmitCx, lane: &Lane) -> Value {
+        let (version, elem) = self.version.clone().expect("begin ran");
+        let n = self.operands.len() / 2;
+        let j = lane.position.expect("a scatter cell has a position");
+        b.ir_array_read(&version, crate::ir_array::ArrayAccess::constant(n as u32, elem, j), &[])
     }
 }
 

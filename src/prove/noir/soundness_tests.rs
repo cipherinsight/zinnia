@@ -1311,3 +1311,120 @@ fn native_ram_reads_the_last_executed_write() {
         assert_eq!(execute(&overlay, &w).unwrap(), expected, "overlay {case:?}");
     }
 }
+
+// ── Array-fact constructions (`lower::array_facts`) ───────────────────
+
+/// `(name, value)` pairs as a witness.
+fn owned_witness(inputs: &[(String, i64)]) -> ResolvedWitness {
+    let named: Vec<(&str, i64)> = inputs.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+    witness(&named)
+}
+
+fn inputs_of(prefix: &str, values: &[i64]) -> Vec<(String, i64)> {
+    values.iter().enumerate().map(|(j, &v)| (format!("{prefix}{j}"), v)).collect()
+}
+
+/// A merged range check on Noir: the values of `[lo, hi]` accepted with
+/// the mock's outputs (the comparisons after it sized by the range the
+/// check deposits, across the offset `lo`), the values outside rejected.
+#[test]
+fn merged_range_checks_accept_exactly_their_range() {
+    use crate::lower::array_facts_tests::{lowered, ranged_program};
+    use crate::lower::Target;
+    if !toolchain_present(false) {
+        return;
+    }
+    for (lo, hi) in [(0, 255), (-100, 27), (1000, 1999)] {
+        let pivot = (lo + hi) / 2;
+        let graph = lowered(&ranged_program(2, lo, hi, pivot), Target::Noir, false);
+        for v in [lo - 1, lo, pivot, hi, hi + 1, i64::MIN, i64::MAX] {
+            let w = owned_witness(&inputs_of("x", &[v, lo]));
+            if (lo..=hi).contains(&v) {
+                let expected = vec![v as i128, i128::from(v < pivot), lo as i128, i128::from(lo < pivot)];
+                assert_eq!(execute(&graph, &w).expect("in range"), expected, "{lo}..{hi}: {v}");
+            } else {
+                assert_rejected(execute(&graph, &w));
+            }
+        }
+    }
+}
+
+/// The hinted positions of the fact constructions on Noir: the argmax of a
+/// sorted line, and `np.searchsorted` of a runtime sorted table. Every
+/// position other than NumPy's is rejected.
+#[test]
+fn fact_construction_hints_are_pinned_in_noir() {
+    use crate::lower::array_facts_tests::{argextreme_program, hint_input, numpy_argextremes, searchsorted_program};
+    use crate::lower::Target;
+    if !toolchain_present(false) {
+        return;
+    }
+    let argmax = hint_input(&argextreme_program(4, true, Some(true), Target::Noir), 0);
+    for values in [[0, 1, 1, 1], [2, 2, 2, 2], [0, 0, 1, 2]] {
+        let expected = numpy_argextremes(&values);
+        for u in -1..=4 {
+            let mut inputs = inputs_of("a", &values);
+            inputs.push(("hint".to_string(), u));
+            let result = execute(&argmax, &owned_witness(&inputs));
+            if u == expected[0] {
+                assert_eq!(result.expect("honest"), expected.iter().map(|&v| v as i128).collect::<Vec<_>>());
+            } else {
+                assert_rejected(result);
+            }
+        }
+    }
+    let search = hint_input(&searchsorted_program(4, true, Some(&crate::lower::sort::search::SearchByPosition)), 1);
+    let values = [0, 2, 2, 7];
+    for t in [-1, 2, 5, 9] {
+        let right = values.iter().filter(|&&v| v <= t).count() as i64;
+        let left = values.iter().filter(|&&v| v < t).count() as i64;
+        for u in -1..=5 {
+            let mut inputs = inputs_of("a", &values);
+            inputs.push(("t0".to_string(), t));
+            inputs.push(("hint".to_string(), u));
+            let result = execute(&search, &owned_witness(&inputs));
+            if u == right {
+                assert_eq!(result.expect("honest"), vec![left as i128, right as i128]);
+            } else {
+                assert_rejected(result);
+            }
+        }
+    }
+}
+
+/// A range check whose exact width would need a lookup table of its own
+/// shares the 14-bit one when the circuit has it, and keeps its width
+/// otherwise; both forms accept exactly `[0, hi)`.
+#[test]
+fn range_check_widths_share_the_wide_table() {
+    use super::emit::{settle_range_widths_for_tests as settle, DeferredWidthForTests as Deferred};
+    let deferred = [Deferred { bits: 11, cell: "v1".to_string(), top: 1999, exact_power: false }];
+    let narrow = "    let v1: Field = x;\n    v1.assert_max_bit_size::<__W0__>();\n    __TOP0__;\n";
+    let wide = format!("    x.assert_max_bit_size::<64>();\n{narrow}");
+    let settled = settle(narrow, &deferred);
+    assert!(settled.contains("v1.assert_max_bit_size::<11>();") && settled.contains("v1_top.assert_max_bit_size::<11>();"), "{settled}");
+    let settled = settle(&wide, &deferred);
+    assert!(settled.contains("v1.assert_max_bit_size::<14>();") && settled.contains("v1_top.assert_max_bit_size::<14>();"), "{settled}");
+    if !toolchain_present(false) {
+        return;
+    }
+    // AssertU128Lt(x, 2000) next to a 64-bit check of y: 14-bit checks.
+    let mut g = Graph::default();
+    let x = g.read_int("x");
+    let y = g.read_int("y");
+    let hi = g.int(2000);
+    g.push(IR::AssertU128Lt, &[x, hi]);
+    let zero = g.int(0);
+    g.push(IR::AssertNonNegI, &[y]);
+    let _ = zero;
+    g.expose(x);
+    let graph = g.finish();
+    for (v, ok) in [(0, true), (1999, true), (2000, false), (-1, false), (16383, false)] {
+        let result = execute(&graph, &witness(&[("x", v), ("y", 5)]));
+        if ok {
+            assert_eq!(result.expect("in range"), vec![v as i128]);
+        } else {
+            assert_rejected(result);
+        }
+    }
+}

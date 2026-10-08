@@ -664,3 +664,27 @@ pub fn stated_ranges<'c>(forms: impl IntoIterator<Item = &'c Fact>) -> HashMap<S
     }
     ranges
 }
+
+/// The cost of a comparison of two values whose difference fits `width`
+/// bits: halo2-base a hinted bit and a range check of the shifted gap
+/// (13 cells plus the range check, 43 at 64 bits, 14 at 8), Noir about 6.5
+/// gates at 64 bits and 3.3 at 8 or fewer
+/// (`eval-redo/layer/array-fact-survey.md`, section 3.2).
+pub fn comparison_cost(width: u32, target: Target) -> u64 {
+    match target {
+        Target::Halo2Base => {
+            let width = u64::from(width.max(1));
+            let limbs = width.div_ceil(8);
+            let recombine = if limbs == 1 { 0 } else { 3 * limbs - 2 };
+            let partial = if width % 8 == 0 { 0 } else { 5 };
+            13 + limbs + recombine + partial
+        }
+        Target::Noir => {
+            if width <= 8 {
+                3
+            } else {
+                7
+            }
+        }
+    }
+}

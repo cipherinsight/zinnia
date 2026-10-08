@@ -82,8 +82,10 @@ pub(super) fn constructions() -> Vec<&'static dyn Construction> {
 ///
 /// * Preconditions: the operator's, `NonDecreasing(Y)`.
 /// * Postconditions: every lane.
-/// * Cost per lane: `n` comparisons with a constant and their sum
-///   (halo2-base 45 cells, Noir 9 gates per entry).
+/// * Cost per lane: `n` comparisons and their sum (per entry halo2-base 32
+///   cells, Noir 7 gates; measured on `np.searchsorted` of 4 queries, both
+///   sides, in sorted tables of 8 to 128 entries,
+///   `benchmarking/fact_constructions`, rule `sorted_searchsorted`).
 /// * Soundness: no hint; the comparisons are exact on the window, so the
 ///   count is NumPy's for a sorted table.
 pub struct SearchByCount;
@@ -128,12 +130,29 @@ impl Construction for SearchByCount {
         let OpKind::SearchSorted { right } = group.kind else { return Vec::new() };
         let n = group.shared.len() as u64;
         let per_entry = match cx.target {
-            Target::Halo2Base => 45,
-            Target::Noir => 9,
+            Target::Halo2Base => 32,
+            Target::Noir => 7,
         };
         let emitter = CountEmitter { right, table: group.shared.clone() };
         vec![sorted_table(group, cx, every_lane(group, n * per_entry * group.lanes.len() as u64, Box::new(emitter)))]
     }
+}
+
+/// The cost of `lanes` hinted positions in a runtime table of `n` entries
+/// (`position_in_sorted`): two reads per lane of the extended table (`n + 2`
+/// slots, priced as the sort family prices reads at runtime positions,
+/// `cost::UnitCosts::reads`: a selection per read, or table reads on
+/// halo2-base for many reads of a long table) and per lane the hint, its
+/// range check, two comparisons and the selects at the ends (halo2-base
+/// 150 cells, Noir 30 gates). Fitted on `np.searchsorted` of 8 queries in
+/// tables of 8 to 128 entries (`benchmarking/fact_constructions`, rule
+/// `sorted_searchsorted`): within 15% from 16 entries on.
+pub(crate) fn runtime_position_cost(n: usize, lanes: u64, target: Target) -> u64 {
+    let fixed = match target {
+        Target::Halo2Base => 150,
+        Target::Noir => 30,
+    };
+    super::cost::unit_costs(target).reads(n + 2, 2 * lanes as usize) + fixed * lanes
 }
 
 /// `candidate` with the operator's precondition, the table's order, unless
@@ -160,12 +179,8 @@ impl Construction for SearchByPosition {
         let entries = group.shared.len() as u64 + 2;
         let lanes = group.lanes.len() as u64;
         let Some(table) = Table::of(group, cx) else {
-            // A runtime table, read at the hinted position (as a constant
-            // one that is not affine).
-            let cost = match cx.target {
-                Target::Halo2Base => (2 * (10 + 17 * entries) + 120) * lanes,
-                Target::Noir => 2 * 3 * entries + (2 * 7 + 30) * lanes,
-            };
+            // A runtime table, read at the hinted position.
+            let cost = runtime_position_cost(group.shared.len(), lanes, cx.target);
             let emitter = RuntimePositionEmitter { right, table: group.shared.clone(), extended: None };
             return vec![sorted_table(group, cx, every_lane(group, cost, Box::new(emitter)))];
         };

@@ -532,3 +532,221 @@ fn fact_constructions_on_halo2_base() {
 fn line16(values: &[i64]) -> Vec<i64> {
     (0..16).map(|j| values[j % values.len()]).collect()
 }
+
+/// `np.searchsorted` of the inputs `a0..` (asserted sorted when `sorted`)
+/// for the query `t`, both sides, exposed; lowered by `construction` (the
+/// compiler's selection when `None`).
+pub(crate) fn searchsorted_program(n: usize, sorted: bool, construction: Option<&dyn super::Construction>) -> IRGraph {
+    let mut b = IRBuilder::new();
+    let a = read_inputs(&mut b, "a", n);
+    if sorted {
+        assert_sorted(&mut b, &a);
+    }
+    let t = read_inputs(&mut b, "t", 1).remove(0);
+    let table: Arc<[Value]> = a.into();
+    for right in [false, true] {
+        let op = super::ArrayOp { kind: OpKind::SearchSorted { right }, shared: n as u32, output: 0, position: None };
+        let lane = b.ir_array_op(op, &table, std::slice::from_ref(&t));
+        b.ir_expose_public_i(&lane);
+    }
+    let graph = b.export_ir_graph();
+    match construction {
+        None => lowered(&graph, Target::Halo2Base, false),
+        Some(c) => {
+            let first = super::emit::lower(&graph, Target::Halo2Base, &[c]).expect("lanes to lower");
+            super::emit::lower_rounds(first, Target::Halo2Base, &super::registry())
+        }
+    }
+}
+
+fn numpy_searchsorted(values: &[i64], t: i64) -> Vec<i64> {
+    vec![values.iter().filter(|&&v| v < t).count() as i64, values.iter().filter(|&&v| v <= t).count() as i64]
+}
+
+#[test]
+fn searchsorted_of_a_runtime_table_is_numpys_and_needs_the_order() {
+    use super::sort::search::{SearchByCount, SearchByPosition};
+    for n in [1, 2, 5] {
+        for construction in [&SearchByCount as &dyn super::Construction, &SearchByPosition] {
+            for sorted in [true, false] {
+                let graph = searchsorted_program(n, sorted, Some(construction));
+                for values in sorted_sequences(n, 4) {
+                    for t in -1..=4 {
+                        let mut inputs = inputs_of("a", &values);
+                        inputs.push(("t0".to_string(), t));
+                        let (ok, out) = mock_run(&graph, &inputs);
+                        assert!(ok, "{values:?} t {t} sorted {sorted}");
+                        assert_eq!(out, numpy_searchsorted(&values, t), "{values:?} t {t}");
+                    }
+                }
+                // NumPy's precondition: an unsorted table has no proof, the
+                // order checked by the program or else by the layer.
+                if n > 1 {
+                    let mut inputs = inputs_of("a", &(0..n as i64).rev().collect::<Vec<_>>());
+                    inputs.push(("t0".to_string(), 1));
+                    assert!(!mock_run(&graph, &inputs).0, "n {n} sorted {sorted}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn the_hinted_position_in_a_runtime_table_is_pinned() {
+    let graph = searchsorted_program(4, true, Some(&super::sort::search::SearchByPosition));
+    // Two hints (left, right): each replaced by an input in turn.
+    for (side, values) in [(0usize, [1, 1, 3, 3]), (1, [0, 2, 2, 7])] {
+        let hinted = hint_input(&graph, side);
+        for t in [-1, 1, 2, 3, 8] {
+            let honest = numpy_searchsorted(&values, t);
+            for u in -1..=5 {
+                let mut inputs = inputs_of("a", &values);
+                inputs.push(("t0".to_string(), t));
+                inputs.push(("hint".to_string(), u));
+                let (ok, out) = mock_run(&hinted, &inputs);
+                assert_eq!(ok, u == honest[side], "{values:?} t {t} side {side} u {u}");
+                if ok {
+                    assert_eq!(out, honest);
+                }
+            }
+        }
+    }
+}
+
+/// `graph` with its `k`-th hint replaced by the private input `hint` and the
+/// other hints by their honest lanes (the mock computes hints as it runs).
+pub(crate) fn hint_input(graph: &IRGraph, k: usize) -> IRGraph {
+    let mut graph = graph.clone();
+    let stmt = graph.stmts.iter_mut().filter(|s| matches!(s.ir, IR::Hint { .. })).nth(k).expect("a hint");
+    stmt.ir = IR::ReadInteger { path: InputPath::new("hint", vec![]), is_public: false };
+    stmt.arguments.clear();
+    stmt.arg_values.clear();
+    graph
+}
+
+/// The scans of flags `x_k > t` (rising) and `x_k <= t` (falling) of inputs
+/// `x0..` asserted sorted and the input `t`: argmax, first and last set
+/// position of each (first and last asserting a set flag, as the frontend
+/// does), exposed; lowered by `construction`.
+pub(crate) fn monotone_scan_program(n: usize, construction: &dyn super::Construction) -> (IRGraph, usize) {
+    use super::gather::{scan_lane, ScanKind};
+    let mut b = IRBuilder::new();
+    let x = read_inputs(&mut b, "x", n);
+    assert_sorted(&mut b, &x);
+    let t = read_inputs(&mut b, "t", 1).remove(0);
+    let mut lanes = 0;
+    for rising in [true, false] {
+        let flags: Vec<Value> =
+            x.iter().map(|xk| if rising { b.ir_greater_than_i(xk, &t) } else { b.ir_less_than_or_equal_i(xk, &t) }).collect();
+        let argmax = scan_lane(&mut b, ScanKind::Argmax, &flags);
+        b.ir_expose_public_i(&argmax);
+        lanes += 1;
+        // `First` and `Last` need a set flag where they are used.
+        let mut any = b.ir_constant_bool(false);
+        for f in &flags {
+            any = b.ir_logical_or(&any, f);
+        }
+        b.ir_assert(&any);
+        for kind in [ScanKind::First, ScanKind::Last] {
+            let lane = scan_lane(&mut b, kind, &flags);
+            b.ir_expose_public_i(&lane);
+            lanes += 1;
+        }
+    }
+    let graph = b.export_ir_graph();
+    let first = super::emit::lower(&graph, Target::Halo2Base, &[construction]).expect("lanes to lower");
+    (super::emit::lower_rounds(first, Target::Halo2Base, &super::registry()), lanes)
+}
+
+fn numpy_scans(x: &[i64], t: i64) -> Option<Vec<i64>> {
+    let mut out = Vec::new();
+    for rising in [true, false] {
+        let flags: Vec<bool> = x.iter().map(|&v| if rising { v > t } else { v <= t }).collect();
+        let first = flags.iter().position(|&f| f)?;
+        out.push(first as i64);
+        out.push(first as i64);
+        out.push(flags.iter().rposition(|&f| f)? as i64);
+    }
+    Some(out)
+}
+
+#[test]
+fn scans_of_monotone_flags_are_numpys() {
+    use super::gather::constructions::{ScanOfMonotoneFlags, ScanOfMonotoneFlagsByPosition};
+    for n in [2, 3, 5] {
+        for construction in [&ScanOfMonotoneFlags as &dyn super::Construction, &ScanOfMonotoneFlagsByPosition] {
+            let (graph, lanes) = monotone_scan_program(n, construction);
+            assert_eq!(lanes, 6);
+            for x in sorted_sequences(n, 4) {
+                for t in -1..=4 {
+                    let mut inputs = inputs_of("x", &x);
+                    inputs.push(("t0".to_string(), t));
+                    let (ok, out) = mock_run(&graph, &inputs);
+                    match numpy_scans(&x, t) {
+                        Some(expected) => {
+                            assert!(ok, "{x:?} t {t}");
+                            assert_eq!(out, expected, "{x:?} t {t}");
+                        }
+                        // Some flag vector is all unset: First/Last have no proof.
+                        None => assert!(!ok, "{x:?} t {t}"),
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_permutation_scatter_by_an_argsort_is_numpys() {
+    // c[np.argsort(a)] = v, built as the frontend builds it.
+    let n = 5;
+    let mut b = IRBuilder::new();
+    let a = read_inputs(&mut b, "a", n);
+    let v = read_inputs(&mut b, "v", n);
+    let elements: Arc<[Value]> = a.into();
+    let p: Vec<Value> = (0..n as u32).map(|r| b.ir_sorted(&elements, r, true)).collect();
+    let cells = super::gather::permutation_scatter_lanes(&mut b, &p, &v).expect("an argsort is a permutation");
+    for cell in &cells {
+        b.ir_expose_public_i(cell);
+    }
+    let graph = lowered(&b.export_ir_graph(), Target::Halo2Base, false);
+    // No permutation check: the argsort is one by definition.
+    assert_eq!(count(&graph, |ir| matches!(ir, IR::IdentityCheck(_))), 0);
+    for values in [[3, 1, 3, 0, 1], [2, 2, 2, 2, 2], [4, 3, 2, 1, 0]] {
+        let mut order: Vec<usize> = (0..n).collect();
+        order.sort_by_key(|&i| values[i]);
+        let payload = [10, 11, 12, 13, 14];
+        let mut expected = vec![0; n];
+        for (k, &j) in order.iter().enumerate() {
+            expected[j] = payload[k];
+        }
+        let mut inputs = inputs_of("a", &values);
+        inputs.extend(inputs_of("v", &payload));
+        let (ok, out) = mock_run(&graph, &inputs);
+        assert!(ok);
+        assert_eq!(out, expected, "{values:?}");
+    }
+}
+
+#[test]
+fn the_wrap_of_a_non_negative_index_is_the_index() {
+    let n = 4;
+    let mut b = IRBuilder::new();
+    let i = read_inputs(&mut b, "i", 1).remove(0);
+    let zero = b.ir_constant_int(0);
+    let non_negative = b.ir_greater_than_or_equal_i(&i, &zero);
+    b.ir_assert(&non_negative);
+    let w = super::memory::wrap::wrap_lane(&mut b, &i, n);
+    let len = b.ir_constant_int(n as i64);
+    b.ir_assert_u128_lt(&w, &len);
+    b.ir_expose_public_i(&w);
+    let graph = lowered(&b.export_ir_graph(), Target::Halo2Base, false);
+    assert_eq!(count(&graph, |ir| matches!(ir, IR::Hint { .. })), 0, "no sign hint");
+    for v in -5..=5 {
+        let (ok, out) = mock_run(&graph, &inputs_of("i", &[v]));
+        assert_eq!(ok, (0..n as i64).contains(&v), "i = {v}");
+        if ok {
+            assert_eq!(out, vec![v]);
+        }
+    }
+}
