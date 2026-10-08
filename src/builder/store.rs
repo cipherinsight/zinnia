@@ -38,9 +38,6 @@ use super::IRBuilder;
 pub(crate) struct Storage {
     elem: ArrayElem,
     state: State,
-    /// A bound of every cell some producer knows (`np.nonzero`'s
-    /// coordinates), published as facts on its reads.
-    cell_bounds: Option<(i64, i64)>,
     /// The store's write clock at its last write (0: never written).
     last_write: u64,
     /// For the real-part storage of a static complex array, the storage of
@@ -126,7 +123,7 @@ impl IRBuilder {
         let id = self.store.next_id;
         self.store.next_id += 1;
         self.track_storage_alloc(id, &cells, zero_filled);
-        self.store.storages.insert(id, Storage { elem, state: State::Cells(cells), cell_bounds: None, last_write: 0, imag: None, real: None, stale: Default::default(), unshaped: Default::default(), read_only: None });
+        self.store.storages.insert(id, Storage { elem, state: State::Cells(cells), last_write: 0, imag: None, real: None, stale: Default::default(), unshaped: Default::default(), read_only: None });
         id
     }
 
@@ -208,13 +205,6 @@ impl IRBuilder {
             State::Cells(cells) => cells.len(),
             State::Version { len, .. } => *len,
         }
-    }
-
-    /// Record that every cell of `storage` lies in `[lo, hi]` (a producer's
-    /// structural bound, e.g. `np.nonzero`'s coordinates): its reads carry
-    /// the bound as facts.
-    pub fn set_storage_cell_bounds(&mut self, storage: u32, bounds: (i64, i64)) {
-        self.storage_mut(storage).cell_bounds = Some(bounds);
     }
 
     /// The cell at the constant `address`.
@@ -406,7 +396,9 @@ impl IRBuilder {
                     None => value,
                     Some(p) => {
                         let old = self.read_cell(storage, address);
-                        self.select_cell_value(elem, p, &value, &old)
+                        let stored = self.select_cell_value(elem, p, &value, &old);
+                        self.derive_select_cell_facts(&stored, &value, &old);
+                        stored
                     }
                 };
                 if let State::Cells(cells) = &mut self.storage_mut(storage).state {
@@ -549,7 +541,9 @@ impl IRBuilder {
             Some(p) => p.clone(),
             None => self.ir_constant_bool(true),
         };
-        let written = self.ir_array_write(&version, access, positions, value, &predicate);
+        let unconditional = constant_truth(&predicate) == Some(true);
+        let written = self.ir_array_write(&version, access.clone(), positions, value, &predicate);
+        self.derive_write_facts(&version, &written, &access, positions, value, unconditional);
         self.storage_mut(storage).state = State::Version { version: written, len, reads: HashMap::new() };
     }
 
@@ -586,25 +580,58 @@ impl IRBuilder {
         }
         self.check_shape_known(owner);
         self.provenance.on_segment_write(storage);
-        self.storage_mut(storage).cell_bounds = None;
         self.track_storage_write(storage, value);
         self.note_storage_written(storage);
     }
 
     /// A read the store built (`ArrayRead`): a NumPy bool when the array is
-    /// a bool array, of the array's fixed-width type, and in the cells'
-    /// bound when one is known.
+    /// a bool array, and of the array's fixed-width type. (What the array's
+    /// facts say about it, the bound queries read from the read itself:
+    /// `builder/array_facts.rs`.)
     fn note_storage_read(&mut self, storage: u32, read: Value) -> Value {
         if self.is_bool_segment(storage) {
             self.record_bool_cell(&read);
         }
-        let read = self.track_storage_read(storage, read);
-        if let (Some((lo, hi)), Some(vid)) = (self.storage(storage).cell_bounds, read.value_id()) {
-            use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
-            let var = || Box::new(ContractTerm::Var(ContractVar::Value(vid)));
-            self.facts.insert_for(vid, ContractTerm::Cmp { op: CmpOp::Ge, lhs: var(), rhs: Box::new(ContractTerm::LitInt(lo)) });
-            self.facts.insert_for(vid, ContractTerm::Cmp { op: CmpOp::Le, lhs: var(), rhs: Box::new(ContractTerm::LitInt(hi)) });
+        self.track_storage_read(storage, read)
+    }
+
+    // ── For the array facts (`builder/array_facts.rs`) ─────────────────
+
+    /// What `storage` holds now, without building IR: its cells, or its
+    /// version. `None` for a deferred product not computed yet and for a
+    /// complex array (whose cells are pairs of storages).
+    pub(super) fn storage_value(&self, storage: u32) -> Option<super::array_facts::StorageValue> {
+        use super::array_facts::StorageValue;
+        let s = self.storage(storage);
+        if s.imag.is_some() || s.real.is_some() || self.static_array_product_provenance.contains_key(&storage) {
+            return None;
         }
-        read
+        match &s.state {
+            State::Cells(cells) => Some(StorageValue::Cells(cells.clone())),
+            State::Version { version, .. } => version.stmt_id().map(StorageValue::Version),
+        }
+    }
+
+    /// Whether the cells of `storage` are what NumPy would show on every
+    /// path: it is not stale and its shape is known (`builder/stale.rs`).
+    pub(super) fn storage_is_current(&self, storage: u32) -> bool {
+        let owner = self.storage(self.storage_owner(storage));
+        owner.stale.is_empty() && owner.unshaped.is_empty()
+    }
+
+    /// Whether `storage` holds float cells.
+    pub(super) fn storage_is_float(&self, storage: u32) -> bool {
+        self.storage(storage).elem == ArrayElem::Float
+    }
+
+    /// Whether the array version `version` holds float cells.
+    pub(super) fn version_is_float(&self, version: &Value) -> bool {
+        use crate::ir_defs::IR;
+        let Some(s) = version.stmt_id().and_then(|v| self.stmts.get(v as usize)) else { return false };
+        match &s.ir {
+            IR::ArrayInit { elem, .. } => *elem == ArrayElem::Float,
+            IR::ArrayWrite(access) | IR::ArrayRead(access) => access.elem == ArrayElem::Float,
+            _ => false,
+        }
     }
 }

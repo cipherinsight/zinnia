@@ -134,7 +134,38 @@ pub(crate) fn vectorize_minmax(
             }
         }
     }
-    rec(builder, &l, &r, int_cmp, float_cmp, is_max)
+    let out = rec(builder, &l, &r, int_cmp, float_cmp, is_max);
+    state_minmax_facts(builder, &l, &r, &out, is_max);
+    out
+}
+
+/// Array facts of an element-wise minimum / maximum (`np.minimum`,
+/// `np.maximum`, both halves of `np.clip`; `docs/array-facts.md`): each
+/// output cell is the extreme of one cell of each operand (a select on an
+/// exact comparison), so the output's cells lie in the min/max transfer of
+/// the operands' ranges, derived where those hold. Integer cells only.
+fn state_minmax_facts(
+    b: &mut crate::builder::IRBuilder,
+    x: &crate::types::Value,
+    y: &crate::types::Value,
+    out: &crate::types::Value,
+    is_max: bool,
+) {
+    use crate::optim::array_facts::{transfer, ElemFacts, Segmentation};
+    let Some(cells) = b.leaf_cells(out) else { return };
+    if cells.iter().any(|c| !c.is_integer()) {
+        return;
+    }
+    let (x, y) = (x.clone(), y.clone());
+    b.state_derived_facts(&cells, |b, at| {
+        let (rx, ry) = (b.range_of(&x, at), b.range_of(&y, at));
+        if rx.is_top() && ry.is_top() {
+            return None;
+        }
+        let oracle = b.oracle(at);
+        let range = if is_max { transfer::max(&rx, &ry, &oracle) } else { transfer::min(&rx, &ry, &oracle) };
+        (!range.is_top()).then(|| Segmentation::uniform(cells.len(), ElemFacts::range(range)))
+    });
 }
 
 macro_rules! define_np_arith {

@@ -153,8 +153,8 @@ mod tests {
             _ => unreachable!(),
         };
 
-        // State is_sorted(arr) as the sorted constructors do.
-        b.state_sorted(&Value::DynamicNDArray(data.clone()), "sort_is_sorted");
+        // Ascending constant cells: sorted by inspection
+        // (`array_facts::constant_facts`).
 
         let result = dyn_aggregate_all(&mut b, &data, DynAggKind::Max);
         // The last cell, read from the array's storage (known: no IR).

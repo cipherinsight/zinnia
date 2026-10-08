@@ -110,6 +110,8 @@ pub fn try_apply_sort(
         for rank in 0..axis_len {
             out[base + rank * axis_stride] = b.ir_sorted(&fiber, rank as u32, argsort);
         }
+        let line: Vec<Value> = (0..axis_len).map(|rank| out[base + rank * axis_stride].clone()).collect();
+        state_sorted_line_facts(b, &line, &fiber, argsort);
     }
 
     let result = build_static_array_from_flat(b, out, shape, out_dtype);
@@ -117,16 +119,39 @@ pub fn try_apply_sort(
     if !argsort && crate::helpers::array_ops::is_bool_array(b, arr) {
         b.mark_bool_array(&result);
     }
-    // The available `is_sorted` vocabulary is whole-array/flattened. Axis-local
-    // N-D sort is only row/column-local, so do not claim that global fact.
-    if !argsort && result_shape_is_globally_sorted(&result) {
-        b.state_sorted(&result, "sort_is_sorted");
-    }
     Some(result)
 }
 
-fn result_shape_is_globally_sorted(result: &Value) -> bool {
-    matches!(result, Value::StaticArray { shape, .. } if shape.len() == 1)
+/// Array facts of one sorted line (`docs/array-facts.md`). Every
+/// construction of the sort family yields NumPy's stable sort of the line on
+/// every accepted witness (`lower::sort`, each construction's soundness
+/// argument; the `Sort` lanes carry no execution predicate), so on every
+/// path:
+///
+/// * argsort: the lanes are a permutation of `0..n` (hence in `[0, n - 1]`);
+/// * sort: the lanes are non-decreasing, and each is one of the inputs, so
+///   it lies in the inputs' range (derived from what is known of them).
+///
+/// The facts are about the line's cells: an N-D sort along an axis orders
+/// each line, not the array (row-major order crosses lines).
+fn state_sorted_line_facts(b: &mut IRBuilder, line: &[Value], inputs: &[Value], argsort: bool) {
+    use crate::optim::array_facts::{ElemFacts, Order, Range, Segmentation};
+    let n = line.len();
+    if n == 0 {
+        return;
+    }
+    if argsort {
+        let facts = Segmentation::uniform(n, ElemFacts::range(Range::new(0, n as i64 - 1))).with_permutation();
+        b.state_defined_facts(line, facts);
+        return;
+    }
+    let order = ElemFacts { order: Some(Order::NonDecreasing), ..ElemFacts::TOP };
+    b.state_defined_facts(line, Segmentation::uniform(n, order));
+    let inputs = inputs.to_vec();
+    b.state_derived_facts(line, |b, at| {
+        let range = b.join_of(&inputs, at);
+        (!range.is_top()).then(|| Segmentation::uniform(n, ElemFacts::range(range)))
+    });
 }
 
 fn flatten_static_indices(b: &mut IRBuilder, indices: &Value) -> (Vec<i64>, Vec<usize>) {

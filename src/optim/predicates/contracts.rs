@@ -1086,48 +1086,5 @@ fn build_contract_registry() -> HashMap<&'static str, OpContract> {
         OpContract::pure(vec![requires_pow_float()], vec![]),
     );
 
-    // ── arange_is_sorted / linspace_is_sorted (range-constructor content) ──
-    //
-    // Soundness: `np.arange(stop)`, `np.arange(start, stop)` and
-    // `np.arange(start, stop, step)` with `step > 0` produce a strictly
-    // ascending sequence; `np.linspace(start, stop, num)` with
-    // `start <= stop` produces a (non-strictly) ascending sequence. In
-    // both cases `is_sorted(out)` holds. The firing sites in
-    // `np_arange` / `np_linspace` (static + dyn) gate the emission on a
-    // call-site direction check, so descending or unknown-direction
-    // forms simply skip the fire — no false claim. Kept as separate
-    // registry entries so the firing-site name in traces matches the
-    // user-visible op.
-    m.insert(
-        "arange_is_sorted",
-        OpContract::pure(
-            vec![],
-            vec![ContractFormula::new(ContractTerm::PredicateApp {
-                kind: "is_sorted".to_string(),
-                args: vec![ContractTerm::Var(ContractVar::Output)],
-            })],
-        ),
-    );
-    m.insert(
-        "linspace_is_sorted",
-        OpContract::pure(
-            vec![],
-            vec![ContractFormula::new(ContractTerm::PredicateApp {
-                kind: "is_sorted".to_string(),
-                args: vec![ContractTerm::Var(ContractVar::Output)],
-            })],
-        ),
-    );
-    m.insert(
-        "sort_is_sorted",
-        OpContract::pure(
-            vec![],
-            vec![ContractFormula::new(ContractTerm::PredicateApp {
-                kind: "is_sorted".to_string(),
-                args: vec![ContractTerm::Var(ContractVar::Output)],
-            })],
-        ),
-    );
-
     m
 }

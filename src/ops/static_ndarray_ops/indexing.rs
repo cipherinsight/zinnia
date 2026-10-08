@@ -380,6 +380,16 @@ pub fn np_argwhere(b: &mut IRBuilder, args: &[Value]) -> Value {
     let found = nonzero_coordinates(b, &cells, &shape);
     let segment_id =
         crate::helpers::segment::alloc_and_write_values(b, &found.packed, NumberType::Integer);
+    // Every packed cell is a coordinate along some axis or the fill 0 (see
+    // `state_nonzero_facts` for why, on every path).
+    let extent = shape.iter().copied().max().unwrap_or(1).max(1) as i64;
+    b.state_defined_facts(
+        &found.packed,
+        crate::optim::array_facts::Segmentation::uniform(
+            found.packed.len(),
+            crate::optim::array_facts::ElemFacts::range(crate::optim::array_facts::Range::new(0, extent - 1)),
+        ),
+    );
     for axis in 0..rank {
         found.record(b, segment_id, axis, axis);
     }
@@ -415,6 +425,44 @@ pub fn np_argwhere(b: &mut IRBuilder, args: &[Value]) -> Value {
     })
 }
 
+/// How the coordinates along `axis` of the non-zero cells of a rank-`rank`
+/// array are ordered, in row-major order of the cells: positions of a 1-D
+/// array increase; the rows of a 2-D array's cells only do not decrease.
+fn nonzero_order(rank: usize, axis: usize) -> Option<crate::optim::array_facts::Order> {
+    use crate::optim::array_facts::Order;
+    match (rank, axis) {
+        (1, 0) => Some(Order::Increasing),
+        (_, 0) => Some(Order::NonDecreasing),
+        _ => None,
+    }
+}
+
+/// Array facts of one axis of `np.nonzero` (`np.flatnonzero` is the 1-D
+/// case): `{0} [0, extent - 1] order {count} [0, 0] {n}`. They hold on every
+/// path by the definition of the cells: the compaction network computes
+/// lane `j` as the coordinate of the `(j + 1)`-th non-zero cell when
+/// `j < count`, and the fill 0 otherwise, from the non-zero indicators with
+/// selects and products only (no hint, `compact_by_mask`); `count`, the sum
+/// of those indicators, is in `[0, n]`. Coordinates of cells in row-major
+/// order follow `order` ([`nonzero_order`]).
+fn state_nonzero_facts(
+    b: &mut IRBuilder,
+    lane: &[Value],
+    count: &Value,
+    extent: usize,
+    order: Option<crate::optim::array_facts::Order>,
+) {
+    use crate::optim::array_facts::{Bound, ElemFacts, Range, Segmentation};
+    let count = match (count.int_val(), count.stmt_id()) {
+        (Some(c), _) => Bound::Const(c),
+        (None, Some(s)) => Bound::stmt(s),
+        (None, None) => return,
+    };
+    let live = ElemFacts { range: Range::new(0, extent as i64 - 1), order, affine: None };
+    let facts = Segmentation::live_then_padding(lane.len(), count, live, ElemFacts::range(Range::point(0)));
+    b.state_defined_facts(lane, facts);
+}
+
 pub fn np_nonzero(b: &mut IRBuilder, args: &[Value]) -> Value {
     let input = args
         .first()
@@ -431,12 +479,7 @@ pub fn np_nonzero(b: &mut IRBuilder, args: &[Value]) -> Value {
     for axis in 0..rank {
         let lane: Vec<Value> = found.packed.iter().skip(axis).step_by(rank).cloned().collect();
         let seg = crate::helpers::segment::alloc_and_write_values(b, &lane, NumberType::Integer);
-        // Every cell of this segment is a coordinate along `axis` or 0.
-        // Publish that as a segment-wide bound so downstream readers
-        // (e.g. `flatnonzero().min() / .max()` for the bbox-crop family
-        // 0507/0509/0510) discharge their slice bounds from facts instead
-        // of emitting u128 bound asserts.
-        b.set_storage_cell_bounds(seg, (0, shape[axis] as i64 - 1));
+        state_nonzero_facts(b, &lane, &found.count, shape[axis], nonzero_order(rank, axis));
         found.record(b, seg, 0, axis);
         segment_ids.push(seg);
     }
@@ -568,6 +611,7 @@ pub fn np_unique(
         .map(|k| select_representative_with_rank(b, &cells, &ranking, k, dtype))
         .collect();
     let segment_id = crate::helpers::segment::alloc_and_write_values(b, &sorted_unique, dtype);
+    state_unique_facts(b, &sorted_unique, &cells, &ranking);
 
     let envelope =
         crate::types::Envelope::new_with_bound(vec![Dim::new_dynamic(&mut b.dim_table, 0, n)], n);
@@ -612,6 +656,41 @@ pub fn np_unique(
         },
     ];
     Value::Tuple(CompositeData::new(types, vec![unique_dyn, inverse_arr]))
+}
+
+/// Array facts of `np.unique` (`docs/array-facts.md`). The values, the
+/// inverse and the count are computed in-circuit from comparisons, selects
+/// and sums (no hint), so on every path:
+///
+/// * the values: `{0} increasing, in the inputs' range {count} [0, 0] {n}`.
+///   The cell of rank `k < count` is the one first occurrence with `k`
+///   distinct values below it, so ranks order the cells strictly; the cells
+///   past the count hold the fill 0. `count`, a sum of `n` flags of which
+///   the first is set, is in `[1, n]`.
+/// * the inverse: `0 <= inverse[i] <= count - 1`. The first occurrence of
+///   `x_i`'s value is counted in `count` but not in `rank[i]` (it is not
+///   below `x_i`), and every term of `rank[i]` is a term of `count`.
+///
+/// The values' range comes from what is known of the inputs, so it is
+/// derived where it holds; the rest is stated on every path.
+fn state_unique_facts(b: &mut IRBuilder, values: &[Value], inputs: &[Value], ranking: &DistinctRanking) {
+    use crate::optim::array_facts::{Bound, ElemFacts, Order, Range, Segmentation};
+    let n = values.len();
+    let count = match (ranking.count.int_val(), ranking.count.stmt_id()) {
+        (Some(c), _) => Bound::Const(c),
+        (None, Some(stmt)) => Bound::stmt(stmt),
+        (None, None) => return,
+    };
+    let fill = ElemFacts::range(Range::point(0));
+    let increasing = ElemFacts { order: Some(Order::Increasing), ..ElemFacts::TOP };
+    b.state_defined_facts(values, Segmentation::live_then_padding(n, count, increasing, fill));
+    let inputs = inputs.to_vec();
+    b.state_derived_facts(values, |b, at| {
+        let range = b.join_of(&inputs, at);
+        (!range.is_top()).then(|| Segmentation::live_then_padding(n, count, ElemFacts::range(range), fill))
+    });
+    let inverse = Range { lo: Some(Bound::Const(0)), hi: count.shifted(-1) };
+    b.state_defined_facts(&ranking.rank, Segmentation::uniform(n, ElemFacts::range(inverse)));
 }
 
 /// Per-cell ranking of the distinct values of `cells` (see `np_unique`).

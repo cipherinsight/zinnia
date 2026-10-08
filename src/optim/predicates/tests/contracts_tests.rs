@@ -3060,213 +3060,81 @@ fn np_fill_call_site_fires_zeros_for_zero_fill_value() {
     assert_eq!(b2.prove(&ones_query), ProveOutcome::Proved);
 }
 
-// ── Group 4b: range constructors emit is_sorted ───────────────────────
+// ── Group 4b: range constructors produce ordered arrays ──────────────
 //
-// `np.arange(stop)` and `np.linspace(a, b, N)` produce strictly /
-// non-strictly ascending arrays when the direction check holds
-// (step > 0 / a <= b). The constructor fires `is_sorted(out)` on the
-// array's value_id so downstream Phase-F consumers (boundary-read on
-// max/min/argmax/argmin) can specialize. Descending or unknown-direction
-// forms simply skip the fire — no false claim.
+// `np.arange` and `np.linspace` with `start <= stop` produce ascending
+// arrays. Their order is an array fact of the output's contents
+// (`builder/array_facts.rs`): `np.arange`'s cells are constants, ordered by
+// inspection; `np.linspace` with a runtime length states it on its cells.
 
-#[test]
-fn fire_contract_arange_is_sorted_deposits_is_sorted() {
+/// A bounded integer input `name` in `[lo, hi]` (the outward-doubling probe
+/// of the bounded constructors admits it).
+fn bounded_input(b: &mut crate::builder::IRBuilder, name: &str, lo: i64, hi: i64) -> crate::types::Value {
     use crate::circuit_input::InputPath;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use std::collections::HashMap;
-
-    let mut b = crate::builder::IRBuilder::new();
-    let out = b.ir_read_integer(InputPath::new("out", vec![]), false);
-    let out_vid = out.value_id().unwrap();
-
-    b.fire_contract("arange_is_sorted", out_vid, &HashMap::new());
-
-    let query = ContractTerm::PredicateApp {
-        kind: "is_sorted".to_string(),
-        args: vec![ContractTerm::Var(ContractVar::Value(out_vid))],
+    use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
+    let v = b.ir_read_integer(InputPath::new(name, vec![]), false);
+    let vid = v.value_id().unwrap();
+    let twice = ContractTerm::Arith {
+        op: ArithOp::Add,
+        lhs: Box::new(ContractTerm::Var(ContractVar::Value(vid))),
+        rhs: Box::new(ContractTerm::Var(ContractVar::Value(vid))),
     };
-    assert_eq!(b.prove(&query), ProveOutcome::Proved);
+    for (op, bound) in [(CmpOp::Ge, 2 * lo), (CmpOp::Le, 2 * hi)] {
+        b.facts.insert_for(vid, ContractTerm::Cmp { op, lhs: Box::new(twice.clone()), rhs: Box::new(ContractTerm::LitInt(bound)) });
+    }
+    v
 }
 
 #[test]
-fn fire_contract_linspace_is_sorted_deposits_is_sorted() {
-    use crate::circuit_input::InputPath;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use std::collections::HashMap;
-
-    let mut b = crate::builder::IRBuilder::new();
-    let out = b.ir_read_integer(InputPath::new("out", vec![]), false);
-    let out_vid = out.value_id().unwrap();
-
-    b.fire_contract("linspace_is_sorted", out_vid, &HashMap::new());
-
-    let query = ContractTerm::PredicateApp {
-        kind: "is_sorted".to_string(),
-        args: vec![ContractTerm::Var(ContractVar::Value(out_vid))],
-    };
-    assert_eq!(b.prove(&query), ProveOutcome::Proved);
-}
-
-#[test]
-fn np_arange_bounded_call_site_fires_is_sorted_on_output() {
-    // Integration: exercise `np_arange` end-to-end via the bounded 1-arg
-    // form. The result is a `DynamicNDArray`; the call site should fire
-    // `arange_is_sorted` on the array's `value_id` (not the length-bearing
-    // scalar) — so `prove(is_sorted(out_vid))` returns `Proved`.
-    use crate::circuit_input::InputPath;
+fn np_arange_bounded_output_is_ascending() {
+    use crate::builder::Where;
     use crate::ops::static_ndarray_ops::np_arange;
-    use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
+    use crate::optim::array_facts::Order;
     use crate::optim::resolver::LayeredResolver;
-    use crate::types::Value;
 
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
         crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
-
-    let n = b.ir_read_integer(InputPath::new("n", vec![]), false);
-    let n_vid = n.value_id().unwrap();
-    let n_plus_n = ContractTerm::Arith {
-        op: ArithOp::Add,
-        lhs: Box::new(ContractTerm::Var(ContractVar::Value(n_vid))),
-        rhs: Box::new(ContractTerm::Var(ContractVar::Value(n_vid))),
-    };
-    b.facts.insert_for(
-        n_vid,
-        ContractTerm::Cmp {
-            op: CmpOp::Le,
-            lhs: Box::new(n_plus_n.clone()),
-            rhs: Box::new(ContractTerm::LitInt(20)),
-        },
-    );
-    b.facts.insert_for(
-        n_vid,
-        ContractTerm::Cmp {
-            op: CmpOp::Ge,
-            lhs: Box::new(n_plus_n),
-            rhs: Box::new(ContractTerm::LitInt(0)),
-        },
-    );
-
-    let out = np_arange(&mut b, &[n.clone()], &std::collections::HashMap::new());
-    let out_vid = match &out {
-        Value::DynamicNDArray(d) => d.value_id,
-        other => panic!("expected DynamicNDArray, got {:?}", other.zinnia_type()),
-    };
-
-    let query = ContractTerm::PredicateApp {
-        kind: "is_sorted".to_string(),
-        args: vec![ContractTerm::Var(ContractVar::Value(out_vid))],
-    };
-    assert_eq!(
-        b.prove(&query),
-        ProveOutcome::Proved,
-        "np.arange(n) should fire is_sorted on the dyn-ndarray output",
-    );
+    let n = bounded_input(&mut b, "n", 0, 10);
+    let out = np_arange(&mut b, &[n], &std::collections::HashMap::new());
+    assert!(matches!(out, crate::types::Value::DynamicNDArray(_)));
+    assert!(b.array_has_order(&out, Order::Increasing, Where::Everywhere));
 }
 
 #[test]
-fn np_linspace_bounded_call_site_fires_is_sorted_when_ascending() {
-    // Integration: exercise `np_linspace` end-to-end via the bounded form
-    // with `start <= stop`. The result is a `DynamicNDArray`; the call
-    // site should fire `linspace_is_sorted` on the array's `value_id`.
-    use crate::circuit_input::InputPath;
+fn np_linspace_bounded_output_is_non_decreasing_when_ascending() {
+    use crate::builder::Where;
     use crate::ops::static_ndarray_ops::np_linspace;
-    use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
+    use crate::optim::array_facts::Order;
     use crate::optim::resolver::LayeredResolver;
-    use crate::types::Value;
-    use std::collections::HashMap;
 
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
         crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
-
-    let num = b.ir_read_integer(InputPath::new("num", vec![]), false);
-    let num_vid = num.value_id().unwrap();
-    // num ∈ [2, 20]: plant `num + num >= 4` and `num + num <= 40` so the
-    // outward-doubling probe admits it as bounded. The static
-    // soundness-guard inside `np_linspace` requires `num >= 2` for the
-    // default `endpoint=True` path.
-    let np = ContractTerm::Arith {
-        op: ArithOp::Add,
-        lhs: Box::new(ContractTerm::Var(ContractVar::Value(num_vid))),
-        rhs: Box::new(ContractTerm::Var(ContractVar::Value(num_vid))),
-    };
-    b.facts.insert_for(
-        num_vid,
-        ContractTerm::Cmp {
-            op: CmpOp::Ge,
-            lhs: Box::new(np.clone()),
-            rhs: Box::new(ContractTerm::LitInt(4)),
-        },
-    );
-    b.facts.insert_for(
-        num_vid,
-        ContractTerm::Cmp {
-            op: CmpOp::Le,
-            lhs: Box::new(np),
-            rhs: Box::new(ContractTerm::LitInt(40)),
-        },
-    );
-
+    let num = bounded_input(&mut b, "num", 2, 20);
     let start = b.ir_constant_int(0);
     let stop = b.ir_constant_int(1);
-    let kwargs = HashMap::new();
-    let out = np_linspace(&mut b, &[start, stop, num.clone()], &kwargs);
-    let out_vid = match &out {
-        Value::DynamicNDArray(d) => d.value_id,
-        other => panic!("expected DynamicNDArray, got {:?}", other.zinnia_type()),
-    };
-
-    let query = ContractTerm::PredicateApp {
-        kind: "is_sorted".to_string(),
-        args: vec![ContractTerm::Var(ContractVar::Value(out_vid))],
-    };
-    assert_eq!(
-        b.prove(&query),
-        ProveOutcome::Proved,
-        "np.linspace(0, 1, num) should fire is_sorted on the dyn-ndarray output",
-    );
+    let out = np_linspace(&mut b, &[start, stop, num], &std::collections::HashMap::new());
+    assert!(matches!(out, crate::types::Value::DynamicNDArray(_)));
+    assert!(b.array_has_order(&out, Order::NonDecreasing, Where::Everywhere));
+    assert!(!b.array_has_order(&out, Order::Increasing, Where::Everywhere), "ties are possible");
 }
 
 #[test]
-fn np_arange_call_site_does_not_emit_for_negative_step() {
-    // Soundness: `np.arange(10, 0, -1)` produces a descending sequence.
-    // The is_sorted (ascending) fact MUST NOT be deposited. The
-    // call-site direction check in `arange_static` gates on `step > 0`,
-    // so we exercise that branch and confirm no `is_sorted` fact
-    // surfaces anywhere in the FactStack. (We can't anchor on the
-    // output's value_id because the fully-static descending path returns
-    // a `Value::StaticArray` with no value_id — so we instead scan all
-    // deposited facts and assert none match the `is_sorted` predicate
-    // shape.)
+fn np_arange_with_a_negative_step_is_not_ascending() {
+    use crate::builder::Where;
     use crate::ops::static_ndarray_ops::np_arange;
-    use crate::optim::predicates::formula::ContractTerm;
+    use crate::optim::array_facts::Order;
 
     let mut b = crate::builder::IRBuilder::new();
     let start = b.ir_constant_int(10);
     let stop = b.ir_constant_int(0);
     let step = b.ir_constant_int(-1);
-    let _out = np_arange(&mut b, &[start, stop, step], &std::collections::HashMap::new());
-
-    let any_is_sorted = b.facts.per_value.values().any(|bucket| {
-        bucket.iter().any(|fact| {
-            matches!(
-                fact,
-                ContractTerm::PredicateApp { kind, .. } if kind == "is_sorted"
-            )
-        })
-    });
-    assert!(
-        !any_is_sorted,
-        "np.arange(10, 0, -1) should NOT deposit an is_sorted fact (descending), \
-         but one was found on the FactStack",
-    );
+    let out = np_arange(&mut b, &[start, stop, step], &std::collections::HashMap::new());
+    assert!(!b.array_has_order(&out, Order::NonDecreasing, Where::Everywhere));
+    assert!(b.array_has_order(&out, Order::Decreasing, Where::Everywhere));
 }
 
 // ── Group 4c (compiler.op-fact-group-4c-tile-repeat-content-relay) ──

@@ -690,7 +690,10 @@ pub fn np_where(b: &mut IRBuilder, args: &[Value]) -> Value {
     let cond_b = crate::helpers::broadcast::materialize_to_shape(cond, &target);
     let x_b = crate::helpers::broadcast::materialize_to_shape(x, &target);
     let y_b = crate::helpers::broadcast::materialize_to_shape(y, &target);
-    match cond.value_id() {
+    // Each output cell is `select(c, x, y)` of one cell of each, so it lies
+    // in the join of their ranges (array facts, `docs/array-facts.md`).
+    let (x_src, y_src) = (x_b.clone(), y_b.clone());
+    let out = match cond.value_id() {
         Some(cond_vid) => {
             let inputs = WhereInputs {
                 cond_b,
@@ -702,5 +705,7 @@ pub fn np_where(b: &mut IRBuilder, args: &[Value]) -> Value {
             crate::optim::dispatch_strategy(b, "where", &inputs, &set)
         }
         None => where_rec(b, &cond_b, &x_b, &y_b),
-    }
+    };
+    b.state_selected_from(&out, &[&x_src, &y_src]);
+    out
 }

@@ -792,10 +792,6 @@ fn np_arange_int(b: &mut IRBuilder, args: &[Value]) -> Value {
                     );
                     let start = b.ir_constant_int(0);
                     length.fire_length_contract(b, &result, &start, stop_val);
-                    // 1-arg form: step is implicit 1 ⇒ always ascending ⇒
-                    // is_sorted(out) holds. Fire on the array's value_id
-                    // (not the length-bearing scalar).
-                    b.state_sorted(&result, "arange_is_sorted");
                     result
                 }
                 BoundedInt::Neither => {
@@ -829,8 +825,6 @@ fn np_arange_int(b: &mut IRBuilder, args: &[Value]) -> Value {
                         crate::types::NumberType::Integer,
                     );
                     length.fire_length_contract(b, &result, &start_constant, stop_val);
-                    // 2-arg form: step is implicit 1 ⇒ always ascending.
-                    b.state_sorted(&result, "arange_is_sorted");
                     result
                 }
                 BoundedInt::Neither => {
@@ -886,11 +880,6 @@ fn np_arange_int(b: &mut IRBuilder, args: &[Value]) -> Value {
                         runtime_length,
                         crate::types::NumberType::Integer,
                     );
-                    // Bounded 3-arg path reaches here only when `step > 0`
-                    // (the `step < 0` branch above already panicked), so the
-                    // direction check has effectively been made — fire
-                    // unconditionally here.
-                    b.state_sorted(&result, "arange_is_sorted");
                     result
                 }
                 BoundedInt::Neither => {
@@ -965,19 +954,8 @@ fn arange_static(b: &mut IRBuilder, start: i64, stop: i64, step: i64) -> Value {
         vec![len],
         crate::types::NumberType::Integer,
     );
-    // Fire `is_sorted(out)` when the step is positive (ascending). The
-    // 3-arg call site above fires its own conditional and bypasses this
-    // helper for the descending case via panic, but `arange_static` is
-    // also reached by the 1-arg / 2-arg static branches (step is
-    // implicitly 1) and by the 3-arg static-stop branch (step is the
-    // user's literal). Gating here keeps the soundness check local. The
-    // `Value::StaticArray` returned by `build_static_array_from_flat`
-    // does not carry a value_id today, so the fire is a no-op for the
-    // static composite — but if a future revision attaches an identity
-    // to static arrays, the fact will start landing automatically.
-    if step > 0 {
-        b.state_sorted(&result, "arange_is_sorted");
-    }
+    // No array fact is stated: the cells are constants, whose range, order
+    // and formula every query reads off them (`array_facts::constant_facts`).
     result
 }
 
@@ -1270,14 +1248,7 @@ fn np_linspace_static(
         vec![len],
         dtype,
     );
-    // Fire `is_sorted(out)` only when start <= stop (ascending or equal).
-    // The fully-static StaticArray path does not carry a value_id today,
-    // so the fire is a no-op for the static composite — kept for
-    // symmetry and forward-compatibility with consumers that one day
-    // attach identity to static arrays.
-    if start <= stop {
-        b.state_sorted(&result, "linspace_is_sorted");
-    }
+    // No array fact is stated: the cells are constants (see `arange_static`).
     result
 }
 
@@ -1375,13 +1346,22 @@ fn np_linspace_bounded(
         value_id: crate::types::ValueId::next(),
     });
 
-    // Fire `is_sorted(out)` on the dyn-ndarray's value_id when start <= stop
-    // (ascending or all-equal). Anchored on the array's value_id, not the
-    // length-bearing scalar — these are two distinct facts on two distinct
-    // SSA identities. Soundness: `start > stop` would produce a descending
-    // sequence; we simply skip the fire in that case (no false claim).
+    // With `start <= stop` the cells are non-decreasing on every path, by
+    // their definition: cell `i` is `start + i * step` with `step = (stop -
+    // start) / denom >= 0` (a non-negative span over a positive count), the
+    // product of the integer `i` and the fixed-point `step` is exact, and
+    // the integer cast of a non-decreasing sequence does not decrease. Every
+    // capacity cell is written that way, the ones past `num` included.
     if start <= stop {
-        b.state_sorted(&result, "linspace_is_sorted");
+        let order = crate::optim::array_facts::ElemFacts {
+            order: Some(crate::optim::array_facts::Order::NonDecreasing),
+            ..crate::optim::array_facts::ElemFacts::TOP
+        };
+        b.state_storage_facts(
+            segment_id,
+            crate::optim::array_facts::Segmentation::uniform(num_max, order),
+            crate::optim::array_facts::FactGuard::Always,
+        );
     }
 
     result

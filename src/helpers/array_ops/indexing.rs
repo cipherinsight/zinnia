@@ -1720,7 +1720,7 @@ fn wrap_negative_index(b: &mut IRBuilder, idx: &Value, len: &Value) -> Value {
             }
         };
     }
-    if b.ask_bounds(idx).map(|(min, _)| min >= 0).unwrap_or(false) {
+    if b.proves_at_least(idx, 0) {
         return idx.clone();
     }
     let zero = b.ir_constant_int(0);

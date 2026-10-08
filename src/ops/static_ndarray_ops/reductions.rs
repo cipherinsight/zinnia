@@ -455,7 +455,36 @@ pub fn np_cumulative(
 }
 
 pub fn np_cumsum(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
-    np_cumulative(b, args, kwargs, "add")
+    let out = np_cumulative(b, args, kwargs, "add");
+    let flattened = kwargs.get("axis").or_else(|| args.get(1)).is_none_or(|v| matches!(v, Value::None));
+    if let (Some(input), true) = (args.first(), flattened) {
+        state_cumsum_facts(b, input, &out);
+    }
+    out
+}
+
+/// Array facts of a flattened `np.cumsum` (a 1-D result) of integer cells in
+/// `[lo, hi]` with `lo >= 0` (`docs/array-facts.md`): the partial sums are
+/// non-decreasing and lie in `[lo, n * hi]`. The circuit adds exactly over
+/// the integers (`n` values of at most `2^63` stay far below the field
+/// size), so each partial sum is the previous one plus a non-negative cell.
+/// Both facts rest on the input's range, so they are derived where it holds.
+fn state_cumsum_facts(b: &mut IRBuilder, input: &Value, out: &Value) {
+    use crate::optim::array_facts::{Bound, ElemFacts, Order, Range, Segmentation};
+    let Some(cells) = b.leaf_cells(out) else { return };
+    if cells.is_empty() || cells.iter().any(|c| !c.is_integer()) {
+        return;
+    }
+    let input = input.clone();
+    let n = cells.len();
+    b.state_derived_facts(&cells, |b, at| {
+        let (Some(lo), hi) = b.range_of(&input, at).interval(&b.oracle(at)) else { return None };
+        if lo < 0 {
+            return None;
+        }
+        let range = Range { lo: Some(Bound::Const(lo)), hi: hi.and_then(|h| h.checked_mul(n as i64)).map(Bound::Const) };
+        Some(Segmentation::uniform(n, ElemFacts { range, order: Some(Order::NonDecreasing), affine: None }))
+    });
 }
 
 pub fn np_cumprod(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
