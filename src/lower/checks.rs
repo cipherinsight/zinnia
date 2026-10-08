@@ -137,7 +137,13 @@ fn check_forms(graph: &IRGraph, ir: &IR, args: &[StmtId]) -> Vec<Fact> {
                     .map(|claim| vec![Fact { claim, scope: Scope::When(p) }])
                     .unwrap_or_default();
             }
-            condition_claim(graph, c, &constant).map(|claim| vec![Fact::everywhere(claim)]).unwrap_or_default()
+            let mut forms: Vec<Fact> = condition_claim(graph, c, &constant).map(Fact::everywhere).into_iter().collect();
+            // That `c` holds, the basis of the facts an `IR::ArrayFact`
+            // states (`array_facts::stated`).
+            if super::array_facts::enabled() {
+                forms.push(Fact::everywhere(Claim::Holds(c)));
+            }
+            forms
         }
         _ => Vec::new(),
     }
@@ -146,6 +152,11 @@ fn check_forms(graph: &IRGraph, ir: &IR, args: &[StmtId]) -> Vec<Fact> {
 /// The claim a Boolean statement states, when it is one the layer knows.
 fn condition_claim(graph: &IRGraph, c: StmtId, constant: &dyn Fn(StmtId) -> Option<i64>) -> Option<Claim> {
     let stmt = &graph.stmts[c as usize];
+    // A float constant's fixed-point code.
+    let float_code = |s: StmtId| match graph.stmts[s as usize].ir {
+        IR::ConstantFloat { .. } => super::array_facts::constant_code(graph, s),
+        _ => None,
+    };
     let float_zero = |s: StmtId| matches!(graph.stmts[s as usize].ir, IR::ConstantFloat { value } if value == 0.0);
     let zero = |s: StmtId| constant(s) == Some(0) || float_zero(s);
     match (&stmt.ir, stmt.arguments.as_slice()) {
@@ -166,6 +177,20 @@ fn condition_claim(graph: &IRGraph, c: StmtId, constant: &dyn Fn(StmtId) -> Opti
         }
         (IR::GtI, &[x, c]) | (IR::LtI, &[c, x]) if super::array_facts::enabled() && constant(c).is_some() => {
             Some(Claim::Within { x, lo: constant(c)?.checked_add(1), hi: None })
+        }
+        // Float orders against a constant, on the codes (the codes are
+        // ordered as the floats): `forall(a, in_range(0.0, 1.0))`.
+        (IR::GteF, &[x, c]) | (IR::LteF, &[c, x]) if super::array_facts::enabled() && float_code(c).is_some() => {
+            Some(Claim::Within { x, lo: float_code(c), hi: None })
+        }
+        (IR::LteF, &[x, c]) | (IR::GteF, &[c, x]) if super::array_facts::enabled() && float_code(c).is_some() => {
+            Some(Claim::Within { x, lo: None, hi: float_code(c) })
+        }
+        (IR::LtF, &[x, c]) | (IR::GtF, &[c, x]) if super::array_facts::enabled() && float_code(c).is_some() => {
+            Some(Claim::Within { x, lo: None, hi: float_code(c)?.checked_sub(1) })
+        }
+        (IR::GtF, &[x, c]) | (IR::LtF, &[c, x]) if super::array_facts::enabled() && float_code(c).is_some() => {
+            Some(Claim::Within { x, lo: float_code(c)?.checked_add(1), hi: None })
         }
         // The order of two values (`@requires(is_sorted(a))` asserts each
         // adjacent pair); floats are ordered as their codes.
@@ -231,6 +256,8 @@ pub fn cost(claim: &Claim, target: Target) -> u64 {
         (Claim::Within { .. }, Target::Halo2Base) => 17,
         (Claim::Within { .. }, Target::Noir) => 3,
         (&Claim::Permutation(a, _), target) => super::permutation::hit_count_cost(a.entries().len() as u64, target, false),
+        (Claim::Holds(_), Target::Halo2Base) => 2,
+        (Claim::Holds(_), Target::Noir) => 1,
         (Claim::Ordered { .. }, Target::Halo2Base) => 34,
         (Claim::Ordered { .. }, Target::Noir) => 7,
         // The array claims are checked value by value (`emit_claim`).
@@ -265,6 +292,12 @@ pub fn emit(b: &mut IRBuilder, fact: &Fact, lookup: &HashMap<StmtId, Value>) {
 
 fn emit_claim(b: &mut IRBuilder, claim: &Claim, lookup: &HashMap<StmtId, Value>) {
     let v = |s: StmtId| lookup[&s].clone();
+    // A bound of a float is a bound of its fixed-point code (the integer
+    // the backends compare), checked on the code.
+    let code = |s: StmtId| match lookup[&s].clone() {
+        Value::Float(f) => Value::Integer(crate::types::ScalarValue::new(None, f.stmt_id)),
+        other => other,
+    };
     match *claim {
         Claim::InRange { x, lo, hi } => {
             let hi = match hi {
@@ -272,10 +305,10 @@ fn emit_claim(b: &mut IRBuilder, claim: &Claim, lookup: &HashMap<StmtId, Value>)
                 Bound::Stmt(h) => v(h),
             };
             let (x, hi) = if lo == 0 {
-                (v(x), hi)
+                (code(x), hi)
             } else {
                 let lo = b.ir_constant_int(lo);
-                (b.ir_sub_i(&v(x), &lo), b.ir_sub_i(&hi, &lo))
+                (b.ir_sub_i(&code(x), &lo), b.ir_sub_i(&hi, &lo))
             };
             b.ir_assert_u128_lt(&x, &hi);
         }
@@ -307,14 +340,17 @@ fn emit_claim(b: &mut IRBuilder, claim: &Claim, lookup: &HashMap<StmtId, Value>)
         Claim::Within { x, lo, hi } => {
             if let Some(lo) = lo {
                 let lo = b.ir_constant_int(lo);
-                let above = b.ir_greater_than_or_equal_i(&v(x), &lo);
+                let above = b.ir_greater_than_or_equal_i(&code(x), &lo);
                 b.ir_assert(&above);
             }
             if let Some(hi) = hi {
                 let hi = b.ir_constant_int(hi);
-                let below = b.ir_less_than_or_equal_i(&v(x), &hi);
+                let below = b.ir_less_than_or_equal_i(&code(x), &hi);
                 b.ir_assert(&below);
             }
+        }
+        Claim::Holds(c) => {
+            b.ir_assert(&v(c));
         }
         Claim::Ordered { x, y, strict } => {
             let (x, y) = (v(x), v(y));
@@ -396,44 +432,66 @@ fn less_or_equal(b: &mut IRBuilder, x: &Value, y: &Value) -> Value {
 
 // ── Merged range checks ─────────────────────────────────────────────────
 
-/// One check `lo <= x <= hi` (`InRange { x, lo, hi + 1 }`) for every value
-/// `x` the program bounds on both sides by checks that hold everywhere, with
-/// its cost on `target`: the *range realization* of an element range. The
-/// check implies each of the checks it merges (an input's int64 window, the
-/// two sides `forall(a, in_range(lo, hi))` asserts, an index bound), so the
-/// selection may keep it in their place when it is cheaper; it is emitted
-/// where the first of the checks it replaces stood (`emit`).
+/// One check `lo <= x <= hi` (`InRange { x, lo, hi + 1 }`) in place of all
+/// the program's checks that bound the value `x` (holding everywhere):
+/// the *range realization* of an element range.
+#[derive(Clone, Debug)]
+pub struct Merge {
+    pub fact: Fact,
+    /// The program checks it replaces, in statement order; it stands where
+    /// the first of them stood.
+    pub replaces: Vec<StmtId>,
+}
+
+/// The merges worth making ([`Merge`]): for every value the program bounds
+/// on both sides by checks holding everywhere (an input's int64 window, the
+/// two sides `forall(a, in_range(lo, hi))` asserts, an index bound) to a
+/// range narrower than the window, when one check of that range costs less
+/// on `target` than the checks it replaces. The merged check implies each
+/// of them; it is emitted where the first stood (`emit`).
 ///
 /// It is also how a narrow range becomes visible to the backends, which
 /// size a comparison by the range the constraints prove (halo2-base) or by
 /// the intervals the asserts deposit (Noir): the one `w`-bit check of
 /// `x - lo` proves `x` in `[lo, hi]` (both backends carry a range across a
-/// constant offset), where two one-sided checks of a 64-bit value prove
-/// nothing narrower than the window. Comparisons, selects, sorts and sums
-/// over `x` then work at `w` bits.
+/// constant offset), where one-sided checks of a 64-bit value prove nothing
+/// narrower than the window. Comparisons, selects, sorts and sums over `x`
+/// then work at `w` bits.
 ///
-/// Only ranges narrower than the int64 window are merged (the window alone
-/// is the input-domain check, kept as the IR generator emits it).
-pub fn range_merges(checks: &[ProgramCheck], target: Target) -> Vec<(Fact, u64)> {
+/// The checks are replaced outright rather than offered to the selection
+/// as alternatives: their cost depends on each other (on halo2-base the
+/// first comparison of an otherwise unbounded value pays its 64-bit window,
+/// whichever check it is), which the per-check estimates of [`cost`] do not
+/// see, and the merged check implies every fact they state, so whatever
+/// relied on one of them may rely on it.
+pub fn range_merges(checks: &[ProgramCheck], target: Target) -> Vec<Merge> {
     if !super::array_facts::enabled() {
         return Vec::new();
     }
-    // Per value: the tightest bounds the checks state, in statement order.
-    let mut bounds: Vec<(StmtId, Option<i64>, Option<i64>)> = Vec::new();
+    // Per value: its checks and the tightest bounds they state.
+    let mut by_value: Vec<(StmtId, Option<i64>, Option<i64>, Vec<&ProgramCheck>)> = Vec::new();
     let mut index: HashMap<StmtId, usize> = HashMap::new();
+    let bound_of = |claim: Claim| match claim {
+        Claim::Within { x, lo, hi } => Some((x, lo, hi)),
+        Claim::InRange { x, lo, hi: Bound::Const(h) } => Some((x, Some(lo), h.checked_sub(1))),
+        Claim::NonNegative(x) => Some((x, Some(0), None)),
+        _ => None,
+    };
     for check in checks {
+        // A check bounds the subject of its first form (a check of `x + k`
+        // that also states a bound of `x` is `x + k`'s).
+        let Some((subject, _, _)) = check.forms.first().filter(|f| f.scope == Scope::Everywhere).and_then(|f| bound_of(f.claim))
+        else {
+            continue;
+        };
+        let slot = *index.entry(subject).or_insert_with(|| {
+            by_value.push((subject, None, None, Vec::new()));
+            by_value.len() - 1
+        });
+        by_value[slot].3.push(check);
         for form in check.forms.iter().filter(|f| f.scope == Scope::Everywhere) {
-            let (x, lo, hi) = match form.claim {
-                Claim::Within { x, lo, hi } => (x, lo, hi),
-                Claim::InRange { x, lo, hi: Bound::Const(h) } => (x, Some(lo), h.checked_sub(1)),
-                Claim::NonNegative(x) => (x, Some(0), None),
-                _ => continue,
-            };
-            let slot = *index.entry(x).or_insert_with(|| {
-                bounds.push((x, None, None));
-                bounds.len() - 1
-            });
-            let entry = &mut bounds[slot];
+            let Some((_, lo, hi)) = bound_of(form.claim).filter(|&(x, _, _)| x == subject) else { continue };
+            let entry = &mut by_value[slot];
             entry.1 = match (entry.1, lo) {
                 (Some(a), Some(b)) => Some(a.max(b)),
                 (a, b) => a.or(b),
@@ -444,9 +502,9 @@ pub fn range_merges(checks: &[ProgramCheck], target: Target) -> Vec<(Fact, u64)>
             };
         }
     }
-    bounds
+    by_value
         .into_iter()
-        .filter_map(|(x, lo, hi)| {
+        .filter_map(|(x, lo, hi, replaced)| {
             let (lo, hi) = (lo?, hi?);
             let span = (hi as i128) - (lo as i128);
             // Narrower than the window (and not empty: an empty range has no
@@ -455,10 +513,93 @@ pub fn range_merges(checks: &[ProgramCheck], target: Target) -> Vec<(Fact, u64)>
                 return None;
             }
             let fact = Fact::everywhere(Claim::InRange { x, lo, hi: Bound::Const(hi.checked_add(1)?) });
-            Some((fact, range_check_cost(span as u64 + 1, lo != 0, target)))
+            // Every replaced check must be implied by the merged one (a
+            // check of several values is not replaced).
+            if !replaced.iter().all(|c| c.forms.iter().any(|f| fact.implies(f))) {
+                return None;
+            }
+            let merged = range_check_cost(span as u64 + 1, lo != 0, target);
+            (replaced.len() >= 2 && merged < replaced_cost(&replaced, target))
+                .then(|| Merge { fact, replaces: replaced.iter().map(|c| c.stmt).collect() })
         })
         .collect()
 }
+
+/// The program's checks with the merges applied: each merge's replaced
+/// checks give way to one check standing where the first stood, whose form
+/// is the merged fact and whose consequences are everything the replaced
+/// checks state or imply (their forms, among them the conditions `Holds(c)`
+/// of the replaced asserts, on which a fact the IR states may rest). Also
+/// returns where each merged check stands and the replaced checks that
+/// disappear.
+pub fn apply_merges(checks: Vec<ProgramCheck>, merges: &[Merge]) -> (Vec<ProgramCheck>, Merged) {
+    let mut merged = Merged::default();
+    let mut replacing: HashMap<StmtId, &Merge> = HashMap::new();
+    for merge in merges {
+        merged.at.insert(merge.replaces[0], merge.fact);
+        merged.away.extend(merge.replaces[1..].iter().copied());
+        for &stmt in &merge.replaces {
+            replacing.insert(stmt, merge);
+        }
+    }
+    // Everything a replaced check states or implies, which the merged
+    // check implies in turn (it is the conjunction of the replaced checks).
+    let implied: HashMap<StmtId, Vec<Fact>> = checks
+        .iter()
+        .filter(|c| replacing.contains_key(&c.stmt))
+        .map(|c| (c.stmt, c.forms.iter().chain(&c.consequences).copied().collect()))
+        .collect();
+    let kept = checks
+        .into_iter()
+        .filter_map(|check| match replacing.get(&check.stmt) {
+            None => Some(check),
+            Some(merge) if merge.replaces[0] == check.stmt => {
+                let consequences = merge.replaces.iter().flat_map(|s| implied[s].iter().copied()).collect();
+                Some(ProgramCheck { stmt: check.stmt, forms: vec![merge.fact], consequences })
+            }
+            Some(_) => None,
+        })
+        .collect();
+    (kept, merged)
+}
+
+/// Where the merged checks stand ([`apply_merges`]).
+#[derive(Clone, Debug, Default)]
+pub struct Merged {
+    /// The statement of the first replaced check, and the merged fact
+    /// emitted in its place.
+    pub at: HashMap<StmtId, Fact>,
+    /// The other replaced checks, which are dropped.
+    pub away: HashSet<StmtId>,
+}
+
+/// What the checks bounding one value cost together on `target`: on
+/// halo2-base the value's 64-bit window (paid by the first comparison of an
+/// otherwise unbounded value, or by its two window checks), then a gap
+/// check per further one-sided check, and each index bound's range check;
+/// on Noir each check by [`cost`].
+fn replaced_cost(checks: &[&ProgramCheck], target: Target) -> u64 {
+    let claims = checks.iter().map(|c| c.forms[0].claim);
+    match target {
+        Target::Halo2Base => {
+            let one_sided = claims.clone().filter(|c| matches!(c, Claim::Within { .. } | Claim::NonNegative(_))).count() as u64;
+            let ranges: u64 = claims.filter(|c| matches!(c, Claim::InRange { .. })).map(|c| cost(&c, target)).sum();
+            let comparisons = match one_sided {
+                0 => 0,
+                k => WINDOW_CELLS + k.saturating_sub(2) * GAP_CHECK_CELLS,
+            };
+            comparisons + ranges
+        }
+        Target::Noir => claims.map(|c| cost(&c, target)).sum(),
+    }
+}
+
+/// halo2-base: an int64 window check (both sides of an input's domain
+/// check), and the gap check of one more asserted comparison of a value in
+/// the window (measured on the input domain checks of `return a`: 34 cells
+/// per element).
+const WINDOW_CELLS: u64 = 34;
+const GAP_CHECK_CELLS: u64 = 17;
 
 /// The cost of checking `0 <= x - lo < size` (`AssertU128Lt`): halo2-base
 /// range-checks the value, and for a size that is no power of two also the

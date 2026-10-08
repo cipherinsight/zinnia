@@ -522,6 +522,7 @@ impl<'a> Preprocessor<'a> {
             | IR::ExposePublicI
             | IR::ExposePublicF => Ok(None),
             IR::StructuralPredicate { .. } => Ok(None),
+            IR::ArrayFact(_) => Ok(None),
             IR::ScalarPrecondition { .. } => Ok(None),
             // Evaluated by `eval_array` before this match.
             IR::ArrayInit { .. }

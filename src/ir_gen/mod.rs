@@ -554,9 +554,12 @@ impl IRGenerator {
                     .iter()
                     .map(|name| {
                         self.ctx.get(name).unwrap_or_else(|| {
-                            match name.parse::<i64>() {
-                                Ok(n) => self.builder.ir_constant_int(n),
-                                Err(_) => crate::types::Value::None,
+                            // An integer or float literal (`in_range(0, 255)`,
+                            // `in_range(0.0, 1.0)`).
+                            match (name.parse::<i64>(), name.parse::<f64>()) {
+                                (Ok(n), _) => self.builder.ir_constant_int(n),
+                                (_, Ok(x)) if x.is_finite() => self.builder.ir_constant_float(x),
+                                _ => crate::types::Value::None,
                             }
                         })
                     })

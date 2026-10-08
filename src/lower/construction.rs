@@ -110,6 +110,9 @@ pub struct Context<'a> {
     /// The bounds the program's checks state, per value
     /// (`checks::stated_ranges`).
     pub(super) stated: &'a HashMap<StmtId, (Option<i64>, Option<i64>)>,
+    /// The facts the IR states on a basis of asserted conditions
+    /// (`array_facts::stated`).
+    pub(super) conditional: &'a [super::array_facts::Stated],
     pub(super) users: &'a HashMap<StmtId, Vec<StmtId>>,
     pub(super) lane_group: &'a HashMap<StmtId, GroupId>,
     /// Price every group as if it were the only one (the local selection,
@@ -139,9 +142,18 @@ impl Context<'_> {
             self.facts.proves(f)
                 || self.checks.iter().any(|c| c.forms.iter().chain(&c.consequences).any(|form| form.implies(f)))
         };
+        // A fact the IR states, on a basis the program's checks state.
+        let stated_by_ir = |f: &Fact| {
+            self.conditional.iter().any(|s| {
+                s.fact.implies(f)
+                    && s.basis.iter().all(|&c| stated(&Fact::everywhere(super::graph::Claim::Holds(c))))
+            })
+        };
         stated(fact)
+            || stated_by_ir(fact)
             || (fact.claim.is_array_claim()
-                && super::array_facts::basis_facts(fact).is_some_and(|basis| basis.iter().all(stated)))
+                && super::array_facts::basis_facts(fact)
+                    .is_some_and(|basis| basis.iter().all(|f| stated(f) || stated_by_ir(f))))
     }
 
     /// The narrowest `[lo, hi]` holding every value of `stmts` on every

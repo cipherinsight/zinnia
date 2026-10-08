@@ -180,6 +180,9 @@ pub enum Claim {
     /// `x <= y`, or `x < y` when `strict`, for two integers or two floats'
     /// fixed-point codes (the codes are ordered as the floats).
     Ordered { x: StmtId, y: StmtId, strict: bool },
+    /// The Boolean statement's value is true (what `Assert(c)` states; the
+    /// basis of a fact an `IR::ArrayFact` statement states).
+    Holds(StmtId),
     // ── Array claims (`super::array_facts`): over the values of a list ──
     /// Every value of the list lies in `[lo, hi]` (`None`: an open end).
     /// `NonNegativeElements(list)` is `ElementsWithin { list, lo: Some(0),
@@ -379,6 +382,7 @@ impl Claim {
             Claim::InRange { x, hi: Bound::Stmt(h), .. } => vec![x, h],
             Claim::InRange { x, .. } | Claim::NonNegative(x) | Claim::NonZero(x) | Claim::Within { x, .. } => vec![x],
             Claim::Equal(a, b) | Claim::Ordered { x: a, y: b, .. } => vec![a, b],
+            Claim::Holds(c) => vec![c],
             Claim::Permutation(a, b) => [a, b].iter().flat_map(|list| list.stmts()).collect(),
             Claim::ElementsWithin { list, .. }
             | Claim::NonDecreasing(list)

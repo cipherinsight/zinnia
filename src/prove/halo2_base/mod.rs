@@ -705,7 +705,8 @@ fn try_build_public_layout_only(
                 public_values.push(value);
             }
             | IR::StructuralPredicate { .. }
-            | IR::ScalarPrecondition { .. } => {}
+            | IR::ScalarPrecondition { .. }
+            | IR::ArrayFact(_) => {}
             _ => return Ok(None),
         }
     }

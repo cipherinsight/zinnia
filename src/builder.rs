@@ -2546,6 +2546,26 @@ impl IRBuilder {
         self.create_ir(&IR::IndexInBox { rank }, &args)
     }
 
+    /// State an array fact (`IR::ArrayFact`, `docs/array-facts-lowering.md`):
+    /// `kind` holds of the values `cells`, given that every Boolean of
+    /// `basis` is true (each one asserted by the program; empty: the claim
+    /// holds by the definition of the cells, on every witness the circuit
+    /// accepts). The lowering layer establishes the claim from it; nothing
+    /// else reads it, and it constrains nothing. Returns `Value::None`.
+    pub fn ir_array_fact(
+        &mut self,
+        kind: crate::lower::array_facts::ArrayFactKind,
+        cells: &[Value],
+        basis: &[Value],
+    ) -> Value {
+        if cells.is_empty() {
+            return Value::None;
+        }
+        let spec = crate::lower::array_facts::ArrayFactSpec { kind, len: cells.len() as u32 };
+        let operands: Vec<Value> = cells.iter().chain(basis).map(|v| self.ensure_ptr(v)).collect();
+        self.create_ir(&IR::ArrayFact(spec), &operands)
+    }
+
     /// Emit an `IR::StructuralPredicate` precondition atom. Takes no stack
     /// operands; the payload (kind / args / op / bound) lives in the IR
     /// instance itself. Returns `Value::None`.
@@ -3172,6 +3192,7 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
         IR::Assert | IR::AssertBit | IR::AssertNonNegI | IR::AssertU128Lt => Value::None,
         IR::StructuralPredicate { .. } => Value::None,
         IR::ScalarPrecondition { .. } => Value::None,
+        IR::ArrayFact(_) => Value::None,
         IR::ExposePublicI | IR::ExposePublicF => Value::None,
 
         // ── Arrays (`crate::ir_array`) ────────────────────────────
@@ -3274,6 +3295,7 @@ fn min_required_arity(ir: &IR) -> usize {
         | IR::Print
         | IR::StructuralPredicate { .. }
         | IR::ScalarPrecondition { .. }
+        | IR::ArrayFact(_)
         | IR::AllocateDynamicNDArrayMeta { .. }
         | IR::InvokeExternal { .. } => 0,
         IR::AbsI
@@ -3443,6 +3465,7 @@ fn unknown_value_for_ir(ir: &IR, ir_id: StmtId) -> Value {
         | IR::AssertU128Lt
         | IR::StructuralPredicate { .. }
         | IR::ScalarPrecondition { .. }
+        | IR::ArrayFact(_)
         | IR::AllocateDynamicNDArrayMeta { .. }
         | IR::WitnessDynamicNDArrayMeta { .. }
         | IR::AssertDynamicNDArrayMeta { .. }

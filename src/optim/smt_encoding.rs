@@ -466,6 +466,8 @@ impl IROp for IR {
             // fresh unconstrained so any incidental query through this
             // arm degrades gracefully.
             IR::ScalarPrecondition { .. } => ctx.fresh_unconstrained(),
+            // An array fact has no value (and no constraint).
+            IR::ArrayFact(_) => ctx.fresh_unconstrained(),
 
             // ── String / IO / memory / dyn-ndarray / external / hashing
             //    — silent fallback. Off the integer-resolver hot path.

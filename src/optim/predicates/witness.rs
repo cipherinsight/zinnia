@@ -133,13 +133,24 @@ fn emit_nnz(b: &mut IRBuilder, args: &[Value], op: Option<&str>, bound: Option<&
     let [array] = args else {
         return Err(format!("expected one array argument, got {}", args.len()));
     };
+    let elements = collect_elements(b, array)?;
     let mut count = b.ir_constant_int(0);
-    for elem in collect_elements(b, array)? {
-        let indicator = nonzero_indicator(b, &elem)?;
+    for elem in &elements {
+        let indicator = nonzero_indicator(b, elem)?;
         count = b.ir_add_i(&count, &indicator);
     }
     let holds = b.create_ir(&comparison, &[count, bound.clone()]);
     b.ir_assert(&holds);
+    // At most `k` nonzero values (`<= k`, `== k`; `< k` is `<= k - 1`),
+    // resting on the assert just made.
+    let at_most = match (op, bound.int_val()) {
+        (Some("<=") | Some("=="), Some(k)) => Some(k),
+        (Some("<"), Some(k)) => k.checked_sub(1),
+        _ => None,
+    };
+    if let Some(k) = at_most.and_then(|k| u32::try_from(k).ok()) {
+        b.ir_array_fact(ArrayFactKind::CountBound { max_nonzero: k }, &elements, &[holds]);
+    }
     Ok(())
 }
 
@@ -154,9 +165,16 @@ fn emit_nnz(b: &mut IRBuilder, args: &[Value], op: Option<&str>, bound: Option<&
 fn emit_is_sorted(b: &mut IRBuilder, args: &[Value], op: Option<&str>, bound: Option<&Value>) -> EmitResult {
     let array = unary_array_argument(args, op, bound)?;
     let elements = collect_elements(b, array)?;
+    let mut basis = Vec::new();
     for pair in elements.windows(2) {
         let ordered = less_or_equal(b, &pair[0], &pair[1])?;
         b.ir_assert(&ordered);
+        basis.push(ordered);
+    }
+    // The array claim the asserts make (`lower::array_facts`), for elements
+    // of one type (each pair then compares the elements themselves).
+    if same_number_type(&elements) {
+        b.ir_array_fact(ArrayFactKind::NonDecreasing, &elements, &basis);
     }
     Ok(())
 }
@@ -221,6 +239,7 @@ fn emit_is_permutation(b: &mut IRBuilder, args: &[Value], op: Option<&str>, boun
     if !elements.is_empty() {
         let holds = crate::lower::permutation::check_lane(b, &elements);
         b.ir_assert(&holds);
+        b.ir_array_fact(ArrayFactKind::Permutation, &elements, &[holds]);
     }
     b.record_permutation(&elements);
     Ok(())
@@ -265,7 +284,9 @@ fn emit_cycle_count(_: &mut IRBuilder, _: &[Value], _: Option<&str>, _: Option<&
 /// `forall(arr, is_nonneg)`: assert `arr[i] >= 0` for every element.
 fn emit_forall_is_nonneg(b: &mut IRBuilder, args: &[Value], op: Option<&str>, bound: Option<&Value>) -> EmitResult {
     let array = unary_array_argument(args, op, bound)?;
-    for elem in collect_elements(b, array)? {
+    let elements = collect_elements(b, array)?;
+    let mut basis = Vec::new();
+    for elem in elements.iter().cloned() {
         let holds = match &elem {
             Value::Integer(_) | Value::Boolean(_) => {
                 let zero = b.ir_constant_int(0);
@@ -278,16 +299,25 @@ fn emit_forall_is_nonneg(b: &mut IRBuilder, args: &[Value], op: Option<&str>, bo
             _ => return Err("elements must be numeric".to_string()),
         };
         b.ir_assert(&holds);
+        basis.push(holds);
     }
+    state_elements_within(b, &elements, Some(0), None, &basis);
     Ok(())
 }
 
 /// `forall(arr, lt_bound(B))`: assert `arr[i] < B` for every element.
 fn emit_forall_lt_bound(b: &mut IRBuilder, args: &[Value], op: Option<&str>, bound: Option<&Value>) -> EmitResult {
     let [array, limit] = element_predicate_arguments::<2>(args, op, bound)?;
-    for elem in collect_elements(b, array)? {
-        let holds = compare_element(b, CmpOp::Lt, &elem, limit)?;
+    let elements = collect_elements(b, array)?;
+    let mut basis = Vec::new();
+    for elem in &elements {
+        let holds = compare_element(b, CmpOp::Lt, elem, limit)?;
         b.ir_assert(&holds);
+        basis.push(holds);
+    }
+    let below = constant_code(limit, &elements).and_then(|c| c.checked_sub(1));
+    if below.is_some() {
+        state_elements_within(b, &elements, None, below, &basis);
     }
     Ok(())
 }
@@ -295,9 +325,15 @@ fn emit_forall_lt_bound(b: &mut IRBuilder, args: &[Value], op: Option<&str>, bou
 /// `forall(arr, eq_const(C))`: assert `arr[i] == C` for every element.
 fn emit_forall_eq_const(b: &mut IRBuilder, args: &[Value], op: Option<&str>, bound: Option<&Value>) -> EmitResult {
     let [array, constant] = element_predicate_arguments::<2>(args, op, bound)?;
-    for elem in collect_elements(b, array)? {
-        let holds = compare_element(b, CmpOp::Eq, &elem, constant)?;
+    let elements = collect_elements(b, array)?;
+    let mut basis = Vec::new();
+    for elem in &elements {
+        let holds = compare_element(b, CmpOp::Eq, elem, constant)?;
         b.ir_assert(&holds);
+        basis.push(holds);
+    }
+    if let Some(c) = constant_code(constant, &elements) {
+        state_elements_within(b, &elements, Some(c), Some(c), &basis);
     }
     Ok(())
 }
@@ -306,13 +342,57 @@ fn emit_forall_eq_const(b: &mut IRBuilder, args: &[Value], op: Option<&str>, bou
 /// element.
 fn emit_forall_in_range(b: &mut IRBuilder, args: &[Value], op: Option<&str>, bound: Option<&Value>) -> EmitResult {
     let [array, lo, hi] = element_predicate_arguments::<3>(args, op, bound)?;
-    for elem in collect_elements(b, array)? {
-        let above_lo = compare_element(b, CmpOp::Ge, &elem, lo)?;
+    let elements = collect_elements(b, array)?;
+    let mut basis = Vec::new();
+    for elem in &elements {
+        let above_lo = compare_element(b, CmpOp::Ge, elem, lo)?;
         b.ir_assert(&above_lo);
-        let below_hi = compare_element(b, CmpOp::Le, &elem, hi)?;
+        let below_hi = compare_element(b, CmpOp::Le, elem, hi)?;
         b.ir_assert(&below_hi);
+        basis.extend([above_lo, below_hi]);
+    }
+    if let (Some(lo), Some(hi)) = (constant_code(lo, &elements), constant_code(hi, &elements)) {
+        state_elements_within(b, &elements, Some(lo), Some(hi), &basis);
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// The array facts the element predicates assert (`lower::array_facts`)
+// ---------------------------------------------------------------------------
+
+use crate::lower::array_facts::ArrayFactKind;
+
+/// Whether every element has one number type (each comparison of the
+/// element predicates is then of the element itself, not of a cast).
+fn same_number_type(elements: &[Value]) -> bool {
+    elements.iter().all(|e| matches!(e, Value::Integer(_))) || elements.iter().all(|e| matches!(e, Value::Float(_)))
+}
+
+/// The code a constant bound has against `elements`: the integer for
+/// integer elements, the fixed-point code of its value for float ones
+/// (the comparisons compare floats as their codes, and an integer bound is
+/// converted exactly).
+fn constant_code(bound: &Value, elements: &[Value]) -> Option<i64> {
+    if !same_number_type(elements) {
+        return None;
+    }
+    let float = elements.first().is_some_and(|e| matches!(e, Value::Float(_)));
+    let value = bound.float_val().or_else(|| bound.int_val().map(|i| i as f64))?;
+    if float {
+        let precision = crate::prove::types::ProvingParams::default().precision_bits;
+        i64::try_from(crate::prove::field::quantize(value, precision)).ok()
+    } else {
+        bound.int_val()
+    }
+}
+
+/// State that every element lies in `[lo, hi]` (codes), resting on the
+/// element predicate's asserts (`basis`).
+fn state_elements_within(b: &mut IRBuilder, elements: &[Value], lo: Option<i64>, hi: Option<i64>, basis: &[Value]) {
+    if same_number_type(elements) {
+        b.ir_array_fact(ArrayFactKind::ElementsWithin { lo, hi }, elements, basis);
+    }
 }
 
 // ---------------------------------------------------------------------------

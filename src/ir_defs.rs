@@ -261,6 +261,16 @@ pub enum IR {
         term_json: String,
     },
 
+    // ── Array fact (inert) ─────────────────────────────────────────────
+    /// A claim about the values of the leading `spec.len` operands (an
+    /// array's cells), resting on the Boolean operands after them, each
+    /// asserted by the program (none: the claim holds by the definition of
+    /// the values). No value, no constraint: the array lowering layer reads
+    /// it (`lower::array_facts::stated`) and removes it, so no backend sees
+    /// one. Dead-code elimination keeps it while all its operands live
+    /// (`optim::dead_code_elimination`). See `docs/array-facts-lowering.md`.
+    ArrayFact(crate::lower::array_facts::ArrayFactSpec),
+
     // ── Arrays (`crate::ir_array`, `docs/array-ssa.md`) ────────────────
     /// An array version holding its `len` operands, cells of type `elem`.
     ArrayInit { len: u32, elem: ArrayElem },
@@ -716,6 +726,7 @@ impl IR {
             IR::ScalarPrecondition { term_json } => {
                 format!("scalar_precondition[{}]", term_json)
             }
+            IR::ArrayFact(spec) => spec.describe(),
 
             // Arrays
             IR::ArrayInit { len, elem } => format!("array_init[{}][{:?}]", len, elem),
@@ -961,6 +972,7 @@ impl IR {
             IR::AssertNonNegI => "AssertNonNegIIR",
             IR::StructuralPredicate { .. } => "StructuralPredicateIR",
             IR::ScalarPrecondition { .. } => "ScalarPreconditionIR",
+            IR::ArrayFact(_) => "ArrayFactIR",
             IR::ExposePublicI => "ExposePublicIIR",
             IR::ExposePublicF => "ExposePublicFIR",
             IR::ArrayInit { .. } => "ArrayInitIR",
@@ -1141,6 +1153,8 @@ impl IR {
             IR::ScalarPrecondition { term_json } => serde_json::json!({
                 "term_json": term_json,
             }),
+
+            IR::ArrayFact(spec) => serde_json::to_value(spec).expect("an ArrayFactSpec serializes"),
 
             IR::Hint { kind, len } => serde_json::json!({ "kind": kind.name(), "len": len }),
             IR::ArrayOp(op) => serde_json::to_value(op).expect("an ArrayOp serializes"),
@@ -1360,6 +1374,9 @@ impl IR {
                 let term_json = data["term_json"].as_str().unwrap_or("").to_string();
                 Ok(IR::ScalarPrecondition { term_json })
             }
+            "ArrayFactIR" => serde_json::from_value(data.clone())
+                .map(IR::ArrayFact)
+                .map_err(|e| format!("ArrayFactIR: {e}")),
             "ExposePublicIIR" => Ok(IR::ExposePublicI),
             "ExposePublicFIR" => Ok(IR::ExposePublicF),
 

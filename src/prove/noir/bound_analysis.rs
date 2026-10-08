@@ -209,6 +209,7 @@ pub fn run(graph: &IRGraph) -> BoundMap {
             | IR::ExposePublicF
             | IR::StructuralPredicate { .. }
             | IR::ScalarPrecondition { .. }
+            | IR::ArrayFact(_)
             | IR::AllocateDynamicNDArrayMeta { .. }
             | IR::WitnessDynamicNDArrayMeta { .. }
             | IR::AssertDynamicNDArrayMeta { .. }

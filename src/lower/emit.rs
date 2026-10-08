@@ -41,6 +41,7 @@ use super::forcing::Forcing;
 use super::graph::{CellSource, Fact, Group, GroupId, Lane, Requirement, VersionLine};
 use super::select::{self, justifies, Node, Problem};
 use super::simplify::Decided;
+use super::array_facts::Stated;
 
 /// The array lowering pass for one compile target.
 pub struct ArrayLowering {
@@ -158,9 +159,24 @@ pub fn lower_with(
     super::graph::ListId::reset();
     super::array_facts::set_enabled(!options.no_array_facts);
     let (groups, direct) = collect_groups(graph);
-    let facts = if options.no_facts { FreeFacts::none(graph) } else { FreeFacts::new(graph) };
+    // The facts the IR states (`IR::ArrayFact`): those that hold by
+    // definition are free; the others rest on asserted conditions.
+    let (definitional_facts, conditional): (Vec<Stated>, Vec<Stated>) =
+        super::array_facts::stated(graph).into_iter().partition(|s| s.basis.is_empty());
+    let facts = if options.no_facts {
+        FreeFacts::none(graph)
+    } else {
+        FreeFacts::with_stated(graph, definitional_facts.iter().map(|s| s.fact).collect())
+    };
     let program_checks = if options.no_facts { Vec::new() } else { checks::program_checks(graph) };
+    // Checks that each realize a value's two-sided range in place of the
+    // program checks bounding it (`checks::range_merges`): the replaced
+    // checks are dropped, and the merged one stands as a program check where
+    // the first of them stood.
+    let merges = checks::range_merges(&program_checks, target);
+    let (program_checks, merged) = checks::apply_merges(program_checks, &merges);
     let mut freely_proven = checks::dominated(&program_checks);
+    freely_proven.extend(merged.away.iter().copied());
     let kept_for_backend = checks::kept_for_backend(graph, &program_checks, target);
     freely_proven.extend(
         program_checks
@@ -169,17 +185,27 @@ pub fn lower_with(
             .filter(|c| c.forms.iter().any(|f| facts.established_by_gadget(f)))
             .map(|c| c.stmt),
     );
-    // Checks that each realize a value's two-sided range (`checks::
-    // range_merges`), offered in place of the program checks they imply.
-    let merges = checks::range_merges(&program_checks, target);
-    if groups.is_empty() && direct.is_empty() && freely_proven.is_empty() && merges.is_empty() {
+    let states_facts = graph.stmts.iter().any(|s| matches!(s.ir, IR::ArrayFact(_)));
+    if groups.is_empty() && direct.is_empty() && freely_proven.is_empty() && merges.is_empty() && !states_facts {
         return None;
     }
 
     let users = users_of(graph);
     let lane_group: HashMap<StmtId, GroupId> =
         groups.iter().flat_map(|g| g.lanes.iter().map(move |l| (l.stmt, g.id))).collect();
-    let stated = checks::stated_ranges(program_checks.iter().flat_map(|c| &c.forms));
+    // The bounds the program's checks state, and those of the facts the IR
+    // states on asserted conditions (or by definition).
+    let asserted: HashSet<StmtId> = program_checks
+        .iter()
+        .flat_map(|c| &c.forms)
+        .filter_map(|f| match f.claim {
+            super::graph::Claim::Holds(c) if f.scope == super::graph::Scope::Everywhere => Some(c),
+            _ => None,
+        })
+        .collect();
+    let all_stated: Vec<Stated> = definitional_facts.iter().chain(&conditional).cloned().collect();
+    let value_bounds = super::array_facts::value_bounds(&all_stated, |c| asserted.contains(&c));
+    let stated = checks::stated_ranges(program_checks.iter().flat_map(|c| &c.forms).chain(&value_bounds));
     let cx = Context {
         target,
         graph,
@@ -187,6 +213,7 @@ pub fn lower_with(
         facts: &facts,
         checks: &program_checks,
         stated: &stated,
+        conditional: &conditional,
         users: &users,
         lane_group: &lane_group,
         alone: options.local,
@@ -198,10 +225,7 @@ pub fn lower_with(
     let (nodes, selected, offers) = loop {
         let (mut nodes, offers) = offer(&groups, &cx, constructions, &options.forcing, &released);
         add_composition_nodes(&mut nodes, &facts);
-        for &(fact, cost) in &merges {
-            let node = Node { pre: Vec::new(), post: vec![Requirement::Fact(fact)], cost };
-            nodes.push(NodeEntry { name: "merged range check", group: None, node, kind: NodeKind::Check(fact) });
-        }
+        add_stated_fact_nodes(&mut nodes, &conditional, &facts);
         let (roots, check_roots) = root_requirements(&groups, &program_checks, &freely_proven, &mut nodes, target);
         add_check_nodes(&mut nodes, target, options.no_facts);
         add_program_nodes(&mut nodes, target);
@@ -237,7 +261,12 @@ pub fn lower_with(
     }
     let mut dropped = freely_proven;
     dropped.extend(unselected_checks(&nodes, &selected));
-    let in_place = checks_in_place_of(graph, &nodes, &selected, &program_checks, &dropped);
+    // A merged check is emitted as its fact (`in_place`), never as the
+    // statement it stands at.
+    let merged_kept: Vec<StmtId> = merged.at.keys().filter(|s| !dropped.contains(s)).copied().collect();
+    let merged_facts: Vec<Fact> = merged_kept.iter().map(|s| merged.at[s]).collect();
+    let in_place = checks_in_place_of(graph, &nodes, &selected, &program_checks, &dropped, &merged);
+    dropped.extend(merged_kept);
     let emitted_checks: Vec<Fact> = selected
         .iter()
         .filter_map(|&i| match nodes[i].kind {
@@ -245,7 +274,9 @@ pub fn lower_with(
             _ => None,
         })
         .collect();
-    let decided = Decided::new(graph, &facts, &program_checks, &dropped, &emitted_checks);
+    let emitted_and_stated: Vec<Fact> =
+        emitted_checks.iter().chain(&value_bounds).chain(&merged_facts).copied().collect();
+    let decided = Decided::new(graph, &facts, &program_checks, &dropped, &emitted_and_stated);
     Some(emit(graph, &groups, &direct, nodes, &selected, &Rewrites { dropped: &dropped, in_place: &in_place, decided: &decided }))
 }
 
@@ -269,9 +300,16 @@ fn checks_in_place_of(
     selected: &[usize],
     program_checks: &[ProgramCheck],
     dropped: &HashSet<StmtId>,
+    merged: &checks::Merged,
 ) -> HashMap<StmtId, Vec<Fact>> {
     let position: HashMap<StmtId, usize> = graph.stmts.iter().enumerate().map(|(i, s)| (s.stmt_id, i)).collect();
     let mut in_place: HashMap<StmtId, Vec<Fact>> = HashMap::new();
+    // A kept merged check stands in place of the first check it replaces.
+    for (&stmt, &fact) in &merged.at {
+        if !dropped.contains(&stmt) {
+            in_place.entry(stmt).or_default().push(fact);
+        }
+    }
     for &i in selected {
         let NodeKind::Check(fact) = nodes[i].kind else { continue };
         let first = program_checks
@@ -350,7 +388,8 @@ fn root_requirements(
     let mut check_roots = Vec::new();
     for check in program_checks.iter().filter(|c| !freely_proven.contains(&c.stmt)) {
         let provable = check.forms.iter().any(|f| established.iter().any(|e| e.implies(f)));
-        let useful = check.forms.iter().any(|f| wanted.iter().any(|w| f.implies(w)));
+        let implied: &[Fact] = if super::array_facts::enabled() { &check.consequences } else { &[] };
+        let useful = check.forms.iter().chain(implied).any(|f| wanted.iter().any(|w| f.implies(w)));
         if provable || useful {
             // The forms are equivalent; the root is one a node establishes
             // when there is one (so that node can justify the check).
@@ -495,8 +534,12 @@ impl NodeEntry {
         NodeEntry { name, group: Some(group), node: Node { pre, post, cost }, kind: NodeKind::Offered(emitter) }
     }
 
+    /// A program check's node: the assertion kept, establishing its forms
+    /// and (with array claims on) the facts it implies, which may justify a
+    /// precondition but never stand for the check itself as a root.
     fn program_check(check: &ProgramCheck, target: Target) -> NodeEntry {
-        let post = check.forms.iter().map(|f| Requirement::Fact(*f)).collect();
+        let implied: &[Fact] = if super::array_facts::enabled() { &check.consequences } else { &[] };
+        let post = check.forms.iter().chain(implied).map(|f| Requirement::Fact(*f)).collect();
         let cost = checks::cost(&check.forms[0].claim, target);
         let node = Node { pre: Vec::new(), post, cost };
         NodeEntry { name: "program check", group: None, node, kind: NodeKind::ProgramCheck(check.stmt) }
@@ -538,6 +581,24 @@ fn add_composition_nodes(nodes: &mut Vec<NodeEntry>, facts: &FreeFacts) {
         let pre = basis.into_iter().filter(|f| !facts.proves(f)).map(Requirement::Fact).collect();
         let node = Node { pre, post: vec![Requirement::Fact(fact)], cost: 0 };
         nodes.push(NodeEntry { name: "array claim", group: None, node, kind: NodeKind::Composition });
+    }
+}
+
+/// A node for every fact the IR states on a basis (`array_facts::Stated`):
+/// it establishes the fact from `Holds(c)` for every condition `c` of the
+/// basis (each asserted by the program, so justified by that check, which
+/// is then kept), at no cost.
+fn add_stated_fact_nodes(nodes: &mut Vec<NodeEntry>, stated: &[Stated], facts: &FreeFacts) {
+    for s in stated {
+        let pre = s
+            .basis
+            .iter()
+            .map(|&c| Fact::everywhere(super::graph::Claim::Holds(c)))
+            .filter(|f| !facts.proves(f))
+            .map(Requirement::Fact)
+            .collect();
+        let node = Node { pre, post: vec![Requirement::Fact(s.fact)], cost: 0 };
+        nodes.push(NodeEntry { name: "stated array fact", group: None, node, kind: NodeKind::Composition });
     }
 }
 
@@ -990,6 +1051,9 @@ fn emit(
                     cx.with_emitter(&mut b, producer, |e, b, cx| e.lane(b, cx, lane))
                 } else if let Some(cell) = direct.get(&s) {
                     lookup[cell].clone()
+                } else if matches!(graph.stmts[s as usize].ir, IR::ArrayFact(_)) {
+                    // Read by this pass; nothing to emit.
+                    Value::None
                 } else if dropped.contains(&s) {
                     for fact in in_place.get(&s).into_iter().flatten() {
                         if state.emitted_checks.insert(*fact) {

@@ -279,6 +279,8 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
             // The IR carries the precondition payload for the SMT layer;
             // the prover treats it as a no-op (no stack args, no result).
             IR::StructuralPredicate { .. } => None,
+            // An array fact is read and removed by the lowering layer; inert.
+            IR::ArrayFact(_) => None,
 
             // ── Scalar precondition (inert at prove time) ────────────
             // Proof-time enforcement lives in the separate IR emitted

@@ -620,10 +620,12 @@ fn value_at(b: &IRBuilder, sid: StmtId) -> Value {
     })
 }
 
-/// How many statements read each statement's result.
+/// How many statements read each statement's result. An array fact
+/// (`IR::ArrayFact`) states a claim about its operands without reading them
+/// for a value, so it does not count.
 fn use_counts(graph: &IRGraph) -> HashMap<StmtId, usize> {
     let mut counts: HashMap<StmtId, usize> = HashMap::new();
-    for stmt in &graph.stmts {
+    for stmt in graph.stmts.iter().filter(|s| !matches!(s.ir, IR::ArrayFact(_))) {
         for &arg in &stmt.arguments {
             *counts.entry(arg).or_default() += 1;
         }

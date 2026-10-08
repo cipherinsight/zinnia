@@ -1,4 +1,5 @@
 use crate::ir::IRGraph;
+use crate::ir_defs::IR;
 use crate::types::StmtId;
 
 use super::IRPass;
@@ -6,16 +7,28 @@ use super::IRPass;
 pub struct DeadCodeElimination;
 
 impl IRPass for DeadCodeElimination {
+    /// A statement is dead when nothing fixed reads it, directly or through
+    /// live statements. An array fact (`IR::ArrayFact`) is a claim about its
+    /// operands, not a use of them: it keeps none alive, and it lives
+    /// exactly while all its operands do.
     fn exec(&self, mut ir_graph: IRGraph) -> IRGraph {
         let n = ir_graph.stmts.len();
         let ensure_keep: Vec<bool> = ir_graph.stmts.iter().map(|s| s.ir.is_fixed()).collect();
+        let is_fact: Vec<bool> = ir_graph.stmts.iter().map(|s| matches!(s.ir, IR::ArrayFact(_))).collect();
         let (mut _in_d, mut out_d) = ir_graph.get_io_degrees();
+        for (i, stmt) in ir_graph.stmts.iter().enumerate() {
+            if is_fact[i] {
+                for &arg in &stmt.arguments {
+                    out_d[arg as usize] -= 1;
+                }
+            }
+        }
 
         let mut killing_queue: Vec<usize> = Vec::new();
         let mut to_eliminate: Vec<StmtId> = Vec::new();
 
         for i in 0..n {
-            if out_d[i] == 0 && !ensure_keep[i] {
+            if out_d[i] == 0 && !ensure_keep[i] && !is_fact[i] {
                 killing_queue.push(i);
             }
         }
@@ -30,6 +43,12 @@ impl IRPass for DeadCodeElimination {
             }
         }
 
+        let dead: std::collections::HashSet<StmtId> = to_eliminate.iter().copied().collect();
+        for (i, stmt) in ir_graph.stmts.iter().enumerate() {
+            if is_fact[i] && stmt.arguments.iter().any(|a| dead.contains(a)) {
+                to_eliminate.push(i as StmtId);
+            }
+        }
         ir_graph.remove_stmt_bunch(&to_eliminate);
         // P0 seam: signal "something possibly changed" to the resolver.
         // Default StaticOnlyResolver is a no-op; P1's SmtResolver uses

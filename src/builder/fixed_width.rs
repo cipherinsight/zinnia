@@ -254,6 +254,7 @@ fn role(ir: &IR, operands: usize) -> Role {
         | IR::ExposePublicF
         | IR::StructuralPredicate { .. }
         | IR::ScalarPrecondition { .. }
+        | IR::ArrayFact(_)
         | IR::AllocateDynamicNDArrayMeta { .. }
         | IR::WitnessDynamicNDArrayMeta { .. }
         | IR::AssertDynamicNDArrayMeta { .. }

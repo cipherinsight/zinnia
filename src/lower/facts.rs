@@ -23,7 +23,9 @@ use super::graph::{Bound, Claim, Fact, ListEntry};
 pub struct FreeFacts<'a> {
     graph: &'a IRGraph,
     range: RefCell<RangeResolver>,
-    /// Facts established by the postconditions of scalar gadgets.
+    /// Facts established by the postconditions of scalar gadgets, and the
+    /// array facts the IR states as holding by definition
+    /// (`array_facts::stated`, with no basis).
     established: Vec<Fact>,
     /// Prove nothing (the ablation `ZINNIA_ABLATE_LAYER_FACTS`).
     disabled: bool,
@@ -32,6 +34,12 @@ pub struct FreeFacts<'a> {
 impl<'a> FreeFacts<'a> {
     pub fn new(graph: &'a IRGraph) -> FreeFacts<'a> {
         FreeFacts { graph, range: RefCell::new(RangeResolver::new()), established: Vec::new(), disabled: false }
+    }
+
+    /// The free facts of `graph`, with `stated`: facts that hold by the
+    /// definition of their statements, as the IR generator states them.
+    pub fn with_stated(graph: &'a IRGraph, stated: Vec<Fact>) -> FreeFacts<'a> {
+        FreeFacts { established: stated, ..FreeFacts::new(graph) }
     }
 
     /// No free fact at all (the ablation `ZINNIA_ABLATE_LAYER_FACTS`).
@@ -71,6 +79,7 @@ impl<'a> FreeFacts<'a> {
             Claim::Equal(a, b) => a == b,
             Claim::Permutation(a, b) => a == b,
             Claim::Within { x, lo, hi } => self.within(x, lo, hi),
+            Claim::Holds(c) => self.min(c).is_some_and(|m| m >= 1),
             Claim::Ordered { x, y, strict } => {
                 x == y && !strict
                     || matches!((self.max(x), self.min(y)), (Some(a), Some(b)) if if strict { a < b } else { a <= b })

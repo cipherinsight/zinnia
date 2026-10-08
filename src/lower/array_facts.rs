@@ -466,3 +466,95 @@ pub fn magnitude_bits(graph: &IRGraph, x: StmtId, depth: u32) -> Option<u32> {
 pub fn everywhere(claim: Claim) -> Fact {
     Fact { claim, scope: Scope::Everywhere }
 }
+
+// ── Facts the IR states (the interface for the IR generator) ────────────
+
+/// The claim of an `IR::ArrayFact` statement about the values of its list
+/// (the statement's first `len` operands), which the IR generator states
+/// (`IRBuilder::ir_array_fact`, `docs/array-facts-lowering.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum ArrayFactKind {
+    /// Every value in `[lo, hi]` (`None`: an open end).
+    ElementsWithin { lo: Option<i64>, hi: Option<i64> },
+    NonDecreasing,
+    StrictlyIncreasing,
+    Distinct,
+    /// At most `max_nonzero` values nonzero.
+    CountBound { max_nonzero: u32 },
+    /// The values are a permutation of `0, 1, ..., len - 1`.
+    Permutation,
+}
+
+/// The payload of `IR::ArrayFact`: the claim and how many of the
+/// statement's operands are the list (the rest are its basis).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct ArrayFactSpec {
+    pub kind: ArrayFactKind,
+    pub len: u32,
+}
+
+impl ArrayFactSpec {
+    /// The statement's printed form.
+    pub fn describe(&self) -> String {
+        format!("array_fact[{:?}][{}]", self.kind, self.len)
+    }
+
+    /// The claim about `list`.
+    pub fn claim(&self, list: ListId) -> Claim {
+        match self.kind {
+            ArrayFactKind::ElementsWithin { lo, hi } => Claim::ElementsWithin { list, lo, hi },
+            ArrayFactKind::NonDecreasing => Claim::NonDecreasing(list),
+            ArrayFactKind::StrictlyIncreasing => Claim::StrictlyIncreasing(list),
+            ArrayFactKind::Distinct => Claim::Distinct(list),
+            ArrayFactKind::CountBound { max_nonzero } => Claim::CountBound { list, max_nonzero },
+            ArrayFactKind::Permutation => Claim::Permutation(list, ListId::range(list.len())),
+        }
+    }
+}
+
+/// A fact an `IR::ArrayFact` statement states, and its basis: the Boolean
+/// statements whose truth it rests on (each asserted by the program); none
+/// when it holds by the definition of the list's values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stated {
+    pub fact: Fact,
+    pub basis: Vec<StmtId>,
+}
+
+/// The bounds each value of the stated facts' lists has (`Within` facts,
+/// one per value), from the facts that hold on every accepted witness: the
+/// definitional ones, and those whose every basis condition `asserted`
+/// says the program asserts. `ElementsWithin` gives its bounds, and a
+/// permutation of `0..n` gives `[0, n - 1]`.
+pub fn value_bounds(stated: &[Stated], asserted: impl Fn(StmtId) -> bool) -> Vec<Fact> {
+    let mut bounds = Vec::new();
+    for s in stated.iter().filter(|s| s.basis.iter().all(|&c| asserted(c))) {
+        let (list, lo, hi) = match s.fact.claim {
+            Claim::ElementsWithin { list, lo, hi } => (list, lo, hi),
+            Claim::Permutation(p, q) if range_len(q).is_some() => (p, Some(0), Some(p.len() as i64 - 1)),
+            _ => continue,
+        };
+        bounds.extend(list.stmts().into_iter().map(|x| everywhere(Claim::Within { x, lo, hi })));
+    }
+    bounds
+}
+
+/// The facts the graph's `IR::ArrayFact` statements state (none when array
+/// claims are off).
+pub fn stated(graph: &IRGraph) -> Vec<Stated> {
+    if !enabled() {
+        return Vec::new();
+    }
+    graph
+        .stmts
+        .iter()
+        .filter_map(|s| match &s.ir {
+            IR::ArrayFact(spec) => {
+                let len = spec.len as usize;
+                let list = ListId::of_stmts(&s.arguments[..len]);
+                Some(Stated { fact: everywhere(spec.claim(list)), basis: s.arguments[len..].to_vec() })
+            }
+            _ => None,
+        })
+        .collect()
+}
