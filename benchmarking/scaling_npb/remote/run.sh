@@ -3,11 +3,14 @@
 # hyperthread siblings of one physical core; 251 GB RAM). Style of
 # eval-redo/post-freeze/scripts/final-remeasure.sh and fin-queue.sh.
 #
-# Stages (default: S P A B C, in this order; each waits for the previous one):
+# Stages (default: S V P A B C, in this order; each waits for the previous one):
 #   S  setup: the checkout's src/ must equal 4115cecb; point the case sets at $DATA; diff the
 #      zkVM programs (zkvm-check); build the zkVM hosts and guests (sp1, risc0) if needed;
 #      check-env. The Zinnia extension and noir-execute must already be built in $WT
 #      (`harness build` / the copy from zinnia-post, as for every other session).
+#   V  validation of the points this study could not validate locally ($DATA/validate_on_remote.txt,
+#      lines "<cap> <case> <system>"): the scaling_npb validate check (mock outputs vs NumPy) with
+#      the timing settings' memory cap and timeout; untimed, all CPUs  -> $OUT/validate/
 #   P  thread probe: one short SP1 and one RISC Zero run on all 64 CPUs (--threads 64), watched
 #      by thread_probe.py (threads per prover, busiest interval in CPUs) -> $OUT/probe/
 #   A  counts (untimed, nothing timed runs): per cap, measure.py with configuration `final`
@@ -46,7 +49,7 @@ SHARDS=8
 ZINNIA_SYSTEMS=zinnia_halo2,zinnia_halo2_delegate,zinnia_noir,zinnia_noir_delegate
 PY=$WT/.venv/bin/python
 export ZINNIA_HARNESS_MEMORY_CAP=watchdog ZWT=$WT
-STAGES=${*:-S P A B C}
+STAGES=${*:-S V P A B C}
 mkdir -p $OUT/logs $OUT/counts $RES
 cd $WT
 
@@ -79,6 +82,22 @@ probe() {  # one small scaled point per zkVM, whole machine, as stage C runs it
       --cases npbench_polybench_gemm_gemm__kernel_cap32 --systems $s --repeats 1 --threads 64 \
       --memory-max $ZKVM_MEMORY --timeout $TIMEOUT --results-dir $OUT/probe/results > $OUT/logs/probe-$s.log 2>&1
     log "probe $s exit $?"
+  done
+}
+
+validate_remote() {  # untimed: the points listed in $DATA/validate_on_remote.txt
+  local list=$DATA/validate_on_remote.txt c system cases
+  [[ -s $list ]] || { echo "nothing to validate on the remote"; return 0; }
+  mkdir -p $OUT/validate
+  for c in $CAPS; do
+    for system in ${ZINNIA_SYSTEMS//,/ }; do
+      cases=$(awk -v c=$c -v s=$system '$1 == c && $3 == s {print $2}' $list | paste -sd,)
+      [[ -z $cases ]] && continue
+      taskset -c 0-63 $PY -m benchmarking.scaling_npb validate --data $DATA --cap $c --cases $cases \
+        --systems $system --jobs 6 --memory 30G --timeout $TIMEOUT \
+        --out $OUT/validate/validate_cap${c}_$system.jsonl > $OUT/logs/validate-cap$c-$system.log 2>&1
+      log "validate cap $c $system exit $?"
+    done
   done
 }
 
@@ -135,6 +154,7 @@ for s in $STAGES; do
   log "$s start"
   case $s in
     S) setup || { log "setup failed"; exit 1; } ;;
+    V) validate_remote ;;
     P) probe ;;
     A) counts ;;
     B) zinnia_queue ;;

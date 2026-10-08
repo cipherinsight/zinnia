@@ -9,7 +9,10 @@ the compiler chooses and with the backend's own array lowering (the delegate
 systems, `ZINNIA_FORCE_CONSTRUCTION=@delegate`, set in the child's
 environment as the harness's delegate adapters set it for their steps). Each
 (case, system) runs in its own child process under a memory cap and a timeout
-(`harness.isolation`);
+(`harness.isolation`) and appends one JSON line to the output, so a stopped run
+resumes where it stopped. Points whose input A is above `--max-elements` are
+not run on this machine (outcome `not_run_here`) and, with points that hit the
+local memory cap or timeout, go to the remote list (`remote-list`);
 the outcome uses the acceptance classes (`accepted_correct`,
 `accepted_wrong_output`, `accepted_unsatisfied`, `rejected_<class>`, a
 resource limit). A failure is a result: it is recorded, nothing is retried.
@@ -27,7 +30,7 @@ import json
 import socket
 import sys
 import tempfile
-import time
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
@@ -83,29 +86,62 @@ def check(case, system: str, work: Path, memory: str, timeout: float) -> dict:
             "peak_rss_bytes": outcome.peak_rss_bytes}
 
 
+#: Outcome of a point not run on this machine because its input is above `--max-elements`.
+NOT_RUN_HERE = "not_run_here"
+#: Outcomes that send a point to the remote validation list.
+REMOTE = (NOT_RUN_HERE, "rejected_resource_limit")
+
+
+def done_keys(out: Path) -> set[tuple[str, str]]:
+    if not out.exists():
+        return set()
+    return {(r["case"], r["system"]) for r in map(json.loads, out.read_text().splitlines()) if r}
+
+
 def main(data: Path, cap: int, out: Path, jobs: int, memory: str, timeout: float, wanted: list[str],
-         systems: list[str]) -> int:
+         systems: list[str], max_elements: int | None) -> int:
+    """Append one JSON line per (case, system) to `out`, skipping those already there."""
+    entries = {e["case"]: e for e in json.loads(case_set_path(data, cap).read_text())["cases"]}
     cases = [c for c in load_perf_cases(case_set_path(data, cap), wanted or None, None) if c.included]
-    jobs_list = [(case, system) for case in cases for system in systems]
-    records = []
-    started = time.time()
-    with tempfile.TemporaryDirectory(prefix=f"scaling-npb-validate-{cap}-") as tmp:
-        work = Path(tmp)
-        with ThreadPoolExecutor(max_workers=jobs) as pool:
-            for record in pool.map(lambda job: check(*job, work, memory, timeout), jobs_list):
-                print(f"{record['case']:<72} {record['system']:<22} {record['outcome']} {record['detail'][:120]}",
-                      flush=True)
-                records.append(record)
+    done = done_keys(out)
+    todo = [(case, system) for case in cases for system in systems if (case.case, system) not in done]
+    context = {"cap": cap, "host": socket.gethostname(), "memory_max": memory, "timeout_s": timeout}
+    out.parent.mkdir(parents=True, exist_ok=True)
+    lock = threading.Lock()
+
+    def run(job) -> dict:
+        case, system = job
+        elements = entries[case.case]["scaling"]["input_elements"]
+        if max_elements is not None and elements > max_elements:
+            record = {"case": case.case, "system": system, "target": SYSTEMS[system][0], "outcome": NOT_RUN_HERE,
+                      "detail": f"input A has {elements} elements, above this machine's limit of {max_elements}"}
+        else:
+            with tempfile.TemporaryDirectory(prefix="scaling-npb-validate-") as tmp:
+                record = check(case, system, Path(tmp), memory, timeout)
+        record.update(context)
+        with lock:
+            with out.open("a") as handle:
+                handle.write(json.dumps(record) + "\n")
+            print(f"{record['case']:<72} {system:<22} {record['outcome']} {record['detail'][:120]}", flush=True)
+        return record
+
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        records = list(pool.map(run, todo))
     counts: dict[str, int] = {}
     for record in records:
         counts[record["outcome"]] = counts.get(record["outcome"], 0) + 1
-    document = {"cap": cap, "host": socket.gethostname(), "systems": systems, "memory_max": memory,
-                "timeout_s": timeout, "jobs": jobs,
-                "wall_s": round(time.time() - started), "counts": counts, "records": records}
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(document, indent=1) + "\n")
     print(json.dumps(counts))
     return 0
+
+
+def remote_list(data: Path, results: list[Path]) -> list[str]:
+    """`<cap> <case> <system>` for every point the local validation left to the remote."""
+    lines = []
+    for path in results:
+        for record in map(json.loads, path.read_text().splitlines()):
+            if record["outcome"] in REMOTE:
+                lines.append(f"{record['cap']} {record['case']} {record['system']}")
+    return sorted(set(lines))
 
 
 if __name__ == "__main__":

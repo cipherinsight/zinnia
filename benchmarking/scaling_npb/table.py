@@ -66,17 +66,16 @@ def entry_rows(document: dict) -> list[str]:
 def validation_rows(reports: list[Path]) -> list[str]:
     lines = []
     for path in reports:
-        document = json.loads(path.read_text())
-        if isinstance(document, dict) and "records" in document:      # validate.py
-            where = document.get("host", "?")
-            by_system: dict[str, Counter] = defaultdict(Counter)
-            for record in document["records"]:
-                system = record.get("system") or f"zinnia_{record['target']}"
-                by_system[system][record["outcome"]] += 1
-            for system, counts in sorted(by_system.items()):
-                lines.append(f"| {document['cap']} | {system}, mock vs NumPy | {where} | "
+        if path.suffix == ".jsonl":                                     # validate.py
+            records = [json.loads(line) for line in path.read_text().splitlines() if line]
+            by_system: dict[tuple, Counter] = defaultdict(Counter)
+            for record in records:
+                by_system[(record["cap"], record["system"], record["host"])][record["outcome"]] += 1
+            for (cap, system, where), counts in sorted(by_system.items()):
+                lines.append(f"| {cap} | {system}, mock vs NumPy | {where} | "
                              + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())) + " |")
         else:                                                           # check_outputs.py --report
+            document = json.loads(path.read_text())
             by_system: dict[str, Counter] = defaultdict(Counter)
             for record in document:
                 verdict = "skipped" if record["skipped"] else "ok" if record["ok"] else "FAIL"

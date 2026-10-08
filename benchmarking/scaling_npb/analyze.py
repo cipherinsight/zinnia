@@ -78,9 +78,11 @@ def completion(epochs: aggregate.EpochData | None, systems: tuple[str, ...], cas
     out = {}
     for system in systems:
         records = epochs.records.get(system, {}) if epochs else {}
-        statuses = Counter(records[c]["status"] if c in records else "not_run" for c in cases)
+        status = {c: records[c]["status"] if c in records else "not_run" for c in cases}
+        statuses = Counter(status.values())
         out[system] = {"points": len(cases), "ok": statuses.get(OK, 0),
-                       "not_ok": {k: v for k, v in sorted(statuses.items()) if k != OK}}
+                       "not_ok": {k: v for k, v in sorted(statuses.items()) if k != OK},
+                       "failures": {c: s for c, s in sorted(status.items()) if s != OK}}
     return out
 
 
@@ -155,7 +157,8 @@ def analyze(data: Path, zinnia_dirs: list[Path], zkvm_dirs: list[Path], count_fi
     for cap, entries in sorted(case_sets(data).items()):
         scaled = [e["case"] for e in entries if e["status"] == "perf"]
         copy_only = {e["case"] for e in entries if e.get("data_movement_only")}
-        groups = {g: [c for c in scaled if c.startswith(g)] for g in ("npbench", "pythran")}
+        groups = {g: [e["case"] for e in entries if e["status"] == "perf" and e["group"] == g]
+                  for g in ("npbench", "pythran")}
         report["caps"][cap] = {
             "points": {"scaled": len(scaled), **Counter(e["status"] for e in entries if e["status"] != "perf")},
             "completion": {**completion(zinnia, ZINNIA + tuple(DELEGATE.values()), scaled),

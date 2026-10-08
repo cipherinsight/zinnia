@@ -3,8 +3,9 @@
     python -m benchmarking.scaling_npb generate --data DATA --npbench NPB --pythran PYT [--caps 32,64,128]
     python -m benchmarking.scaling_npb relocate --data DATA
     python -m benchmarking.scaling_npb zkvm-check --data DATA [--out FILE]
-    python -m benchmarking.scaling_npb validate --data DATA --cap C --out FILE [--systems S,..] [--jobs N]
-                                               [--memory 16G] [--timeout S] [--cases ...]
+    python -m benchmarking.scaling_npb validate --data DATA --cap C --out FILE.jsonl [--systems S,..] [--jobs N]
+                                               [--memory 16G] [--timeout S] [--max-elements N] [--cases ...]
+    python -m benchmarking.scaling_npb remote-list --data DATA FILE.jsonl...
     python -m benchmarking.scaling_npb table --data DATA [--validation FILE ...]
     python -m benchmarking.scaling_npb analyze --data DATA [--zinnia EPOCH...] [--zkvm EPOCH...] \\
                                               [--counts FILE...] [--reference-zinnia EPOCH...] \\
@@ -61,7 +62,15 @@ def cmd_validate(args: argparse.Namespace) -> int:
     if unknown:
         raise SystemExit(f"unknown systems {sorted(unknown)}; known: {', '.join(validate.SYSTEMS)}")
     return validate.main(args.data.resolve(), args.cap, args.out, args.jobs, args.memory, args.timeout, cases,
-                         systems)
+                         systems, args.max_elements)
+
+
+def cmd_remote_list(args: argparse.Namespace) -> int:
+    from benchmarking.scaling_npb import validate
+    lines = validate.remote_list(args.data.resolve(), args.results)
+    (args.data / "validate_on_remote.txt").write_text("".join(f"{line}\n" for line in lines))
+    print(f"{len(lines)} (cap, case, system) to validate on the remote -> {args.data / 'validate_on_remote.txt'}")
+    return 0
 
 
 def cmd_table(args: argparse.Namespace) -> int:
@@ -106,7 +115,13 @@ def parser() -> argparse.ArgumentParser:
     val.add_argument("--jobs", type=int, default=4)
     val.add_argument("--memory", default="16G")
     val.add_argument("--timeout", type=float, default=1800)
+    val.add_argument("--max-elements", type=int, help="leave points with a larger input A to the remote")
     val.set_defaults(func=cmd_validate)
+
+    rem = sub.add_parser("remote-list", help="write DATA/validate_on_remote.txt from local validation results")
+    rem.add_argument("--data", type=Path, required=True)
+    rem.add_argument("results", type=Path, nargs="+", help="validate outputs (JSON lines)")
+    rem.set_defaults(func=cmd_remote_list)
 
     tab = sub.add_parser("table", help="the classification table (markdown)")
     tab.add_argument("--data", type=Path, required=True)
