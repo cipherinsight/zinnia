@@ -25,9 +25,26 @@ pub(crate) fn derive_bounds_from_facts(
     facts: &crate::optim::predicates::FactStack,
     vid: crate::types::ValueId,
 ) -> Option<(i64, i64)> {
+    let path_conds = facts.visible_path_conditions();
+    bounds_from_terms(facts.facts_for(vid), &path_conds, vid)
+}
+
+/// [`derive_bounds_from_facts`] from the facts that hold on every path
+/// (`FactStack::unconditional_facts_for`, no path condition assumed), so the
+/// bound holds wherever the code that asks runs, or does not run.
+pub(crate) fn derive_bounds_from_unconditional_facts(
+    facts: &crate::optim::predicates::FactStack,
+    vid: crate::types::ValueId,
+) -> Option<(i64, i64)> {
+    bounds_from_terms(facts.unconditional_facts_for(vid), &[], vid)
+}
+
+fn bounds_from_terms<'a>(
+    entries: impl Iterator<Item = &'a crate::optim::predicates::formula::ContractTerm>,
+    path_conds: &[&crate::optim::predicates::formula::ContractTerm],
+    vid: crate::types::ValueId,
+) -> Option<(i64, i64)> {
     use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
-    let entries = facts.facts_for(vid);
-    let path_conds: Vec<&ContractTerm> = facts.visible_path_conditions();
     let mut lo: Option<i64> = None;
     let mut hi: Option<i64> = None;
     // A conjunction holds only if each conjunct does: the interval facts of
@@ -79,7 +96,7 @@ pub(crate) fn derive_bounds_from_facts(
         }
     };
     for term in entries {
-        for_each_conjunct(term, &path_conds, &mut consider);
+        for_each_conjunct(term, path_conds, &mut consider);
     }
     match (lo, hi) {
         (Some(min), Some(max)) => Some((min, max)),

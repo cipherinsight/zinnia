@@ -214,6 +214,19 @@ impl Resolver for LayeredResolver {
         None
     }
 
+    fn proves_bound_with_stmts(
+        &mut self,
+        val: &Value,
+        stmts: &[IRStatement],
+        bound: i64,
+        side: super::Side,
+        effort: super::Effort,
+    ) -> bool {
+        use std::sync::atomic::Ordering;
+        self.telemetry.queries_total.fetch_add(1, Ordering::Relaxed);
+        self.layers.iter_mut().any(|layer| layer.proves_bound_with_stmts(val, stmts, bound, side, effort))
+    }
+
     fn on_ir_mutated(&mut self, affected: &[StmtId]) {
         for layer in self.layers.iter_mut() {
             layer.on_ir_mutated(affected);

@@ -232,7 +232,7 @@ pub struct FactStack {
 
 /// Where the code currently being lowered executes, as the fact stack sees
 /// it. Set by the IR builder from its execution (write) predicate.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub enum FactGuard {
     /// On every path.
     #[default]
@@ -291,6 +291,18 @@ impl FactStack {
             }
         }
         self.guard = guard;
+    }
+
+    /// Where the code being lowered executes.
+    pub fn guard(&self) -> &FactGuard {
+        &self.guard
+    }
+
+    /// The facts anchored on `vid` that hold on every path: those of the
+    /// scopes (`per_value`), never a guard frame's. (A branch merge's
+    /// `p => f` is such a fact; it bounds `vid` only where `p` is known.)
+    pub fn unconditional_facts_for(&self, vid: ValueId) -> impl Iterator<Item = &Fact> {
+        self.per_value.get(&vid).into_iter().flatten()
     }
 
     /// The guard frames whose facts the current code may use: all of them

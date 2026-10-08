@@ -40,7 +40,7 @@ pub use chokepoints::{
 pub use discharge::{
     discharge_index_below_value, discharge_index_in_range, probe_in_range, provably_in_range,
 };
-pub(crate) use intervals::derive_bounds_from_facts;
+pub(crate) use intervals::{derive_bounds_from_facts, derive_bounds_from_unconditional_facts};
 pub use intervals::{interval_fact_for_float_binary, interval_fact_for_int_binary};
 pub use layered::LayeredResolver;
 pub use relays::{
@@ -74,6 +74,26 @@ pub fn req_disabled() -> bool {
 // ---------------------------------------------------------------------------
 // Resolver trait
 // ---------------------------------------------------------------------------
+
+/// How hard a decision query may try ([`Resolver::proves_bound_with_stmts`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Effort {
+    /// A cheaper tier already bounds this side, just not tightly enough: a
+    /// speculative tightening, with `z3_budget::TIGHTEN_RLIMIT` steps.
+    Tighten,
+    /// Nothing cheaper bounds this side: the resolver's full step budget.
+    Full,
+}
+
+/// Which side of a value a decision query bounds
+/// ([`Resolver::proves_bound_with_stmts`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Side {
+    /// `value >= bound`.
+    AtLeast,
+    /// `value <= bound`.
+    AtMost,
+}
 
 /// The "is this value provably constant?" abstraction.
 ///
@@ -131,6 +151,29 @@ pub trait Resolver: Send + Sync {
 
     fn resolve_min_with_stmts(&mut self, val: &Value, _stmts: &[IRStatement]) -> Option<i64> {
         self.resolve_min(val)
+    }
+
+    /// A decision query: whether `val >= bound` ([`Side::AtLeast`]) or
+    /// `val <= bound` ([`Side::AtMost`]) holds on every accepted witness.
+    /// `true` means proved; `false` means not proved (no information).
+    ///
+    /// A consumer that only needs a yes/no should ask this rather than an
+    /// extreme: it is never weaker (if `min(val) = m >= bound` is proved,
+    /// then so is `val >= bound`), and an SMT layer answers it with one
+    /// satisfiability check instead of an optimization. `effort` bounds how
+    /// much an SMT layer may spend. The default asks the extremes.
+    fn proves_bound_with_stmts(
+        &mut self,
+        val: &Value,
+        stmts: &[IRStatement],
+        bound: i64,
+        side: Side,
+        _effort: Effort,
+    ) -> bool {
+        match side {
+            Side::AtLeast => self.resolve_min_with_stmts(val, stmts).is_some_and(|m| m >= bound),
+            Side::AtMost => self.resolve_max_with_stmts(val, stmts).is_some_and(|m| m <= bound),
+        }
     }
 
     /// Cache-invalidation hook called by IR-mutating optim passes.

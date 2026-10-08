@@ -89,6 +89,16 @@ pub(super) enum ResolvedValue {
 #[derive(Debug, Default)]
 struct SmtResolverInner {
     cache: HashMap<StmtId, ResolvedValue>,
+    /// Each statement's extreme per side (`true`: maximum), including "no
+    /// bound" (`None`: not bounded, not proved, or the step budget ran out).
+    /// A statement's formula is fixed once it exists (statements are only
+    /// appended) and the program's facts are fixed at entry, so asking
+    /// again would get the same answer; `on_ir_mutated` clears it.
+    extremes: HashMap<(StmtId, bool), Option<i64>>,
+    /// Decision queries already answered: `(statement, side, bound)`, with
+    /// the effort they were asked with (a failed tightening may still
+    /// succeed with the full budget).
+    decisions: HashMap<(StmtId, super::Side, i64), (bool, super::Effort)>,
 }
 
 /// Z3-backed [`Resolver`].
@@ -274,6 +284,19 @@ impl SmtResolver {
         inner.cache.insert(ptr, value);
     }
 
+    /// The extreme of `ptr` asked before (`Some(answer)`), else `None`.
+    fn remembered_extreme(&self, ptr: StmtId, maximise: bool) -> Option<Option<i64>> {
+        let known = self.inner.lock().unwrap().extremes.get(&(ptr, maximise)).copied();
+        if known.is_some() {
+            self.telemetry.queries_cache_hit.fetch_add(1, Ordering::Relaxed);
+        }
+        known
+    }
+
+    fn remember_extreme(&self, ptr: StmtId, maximise: bool, answer: Option<i64>) {
+        self.inner.lock().unwrap().extremes.insert((ptr, maximise), answer);
+    }
+
     /// Test-only: count of cached entries. Used by the cache-hit test.
     #[cfg(test)]
     pub fn cache_size(&self) -> usize {
@@ -336,6 +359,9 @@ impl Resolver for SmtResolver {
             }
         }
 
+        if let Some(known) = self.remembered_extreme(ptr, true) {
+            return known;
+        }
         if self.disabled {
             self.telemetry
                 .queries_skipped_disabled
@@ -358,6 +384,7 @@ impl Resolver for SmtResolver {
             max_size,
             self.program_facts,
         );
+        self.remember_extreme(ptr, true, resolved);
         let dur = t0.elapsed();
         self.telemetry.record_smt_duration(dur);
         self.telemetry.note_formula_size(formula_size);
@@ -391,6 +418,9 @@ impl Resolver for SmtResolver {
                 return Some(*n);
             }
         }
+        if let Some(known) = self.remembered_extreme(ptr, false) {
+            return known;
+        }
         if self.disabled {
             self.telemetry
                 .queries_skipped_disabled
@@ -412,6 +442,7 @@ impl Resolver for SmtResolver {
             max_size,
             self.program_facts,
         );
+        self.remember_extreme(ptr, false, resolved);
         let dur = t0.elapsed();
         self.telemetry.record_smt_duration(dur);
         self.telemetry.note_formula_size(formula_size);
@@ -431,10 +462,79 @@ impl Resolver for SmtResolver {
         resolved
     }
 
+    fn proves_bound_with_stmts(
+        &mut self,
+        val: &Value,
+        stmts: &[IRStatement],
+        bound: i64,
+        side: super::Side,
+        effort: super::Effort,
+    ) -> bool {
+        use super::Side;
+        let holds = |n: i64| match side {
+            Side::AtLeast => n >= bound,
+            Side::AtMost => n <= bound,
+        };
+        if let Some(n) = val.int_val() {
+            return holds(n);
+        }
+        let Some(ptr) = val.stmt_id() else { return false };
+        {
+            let inner = self.inner.lock().unwrap();
+            if let Some(ResolvedValue::Int(n)) = inner.cache.get(&ptr) {
+                return holds(*n);
+            }
+            if let Some(Some(n)) = inner.extremes.get(&(ptr, side == Side::AtMost)) {
+                if holds(*n) {
+                    return true;
+                }
+            }
+            if let Some(&(known, asked)) = inner.decisions.get(&(ptr, side, bound)) {
+                if known || asked >= effort {
+                    return known;
+                }
+            }
+        }
+        if self.disabled {
+            self.telemetry.queries_skipped_disabled.fetch_add(1, Ordering::Relaxed);
+            return false;
+        }
+        let max_size = (self.max_formula_size != usize::MAX).then_some(self.max_formula_size);
+        let t0 = Instant::now();
+        let rlimit = match effort {
+            super::Effort::Full => self.rlimit,
+            super::Effort::Tighten => self.rlimit.min(z3_budget::TIGHTEN_RLIMIT),
+        };
+        let (proved, formula_size, oversized) = smt_decide(
+            ptr,
+            stmts,
+            &self.inner.lock().unwrap().cache,
+            rlimit,
+            bound,
+            side,
+            max_size,
+            self.program_facts,
+        );
+        self.telemetry.record_smt_duration(t0.elapsed());
+        self.telemetry.note_formula_size(formula_size);
+        if oversized {
+            self.telemetry.queries_skipped_oversized.fetch_add(1, Ordering::Relaxed);
+        } else if proved {
+            self.telemetry.queries_smt_resolved.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.telemetry.queries_smt_unknown.fetch_add(1, Ordering::Relaxed);
+        }
+        self.inner.lock().unwrap().decisions.insert((ptr, side, bound), (proved, effort));
+        proved
+    }
+
     fn on_ir_mutated(&mut self, _affected: &[StmtId]) {
         // P1 conservative: blow the entire cache. P5 may refine to precise
         // ids when profiling shows the cache-rebuild cost matters.
-        self.inner.lock().unwrap().cache.clear();
+        let mut inner = self.inner.lock().unwrap();
+        inner.cache.clear();
+        inner.extremes.clear();
+        inner.decisions.clear();
     }
 
     fn telemetry_handle(&self) -> Option<std::sync::Arc<crate::optim::telemetry::SmtTelemetry>> {
@@ -632,6 +732,56 @@ fn program_facts_over(stmts: &[IRStatement], walker: &mut Walker) -> Vec<z3::ast
         }
     }
     facts
+}
+
+/// Whether `root >= bound` (or `<= bound`) holds on every model of the
+/// statements that define `root` and, with `program_facts`, the program's own
+/// facts: one satisfiability check of the violation, proved when it has no
+/// model. An encoding that leaves an operation unconstrained only adds
+/// models, so a proof stays sound. Real-valued roots are not decided.
+/// Returns `(proved, formula size, oversized)`.
+#[allow(clippy::too_many_arguments)]
+fn smt_decide(
+    root: StmtId,
+    stmts: &[IRStatement],
+    cache: &HashMap<StmtId, ResolvedValue>,
+    rlimit: u32,
+    bound: i64,
+    side: super::Side,
+    max_formula_size: Option<usize>,
+    program_facts: bool,
+) -> (bool, usize, bool) {
+    use crate::optim::smt_encoding::Z3Term;
+    let mut walker = Walker::new(stmts, cache);
+    walker.max_size = max_formula_size;
+    let Some(root_term) = walker.encode(root) else {
+        return (false, walker.visited, walker.aborted_oversized);
+    };
+    let formula_size = walker.visited;
+    if walker.aborted_oversized {
+        return (false, formula_size, true);
+    }
+    let int = match root_term {
+        Z3Term::Int(i) => i,
+        Z3Term::Bool(b) => b.ite(&z3::ast::Int::from_i64(1), &z3::ast::Int::from_i64(0)),
+        Z3Term::Real(_) => return (false, formula_size, false),
+    };
+    let solver = z3_budget::solver(rlimit);
+    for c in walker.constraints.drain(..) {
+        solver.assert(&c);
+    }
+    if program_facts {
+        for fact in program_facts_over(stmts, &mut walker) {
+            solver.assert(&fact);
+        }
+    }
+    let bound = z3::ast::Int::from_i64(bound);
+    solver.assert(&match side {
+        super::Side::AtLeast => int.lt(&bound),
+        super::Side::AtMost => int.gt(&bound),
+    });
+    let proved = z3_budget::check("resolver.decide", &solver) == z3::SatResult::Unsat;
+    (proved, formula_size, false)
 }
 
 /// Discharge an `Optimize` query: maximise (or minimise) the wire at
