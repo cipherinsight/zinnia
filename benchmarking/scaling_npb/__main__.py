@@ -6,9 +6,10 @@
     python -m benchmarking.scaling_npb validate --data DATA --cap C --out FILE.jsonl [--systems S,..] [--jobs N]
                                                [--memory 16G] [--timeout S] [--max-elements N] [--cases ...]
     python -m benchmarking.scaling_npb remote-list --data DATA FILE.jsonl...
-    python -m benchmarking.scaling_npb plan --data DATA --cap C --shard K/N [--repeats 5] [--heavy-repeats 3] MEASURE.json...
-    python -m benchmarking.scaling_npb timeout MEASURE.json...
-    python -m benchmarking.scaling_npb estimate --data DATA --cap C MEASURE.json...
+    python -m benchmarking.scaling_npb jobs-untimed --data DATA --caps 32,64 --script JOB_SH
+    python -m benchmarking.scaling_npb merge-counts --cap C --out-dir DIR PART.json...
+    python -m benchmarking.scaling_npb jobs-timed --data DATA --caps 32,64 --counts-dir DIR --script JOB_SH
+                                                 [--repeats 5] [--heavy-repeats 3]
     python -m benchmarking.scaling_npb delegate-cases --target halo2|noir --case-set FILE MEASURE.json...
     python -m benchmarking.scaling_npb table --data DATA [--validation FILE ...]
     python -m benchmarking.scaling_npb analyze --data DATA [--zinnia EPOCH...] [--zkvm EPOCH...] \\
@@ -95,24 +96,40 @@ def cmd_delegate_cases(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_plan(args: argparse.Namespace) -> int:
-    from benchmarking.scaling_npb import plan
-    shard, shards = (int(x) for x in args.shard.split("/"))
-    return plan.main(args.data.resolve(), args.cap, shard, shards, args.counts, args.repeats, args.heavy_repeats)
+def _caps_list(text: str) -> list[int]:
+    return [int(c) for c in text.split(",") if c]
 
 
-def cmd_timeout(args: argparse.Namespace) -> int:
+def cmd_jobs_untimed(args: argparse.Namespace) -> int:
     from benchmarking.scaling_npb import plan
-    seconds, why = plan.timeout(args.counts)
-    print(seconds)
-    print(why, file=sys.stderr)
+    print("\n".join(plan.untimed_lines(args.data.resolve(), _caps_list(args.caps), args.script)))
     return 0
 
 
-def cmd_estimate(args: argparse.Namespace) -> int:
+def cmd_merge_counts(args: argparse.Namespace) -> int:
+    """One measure.py-style file per configuration from the per-point parts."""
+    from benchmarking.scaling_npb.analyze import load_counts
+    merged = load_counts(args.parts)
+    for config, by_case in merged.items():
+        out = args.out_dir / f"measure_{config}_cap{args.cap}.json"
+        out.write_text(json.dumps({"config": {"name": config, "parts": len(args.parts)}, f"cap{args.cap}": by_case},
+                                  indent=1, sort_keys=True) + "\n")
+        print(f"{out}: {len(by_case)} points")
+    return 0
+
+
+def cmd_jobs_timed(args: argparse.Namespace) -> int:
     from benchmarking.scaling_npb import plan
-    print(json.dumps(plan.estimate(args.data.resolve(), args.cap, args.shards, args.counts, args.repeats,
-                                   args.heavy_repeats)))
+    caps = _caps_list(args.caps)
+    counts_of = lambda cap: [args.counts_dir / f"measure_{c}_cap{cap}.json" for c in plan.CONFIGS]  # noqa: E731
+    for cap in caps:
+        seconds, why = plan.timeout(counts_of(cap))
+        (args.counts_dir.parent / f"timeout_cap{cap}").write_text(f"{seconds}\n")
+        estimate = plan.estimate(args.data.resolve(), cap, counts_of(cap), args.repeats, args.heavy_repeats)
+        (args.counts_dir.parent / f"estimate_cap{cap}.json").write_text(json.dumps(estimate, indent=1) + "\n")
+        print(f"cap {cap}: per-step timeout {seconds} s ({why}); estimate {json.dumps(estimate)}", file=sys.stderr)
+    print("\n".join(plan.timed_lines(args.data.resolve(), caps, counts_of, args.repeats, args.heavy_repeats,
+                                     args.script)))
     return 0
 
 
@@ -165,27 +182,26 @@ def parser() -> argparse.ArgumentParser:
     dc.add_argument("counts", type=Path, nargs="+", help="measure.py outputs of final and fix_delegate")
     dc.set_defaults(func=cmd_delegate_cases)
 
-    pl = sub.add_parser("plan", help="the Zinnia timing runs of one shard (stage B)")
-    pl.add_argument("--data", type=Path, required=True)
-    pl.add_argument("--cap", type=int, required=True)
-    pl.add_argument("--shard", required=True, help="K/N")
-    pl.add_argument("--repeats", type=int, default=5)
-    pl.add_argument("--heavy-repeats", type=int, default=3)
-    pl.add_argument("counts", type=Path, nargs="+", help="stage-A measure.py outputs of the cap")
-    pl.set_defaults(func=cmd_plan)
+    ju = sub.add_parser("jobs-untimed", help="queue lines of stages V and A (counts, remote validation)")
+    ju.add_argument("--data", type=Path, required=True)
+    ju.add_argument("--caps", required=True, help="comma-separated, e.g. 32,64")
+    ju.add_argument("--script", required=True, help="the remote path of remote/job.sh")
+    ju.set_defaults(func=cmd_jobs_untimed)
 
-    to = sub.add_parser("timeout", help="the cap's per-step timeout from the stage-A counts")
-    to.add_argument("counts", type=Path, nargs="+")
-    to.set_defaults(func=cmd_timeout)
+    mc = sub.add_parser("merge-counts", help="merge per-point measure.py outputs of one cap")
+    mc.add_argument("--cap", type=int, required=True)
+    mc.add_argument("--out-dir", type=Path, required=True)
+    mc.add_argument("parts", type=Path, nargs="+")
+    mc.set_defaults(func=cmd_merge_counts)
 
-    es = sub.add_parser("estimate", help="stage B's wall time at a cap from the stage-A counts")
-    es.add_argument("--data", type=Path, required=True)
-    es.add_argument("--cap", type=int, required=True)
-    es.add_argument("--shards", type=int, default=8)
-    es.add_argument("--repeats", type=int, default=5)
-    es.add_argument("--heavy-repeats", type=int, default=3)
-    es.add_argument("counts", type=Path, nargs="+")
-    es.set_defaults(func=cmd_estimate)
+    jt = sub.add_parser("jobs-timed", help="queue lines of stage B; writes the caps' timeouts and estimates")
+    jt.add_argument("--data", type=Path, required=True)
+    jt.add_argument("--caps", required=True)
+    jt.add_argument("--counts-dir", type=Path, required=True, help="holds measure_<config>_cap<C>.json")
+    jt.add_argument("--script", required=True)
+    jt.add_argument("--repeats", type=int, default=5)
+    jt.add_argument("--heavy-repeats", type=int, default=3)
+    jt.set_defaults(func=cmd_jobs_timed)
 
     ana = sub.add_parser("analyze", help="Zinnia vs zkVM prove time and Zinnia vs @delegate gates")
     ana.add_argument("--data", type=Path, required=True)

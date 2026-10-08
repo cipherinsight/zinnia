@@ -39,7 +39,8 @@ def summary_rows(points: list[dict]) -> list[str]:
 
 def cell(point: dict) -> str:
     if point["status"] == SCALED:
-        return f"{point['input_elements']:,} el. (d={point['divisor']})"
+        how = f"d={point['divisor']}" if point.get("divisor") else f"t={point.get('largest')}"
+        return f"{point['input_elements']:,} el. ({how})"
     if point["status"] == UNCHANGED:
         return f"= CAP {point['same_as']}"
     return "fixed"
@@ -92,7 +93,8 @@ def validation_rows(reports: list[Path]) -> list[str]:
 def render(data: Path, validation: list[Path]) -> str:
     document = load_points(data)
     parts = ["## Classification per cap", "", *summary_rows(document["points"]), "",
-             "## Per entry", "", "Cells: input elements of input A and the divisor d for a scaled point; "
+             "## Per entry", "", "Cells: input elements of input A and, for a scaled point, the divisor d (NPBench) or the "
+             "largest knob's value t (Pythran, proportional formula); "
              "`= CAP c` for a point with the sizes of an earlier one; `fixed` for one the rule cannot scale. "
              "CAP 16 column: how the performance set's sizes relate to the rule at CAP 16.", "",
              *entry_rows(document)]

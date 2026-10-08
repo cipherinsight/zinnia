@@ -1,71 +1,38 @@
-"""The Zinnia timing runs of one shard of one cap (stage B of `remote/run.sh`).
+"""Job lines of the scaling study for the remote job queue (`eval-redo/post-freeze/scripts/queue.sh`),
+the per-step timeout of each cap, and an estimate of the timed stage's wall time.
 
-Both rules below were fixed before any timing.
+The queue runs one job per line, `timed <command>` or `untimed <command>`, with the slot's CPU
+list appended to the command; `remote/job.sh` is the command. Lines are ordered longest first
+(by input size for the untimed jobs, by estimated cost for the timed ones), so long jobs do not
+start last.
 
-* Systems: zinnia_halo2 and zinnia_noir run on every scaled point of the shard.
-  Each delegate system (Zinnia with the backend's own array lowering) runs only
-  on the points whose `@delegate` circuit for its target differs from Zinnia's
-  in the stage-A counts, or where that could not be established
-  (`analyze.differing_cases`); elsewhere it compiles the identical circuit and
-  its ratio to Zinnia is 1 by construction.
-* Repeats: 5, and 3 (the author's floor) at the points listed in
-  `DATA/validate_on_remote.txt`, the points too large or too memory-hungry to
-  validate on the 16-core, 46 GB local machine. Every compile step of the
-  harness compiles the kernel again, so at these points each repeat costs a
-  compile that can take hours. Every system at a point gets the same count.
+Untimed jobs (stages V and A), one per (point, configuration) or (point, system):
 
-Shards are the harness's (`case_sets.shard_cases` over the cap's case set), so
-the shard of a point does not depend on which runs it is in. Each output line
-is one harness run: `<label suffix> <systems> <repeats> <cases>`.
+* `count <cap> <case> <config>`: halo2-base cells and Noir gates of every scaled point, as Zinnia
+  compiles it (`final`) and with the backend's own array lowering (`fix_delegate`);
+* `validate <cap> <case> <system>`: the output check of the four Zinnia systems at the points
+  the local machine could not validate (`DATA/validate_on_remote.txt`).
+
+Timed jobs (stage B), one per scaled point, written after stage A because they depend on it:
+`time <cap> <case> <repeats> <delegate systems or ->`. Each times zinnia_halo2 and zinnia_noir
+and then, in the same slot, the delegate system of each target whose `@delegate` circuit differs
+from Zinnia's at that point (`analyze.differing_cases`: halo2 IR digest, Noir main.nr digest, or
+a count that failed or is missing). Where the circuit is identical the delegate's ratio is 1 by
+construction (rule fixed before any timing, 2026-10-09). Repeats: 5, and 3 (the author's floor)
+at the points of `validate_on_remote.txt`, whose compiles are long and are repeated by every
+harness step; the same count for every system at a point.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from benchmarking.harness.case_sets import load_perf_cases, shard_cases
-from benchmarking.scaling_npb.analyze import DELEGATE_OF_TARGET, differing_cases
+from benchmarking.scaling_npb.analyze import DELEGATE_OF_TARGET, differing_cases, load_counts
 from benchmarking.scaling_npb.generate import case_set_path
 
-ZINNIA = "zinnia_halo2,zinnia_noir"
-
-
-def heavy_cases(data: Path, cap: int) -> set[str]:
-    listing = data / "validate_on_remote.txt"
-    if not listing.exists():
-        return set()
-    rows = (line.split() for line in listing.read_text().splitlines() if line.strip())
-    return {case for row_cap, case, _ in rows if int(row_cap) == cap}
-
-
-def runs(data: Path, cap: int, shard: int, shards: int, counts: list[Path], repeats: int,
-         heavy_repeats: int) -> list[tuple[str, str, int, list[str]]]:
-    case_set = case_set_path(data, cap)
-    mine = [c.case for c in shard_cases(load_perf_cases(case_set, None, None), shard, shards) if c.included]
-    heavy = heavy_cases(data, cap)
-    plan = []
-    for suffix, cases, count in (("", [c for c in mine if c not in heavy], repeats),
-                                 ("-heavy", [c for c in mine if c in heavy], heavy_repeats)):
-        if cases:
-            plan.append((suffix, ZINNIA, count, cases))
-        for target, system in DELEGATE_OF_TARGET.items():
-            differing = set(differing_cases(case_set, counts, target))
-            chosen = [c for c in cases if c in differing]
-            if chosen:
-                plan.append((f"{suffix}-{system}", system, count, chosen))
-    return plan
-
-
-def main(data: Path, cap: int, shard: int, shards: int, counts: list[Path], repeats: int,
-         heavy_repeats: int) -> int:
-    for suffix, systems, count, cases in runs(data, cap, shard, shards, counts, repeats, heavy_repeats):
-        print(suffix or "-", systems, count, ",".join(cases))
-    return 0
-
-
-# ---------------------------------------------------------------------------
-# The per-step timeout of a cap, and an estimate of stage B's wall time
-# ---------------------------------------------------------------------------
+ZINNIA_SYSTEMS = ("zinnia_halo2", "zinnia_halo2_delegate", "zinnia_noir", "zinnia_noir_delegate")
+CONFIGS = ("final", "fix_delegate")
 
 #: Seconds of proving per halo2-base cell (prove_core) and per Noir gate (end to end), on 8
 #: pinned cores of the remote: the medians over the CAP-16 NPBench/Pythran points above 2e5 cells
@@ -74,14 +41,40 @@ PROVE_S_PER_UNIT = {"halo2": 9.3e-6, "noir": 1.33e-5}
 SIZE_FIELD = {"halo2": "cells", "noir": "gates"}
 #: The smallest per-step timeout (the NPBench/Pythran performance sessions used 14,400 s).
 TIMEOUT_FLOOR_S = 14400
-#: The per-step timeout is at least this many times compile + prove of the slowest point.
+#: The per-step timeout is at least this many times compile + prove of the slowest step.
 TIMEOUT_FACTOR = 3
+
+
+def scaled_points(data: Path, cap: int) -> list[dict]:
+    return [e for e in json.loads(case_set_path(data, cap).read_text())["cases"] if e["status"] == "perf"]
+
+
+def heavy_cases(data: Path, cap: int) -> set[str]:
+    """The cap's points the local machine left to the remote (too large or too memory-hungry)."""
+    listing = data / "validate_on_remote.txt"
+    if not listing.exists():
+        return set()
+    rows = (line.split() for line in listing.read_text().splitlines() if line.strip())
+    return {case for row_cap, case, _ in rows if int(row_cap) == cap}
+
+
+def untimed_lines(data: Path, caps: list[int], script: str) -> list[str]:
+    jobs = []
+    for cap in caps:
+        heavy = heavy_cases(data, cap)
+        for point in scaled_points(data, cap):
+            size = point["scaling"]["input_elements"]
+            for config in CONFIGS:
+                jobs.append((size, f"untimed bash {script} count {cap} {point['case']} {config}"))
+            if point["case"] in heavy:
+                for system in ZINNIA_SYSTEMS:
+                    jobs.append((size, f"untimed bash {script} validate {cap} {point['case']} {system}"))
+    return [line for _, line in sorted(jobs, key=lambda job: -job[0])]
 
 
 def step_costs(counts: list[Path]) -> dict[str, dict[str, dict[str, float]]]:
     """case -> configuration -> target -> {"compile_s", "prove_s"} (estimated prove), from the
     stage-A records that completed."""
-    from benchmarking.scaling_npb.analyze import load_counts
     out: dict = {}
     for config, by_case in load_counts(counts).items():
         for case, by_target in by_case.items():
@@ -96,7 +89,8 @@ def step_costs(counts: list[Path]) -> dict[str, dict[str, dict[str, float]]]:
 
 def timeout(counts: list[Path]) -> tuple[int, str]:
     """The cap's per-step timeout: at least TIMEOUT_FACTOR x (compile + estimated prove) of every
-    point and configuration whose stage-A count completed, and never below TIMEOUT_FLOOR_S."""
+    point and configuration whose stage-A count completed, and never below TIMEOUT_FLOOR_S. It is
+    the same for every system at the cap's points (Zinnia, delegates, zkVMs)."""
     worst, where = 0.0, "-"
     for case, by_config in step_costs(counts).items():
         for config, by_target in by_config.items():
@@ -106,30 +100,48 @@ def timeout(counts: list[Path]) -> tuple[int, str]:
     return max(TIMEOUT_FLOOR_S, int(TIMEOUT_FACTOR * worst + 0.5)), f"slowest step {worst:.0f} s ({where})"
 
 
-def estimate(data: Path, cap: int, shards: int, counts: list[Path], repeats: int, heavy_repeats: int,
-             slots: int = 4) -> dict:
-    """Stage B's wall time at this cap from the stage-A compile times and estimated prove times:
-    a run of R repeats compiles and proves R + 2 times per system (setup, warm-up, R samples);
-    verification is not counted. Shards go to `slots` slots in order (the queue)."""
+def timed_jobs(data: Path, cap: int, counts: list[Path], repeats: int,
+               heavy_repeats: int) -> list[tuple[float | None, int, str, str]]:
+    """(estimated seconds or None, repeats, case, delegate systems) per scaled point. A run of R
+    repeats compiles and proves R + 2 times per system (setup, warm-up, R samples)."""
+    case_set = case_set_path(data, cap)
+    heavy = heavy_cases(data, cap)
+    differing = {target: set(differing_cases(case_set, counts, target)) for target in DELEGATE_OF_TARGET}
     costs = step_costs(counts)
-    unknown: set[str] = set()
-    shard_s = []
-    for shard in range(shards):
-        total = 0.0
-        for _, systems, count, cases in runs(data, cap, shard, shards, counts, repeats, heavy_repeats):
-            for case in cases:
-                for system in systems.split(","):
-                    target = "halo2" if "halo2" in system else "noir"
-                    config = "fix_delegate" if system.endswith("_delegate") else "final"
-                    cost = costs.get(case, {}).get(config, {}).get(target)
-                    if cost is None:
-                        unknown.add(case)
-                        continue
-                    total += (count + 2) * (cost["compile_s"] + cost["prove_s"])
-        shard_s.append(total)
+    jobs = []
+    for point in scaled_points(data, cap):
+        case = point["case"]
+        count = heavy_repeats if case in heavy else repeats
+        delegates = [system for target, system in DELEGATE_OF_TARGET.items() if case in differing[target]]
+        steps = [("final", "halo2"), ("final", "noir")]
+        steps += [("fix_delegate", "halo2" if "halo2" in system else "noir") for system in delegates]
+        known = [costs.get(case, {}).get(config, {}).get(target) for config, target in steps]
+        seconds = None if None in known else sum((count + 2) * (c["compile_s"] + c["prove_s"]) for c in known)
+        jobs.append((seconds, count, case, ",".join(delegates) or "-"))
+    return jobs
+
+
+def timed_lines(data: Path, caps: list[int], counts_of, repeats: int, heavy_repeats: int,
+                script: str) -> list[str]:
+    """Timed job lines of the caps, in cap order; within a cap the points without an estimate
+    (their counts failed: the largest) first, then by estimated cost, longest first."""
+    lines = []
+    for cap in caps:
+        jobs = timed_jobs(data, cap, counts_of(cap), repeats, heavy_repeats)
+        jobs.sort(key=lambda job: (job[0] is not None, -(job[0] or 0)))
+        lines += [f"timed bash {script} time {cap} {case} {count} {delegates}"
+                  for _, count, case, delegates in jobs]
+    return lines
+
+
+def estimate(data: Path, cap: int, counts: list[Path], repeats: int, heavy_repeats: int, slots: int = 4) -> dict:
+    """The timed stage's wall time at this cap on `slots` slots (longest job first to the
+    first free slot), over the points with an estimate; the others are listed."""
+    jobs = timed_jobs(data, cap, counts, repeats, heavy_repeats)
+    known = sorted((seconds for seconds, *_ in jobs if seconds is not None), reverse=True)
     finish = [0.0] * slots
-    for seconds in shard_s:                    # the queue: a free slot takes the next shard
+    for seconds in known:
         finish[finish.index(min(finish))] += seconds
-    return {"cap": cap, "shard_hours": [round(s / 3600, 2) for s in shard_s],
-            "total_slot_hours": round(sum(shard_s) / 3600, 1), "wall_hours_4_slots": round(max(finish) / 3600, 1),
-            "points_without_counts": sorted(unknown)}
+    return {"cap": cap, "points": len(jobs), "slot_hours": round(sum(known) / 3600, 1),
+            "wall_hours": round(max(finish) / 3600, 1), "slots": slots,
+            "points_without_estimate": [case for seconds, _, case, _ in jobs if seconds is None]}

@@ -13,16 +13,22 @@ integer input and array dimension is at most CAP. The arrays come from
 `initialize()` at those parameters.
 
 Pythran: the upstream example line (the first `#runas` line of the function,
-else the first `#bench` line) with the same formula applied to its size knobs.
+else the first `#bench` line) with its size knobs scaled in proportion: the
+largest knob m becomes t = min(CAP, m) and every knob p becomes
+max(min(p, 2), ceil(p * t / m)); when the line then fails or passes a
+dimension or integer scalar above CAP (a float step can give one point more),
+t is lowered by one until it does not. This is the formula of the acceptance
+study's hand reduction to CAP 16 (`acceptance_sizes.PYTHRAN_SMALL_EXAMPLES`):
+it reproduces all 20 of those reductions, so the series starts at the
+measured performance-set points (author's decision, 2026-10-09, taken over
+NPBench's divisor formula, which reproduces 11 of 20).
 A size knob is a number written in the line that sets an array length (or a
 size scalar); the knobs of each line are the numbers the acceptance study's
-reduction to CAP = 16 changed (`acceptance_sizes.PYTHRAN_SMALL_EXAMPLES`,
-its "what changed" column), so which numbers count as sizes was fixed before
-this study. Each line is written below as a template, the upstream line with
-every knob replaced by `{expression}` over the knob names; the generator
-checks that the template at the upstream knob values gives the upstream
-line's arguments. d is the smallest whole number for which the line runs and
-every array dimension and integer scalar it passes is at most CAP.
+reduction to CAP = 16 changed (its "what changed" column), so which numbers
+count as sizes was fixed before this study. Each line is written below as a
+template, the upstream line with every knob replaced by `{expression}` over
+the knob names; the generator checks that the template at the upstream knob
+values gives the upstream line's arguments.
 
 Lines are prepared the same way at every cap (as the CAP = 16 fixtures were):
 uninitialised buffers (`np.empty`, `np.empty_like`) become zeros, an import of
@@ -238,12 +244,14 @@ def render(template: str, knobs: dict[str, int]) -> str:
 
 @dataclass
 class Choice:
-    """The knob values the rule picks at a cap, and what they give."""
+    """The knob values the rule picks at a cap, and what they give: `divisor` d for
+    NPBench's formula, `largest` t (the largest knob's new value) for the proportional one."""
 
     knobs: dict[str, Any]
-    divisor: int
+    divisor: int | None
     values: Any = None          # what the probe returned for these knobs
-    tried: list[str] = field(default_factory=list)   # why smaller divisors failed
+    tried: list[str] = field(default_factory=list)   # why earlier candidates failed
+    largest: int | None = None
 
 
 def is_int(value: Any) -> bool:
@@ -281,3 +289,23 @@ def choose(knobs: dict[str, Any], cap: int, probe) -> Choice:
         if len(tried) < 3:
             tried.append(f"d={d}: {problem}")
     raise NotScalable(f"no divisor gives sizes within {cap}: " + "; ".join(tried))
+
+
+def proportional_knob(p: int, t: int, m: int) -> int:
+    """The proportional formula: p * t / m, rounded up, never below min(p, 2)."""
+    return max(min(p, 2), -(-p * t // m))
+
+
+def choose_proportional(knobs: dict[str, int], cap: int, probe) -> Choice:
+    """The largest t <= min(cap, largest knob) whose proportionally scaled knobs pass `probe`.
+    Raises NotScalable when none does."""
+    m = max(knobs.values())
+    tried: list[str] = []
+    for t in range(min(cap, m), 0, -1):
+        candidate = {k: proportional_knob(p, t, m) for k, p in knobs.items()}
+        values, problem = probe(candidate)
+        if problem is None:
+            return Choice(candidate, None, values, tried, largest=t)
+        if len(tried) < 3:
+            tried.append(f"t={t}: {problem}")
+    raise NotScalable(f"no proportional sizes within {cap}: " + "; ".join(tried))

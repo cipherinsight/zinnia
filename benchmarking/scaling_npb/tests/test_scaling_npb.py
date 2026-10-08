@@ -91,3 +91,16 @@ def test_zkvm_compare_allows_only_size_constants():
     assert zkvm_check.compare(original, original)[0] == "identical"
     assert zkvm_check.compare(original, original.replace("16", "64"))[0] == "size constants"
     assert zkvm_check.compare(original, original.replace("x = N", "x = N + 1"))[0] == "not scalable"
+
+
+def test_proportional_formula_keeps_ratios_and_never_grows():
+    assert rule.proportional_knob(200, 16, 200) == 16 and rule.proportional_knob(100, 16, 200) == 8
+    assert rule.proportional_knob(3, 16, 1000) == 2          # never below min(p, 2)
+    choice = rule.choose_proportional({"m": 200, "n": 100}, 32, lambda k: (k, None))
+    assert choice.knobs == {"m": 32, "n": 16} and choice.largest == 32 and choice.divisor is None
+    assert rule.choose_proportional({"N": 30}, 32, lambda k: (k, None)).knobs == {"N": 30}
+
+
+def test_proportional_lowers_the_target_until_the_line_fits():
+    choice = rule.choose_proportional({"c": 200}, 32, lambda k: (k, None if k["c"] <= 30 else "33 points"))
+    assert choice.largest == 30 and len(choice.tried) == 2

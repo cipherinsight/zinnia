@@ -219,15 +219,20 @@ def analyze(data: Path, zinnia_dirs: list[Path], zkvm_dirs: list[Path], count_fi
         copy_only = {e["case"] for e in entries if e.get("data_movement_only")}
         groups = {g: [e["case"] for e in entries if e["status"] == "perf" and e["group"] == g]
                   for g in ("npbench", "pythran")}
+        identical = identical_pairs(counts, scaled)
+        timed_delegate = {system: [c for c in scaled if c not in identical.get(target, set())]
+                          for target, system in DELEGATE_OF_TARGET.items()}
         report["caps"][cap] = {
             "points": {"scaled": len(scaled), **Counter(e["status"] for e in entries if e["status"] != "perf")},
-            "completion": {**completion(zinnia, ZINNIA + tuple(DELEGATE.values()), scaled),
+            # a delegate system is timed only where its circuit differs (identical pairs: ratio 1)
+            "completion": {**completion(zinnia, ZINNIA, scaled),
+                           **{s: completion(zinnia, (s,), cs)[s] for s, cs in timed_delegate.items()},
                            **completion(zkvm, ZKVMS, scaled)},
             "time": zinnia_vs_zkvm(zinnia, zkvm, scaled, copy_only) if zinnia and zkvm else {},
             "time_by_group": {g: zinnia_vs_zkvm(zinnia, zkvm, cs, copy_only) for g, cs in groups.items()}
             if zinnia and zkvm else {},
-            "identical_delegate_pairs": {t: len(v) for t, v in identical_pairs(counts, scaled).items()},
-            "time_vs_delegate": zinnia_vs_delegate(zinnia, scaled, copy_only, identical_pairs(counts, scaled))
+            "identical_delegate_pairs": {t: len(v) for t, v in identical.items()},
+            "time_vs_delegate": zinnia_vs_delegate(zinnia, scaled, copy_only, identical)
             if zinnia else {},
             "size_vs_delegate": size_comparison(counts, scaled) if counts else {},
         }

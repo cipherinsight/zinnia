@@ -81,9 +81,10 @@ class Sizing:
     drawn when the fixture is written, as for the CAP-16 fixtures)."""
 
     knobs: dict[str, Any]
-    divisor: int
+    divisor: int | None
     a: dict[str, Any]
     note: str
+    largest: int | None = None
 
 
 @dataclass
@@ -176,17 +177,17 @@ class PythranSizer(Sizer):
                 return None, "the example line fails"
             return args, rule.within_cap(flatten_arguments(args), cap)
 
-        choice = rule.choose(self.line.knobs, cap, probe)
+        choice = rule.choose_proportional(self.line.knobs, cap, probe)
         names = [p["name"] for p in self.entry.parameters]
         if len(choice.values) != len(names):
             raise rule.NotScalable(f"the line passes {len(choice.values)} arguments, the kernel takes {names}")
         code = rule.render(self.line.template, choice.knobs)
         note = (f"A is the arguments of the example call `{code}` (upstream "
-                f"`{self.line.upstream}` with its size knobs {self.line.knobs} through the scaling rule at "
-                f"CAP {cap}: divisor {choice.divisor}).")
+                f"`{self.line.upstream}` with its size knobs {self.line.knobs} scaled in proportion at "
+                f"CAP {cap}: largest knob {choice.largest}).")
         if self.line.q32_values:
             note += " The values come from the CAP-16 fixture's Q32 generator (acceptance_fixtures.py)."
-        return Sizing(choice.knobs, choice.divisor, dict(zip(names, choice.values)), note)
+        return Sizing(choice.knobs, None, dict(zip(names, choice.values)), note, choice.largest)
 
     def check_template(self) -> list[str]:
         """Problems with the template: it must give the upstream line's arguments at the
@@ -349,7 +350,8 @@ class Point:
     reason: str | None = None
     same_as: int | None = None          # unchanged: the cap whose program it is (16 = perf set)
     knobs: dict | None = None
-    divisor: int | None = None
+    divisor: int | None = None          # NPBench: d of the divisor formula
+    largest: int | None = None          # Pythran: the largest knob's value (proportional formula)
     signature: dict | None = None
     input_elements: int | None = None
     fixture_notes: str | None = None
@@ -410,7 +412,7 @@ def write_point(entry: Entry, cap: int, sizing: Sizing, data: Path) -> tuple[Poi
         raise rule.NotScalable(f"NumPy reference fails: {exc}") from exc
     fixtures.dump(folder / entry.perf["fixture"], document)
     point = Point(scaled_case_id(entry.perf["case"], cap), program, function, entry.perf["group"], cap, SCALED,
-                  knobs=sizing.knobs, divisor=sizing.divisor, signature=annotations,
+                  knobs=sizing.knobs, divisor=sizing.divisor, largest=sizing.largest, signature=annotations,
                   input_elements=input_elements(document), fixture_notes=document["notes"],
                   folder=str(folder.relative_to(data)), fixture=entry.perf["fixture"])
     return point, document
@@ -446,6 +448,7 @@ def reference_relation(entry: Entry, sizer: Sizer, scratch: Path) -> dict:
     same_inputs = same_sizes and document["inputs"] == entry.fixture["inputs"]
     relation = "rule (identical fixture)" if same_inputs else "rule sizes" if same_sizes else "hand"
     return {"relation": relation, "rule_knobs": at16.knobs, "rule_divisor": at16.divisor,
+            "rule_largest": at16.largest,
             "rule_signature": annotations_for(entry, at16.a), "current_signature": entry.acceptance["signature"],
             "acceptance_rule": sizing.get("rule"), "acceptance_change": sizing.get("change")}
 
@@ -497,7 +500,7 @@ def size_point(entry: Entry, sizer: Sizer, cap: int, data: Path, earlier: dict[i
     except rule.NotScalable as exc:
         base.reason = str(exc)
         return base
-    base.knobs, base.divisor = sizing.knobs, sizing.divisor
+    base.knobs, base.divisor, base.largest = sizing.knobs, sizing.divisor, sizing.largest
     key = size_key(entry.parameters, sizing.a)
     for previous, previous_key in earlier.items():
         if key == previous_key:
@@ -524,7 +527,7 @@ def write_case_sets(entries: list[Entry], points: list[Point], data: Path, caps:
                         reason=None if point.status == SCALED else
                         point.reason or f"the rule gives the sizes of CAP {point.same_as}",
                         base_case=original["case"],
-                        scaling={"cap": cap, "knobs": point.knobs, "divisor": point.divisor,
+                        scaling={"cap": cap, "knobs": point.knobs, "divisor": point.divisor, "largest": point.largest,
                                  "input_elements": point.input_elements})
             if point.status == SCALED:
                 case.update(path=str((data / point.folder).resolve()), data_folder=point.folder)
