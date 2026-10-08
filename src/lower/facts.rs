@@ -69,7 +69,11 @@ impl<'a> FreeFacts<'a> {
             Claim::NonNegative(x) => self.bounds(x).is_some_and(|(min, _)| min >= 0),
             Claim::NonZero(x) => self.bounds(x).is_some_and(|(min, max)| min > 0 || max < 0),
             Claim::Equal(a, b) => a == b,
-            Claim::Permutation(a, b) => a == b || self.is_argsort_line(a, b) || self.is_argsort_line(b, a),
+            Claim::Permutation(a, b) => {
+                a == b
+                    || (!crate::optim::array_facts::ablated()
+                        && (self.is_argsort_line(a, b) || self.is_argsort_line(b, a)))
+            }
             Claim::Within { x, lo, hi } => {
                 self.bounds(x).is_some_and(|(min, max)| lo.is_none_or(|l| l <= min) && hi.is_none_or(|u| max <= u))
             }

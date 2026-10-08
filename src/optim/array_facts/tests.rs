@@ -151,6 +151,11 @@ fn permutation_implies_the_index_range() {
 
 const ALWAYS: FactGuard = FactGuard::Always;
 
+/// The constant ends of `cell`'s range in `context`.
+fn interval(store: &ArrayFacts, cell: Cell, context: &FactGuard) -> (Option<i64>, Option<i64>) {
+    store.cell_range(cell, &NoScalars, context).interval(&NoScalars)
+}
+
 /// The guard of code running where the Boolean values `atoms` all hold.
 fn when(atoms: &[u64]) -> FactGuard {
     FactGuard::When(atoms.iter().map(|&a| crate::types::ValueId(a)).collect())
@@ -163,9 +168,9 @@ fn store_finds_facts_through_cells_and_views() {
     let cells = stmts(&[100, 101, 102, 103]);
     let inc = ElemFacts { range: Range::new(0, 3), order: Some(Order::Increasing), affine: None };
     store.state(cells.clone(), Segmentation::uniform(4, inc), ALWAYS);
-    assert_eq!(store.cell_interval(Cell::Stmt(102), &s, &ALWAYS), (Some(0), Some(3)));
-    assert_eq!(store.cell_interval(Cell::Stmt(999), &s, &ALWAYS), (None, None));
-    assert_eq!(store.cell_interval(Cell::Const(7), &s, &ALWAYS), (Some(7), Some(7)));
+    assert_eq!(interval(&store, Cell::Stmt(102), &ALWAYS), (Some(0), Some(3)));
+    assert_eq!(interval(&store, Cell::Stmt(999), &ALWAYS), (None, None));
+    assert_eq!(interval(&store, Cell::Const(7), &ALWAYS), (Some(7), Some(7)));
     // A slice keeps the order; a reversed view reverses it.
     let view = store.list_facts(&stmts(&[101, 102]), &s, &ALWAYS);
     assert_eq!(view.len(), 1, "a run of the list");
@@ -174,7 +179,7 @@ fn store_finds_facts_through_cells_and_views() {
     assert_eq!(rev[0].hull(&s).order, Some(Order::Decreasing));
     // Not a run: no relational fact (element facts still apply per cell).
     assert!(store.list_facts(&stmts(&[100, 102]), &s, &ALWAYS).is_empty());
-    assert_eq!(store.hull(&stmts(&[100, 102]), &s, &ALWAYS), Range::new(0, 3));
+    assert_eq!(store.cell_range(Cell::Stmt(100), &s, &ALWAYS), Range::new(0, 3));
 }
 
 #[test]
@@ -185,7 +190,7 @@ fn store_has_no_fact_about_a_list_after_a_write() {
     let mut store = ArrayFacts::new();
     store.state(stmts(&[1, 2, 3]), Segmentation::uniform(3, ElemFacts::range(Range::new(0, 4))), ALWAYS);
     let written = stmts(&[50, 2, 3]);
-    assert!(store.hull(&written, &s, &ALWAYS).is_top());
+    assert!(store.cell_range(Cell::Stmt(50), &s, &ALWAYS).is_top());
     assert!(store.list_facts(&written, &s, &ALWAYS).is_empty());
 }
 
@@ -206,11 +211,11 @@ fn a_guarded_fact_is_seen_only_where_its_atoms_hold() {
     let s = NoScalars;
     let mut store = ArrayFacts::new();
     store.state(stmts(&[5, 6]), Segmentation::uniform(2, ElemFacts::range(Range::new(0, 1))), when(&[1]));
-    assert_eq!(store.cell_interval(Cell::Stmt(5), &s, &when(&[1])), (Some(0), Some(1)));
-    assert_eq!(store.cell_interval(Cell::Stmt(5), &s, &when(&[1, 2])), (Some(0), Some(1)));
-    assert_eq!(store.cell_interval(Cell::Stmt(5), &s, &ALWAYS), (None, None));
-    assert_eq!(store.cell_interval(Cell::Stmt(5), &s, &when(&[2])), (None, None));
-    assert_eq!(store.cell_interval(Cell::Stmt(5), &s, &FactGuard::Never), (None, None));
+    assert_eq!(interval(&store, Cell::Stmt(5), &when(&[1])), (Some(0), Some(1)));
+    assert_eq!(interval(&store, Cell::Stmt(5), &when(&[1, 2])), (Some(0), Some(1)));
+    assert_eq!(interval(&store, Cell::Stmt(5), &ALWAYS), (None, None));
+    assert_eq!(interval(&store, Cell::Stmt(5), &when(&[2])), (None, None));
+    assert_eq!(interval(&store, Cell::Stmt(5), &FactGuard::Never), (None, None));
     assert!(store.list_facts(&stmts(&[5, 6]), &s, &ALWAYS).is_empty());
     // A fact for every path is seen everywhere.
     assert!(holds_in(&ALWAYS, &when(&[3])));

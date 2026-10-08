@@ -83,6 +83,13 @@ impl Cell {
     }
 }
 
+/// Whether the ablation `ZINNIA_ABLATE_ARRAY_FACTS=1` turns array facts off
+/// (`docs/ablations.md`): no query sees any (the compiler then decides as if
+/// nothing were known about whole arrays).
+pub fn ablated() -> bool {
+    std::env::var("ZINNIA_ABLATE_ARRAY_FACTS").is_ok_and(|v| v == "1")
+}
+
 /// Whether a fact stated under `guard` may be used in `context`: it holds on
 /// every path, or every conjunct it was learned under is a conjunct of the
 /// context. Nothing guarded is used where the code never runs.
@@ -189,47 +196,6 @@ impl ArrayFacts {
         self.cell_facts(cell, s, context).iter().fold(Range::TOP, |acc, f| acc.meet(&f.range, s))
     }
 
-    /// [`Self::cell_range`] as constant ends.
-    pub fn cell_interval(&self, cell: Cell, s: &dyn Scalars, context: &FactGuard) -> (Option<i64>, Option<i64>) {
-        let mut out: (Option<i64>, Option<i64>) = (None, None);
-        for facts in self.cell_facts(cell, s, context) {
-            let (lo, hi) = facts.range.interval(s);
-            out.0 = max_opt(out.0, lo);
-            out.1 = min_opt(out.1, hi);
-        }
-        out
-    }
-
-    /// Whether some fact about `cell` proves `cell >= bound`.
-    pub fn cell_ge(&self, cell: Cell, bound: &Bound, s: &dyn Scalars, context: &FactGuard) -> bool {
-        self.cell_facts(cell, s, context).iter().any(|f| f.range.implies_ge(bound, s))
-    }
-
-    /// Whether some fact about `cell` proves `cell <= bound`.
-    pub fn cell_le(&self, cell: Cell, bound: &Bound, s: &dyn Scalars, context: &FactGuard) -> bool {
-        self.cell_facts(cell, s, context).iter().any(|f| f.range.implies_le(bound, s))
-    }
-
-    /// A range holding every cell of `cells`: per cell the meet of its facts'
-    /// ranges, joined over the cells. `TOP` as soon as one cell has none.
-    pub fn hull(&self, cells: &[Cell], s: &dyn Scalars, context: &FactGuard) -> Range {
-        let mut acc: Option<Range> = None;
-        for &cell in cells {
-            let range = self.cell_range(cell, s, context);
-            if range.is_top() {
-                return Range::TOP;
-            }
-            acc = Some(match acc {
-                None => range,
-                Some(a) => a.join(&range, s),
-            });
-            if acc.is_some_and(|a| a.is_top()) {
-                return Range::TOP;
-            }
-        }
-        acc.unwrap_or(Range::TOP)
-    }
-
     /// The facts that hold in `context` about `cells` as an array of their
     /// own: the facts of every stated list of which `cells` is a run of
     /// consecutive positions, in order or reversed (a slice, a reversed view,
@@ -319,19 +285,5 @@ fn order_of<T: PartialOrd>(pairs: impl Iterator<Item = (T, T)> + Clone) -> Optio
         Some(Order::NonIncreasing)
     } else {
         None
-    }
-}
-
-fn max_opt(a: Option<i64>, b: Option<i64>) -> Option<i64> {
-    match (a, b) {
-        (Some(x), Some(y)) => Some(x.max(y)),
-        (x, y) => x.or(y),
-    }
-}
-
-fn min_opt(a: Option<i64>, b: Option<i64>) -> Option<i64> {
-    match (a, b) {
-        (Some(x), Some(y)) => Some(x.min(y)),
-        (x, y) => x.or(y),
     }
 }

@@ -622,3 +622,14 @@ def test_a_divisor_fact_does_not_outlive_a_write(write):
     zero = {"a[0] = x": (0, 0), "b = a\n    b[1] = x": (0, 1), "a[x % 4] = x": (0, 0),
             "if x > 3:\n        a[2] = x - 4": (4, 2)}[write]
     assert has_no_proof(source, np.array([1, 5, 2, 3]), *zero)
+
+
+# ── The ablation switch ──────────────────────────────────────────────────
+
+def test_the_ablation_turns_array_facts_off(monkeypatch):
+    # `ZINNIA_ABLATE_ARRAY_FACTS=1` (docs/ablations.md): no query sees an
+    # array fact, so the index of `FORALL_INDEX` is checked again (and the
+    # program stays correct).
+    monkeypatch.setenv("ZINNIA_ABLATE_ARRAY_FACTS", "1")
+    assert index_checks(compile_source(FORALL_INDEX)) != []
+    assert_all_backends_match_numpy(FORALL_INDEX, np.array([3, 0, 4, 1]))

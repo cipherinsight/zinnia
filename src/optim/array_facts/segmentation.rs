@@ -88,14 +88,6 @@ impl Segmentation {
         Segmentation { len: self.len, segments, permutation: false }
     }
 
-    /// Whether the segmentation states more than one range for all cells:
-    /// an order, a formula, a permutation, or several segments.
-    pub fn is_relational(&self) -> bool {
-        self.permutation
-            || self.segments.len() > 1
-            || self.segments.iter().any(|seg| seg.facts.order.is_some() || seg.facts.affine.is_some())
-    }
-
     /// Whether nothing is stated.
     pub fn is_top(&self) -> bool {
         !self.permutation && self.segments.iter().all(|seg| seg.facts.is_top())

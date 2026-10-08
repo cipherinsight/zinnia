@@ -47,8 +47,10 @@ pub enum Where {
 }
 
 /// The builder's array-fact state.
-#[derive(Default)]
 pub(crate) struct ArrayFactState {
+    /// Array facts are off (`ZINNIA_ABLATE_ARRAY_FACTS=1`, read when the
+    /// builder is made): every query sees none.
+    off: bool,
     /// The stated facts (`optim::array_facts`).
     pub(crate) store: crate::optim::array_facts::ArrayFacts,
     /// Interval propagation over the IR for the solver-free tiers; separate
@@ -59,6 +61,17 @@ pub(crate) struct ArrayFactState {
     /// its cells on first use (the cells of a statement never change, and
     /// facts are only added, so a remembered answer stays true).
     init_facts: std::sync::Mutex<HashMap<(StmtId, FactGuard), Vec<Segmentation>>>,
+}
+
+impl Default for ArrayFactState {
+    fn default() -> Self {
+        ArrayFactState {
+            off: crate::optim::array_facts::ablated(),
+            store: Default::default(),
+            intervals: Default::default(),
+            init_facts: Default::default(),
+        }
+    }
 }
 
 /// The builder as the oracle for the symbolic bounds of array facts (a
@@ -314,9 +327,8 @@ impl IRBuilder {
     }
 
     /// One segmentation summarizing what is known about `arr`'s elements in
-    /// context `at`: a stated segmentation with relational facts (order,
-    /// permutation, symbolic cuts) when there is one, else the range every
-    /// element satisfies.
+    /// context `at`: the meet of all its facts (each holds of the same
+    /// cells).
     fn primary_facts(&self, arr: &Value, at: Where) -> Option<Segmentation> {
         let facts = self.view_facts(arr, at);
         let oracle = self.oracle(at);
@@ -332,6 +344,9 @@ impl IRBuilder {
     /// `ArrayRead`, the facts of the array it reads over the cells it can
     /// read. Symbolic ends are kept.
     pub(crate) fn array_fact_range(&self, cell: &Cell, v: &Value, at: Where) -> Range {
+        if self.array_facts.off {
+            return Range::TOP;
+        }
         let context = self.fact_context(at);
         let oracle = self.oracle(at);
         let mut range = self.array_facts.store.cell_range(*cell, &oracle, &context);
@@ -508,6 +523,9 @@ impl IRBuilder {
     /// row-major order, in context `at`. Empty when nothing is known, the
     /// array is complex, or its storage is stale.
     pub(crate) fn view_facts(&self, arr: &Value, at: Where) -> Vec<Segmentation> {
+        if self.array_facts.off {
+            return Vec::new();
+        }
         match arr {
             Value::StaticArray { dtype, shape, segment_id, strides, offset, .. } => {
                 if *dtype == NumberType::Complex || !self.storage_is_current(*segment_id) {
@@ -663,6 +681,9 @@ impl IRBuilder {
     /// `is_permutation`, the argsort of a line), read through a run that
     /// covers all of it, in context `Here`.
     pub fn is_known_permutation(&self, elements: &[Value]) -> bool {
+        if self.array_facts.off {
+            return false;
+        }
         let Some(cells) = Cell::list(elements) else { return false };
         let context = self.fact_context(Where::Here);
         self.array_facts.store.list_facts(&cells, &self.oracle(Where::Here), &context).iter().any(Segmentation::is_permutation)
@@ -831,6 +852,29 @@ mod tests {
         let x = input(&mut b, "x");
         b.storage_write_at(storage, &i, &x);
         assert_eq!(b.array_interval(&arr, Where::Here), None);
+    }
+
+    #[test]
+    fn a_constant_write_to_a_version_replaces_one_cell() {
+        // After a runtime write the array is a version; a later write on
+        // every path at a constant address splits its segment: the other
+        // cells keep their facts, the written one has the value's.
+        let mut b = IRBuilder::new();
+        let cells = bounded_cells(&mut b);
+        let arr = array_of(&mut b, &cells);
+        let storage = storage_of(&arr);
+        let i = input(&mut b, "i");
+        let two = b.ir_constant_int(2);
+        b.storage_write_at(storage, &i, &two);
+        let hundred = b.ir_constant_int(100);
+        b.storage_write(storage, 1, &hundred);
+        assert_eq!(b.array_interval(&arr, Where::Here), Some((0, 100)));
+        // Reading cell 0 or 2 at a runtime position that can only name them
+        // (positions 0 and 2 of a 2-element strided view would; here a
+        // constant read): the version's facts at that position.
+        let zero = b.ir_constant_int(0);
+        let first = b.storage_read_at(storage, &zero);
+        assert_eq!(b.cheap_bounds(&first, Where::Here), (Some(0), Some(4)));
     }
 
     #[test]
