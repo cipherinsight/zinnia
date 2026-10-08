@@ -41,7 +41,7 @@ import re
 import shutil
 import sys
 import tempfile
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -77,12 +77,12 @@ def scaled_case_id(case: str, cap: int) -> str:
 
 @dataclass
 class Sizing:
-    """The entry's inputs at one cap: input A by parameter name, B when given."""
+    """The entry's input A at one cap, by parameter name (B is the seeded perturbation of A,
+    drawn when the fixture is written, as for the CAP-16 fixtures)."""
 
     knobs: dict[str, Any]
     divisor: int
     a: dict[str, Any]
-    b: dict[str, Any] | None
     note: str
 
 
@@ -145,7 +145,7 @@ class NpbenchSizer(Sizer):
             for name, factor in factors[0].items():
                 a[name] = a[name] * factor
             note += f" Changed for Q32 as at CAP 16: {factors[1]}."
-        return Sizing(choice.knobs, choice.divisor, a, None, note)
+        return Sizing(choice.knobs, choice.divisor, a, note)
 
 
 def example_arguments(code: str, function: str, module_globals: dict) -> list[Any] | None:
@@ -186,7 +186,7 @@ class PythranSizer(Sizer):
                 f"CAP {cap}: divisor {choice.divisor}).")
         if self.line.q32_values:
             note += " The values come from the CAP-16 fixture's Q32 generator (acceptance_fixtures.py)."
-        return Sizing(choice.knobs, choice.divisor, dict(zip(names, choice.values)), None, note)
+        return Sizing(choice.knobs, choice.divisor, dict(zip(names, choice.values)), note)
 
     def check_template(self) -> list[str]:
         """Problems with the template: it must give the upstream line's arguments at the
@@ -383,20 +383,14 @@ def attach_upstream(entries: list[Entry], roots: dict[str, Path]) -> None:
             entry.module_globals = globals_by_program[entry.perf["program"]]
 
 
-def build_fixture(entry: Entry, kernel: Path, annotations: dict[str, str], sizing: Sizing) -> dict:
-    program, function = entry.key
-    data = fixtures.build(program, function, kernel, annotations, sizing.a,
-                          fixtures.seed_for(program, function), sizing.note, sizing.b)
-    return data
-
-
 def write_point(entry: Entry, cap: int, sizing: Sizing, data: Path) -> tuple[Point, dict]:
     """Write the scaled kernel, fixture and zkvm.rs; the point and its fixture."""
     program, function = entry.key
     folder = data / f"cap{cap}" / program
-    folder.mkdir(parents=True, exist_ok=True)
     kernel = folder / "kernel.py"
-    if not kernel.exists():
+    created = not kernel.exists()
+    if created:
+        folder.mkdir(parents=True)
         kernel.write_text((entry.folder / "kernel.py").read_text())
         shutil.copyfile(entry.folder / "zkvm.rs", folder / "zkvm.rs")
     annotations = annotations_for(entry, sizing.a)
@@ -406,9 +400,13 @@ def write_point(entry: Entry, cap: int, sizing: Sizing, data: Path) -> tuple[Poi
         raise RuntimeError(f"{entry.key}: rewriting the annotations changed the kernel")
     kernel.write_text(after)
     try:
-        document = build_fixture(entry, kernel, annotations, sizing)
+        document = fixtures.build(program, function, kernel, annotations, sizing.a,
+                                  fixtures.seed_for(program, function), sizing.note)
     except fixtures.FixtureError as exc:
-        kernel.write_text(before)
+        if created:
+            shutil.rmtree(folder)
+        else:
+            kernel.write_text(before)
         raise rule.NotScalable(f"NumPy reference fails: {exc}") from exc
     fixtures.dump(folder / entry.perf["fixture"], document)
     point = Point(scaled_case_id(entry.perf["case"], cap), program, function, entry.perf["group"], cap, SCALED,

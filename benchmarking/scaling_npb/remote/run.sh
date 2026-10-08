@@ -3,7 +3,7 @@
 # hyperthread siblings of one physical core; 251 GB RAM). Style of
 # eval-redo/post-freeze/scripts/final-remeasure.sh and fin-queue.sh.
 #
-# Stages (default: S A B C, in this order; each waits for the previous one):
+# Stages (default: S P A B C, in this order; each waits for the previous one):
 #   S  setup: the checkout's src/ must equal 4115cecb; point the case sets at $DATA; diff the
 #      zkVM programs (zkvm-check); build the zkVM hosts and guests (sp1, risc0) if needed;
 #      check-env. The Zinnia extension and noir-execute must already be built in $WT
@@ -11,18 +11,21 @@
 #   P  thread probe: one short SP1 and one RISC Zero run on all 64 CPUs (--threads 64), watched
 #      by thread_probe.py (threads per prover, busiest interval in CPUs) -> $OUT/probe/
 #   A  counts (untimed, nothing timed runs): per cap, measure.py with configuration `final`
-#      (halo2-base cells and Noir gates) and `fix_delegate` (Noir gates of Noir's own array
-#      lowering), on all 64 CPUs                                    -> $OUT/counts/
-#   B  Zinnia timing: zinnia_halo2 + zinnia_noir, every cap, 8 shards per cap, as a job queue over
-#      four slots of 8 physical cores (CPUs 8j..8j+7; their siblings 32+8j.. stay idle), threads 8,
-#      memory cap 30G, repeats $REPEATS_<cap> (5; never below 3), per-step timeout $TIMEOUT.
-#      Only these four timed jobs run.                               -> $RES/<date>-scnpb-z-cap<C>-s<K>
+#      (halo2-base cells and Noir gates as Zinnia chooses) and `fix_delegate` (the same with the
+#      backend's own array lowering), on all 64 CPUs               -> $OUT/counts/
+#   B  Zinnia timing: zinnia_halo2, zinnia_halo2_delegate, zinnia_noir, zinnia_noir_delegate back to
+#      back per entry in one harness run (the delegate systems are Zinnia with the backend's own
+#      array lowering), every cap, 8 shards per cap, as a job queue over four slots of 8 physical
+#      cores (CPUs 8j..8j+7; their siblings 32+8j.. stay idle), threads 8, memory cap 30G, repeats
+#      $REPEATS_<cap> (5; never below 3, the same for all four systems at a cap), per-step timeout
+#      $TIMEOUT. Only these four timed jobs run.                    -> $RES/<date>-scnpb-z-cap<C>-s<K>
 #   C  zkVM timing: sp1 + risc0, one harness run per cap, one at a time on the whole machine
 #      (taskset 0-63, threads 64, memory cap $ZKVM_MEMORY), repeats 1, the same per-step timeout.
 #      Nothing else runs.                                            -> $RES/<date>-scnpb-k-cap<C>
 #
-# The asymmetry is deliberate (author's rule): Zinnia gets 8 cores and 30G exactly as in every
-# other timing session; the zkVMs, far slower, get the whole machine. Same timeout for every system.
+# The asymmetry is deliberate (author's rule): Zinnia (all four systems) gets 8 cores and 30G
+# exactly as in every other timing session; the zkVMs, far slower, get the whole machine. Same
+# timeout for every system.
 #
 # Usage (on the remote, after `remote.sh push` of branch scaling-npb to $WT and `remote.sh put` of
 # the data directory to $DATA):  bash $WT/benchmarking/scaling_npb/remote/run.sh [stages...]
@@ -40,9 +43,10 @@ REPEATS_64=${REPEATS_64:-5}
 REPEATS_128=${REPEATS_128:-5}
 ZKVM_MEMORY=${ZKVM_MEMORY:-200G}
 SHARDS=8
+ZINNIA_SYSTEMS=zinnia_halo2,zinnia_halo2_delegate,zinnia_noir,zinnia_noir_delegate
 PY=$WT/.venv/bin/python
 export ZINNIA_HARNESS_MEMORY_CAP=watchdog ZWT=$WT
-STAGES=${*:-S A B C}
+STAGES=${*:-S P A B C}
 mkdir -p $OUT/logs $OUT/counts $RES
 cd $WT
 
@@ -52,6 +56,9 @@ log() { echo "$* $(date -Is)"; }
 
 setup() {
   git diff --quiet 4115cecb -- src || { echo "src/ differs from 4115cecb"; return 1; }
+  # In the first NPB zkVM epoch SP1 died with SIGBUS on conv2d_bias while /dev/shm was Docker's
+  # 64 MB default; the reruns with a larger /dev/shm passed. The scaled points are larger.
+  echo "/dev/shm: $(df -h /dev/shm | tail -1)"
   $PY -m benchmarking.scaling_npb relocate --data $DATA
   $PY -m benchmarking.scaling_npb zkvm-check --data $DATA --out $OUT/zkvm_check.json | tail -1 || return 1
   for s in sp1 risc0; do
@@ -60,7 +67,7 @@ setup() {
   done
   taskset -c 0-63 $PY -m benchmarking.harness build --skip-zinnia --baselines sp1,risc0 --jobs 32 \
     > $OUT/logs/build-zkvm.log 2>&1 || { tail -5 $OUT/logs/build-zkvm.log; return 1; }
-  $PY -m benchmarking.harness check-env --systems zinnia_halo2,zinnia_noir,sp1,risc0 \
+  $PY -m benchmarking.harness check-env --systems $ZINNIA_SYSTEMS,sp1,risc0 \
     --out $OUT/check-env.json > $OUT/logs/check-env.log 2>&1 || { tail -20 $OUT/logs/check-env.log; return 1; }
 }
 
@@ -78,9 +85,8 @@ probe() {  # one small scaled point per zkVM, whole machine, as stage C runs it
 counts() {  # untimed: every cap, both configurations, all CPUs
   for c in $CAPS; do
     for config in final fix_delegate; do
-      targets=halo2,noir; [[ $config == fix_delegate ]] && targets=noir
       taskset -c 0-63 $PY benchmarking/ablations/measure.py --config $config --case-sets $(case_set $c) \
-        --targets $targets --gates --jobs 6 --timeout $((TIMEOUT + 100)) \
+        --targets halo2,noir --gates --jobs 6 --timeout $((TIMEOUT + 100)) \
         --wrap "$PY benchmarking/ablations/capped.py 30G $TIMEOUT" \
         --out $OUT/counts/measure_${config}_cap$c.json > $OUT/logs/counts-${config}-cap$c.log 2>&1
       log "counts $config cap $c exit $?"
@@ -91,7 +97,7 @@ counts() {  # untimed: every cap, both configurations, all CPUs
 zinnia_job() {  # zinnia_job <cap> <shard> <cpus>
   local label=scnpb-z-cap$1-s$2
   taskset -c $3 $PY -m benchmarking.harness run --label $label --case-set $(case_set $1) \
-    --shard $2/$SHARDS --systems zinnia_halo2,zinnia_noir --repeats $(repeats $1) --threads 8 \
+    --shard $2/$SHARDS --systems $ZINNIA_SYSTEMS --repeats $(repeats $1) --threads 8 \
     --memory-max 30G --timeout $TIMEOUT --results-dir $RES > $OUT/logs/$label.log 2>&1
   log "$label exit $? cpus $3"
 }

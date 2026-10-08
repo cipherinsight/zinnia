@@ -69,11 +69,12 @@ def validation_rows(reports: list[Path]) -> list[str]:
         document = json.loads(path.read_text())
         if isinstance(document, dict) and "records" in document:      # validate.py
             where = document.get("host", "?")
-            by_target: dict[str, Counter] = defaultdict(Counter)
+            by_system: dict[str, Counter] = defaultdict(Counter)
             for record in document["records"]:
-                by_target[record["target"]][record["outcome"]] += 1
-            for target, counts in sorted(by_target.items()):
-                lines.append(f"| {document['cap']} | Zinnia ({target} target), mock vs NumPy | {where} | "
+                system = record.get("system") or f"zinnia_{record['target']}"
+                by_system[system][record["outcome"]] += 1
+            for system, counts in sorted(by_system.items()):
+                lines.append(f"| {document['cap']} | {system}, mock vs NumPy | {where} | "
                              + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())) + " |")
         else:                                                           # check_outputs.py --report
             by_system: dict[str, Counter] = defaultdict(Counter)

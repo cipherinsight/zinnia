@@ -3,8 +3,8 @@
     python -m benchmarking.scaling_npb generate --data DATA --npbench NPB --pythran PYT [--caps 32,64,128]
     python -m benchmarking.scaling_npb relocate --data DATA
     python -m benchmarking.scaling_npb zkvm-check --data DATA [--out FILE]
-    python -m benchmarking.scaling_npb validate --data DATA --cap C --out FILE [--jobs N] [--memory 16G]
-                                               [--timeout S] [--cases ...]
+    python -m benchmarking.scaling_npb validate --data DATA --cap C --out FILE [--systems S,..] [--jobs N]
+                                               [--memory 16G] [--timeout S] [--cases ...]
     python -m benchmarking.scaling_npb table --data DATA [--validation FILE ...]
     python -m benchmarking.scaling_npb analyze --data DATA [--zinnia EPOCH...] [--zkvm EPOCH...] \\
                                               [--counts FILE...] [--reference-zinnia EPOCH...] \\
@@ -56,7 +56,12 @@ def cmd_zkvm_check(args: argparse.Namespace) -> int:
 def cmd_validate(args: argparse.Namespace) -> int:
     from benchmarking.scaling_npb import validate
     cases = [c for c in (args.cases or "").split(",") if c]
-    return validate.main(args.data.resolve(), args.cap, args.out, args.jobs, args.memory, args.timeout, cases)
+    systems = [s for s in args.systems.split(",") if s]
+    unknown = set(systems) - set(validate.SYSTEMS)
+    if unknown:
+        raise SystemExit(f"unknown systems {sorted(unknown)}; known: {', '.join(validate.SYSTEMS)}")
+    return validate.main(args.data.resolve(), args.cap, args.out, args.jobs, args.memory, args.timeout, cases,
+                         systems)
 
 
 def cmd_table(args: argparse.Namespace) -> int:
@@ -97,6 +102,7 @@ def parser() -> argparse.ArgumentParser:
     val.add_argument("--cap", type=int, required=True)
     val.add_argument("--out", type=Path, required=True)
     val.add_argument("--cases", help="comma-separated case ids (default: every scaled case)")
+    val.add_argument("--systems", default="zinnia_halo2,zinnia_halo2_delegate,zinnia_noir,zinnia_noir_delegate")
     val.add_argument("--jobs", type=int, default=4)
     val.add_argument("--memory", default="16G")
     val.add_argument("--timeout", type=float, default=1800)

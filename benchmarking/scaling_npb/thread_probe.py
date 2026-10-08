@@ -3,9 +3,10 @@
     python -m benchmarking.scaling_npb.thread_probe --out FILE -- <command ...>
 
 Runs the command (typically a harness run of one case on `sp1` or `risc0` with
-`--threads N`) and samples /proc every 0.5 s. For every process whose name is
-a zkVM host (`sp1-baseline`, `risc0-baseline`) or a process it started, it
-records the thread count (`Threads:` in /proc/PID/status), the thread
+`--threads N`) and samples /proc every 0.5 s. For every process the command
+started whose name is a zkVM host (`sp1-baseline`, `risc0-baseline`), with
+the processes that host started, it
+records its mode (setup, prove, verify), the thread count (`Threads:` in /proc/PID/status), the thread
 variables in its environment (RAYON_NUM_THREADS, OMP_NUM_THREADS), its CPU
 affinity, and the CPU time it used per sample interval. The summary gives,
 per host process, the largest thread count and the busiest interval in CPUs
@@ -51,6 +52,9 @@ def describe(pid: int) -> dict:
         record["threads"] = int(next(l for l in status.splitlines() if l.startswith("Threads:")).split()[1])
         record["cpus_allowed"] = next(l for l in status.splitlines()
                                       if l.startswith("Cpus_allowed_list:")).split()[1]
+        argv = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace").split("\0")
+        if "--mode" in argv:
+            record["mode"] = argv[argv.index("--mode") + 1]
         environ = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
         record["env"] = {k: v for k, _, v in (e.decode(errors="replace").partition("=") for e in environ)
                          if k in ("RAYON_NUM_THREADS", "OMP_NUM_THREADS", "HARDWARE_CONCURRENCY")}
@@ -59,9 +63,23 @@ def describe(pid: int) -> dict:
     return record
 
 
-def watched(table: dict[int, tuple[str, int, int]]) -> dict[int, int]:
-    """Host processes and their descendants: pid -> the host pid they belong to."""
-    roots = {pid for pid, (name, _, _) in table.items() if name in HOSTS}
+def descendants(table: dict[int, tuple[str, int, int]], root: int) -> set[int]:
+    found = {root}
+    changed = True
+    while changed:
+        changed = False
+        for pid, (_, parent, _) in table.items():
+            if pid not in found and parent in found:
+                found.add(pid)
+                changed = True
+    return found
+
+
+def watched(table: dict[int, tuple[str, int, int]], root: int) -> dict[int, int]:
+    """Host processes started by `root` (only those: other runs on the machine are not
+    ours) and their descendants: pid -> the host pid they belong to."""
+    mine = descendants(table, root)
+    roots = {pid for pid in mine if table[pid][0] in HOSTS}
     owner = {pid: pid for pid in roots}
     changed = True
     while changed:
@@ -87,7 +105,7 @@ def main() -> int:
         time.sleep(INTERVAL_S)
         now = time.monotonic()
         table = processes()
-        owner = watched(table)
+        owner = watched(table, proc.pid)
         busy: dict[int, int] = {}
         for pid, host in owner.items():
             ticks = table[pid][2]
@@ -98,7 +116,7 @@ def main() -> int:
                                              "samples": 0})
             info = describe(host)
             record["max_threads"] = max(record["max_threads"], info.get("threads", 0))
-            record.update({k: info[k] for k in ("cpus_allowed", "env") if k in info})
+            record.update({k: info[k] for k in ("mode", "cpus_allowed", "env") if k in info})
             record["max_busy_cpus"] = max(record["max_busy_cpus"], round(ticks / CLOCK_TICKS / (now - last), 1))
             record["samples"] += 1
         last = now

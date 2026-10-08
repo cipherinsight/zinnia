@@ -1,8 +1,9 @@
-"""Analysis of the remote runs: Zinnia against the zkVMs per cap, and Zinnia's Noir gates
-against Noir's own array lowering (`@delegate`).
+"""Analysis of the remote runs: Zinnia against the zkVMs per cap, and Zinnia against itself
+with the backend's own array lowering (the delegate systems, `@delegate`).
 
-Inputs: the Zinnia epochs (stage B of `remote/run.sh`: zinnia_halo2 and
-zinnia_noir, every cap and shard) and the zkVM epochs (stage C: sp1 and risc0),
+Inputs: the Zinnia epochs (stage B of `remote/run.sh`: zinnia_halo2,
+zinnia_halo2_delegate, zinnia_noir and zinnia_noir_delegate in one run, every
+cap and shard) and the zkVM epochs (stage C: sp1 and risc0),
 optionally the CAP-16 epochs of the performance set (`--reference-zinnia`,
 `--reference-zkvm`, the same measurement at the acceptance study's sizes), and
 the count files of stage A (`ablations/measure.py` with configurations `final`
@@ -19,9 +20,11 @@ an earlier cap and is not measured again):
   with the harness's bootstrap 95 % interval (`harness.analysis.stats`) and
   the number of points, the copy-only points (`data_movement_only`) apart, as
   `eval-redo/tools/pooled.py` and the harness do;
-* Noir gates: Zinnia (`final`) / `@delegate` (`fix_delegate`) per point and
-  their geometric mean, with how many points are cheaper, equal, costlier;
-  halo2-base cells of `final` are listed per point too.
+* the same for each Zinnia backend against its delegate system (both timed in
+  the same run, so the ratio is paired);
+* sizes: halo2-base cells and Noir gates of Zinnia (`final`) over those of
+  `@delegate` (`fix_delegate`) per point, their geometric mean, and how many
+  points are cheaper, equal, costlier.
 
 Writes `OUT/scaling_npb.json` and `OUT/scaling_npb.md` (default OUT: DATA/analysis).
 """
@@ -36,7 +39,11 @@ from benchmarking.harness.analysis import aggregate, stats
 from benchmarking.harness.protocol import OK
 
 ZINNIA = ("zinnia_halo2", "zinnia_noir")
+#: Each Zinnia backend's delegate system (the backend's own array lowering).
+DELEGATE = {"zinnia_halo2": "zinnia_halo2_delegate", "zinnia_noir": "zinnia_noir_delegate"}
 ZKVMS = ("sp1", "risc0")
+#: The size each target is counted in (`ablations/measure.py` record fields).
+SIZE_FIELD = {"halo2": "cells", "noir": "gates"}
 CLOCKS = ("prove_core_s", "end_to_end_s")
 REFERENCE_CAP = 16
 
@@ -77,21 +84,28 @@ def completion(epochs: aggregate.EpochData | None, systems: tuple[str, ...], cas
     return out
 
 
-def time_comparison(zinnia: aggregate.EpochData, zkvm: aggregate.EpochData, cases: list[str],
-                    copy_only: set[str]) -> dict:
+def time_comparison(numerator: aggregate.EpochData, denominator: aggregate.EpochData,
+                    pairs: list[tuple[str, str]], cases: list[str], copy_only: set[str]) -> dict:
+    """Per pair (system of `numerator`, system of `denominator`) and clock: the ratios of
+    median times on the points both completed, summarized."""
     result = {}
     for clock in CLOCKS:
-        z_medians = {s: medians(zinnia, s, clock) for s in ZINNIA}
-        k_medians = {s: medians(zkvm, s, clock) for s in ZKVMS}
-        for z in ZINNIA:
-            for k in ZKVMS:
-                both = [c for c in cases if c in z_medians[z] and c in k_medians[k]]
-                ratios = {c: z_medians[z][c] / k_medians[k][c] for c in both}
-                result[f"{z}/{k}/{clock}"] = {
-                    "headline": summarize({c: r for c, r in ratios.items() if c not in copy_only}),
-                    "copy_only": summarize({c: r for c, r in ratios.items() if c in copy_only}),
-                    "per_point": ratios}
+        for top, bottom in pairs:
+            a, b = medians(numerator, top, clock), medians(denominator, bottom, clock)
+            ratios = {c: a[c] / b[c] for c in cases if c in a and c in b}
+            result[f"{top}/{bottom}/{clock}"] = {
+                "headline": summarize({c: r for c, r in ratios.items() if c not in copy_only}),
+                "copy_only": summarize({c: r for c, r in ratios.items() if c in copy_only}),
+                "per_point": ratios}
     return result
+
+
+def zinnia_vs_zkvm(zinnia, zkvm, cases, copy_only) -> dict:
+    return time_comparison(zinnia, zkvm, [(z, k) for z in ZINNIA for k in ZKVMS], cases, copy_only)
+
+
+def zinnia_vs_delegate(zinnia, cases, copy_only) -> dict:
+    return time_comparison(zinnia, zinnia, list(DELEGATE.items()), cases, copy_only)
 
 
 def load_counts(paths: list[Path]) -> dict[str, dict[str, dict]]:
@@ -106,24 +120,27 @@ def load_counts(paths: list[Path]) -> dict[str, dict[str, dict]]:
     return out
 
 
-def gate_comparison(counts: dict[str, dict[str, dict]], cases: list[str]) -> dict:
+def size_comparison(counts: dict[str, dict[str, dict]], cases: list[str]) -> dict:
+    """Per target: Zinnia's size (`final`) over the delegate size (`fix_delegate`)."""
     final, delegate = counts.get("final", {}), counts.get("fix_delegate", {})
-    rows, ratios = {}, {}
-    for case in cases:
-        zinnia_gates = (final.get(case, {}).get("noir") or {}).get("gates")
-        delegate_gates = (delegate.get(case, {}).get("noir") or {}).get("gates")
-        cells = (final.get(case, {}).get("halo2") or {}).get("cells")
-        rows[case] = {"halo2_cells": cells, "noir_gates": zinnia_gates, "delegate_noir_gates": delegate_gates,
-                      "errors": {f"{cfg}/{t}": r["error"][:300] for cfg, by in (("final", final), ("fix_delegate", delegate))
-                                 for t, r in by.get(case, {}).items() if "error" in r}}
-        if zinnia_gates and delegate_gates:
-            ratios[case] = zinnia_gates / delegate_gates
-    values = list(ratios.values())
-    summary = {"n": len(values), "points": len(cases)}
-    if values:
-        summary.update(geomean=stats.geometric_mean(values), cheaper=sum(v < 1 for v in values),
-                       equal=sum(v == 1 for v in values), costlier=sum(v > 1 for v in values))
-    return {"summary": summary, "per_point": rows}
+    out = {}
+    for target, field in SIZE_FIELD.items():
+        rows, ratios = {}, {}
+        for case in cases:
+            mine = (final.get(case, {}).get(target) or {})
+            theirs = (delegate.get(case, {}).get(target) or {})
+            rows[case] = {"zinnia": mine.get(field), "delegate": theirs.get(field),
+                          "errors": {name: r["error"][:300] for name, r in (("final", mine), ("fix_delegate", theirs))
+                                     if "error" in r}}
+            if mine.get(field) and theirs.get(field):
+                ratios[case] = mine[field] / theirs[field]
+        values = list(ratios.values())
+        summary = {"n": len(values), "points": len(cases)}
+        if values:
+            summary.update(geomean=stats.geometric_mean(values), cheaper=sum(v < 1 for v in values),
+                           equal=sum(v == 1 for v in values), costlier=sum(v > 1 for v in values))
+        out[target] = {"field": field, "summary": summary, "per_point": rows}
+    return out
 
 
 def load(dirs: list[Path] | None) -> aggregate.EpochData | None:
@@ -141,11 +158,13 @@ def analyze(data: Path, zinnia_dirs: list[Path], zkvm_dirs: list[Path], count_fi
         groups = {g: [c for c in scaled if c.startswith(g)] for g in ("npbench", "pythran")}
         report["caps"][cap] = {
             "points": {"scaled": len(scaled), **Counter(e["status"] for e in entries if e["status"] != "perf")},
-            "completion": {**completion(zinnia, ZINNIA, scaled), **completion(zkvm, ZKVMS, scaled)},
-            "time": time_comparison(zinnia, zkvm, scaled, copy_only) if zinnia and zkvm else {},
-            "time_by_group": {g: time_comparison(zinnia, zkvm, cs, copy_only) for g, cs in groups.items()}
+            "completion": {**completion(zinnia, ZINNIA + tuple(DELEGATE.values()), scaled),
+                           **completion(zkvm, ZKVMS, scaled)},
+            "time": zinnia_vs_zkvm(zinnia, zkvm, scaled, copy_only) if zinnia and zkvm else {},
+            "time_by_group": {g: zinnia_vs_zkvm(zinnia, zkvm, cs, copy_only) for g, cs in groups.items()}
             if zinnia and zkvm else {},
-            "gates": gate_comparison(counts, scaled) if counts else {},
+            "time_vs_delegate": zinnia_vs_delegate(zinnia, scaled, copy_only) if zinnia else {},
+            "size_vs_delegate": size_comparison(counts, scaled) if counts else {},
         }
     if reference_zinnia and reference_zkvm:
         ref_z, ref_k = load(reference_zinnia), load(reference_zkvm)
@@ -154,8 +173,8 @@ def analyze(data: Path, zinnia_dirs: list[Path], zkvm_dirs: list[Path], count_fi
         report["caps"][REFERENCE_CAP] = {"points": {"scaled": len(cases)},
                                          "completion": {**completion(ref_z, ZINNIA, cases),
                                                         **completion(ref_k, ZKVMS, cases)},
-                                         "time": time_comparison(ref_z, ref_k, cases, copy_only),
-                                         "gates": gate_comparison(counts, cases) if counts else {}}
+                                         "time": zinnia_vs_zkvm(ref_z, ref_k, cases, copy_only),
+                                         "size_vs_delegate": size_comparison(counts, cases) if counts else {}}
     return report
 
 
@@ -167,23 +186,30 @@ def fmt(summary: dict) -> str:
             f"(faster {summary['zinnia_faster']}, slower {summary['zinnia_slower']})")
 
 
+def time_table(comparisons: dict) -> list[str]:
+    lines = ["| ratio | clock | geomean [95 % CI], points (headline) | copy-only |", "|---|---|---|---|"]
+    for key, comparison in comparisons.items():
+        top, bottom, clock = key.split("/")
+        lines.append(f"| {top} / {bottom} | {clock} | {fmt(comparison['headline'])} | "
+                     f"{fmt(comparison['copy_only'])} |")
+    return lines
+
+
 def markdown(report: dict) -> str:
     lines = ["# NPBench/Pythran scaling study", ""]
     for cap, part in sorted(report["caps"].items(), key=lambda kv: int(kv[0])):
         lines += [f"## CAP {cap}", "", f"Points: {part['points']}", "", "| system | ok | not ok |", "|---|---|---|"]
         for system, done in part["completion"].items():
             lines.append(f"| {system} | {done['ok']}/{done['points']} | {done['not_ok'] or ''} |")
-        if part.get("time"):
-            lines += ["", "| Zinnia / zkVM | clock | geomean [95 % CI], points (headline) | copy-only |",
-                      "|---|---|---|---|"]
-            for key, comparison in part["time"].items():
-                z, k, clock = key.split("/")
-                lines.append(f"| {z} / {k} | {clock} | {fmt(comparison['headline'])} | {fmt(comparison['copy_only'])} |")
-        gates = (part.get("gates") or {}).get("summary")
-        if gates and gates.get("n"):
-            lines += ["", f"Noir gates, Zinnia / @delegate: geomean {gates['geomean']:.3g} over {gates['n']} of "
-                      f"{gates['points']} points (cheaper {gates['cheaper']}, equal {gates['equal']}, costlier "
-                      f"{gates['costlier']})."]
+        for title, key in (("Zinnia / zkVM", "time"), ("Zinnia / delegate (same run)", "time_vs_delegate")):
+            if part.get(key):
+                lines += ["", f"{title}:", "", *time_table(part[key])]
+        for target, sizes in (part.get("size_vs_delegate") or {}).items():
+            summary = sizes["summary"]
+            if summary.get("n"):
+                lines += ["", f"{target} {sizes['field']}, Zinnia / @delegate: geomean {summary['geomean']:.3g} over "
+                          f"{summary['n']} of {summary['points']} points (cheaper {summary['cheaper']}, equal "
+                          f"{summary['equal']}, costlier {summary['costlier']})."]
         lines.append("")
     return "\n".join(lines)
 
