@@ -16,12 +16,18 @@
 #   A  counts (untimed, nothing timed runs): per cap, measure.py with configuration `final`
 #      (halo2-base cells and Noir gates as Zinnia chooses) and `fix_delegate` (the same with the
 #      backend's own array lowering), on all 64 CPUs               -> $OUT/counts/
-#   B  Zinnia timing: zinnia_halo2, zinnia_halo2_delegate, zinnia_noir, zinnia_noir_delegate back to
-#      back per entry in one harness run (the delegate systems are Zinnia with the backend's own
-#      array lowering), every cap, 8 shards per cap, as a job queue over four slots of 8 physical
+#   B  Zinnia timing, every cap, 8 shards per cap, as a job queue over four slots of 8 physical
 #      cores (CPUs 8j..8j+7; their siblings 32+8j.. stay idle), threads 8, memory cap 30G, repeats
-#      $REPEATS_<cap> (5; never below 3, the same for all four systems at a cap), per-step timeout
-#      $TIMEOUT. Only these four timed jobs run.                    -> $RES/<date>-scnpb-z-cap<C>-s<K>
+#      $REPEATS_<cap> (5; never below 3, the same for every system at a cap), per-step timeout
+#      $TIMEOUT. Only these four timed jobs run. Per shard: zinnia_halo2 + zinnia_noir on every
+#      point                                                        -> $RES/<date>-scnpb-z-cap<C>-s<K>
+#      then each delegate system (Zinnia with the backend's own array lowering) on the points whose
+#      @delegate circuit for that target differs from Zinnia's (stage A digests: halo2 IR, Noir
+#      main.nr, or a count that failed), in the same slot right after
+#                                                   -> ...-scnpb-z-cap<C>-s<K>-zinnia_<target>_delegate
+#      Rule fixed before any timing: where the circuit is identical the ratio is 1 by construction
+#      (original-size remote sessions, identical circuits: Zinnia/delegate 1.005 halo2, 0.998 Noir on
+#      DS-1000; 0.991, 1.006 on NPBench/Pythran). Stage B therefore needs stage A's counts.
 #   C  zkVM timing: sp1 + risc0, one harness run per cap, one at a time on the whole machine
 #      (taskset 0-63, threads 64, memory cap $ZKVM_MEMORY), repeats 1, the same per-step timeout.
 #      Nothing else runs.                                            -> $RES/<date>-scnpb-k-cap<C>
@@ -113,12 +119,34 @@ counts() {  # untimed: every cap, both configurations, all CPUs
   done
 }
 
+shard_cases() {  # shard_cases <cap> <shard> <comma-separated cases>: those of the shard
+  $PY - "$(case_set $1)" $2 $SHARDS "$3" <<'PY'
+import sys
+from pathlib import Path
+from benchmarking.harness.case_sets import load_perf_cases, shard_cases
+wanted = set(sys.argv[4].split(","))
+cases = shard_cases(load_perf_cases(Path(sys.argv[1]), None, None), int(sys.argv[2]), int(sys.argv[3]))
+print(",".join(c.case for c in cases if c.included and c.case in wanted))
+PY
+}
+
 zinnia_job() {  # zinnia_job <cap> <shard> <cpus>
-  local label=scnpb-z-cap$1-s$2
+  local label=scnpb-z-cap$1-s$2 target system cases
   taskset -c $3 $PY -m benchmarking.harness run --label $label --case-set $(case_set $1) \
-    --shard $2/$SHARDS --systems $ZINNIA_SYSTEMS --repeats $(repeats $1) --threads 8 \
+    --shard $2/$SHARDS --systems zinnia_halo2,zinnia_noir --repeats $(repeats $1) --threads 8 \
     --memory-max 30G --timeout $TIMEOUT --results-dir $RES > $OUT/logs/$label.log 2>&1
   log "$label exit $? cpus $3"
+  # The delegate system of a target only where its circuit differs from Zinnia's (stage A).
+  for target in halo2 noir; do
+    system=zinnia_${target}_delegate
+    cases=$(shard_cases $1 $2 "$($PY -m benchmarking.scaling_npb delegate-cases --target $target \
+      --case-set $(case_set $1) $OUT/counts/measure_{final,fix_delegate}_cap$1.json)")
+    [[ -z $cases ]] && continue
+    taskset -c $3 $PY -m benchmarking.harness run --label $label-$system --case-set $(case_set $1) \
+      --cases $cases --systems $system --repeats $(repeats $1) --threads 8 --memory-max 30G \
+      --timeout $TIMEOUT --results-dir $RES > $OUT/logs/$label-$system.log 2>&1
+    log "$label-$system exit $? cpus $3"
+  done
 }
 
 zinnia_queue() {  # four slots of 8 physical cores; a slot takes the next (cap, shard) when free

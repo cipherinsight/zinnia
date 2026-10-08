@@ -6,6 +6,7 @@
     python -m benchmarking.scaling_npb validate --data DATA --cap C --out FILE.jsonl [--systems S,..] [--jobs N]
                                                [--memory 16G] [--timeout S] [--max-elements N] [--cases ...]
     python -m benchmarking.scaling_npb remote-list --data DATA FILE.jsonl...
+    python -m benchmarking.scaling_npb delegate-cases --target halo2|noir --case-set FILE MEASURE.json...
     python -m benchmarking.scaling_npb table --data DATA [--validation FILE ...]
     python -m benchmarking.scaling_npb analyze --data DATA [--zinnia EPOCH...] [--zkvm EPOCH...] \\
                                               [--counts FILE...] [--reference-zinnia EPOCH...] \\
@@ -85,6 +86,12 @@ def cmd_analyze(args: argparse.Namespace) -> int:
                         args.reference_zinnia, args.reference_zkvm)
 
 
+def cmd_delegate_cases(args: argparse.Namespace) -> int:
+    from benchmarking.scaling_npb import analyze
+    print(",".join(analyze.differing_cases(args.case_set, args.counts, args.target)))
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     top = argparse.ArgumentParser(prog="python -m benchmarking.scaling_npb", description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -127,6 +134,12 @@ def parser() -> argparse.ArgumentParser:
     tab.add_argument("--data", type=Path, required=True)
     tab.add_argument("--validation", type=Path, action="append")
     tab.set_defaults(func=cmd_table)
+
+    dc = sub.add_parser("delegate-cases", help="cases whose @delegate circuit differs (or a count failed)")
+    dc.add_argument("--target", choices=["halo2", "noir"], required=True)
+    dc.add_argument("--case-set", type=Path, required=True, help="the cap's case set")
+    dc.add_argument("counts", type=Path, nargs="+", help="measure.py outputs of final and fix_delegate")
+    dc.set_defaults(func=cmd_delegate_cases)
 
     ana = sub.add_parser("analyze", help="Zinnia vs zkVM prove time and Zinnia vs @delegate gates")
     ana.add_argument("--data", type=Path, required=True)

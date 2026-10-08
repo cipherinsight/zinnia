@@ -20,8 +20,12 @@ an earlier cap and is not measured again):
   with the harness's bootstrap 95 % interval (`harness.analysis.stats`) and
   the number of points, the copy-only points (`data_movement_only`) apart, as
   `eval-redo/tools/pooled.py` and the harness do;
-* the same for each Zinnia backend against its delegate system (both timed in
-  the same run, so the ratio is paired);
+* each Zinnia backend against its delegate system. The delegate system is timed
+  only at (point, target) pairs whose circuit differs from Zinnia's (stage-A
+  digests: halo2 IR, Noir main.nr; rule fixed before any timing); at the other
+  pairs it compiles the identical circuit and the ratio is 1 by construction.
+  Reported: the number of identical and differing pairs, the geometric mean over
+  the differing (measured) pairs, and over all pairs;
 * sizes: halo2-base cells and Noir gates of Zinnia (`final`) over those of
   `@delegate` (`fix_delegate`) per point, their geometric mean, and how many
   points are cheaper, equal, costlier.
@@ -106,8 +110,40 @@ def zinnia_vs_zkvm(zinnia, zkvm, cases, copy_only) -> dict:
     return time_comparison(zinnia, zkvm, [(z, k) for z in ZINNIA for k in ZKVMS], cases, copy_only)
 
 
-def zinnia_vs_delegate(zinnia, cases, copy_only) -> dict:
-    return time_comparison(zinnia, zinnia, list(DELEGATE.items()), cases, copy_only)
+def zinnia_vs_delegate(zinnia, cases: list[str], copy_only: set[str], identical: dict[str, set[str]]) -> dict:
+    """Zinnia / its delegate system, per target. A (point, target) pair whose delegate circuit is
+    identical to Zinnia's (`identical`, from the stage-A digests) is not timed for the delegate:
+    its ratio is 1 by construction where Zinnia completed. Reported: the measured (differing)
+    pairs alone, and all pairs with the identical ones at 1."""
+    measured = time_comparison(zinnia, zinnia, list(DELEGATE.items()), cases, copy_only)
+    result = {}
+    for key, comparison in measured.items():
+        system = key.split("/")[0]
+        target = "halo2" if system == "zinnia_halo2" else "noir"
+        clock = key.split("/")[2]
+        same = identical.get(target, set())
+        done = medians(zinnia, system, clock)
+        measured_ratios = {c: r for c, r in comparison["per_point"].items() if c not in same}
+        by_construction = {c: 1.0 for c in cases if c in same and c in done}
+        everything = {**measured_ratios, **by_construction}
+        result[key] = {
+            "identical_pairs": len([c for c in cases if c in same]),
+            "differing_pairs": len([c for c in cases if c not in same]),
+            "headline": summarize({c: r for c, r in measured_ratios.items() if c not in copy_only}),
+            "copy_only": summarize({c: r for c, r in measured_ratios.items() if c in copy_only}),
+            "all_pairs": summarize({c: r for c, r in everything.items() if c not in copy_only}),
+            "per_point": everything}
+    return result
+
+
+def identical_pairs(counts: dict[str, dict[str, dict]], cases: list[str]) -> dict[str, set[str]]:
+    final, delegate = counts.get("final", {}), counts.get("fix_delegate", {})
+    out: dict[str, set[str]] = {}
+    for target, key in CIRCUIT_DIGEST.items():
+        out[target] = {c for c in cases
+                       if (final.get(c, {}).get(target) or {}).get(key)
+                       and final[c][target][key] == (delegate.get(c, {}).get(target) or {}).get(key)}
+    return out
 
 
 def load_counts(paths: list[Path]) -> dict[str, dict[str, dict]]:
@@ -145,6 +181,30 @@ def size_comparison(counts: dict[str, dict[str, dict]], cases: list[str]) -> dic
     return out
 
 
+#: The digest that identifies a target's circuit in a count record (`ablations/measure.py`).
+CIRCUIT_DIGEST = {"halo2": "ir", "noir": "noir"}
+#: The delegate system of each compile target.
+DELEGATE_OF_TARGET = {"halo2": "zinnia_halo2_delegate", "noir": "zinnia_noir_delegate"}
+
+
+def differing_cases(case_set: Path, count_files: list[Path], target: str) -> list[str]:
+    """The case set's scaled cases whose `@delegate` circuit for `target` differs from Zinnia's
+    (halo2: IR digest; Noir: main.nr digest), or whose identity is not established (a count
+    failed or is missing). Only these are timed for the delegate system; elsewhere it compiles
+    the same circuit."""
+    counts = load_counts(count_files)
+    final, delegate = counts.get("final", {}), counts.get("fix_delegate", {})
+    key = CIRCUIT_DIGEST[target]
+    scaled = [e["case"] for e in json.loads(case_set.read_text())["cases"] if e["status"] == "perf"]
+    out = []
+    for case in scaled:
+        mine = final.get(case, {}).get(target, {})
+        theirs = delegate.get(case, {}).get(target, {})
+        if not mine.get(key) or not theirs.get(key) or mine[key] != theirs[key]:
+            out.append(case)
+    return out
+
+
 def load(dirs: list[Path] | None) -> aggregate.EpochData | None:
     return aggregate.load_shards(dirs) if dirs else None
 
@@ -166,7 +226,9 @@ def analyze(data: Path, zinnia_dirs: list[Path], zkvm_dirs: list[Path], count_fi
             "time": zinnia_vs_zkvm(zinnia, zkvm, scaled, copy_only) if zinnia and zkvm else {},
             "time_by_group": {g: zinnia_vs_zkvm(zinnia, zkvm, cs, copy_only) for g, cs in groups.items()}
             if zinnia and zkvm else {},
-            "time_vs_delegate": zinnia_vs_delegate(zinnia, scaled, copy_only) if zinnia else {},
+            "identical_delegate_pairs": {t: len(v) for t, v in identical_pairs(counts, scaled).items()},
+            "time_vs_delegate": zinnia_vs_delegate(zinnia, scaled, copy_only, identical_pairs(counts, scaled))
+            if zinnia else {},
             "size_vs_delegate": size_comparison(counts, scaled) if counts else {},
         }
     if reference_zinnia and reference_zkvm:
@@ -204,9 +266,16 @@ def markdown(report: dict) -> str:
         lines += [f"## CAP {cap}", "", f"Points: {part['points']}", "", "| system | ok | not ok |", "|---|---|---|"]
         for system, done in part["completion"].items():
             lines.append(f"| {system} | {done['ok']}/{done['points']} | {done['not_ok'] or ''} |")
-        for title, key in (("Zinnia / zkVM", "time"), ("Zinnia / delegate (same run)", "time_vs_delegate")):
-            if part.get(key):
-                lines += ["", f"{title}:", "", *time_table(part[key])]
+        if part.get("time"):
+            lines += ["", "Zinnia / zkVM:", "", *time_table(part["time"])]
+        if part.get("time_vs_delegate"):
+            lines += ["", "Zinnia / delegate (identical circuits at 1 by construction):", "",
+                      "| ratio | clock | identical / differing pairs | differing pairs (measured) | all pairs |",
+                      "|---|---|---|---|---|"]
+            for key, c in part["time_vs_delegate"].items():
+                top, bottom, clock = key.split("/")
+                lines.append(f"| {top} / {bottom} | {clock} | {c['identical_pairs']} / {c['differing_pairs']} | "
+                             f"{fmt(c['headline'])} | {fmt(c['all_pairs'])} |")
         for target, sizes in (part.get("size_vs_delegate") or {}).items():
             summary = sizes["summary"]
             if summary.get("n"):
