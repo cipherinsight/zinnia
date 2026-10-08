@@ -53,6 +53,8 @@ pub(super) struct Decided<'a> {
     ordered: HashSet<(StmtId, StmtId, bool)>,
     /// The conditions of the program checks that are kept, never replaced.
     frozen: HashSet<StmtId>,
+    /// Off under `ZINNIA_ABLATE_ARRAY_FACTS`: nothing is replaced.
+    enabled: bool,
     /// Each replaced maximum or minimum, to the operand that replaced it:
     /// the two are equal on every accepted witness, so the operand's facts
     /// are the statement's (a clip's `min(max(a, lo), hi)`).
@@ -75,9 +77,10 @@ impl<'a> Decided<'a> {
             ranges: HashMap::new(),
             ordered: HashSet::new(),
             frozen: HashSet::new(),
+            enabled: super::array_facts::enabled() && free.enabled(),
             aliases: RefCell::new(HashMap::new()),
         };
-        if !super::array_facts::enabled() {
+        if !decided.enabled {
             return decided;
         }
         let kept: Vec<&ProgramCheck> = checks.iter().filter(|c| !dropped.contains(&c.stmt)).collect();
@@ -141,7 +144,7 @@ impl<'a> Decided<'a> {
     /// decide it: a comparison's constant outcome, or the operand a maximum
     /// or minimum always selects. `lookup` holds the lowered operands.
     pub(super) fn replacement(&self, b: &mut IRBuilder, stmt: StmtId, lookup: &HashMap<StmtId, Value>) -> Option<Value> {
-        if self.frozen.contains(&stmt) || (self.ranges.is_empty() && self.ordered.is_empty() && !self.free.enabled()) {
+        if !self.enabled || self.frozen.contains(&stmt) {
             return None;
         }
         let s = &self.graph.stmts[stmt as usize];

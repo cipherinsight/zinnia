@@ -44,6 +44,7 @@ CONFIGS: dict[str, dict[str, str]] = {
     "abl_joint": {"ZINNIA_ABLATE_JOINT": "1"},
     "fix_delegate": {"ZINNIA_FORCE_CONSTRUCTION": "@delegate"},
     "fix_selects": {"ZINNIA_FORCE_CONSTRUCTION": "@selects"},
+    "abl_array_facts": {"ZINNIA_ABLATE_ARRAY_FACTS": "1"},
 }
 
 #: Constructions through the backend's memory: Noir's native ROM / RAM, halo2-base's

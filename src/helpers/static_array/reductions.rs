@@ -983,6 +983,18 @@ fn ascending_sort_outputs(b: &IRBuilder, stmts: &[crate::types::StmtId]) -> Opti
     Some(elements)
 }
 
+/// NumPy's argmax (`is_max`) or argmin of one line of cells, compared as
+/// floats when `float`: 0 for a line of one cell, else an array-operator
+/// placeholder the lowering layer lowers (`lower::sort::arg_extreme`: the
+/// running extreme by selects, or, for a line known to be in order, a
+/// constant, a count or a hinted position).
+fn arg_extreme_of_line(b: &mut IRBuilder, cells: &[Value], is_max: bool, float: bool) -> Value {
+    if cells.len() < 2 {
+        return b.ir_constant_int(0);
+    }
+    crate::lower::sort::arg_extreme::lane(b, cells, is_max, float)
+}
+
 fn whole_array_argmax_argmin(b: &mut IRBuilder, arr: &Value, is_max: bool) -> Value {
     let cells = payload_cells(b, arr);
     if cells.is_empty() {
@@ -1006,29 +1018,7 @@ fn whole_array_argmax_argmin(b: &mut IRBuilder, arr: &Value, is_max: bool) -> Va
         // scan placeholder, whose one-hot a later read at it may reuse.
         crate::lower::gather::scan_lane(b, crate::lower::gather::ScanKind::Argmax, &cells)
     } else {
-        let mut idx = b.ir_constant_int(0);
-        let mut best_val = cells[0].clone();
-        for (i, elem) in cells.iter().enumerate().skip(1) {
-            let cond = if dtype == NumberType::Float {
-                if is_max {
-                    b.ir_greater_than_f(elem, &best_val)
-                } else {
-                    b.ir_less_than_f(elem, &best_val)
-                }
-            } else if is_max {
-                b.ir_greater_than_i(elem, &best_val)
-            } else {
-                b.ir_less_than_i(elem, &best_val)
-            };
-            let idx_val = b.ir_constant_int(i as i64);
-            idx = b.ir_select_i(&cond, &idx_val, &idx);
-            best_val = if dtype == NumberType::Float {
-                b.ir_select_f(&cond, elem, &best_val)
-            } else {
-                b.ir_select_i(&cond, elem, &best_val)
-            };
-        }
-        idx
+        arg_extreme_of_line(b, &cells, is_max, dtype == NumberType::Float)
     };
     // Publish `0 <= best_idx < len` via the registered `dyn_argextremum`
     // contract so downstream `discharge_index_in_range(best_idx, 0, len)`
@@ -1085,31 +1075,8 @@ fn axis_argmax_argmin(
             remaining %= stride.max(1);
             base += coord * kept_strides[k];
         }
-        // Inline argmax/argmin over this fiber.
-        let mut best_idx = b.ir_constant_int(0);
-        let mut best_val = cells[base].clone();
-        for j in 1..axis_len {
-            let elem = &cells[base + j * axis_stride];
-            let cond = if dtype == NumberType::Float {
-                if is_max {
-                    b.ir_greater_than_f(elem, &best_val)
-                } else {
-                    b.ir_less_than_f(elem, &best_val)
-                }
-            } else if is_max {
-                b.ir_greater_than_i(elem, &best_val)
-            } else {
-                b.ir_less_than_i(elem, &best_val)
-            };
-            let idx_val = b.ir_constant_int(j as i64);
-            best_idx = b.ir_select_i(&cond, &idx_val, &best_idx);
-            best_val = if dtype == NumberType::Float {
-                b.ir_select_f(&cond, elem, &best_val)
-            } else {
-                b.ir_select_i(&cond, elem, &best_val)
-            };
-        }
-        out_flat.push(best_idx);
+        let fiber: Vec<Value> = (0..axis_len).map(|j| cells[base + j * axis_stride].clone()).collect();
+        out_flat.push(arg_extreme_of_line(b, &fiber, is_max, dtype == NumberType::Float));
     }
     build_static_array_from_flat(b, out_flat, out_shape, NumberType::Integer)
 }

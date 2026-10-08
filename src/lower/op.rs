@@ -57,6 +57,11 @@ pub enum OpKind {
     /// `t` per lane (the lane's one own operand): the number of entries
     /// `<= t` (`right`) or `< t` (left). Output 0, position `None`.
     SearchSorted { right: bool },
+    /// NumPy's `argmax` (`max`) or `argmin` of the shared operands (at
+    /// least two), compared as floats when `float`: the first position of
+    /// the largest (smallest) value. One lane, output 0 at position 0
+    /// (`sort::arg_extreme`).
+    ArgExtreme { max: bool, float: bool },
     // ── statistics family (`lower::stats`) ────────────────────────────
     /// Pearson's `r` of `np.corrcoef(x, y)` (its off-diagonal entry) for two
     /// 1-D arrays of `n` elements. Shared operands: `x`, then `y`, then (when
@@ -136,6 +141,7 @@ impl OpKind {
         match self {
             OpKind::Sort => &super::sort::SortSemantics,
             OpKind::SearchSorted { .. } => &super::sort::SearchSortedSemantics,
+            OpKind::ArgExtreme { .. } => &super::sort::arg_extreme::ArgExtremeSemantics,
             OpKind::Corrcoef { .. } => &super::stats::CorrcoefSemantics,
             OpKind::FirstSet
             | OpKind::LastSet
@@ -159,6 +165,7 @@ impl OpKind {
         match self {
             OpKind::Sort => "sort",
             OpKind::SearchSorted { .. } => "searchsorted",
+            OpKind::ArgExtreme { .. } => "argextreme",
             OpKind::Corrcoef { .. } => "corrcoef",
             OpKind::FirstSet | OpKind::LastSet | OpKind::ArgmaxOfFlags => "scan",
             OpKind::Window { .. } => "window",
@@ -179,6 +186,8 @@ impl OpKind {
             OpKind::Sort => "sort",
             OpKind::SearchSorted { right: true } => "searchsorted_right",
             OpKind::SearchSorted { right: false } => "searchsorted_left",
+            OpKind::ArgExtreme { max: true, .. } => "argmax",
+            OpKind::ArgExtreme { max: false, .. } => "argmin",
             OpKind::Corrcoef { .. } => "corrcoef",
             OpKind::FirstSet => "first_set",
             OpKind::LastSet => "last_set",

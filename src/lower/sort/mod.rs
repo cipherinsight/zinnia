@@ -32,6 +32,7 @@
 //! argument is next to its pins in `emit` (the routing bits' in `routed`).
 
 mod argmax;
+pub mod arg_extreme;
 mod cost;
 mod counts;
 mod emit;
@@ -84,6 +85,7 @@ pub fn constructions() -> Vec<&'static dyn Construction> {
         &sorted_input::SortedInput,
     ];
     all.extend(search::constructions());
+    all.extend(arg_extreme::constructions());
     all
 }
 
