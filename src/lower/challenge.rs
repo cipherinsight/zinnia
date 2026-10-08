@@ -58,15 +58,16 @@ pub const HALO2_BASE_COLUMN_CELLS: u64 = 512 - 20;
 /// column of cells. One and a half columns of cells: 738 cells at `k = 9`.
 ///
 /// Measured on the circuits as configured
-/// (`prove::halo2_base::configured_polys`, `eval-redo/layer/
-/// cost-model-misses.md`): for the eleven perf programs compiled with a
-/// grand-product sort or permutation, laying the second-phase cells out in
-/// the first phase and dropping the challenge column would commit 1 to 3
-/// fewer polynomials (mean 1.8), where one and a half columns are 2.25 (a
-/// column of cells is 1.5 committed polynomials with its permutation
-/// share). The earlier price, 2,000 cells (about four columns), came from
-/// proving times on a loaded machine (`eval-redo/layer/layer-challenge.md`)
-/// that could not resolve a difference of this size.
+/// (`prove::halo2_base::configured_polys`,
+/// `eval-redo/layer/cost-model-misses.md`): for the nine grand-product
+/// sorts among the oracle's compiles of the perf programs, laying the
+/// second-phase cells out in the first phase and dropping the challenge
+/// column would commit 1 to 3 fewer polynomials (mean 1.8), where one and a
+/// half columns are 2.25 (a column of cells is 1.5 committed polynomials
+/// with its permutation share). The earlier price, 2,000 cells (about four
+/// columns), came from proving times on a loaded machine
+/// (`eval-redo/layer/layer-challenge.md`) that could not resolve a
+/// difference of this size.
 pub const HALO2_BASE_CHALLENGE_COST: u64 = HALO2_BASE_COLUMN_CELLS * 3 / 2;
 
 /// The name of the program-wide RAM trace (halo2-base,
