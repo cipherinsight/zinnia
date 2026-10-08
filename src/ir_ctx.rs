@@ -14,10 +14,12 @@ pub struct IRContext {
     /// they are read, each with the execution predicates of the assignments
     /// to it so far. Python binds a local name exactly where one of its
     /// assignments ran, and reading it elsewhere raises UnboundLocalError.
-    /// Zinnia's scopes keep a name bound after the scope it was first bound
-    /// in; that is exact unless the first binding is in a loop body the loop
-    /// may leave before it (a `break` or `continue` earlier in it or in an
-    /// enclosing loop), which is the only case recorded here (review 3, B4).
+    /// A name first bound under a runtime predicate (in a branch, after a
+    /// `break` or `continue`, in a loop that may run no iteration) is
+    /// recorded here; a branch join replaces the arms' predicates by the
+    /// join's own where both arms bind the name on every path through them
+    /// (`IRGenerator::join_assignment_records`), and an assignment on every
+    /// path ends the record (reviews 3 and 4, B4, R2, FR4).
     possibly_unbound: Vec<BTreeMap<String, Vec<Value>>>,
 }
 
@@ -138,54 +140,67 @@ impl IRContext {
     }
 
     /// Record an assignment to `key` that runs under `predicate` (`None`:
-    /// on every path). A name assigned on every path is bound from then on.
-    /// A first binding in a loop body that the loop may leave before it is
-    /// recorded as possibly unbound, with its predicate; later assignments
-    /// add theirs (see `possibly_unbound`).
+    /// on every path). An assignment on every path binds the name from then
+    /// on; a first binding under a runtime predicate starts a record, and a
+    /// later assignment to a recorded name adds its predicate (see
+    /// `possibly_unbound`).
     pub fn note_assignment(&mut self, key: &str, predicate: Option<&Value>) {
         let everywhere = predicate.is_none_or(|p| p.bool_val() == Some(true) || p.int_val().is_some_and(|v| v != 0));
-        let first_in_skippable_loop = !everywhere
-            && !self.exists(key)
-            && matches!(self.scopes.last(), Some(Scope::Loop(_)))
-            && self.find_condition(|s| s.get_looping_condition()).is_some();
+        let first = !self.exists(key);
         let names = self.possibly_unbound.last_mut().expect("a function scope");
-        if let Some(predicates) = names.get_mut(key) {
-            match predicate {
-                Some(p) if !everywhere => predicates.push(p.clone()),
-                _ => {
-                    names.remove(key);
-                }
-            }
-        } else if first_in_skippable_loop {
-            names.insert(key.to_string(), vec![predicate.expect("a runtime predicate").clone()]);
-        }
-    }
-
-    /// Record that the join of a runtime `if` binds `key`, assigned in both
-    /// arms and not bound before, in the enclosing scope, where the `if`
-    /// runs under `predicate`. In a loop body the loop may leave before the
-    /// `if`, that is a first binding as in [`Self::note_assignment`]. A name
-    /// already recorded keeps its record: an arm may have bound it only on
-    /// some of its paths, so the `if`'s predicate would claim too much.
-    pub fn note_join_binding(&mut self, key: &str, predicate: Option<&Value>) {
-        if self.possibly_unbound.last().is_some_and(|names| names.contains_key(key)) {
-            return;
-        }
-        self.note_assignment(key, predicate);
-    }
-
-    /// Forget the assignments recorded for `key`: the join of a runtime `if`
-    /// drops a name bound in one arm only, so it is unbound for Zinnia after
-    /// the `if`, and a later binding starts afresh.
-    pub fn forget_assignments(&mut self, key: &str) {
-        if let Some(names) = self.possibly_unbound.last_mut() {
+        if everywhere {
             names.remove(key);
+        } else if let Some(p) = predicate {
+            if let Some(predicates) = names.get_mut(key) {
+                predicates.push(p.clone());
+            } else if first {
+                names.insert(key.to_string(), vec![p.clone()]);
+            }
         }
+    }
+
+    /// The records of possibly unbound names of the current function (see
+    /// `possibly_unbound`), to save before a branch arm.
+    pub fn assignment_records(&self) -> BTreeMap<String, Vec<Value>> {
+        self.possibly_unbound.last().cloned().unwrap_or_default()
+    }
+
+    /// Replace the records of the current function (the second arm of a
+    /// branch starts from the records before the first arm; the join sets
+    /// the merged records).
+    pub fn set_assignment_records(&mut self, records: BTreeMap<String, Vec<Value>>) {
+        *self.possibly_unbound.last_mut().expect("a function scope") = records;
+    }
+
+    /// The innermost loop's condition for its current iteration to run on
+    /// (not broken, not skipped), `None` when it runs on every path where
+    /// the loop does.
+    pub fn looping_condition(&self) -> Option<Value> {
+        self.find_condition(|s| s.get_looping_condition())
+    }
+
+    /// Whether the innermost loop may have been left by a `break` so far.
+    pub fn loop_may_break(&self) -> bool {
+        self.scopes.iter().rev().find_map(|s| match s {
+            Scope::Loop(d) => Some(d.break_condition.as_ref().is_some_and(|not_broken| {
+                not_broken.bool_val() != Some(true) && not_broken.int_val().is_none_or(|v| v == 0)
+            })),
+            _ => None,
+        }) == Some(true)
     }
 
     /// The predicates of the assignments to `key` when it may be unbound
     /// (see [`Self::note_assignment`]); it is bound where one of them held.
     pub fn possibly_unbound(&self, key: &str) -> Option<&[Value]> {
+        // A comprehension's own target is bound wherever it is read.
+        for scope in self.scopes.iter().rev() {
+            if matches!(scope, Scope::Generator(_)) && scope.exists_local(key) {
+                return None;
+            }
+            if scope.is_boundary() {
+                break;
+            }
+        }
         self.possibly_unbound.last()?.get(key).map(Vec::as_slice)
     }
 

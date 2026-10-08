@@ -442,6 +442,19 @@ impl IRBuilder {
         }
     }
 
+    /// Whether `q` holds wherever all of `conjuncts` hold, judged from the
+    /// literals: `q`'s literals are among theirs (`None`: true).
+    pub fn conjunction_implies(&mut self, conjuncts: &[Option<&Value>], q: &Value) -> bool {
+        let mut within: Vec<Literal> = Vec::new();
+        for c in conjuncts {
+            let Some(literals) = self.path_of(*c) else { return true }; // never holds
+            within.extend(literals);
+        }
+        within.sort_unstable();
+        let Some(required) = self.path_of(Some(q)) else { return false };
+        required.iter().all(|l| within.binary_search(l).is_ok())
+    }
+
     /// The conjunction of the current execution predicate's literals
     /// (`None`: the current code never runs).
     fn current_path(&mut self) -> Option<Vec<Literal>> {

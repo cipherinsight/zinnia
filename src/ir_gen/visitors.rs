@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::*;
 use crate::optim::predicates::formula::{CmpOp, ContractFloat, ContractTerm, ContractVar};
@@ -708,6 +708,22 @@ impl IRGenerator {
             }
         }
         let true_cond = crate::helpers::value_ops::to_scalar_bool(&mut self.builder, &cond_val);
+        self.visit_branches(true_cond, &n.t_block, &n.f_block, false);
+    }
+
+    /// `if true_cond: t_block else: f_block`, the condition already
+    /// evaluated: each arm under its side of the condition, then the join.
+    /// With `keeps_first_arm_names`, a name bound in `t_block` alone stays
+    /// bound after the join, recorded as bound where its assignments ran (a
+    /// loop's `else` block, whose names Python keeps after the loop);
+    /// otherwise such a name is dropped.
+    pub(crate) fn visit_branches(
+        &mut self,
+        true_cond: Value,
+        t_block: &[ASTNode],
+        f_block: &[ASTNode],
+        keeps_first_arm_names: bool,
+    ) {
         let false_cond = self.builder.ir_logical_not(&true_cond);
 
         let true_static = true_cond
@@ -716,6 +732,12 @@ impl IRGenerator {
         let false_static = false_cond
             .bool_val()
             .or_else(|| false_cond.int_val().map(|v| v != 0));
+
+        // The records of possibly unbound names flow through each arm from
+        // their state before the `if` (see `join_assignment_records`).
+        let if_predicate = self.builder.write_predicate().cloned();
+        let records_before = self.ctx.assignment_records();
+        let mut records_after_then = None;
 
         // True branch
         let mut scope_true_ret_guaranteed = false;
@@ -731,7 +753,7 @@ impl IRGenerator {
             );
             // Each statement in the arm sets the write predicate to its own
             // full execution condition, which includes this arm's condition.
-            for stmt in &n.t_block {
+            for stmt in t_block {
                 self.visit(stmt);
             }
             scope_true_ret_guaranteed = self.ctx.check_return_guaranteed();
@@ -739,6 +761,10 @@ impl IRGenerator {
             let scope_true = self.ctx.if_leave();
             then_fact_scope = Some(self.builder.facts.leave());
             then_scope = Some(scope_true);
+            if true_static.is_none() {
+                records_after_then = Some(self.ctx.assignment_records());
+                self.ctx.set_assignment_records(records_before.clone());
+            }
         }
 
         // False branch
@@ -753,7 +779,7 @@ impl IRGenerator {
                 crate::optim::predicates::ScopeKind::Conditional,
                 path_predicate,
             );
-            for stmt in &n.f_block {
+            for stmt in f_block {
                 self.visit(stmt);
             }
             scope_false_ret_guaranteed = self.ctx.check_return_guaranteed();
@@ -806,7 +832,22 @@ impl IRGenerator {
 
         match (then_scope, else_scope) {
             (Some(then_scope), Some(else_scope)) => {
-                self.merge_conditional_branch_bindings(then_scope, else_scope, &true_cond);
+                let assigned = |scope: &crate::scope::Scope| -> BTreeSet<String> {
+                    scope.get_local_var_table().map(|vars| vars.keys().cloned().collect()).unwrap_or_default()
+                };
+                let records_after_else = self.ctx.assignment_records();
+                let records_after_then = records_after_then.unwrap_or_else(|| records_before.clone());
+                let records = self.join_assignment_records(
+                    if_predicate.as_ref(),
+                    &records_before,
+                    [
+                        (&true_cond, &records_after_then, &assigned(&then_scope)),
+                        (&false_cond, &records_after_else, &assigned(&else_scope)),
+                    ],
+                    keeps_first_arm_names,
+                );
+                self.ctx.set_assignment_records(records);
+                self.merge_conditional_branch_bindings(then_scope, else_scope, &true_cond, keeps_first_arm_names);
             }
             // Statically-resolved condition: exactly one arm ran, so its
             // bindings propagate unconditionally (Python semantics).
@@ -833,6 +874,7 @@ impl IRGenerator {
         then_scope: crate::scope::Scope,
         else_scope: crate::scope::Scope,
         condition: &Value,
+        keeps_first_arm_names: bool,
     ) {
         let Some(then_vars) = then_scope.get_local_var_table() else {
             return;
@@ -854,16 +896,13 @@ impl IRGenerator {
                     let then_val = t.value.clone();
                     let else_val = e.value.clone();
                     let merged = self.merge_binding(condition, &then_val, &else_val);
-                    let predicate = self.builder.write_predicate().cloned();
-                    self.ctx.note_join_binding(&name, predicate.as_ref());
                     self.ctx.set(&name, merged);
                 }
                 (Some(one), None) | (None, Some(one)) => {
-                    if self.ctx.exists(&name) {
+                    let kept = keeps_first_arm_names && then_vars.contains_key(&name);
+                    if kept || self.ctx.exists(&name) {
                         let val = one.value.clone();
                         self.ctx.set(&name, val);
-                    } else {
-                        self.ctx.forget_assignments(&name);
                     }
                 }
                 (None, None) => unreachable!(),
@@ -937,9 +976,11 @@ impl IRGenerator {
     /// Unroll a `for` loop over `items` (see [`super::iteration`]). The
     /// target is bound to each item's value unconditionally, so indices
     /// built from it stay compile-time constants inside the body; an
-    /// inactive item skips its body like a `continue`. After the loop a
-    /// simple-name target holds its value at the end of the last item that
-    /// actually ran, as in Python.
+    /// inactive item skips its body like a `continue`. After the loop the
+    /// target names hold their values at the end of the last iteration that
+    /// started (one stopped by a `break` included), or their values before
+    /// the loop where no iteration started, as in Python; a target bound by
+    /// the loop alone is recorded as bound only where an iteration started.
     pub(crate) fn unroll_loop(
         &mut self,
         target: &ASTNode,
@@ -981,11 +1022,13 @@ impl IRGenerator {
             self.clear_induction_origins_from(&frame.var_name);
             self.for_loop_frames.push(frame);
         }
-        let target_name = Self::simple_name_target(target);
-        let guarded = items.iter().any(|item| item.active.is_some());
-        // The target's value at the end of the last item that ran.
-        let mut exit_target: Option<Value> =
-            target_name.and_then(|name| self.ctx.get(name));
+        let mut target_names = BTreeSet::new();
+        Self::collect_assigned_names_from_target(target, &mut target_names);
+        // The targets' values at the end of the last iteration that started
+        // (review 4, R3: they used to be the last item's on every path, so a
+        // loop variable read after a `break` had the wrong value).
+        let mut exit_values: BTreeMap<String, Value> =
+            target_names.iter().filter_map(|name| self.ctx.get(name).map(|v| (name.clone(), v))).collect();
         for item in items {
             self.ctx.loop_reiter(&mut self.builder);
             // An inactive item skips its body like a `continue`, so a later
@@ -1003,6 +1046,19 @@ impl IRGenerator {
                 }
             }
 
+            // Where this iteration starts: not after a `break`, and on an
+            // active item (`None`: wherever the loop runs).
+            let started = self.ctx.looping_condition();
+            // The targets are assigned where the iteration starts (review 4,
+            // R2: a loop of a runtime trip count may run no iteration).
+            let assigned_where = match &started {
+                None => entry_condition.clone(),
+                Some(s) if entry_condition.bool_val() == Some(true) => s.clone(),
+                Some(s) => self.builder.ir_logical_and(&entry_condition, s),
+            };
+            for name in &target_names {
+                self.ctx.note_assignment(name, Some(&assigned_where));
+            }
             self.do_recursive_assign(target, item.value.clone(), false);
 
             let mut terminated = false;
@@ -1014,13 +1070,13 @@ impl IRGenerator {
                     break;
                 }
             }
-            if guarded {
-                if let Some(end) = target_name.and_then(|name| self.ctx.get(name)) {
-                    exit_target = Some(match (&item.active, exit_target.take()) {
-                        (Some(active), Some(previous)) => self.merge_binding(active, &end, &previous),
-                        _ => end,
-                    });
-                }
+            for name in &target_names {
+                let Some(end) = self.ctx.get(name) else { continue };
+                let exit = match (&started, exit_values.remove(name)) {
+                    (Some(started), Some(previous)) => self.merge_binding(started, &end, &previous),
+                    _ => end,
+                };
+                exit_values.insert(name.clone(), exit);
             }
             if terminated {
                 break;
@@ -1029,19 +1085,25 @@ impl IRGenerator {
 
         // The `else` block runs when the loop was not broken. A `continue`
         // (or an inactive item) in the last iteration does not affect it, so
-        // reset the per-iteration skip condition first.
-        if !orelse.is_empty() {
+        // reset the per-iteration skip condition first. It runs after the
+        // loop, as `if not broken: ...`: a `break` or `continue` in it is the
+        // enclosing loop's, and a `return` in it returns only where the loop
+        // was not broken (review 4, R4; a `continue` there used to apply to
+        // the loop the block belongs to).
+        let not_broken = if orelse.is_empty() {
+            None
+        } else {
             self.ctx.loop_reiter(&mut self.builder);
-        }
-        for stmt in orelse {
-            self.visit(stmt);
-        }
+            Some(self.ctx.looping_condition())
+        };
 
         // For-loop trips are statically enumerated, so a return guarantee
         // established inside the body (or the for-else block, which always
-        // runs when the loop wasn't broken) holds unconditionally outside.
+        // runs when the loop wasn't broken) holds unconditionally outside,
+        // unless the loop may have been left by a `break` (review 4, R4: a
+        // `return` in the `else` block skipped the code after the loop).
         // The flag lives on the Loop scope and would vanish at loop_leave.
-        let returned = self.ctx.check_return_guaranteed();
+        let returned = self.ctx.check_return_guaranteed() && !self.ctx.loop_may_break();
         self.ctx.loop_leave();
         if pushed_frame {
             if let Some(frame) = self.for_loop_frames.pop() {
@@ -1049,8 +1111,10 @@ impl IRGenerator {
             }
         }
         let _loop_facts = self.builder.facts.leave();
-        if let (true, Some(name), Some(exit)) = (guarded, target_name, exit_target) {
-            self.ctx.set(name, exit);
+        for (name, exit) in exit_values {
+            if self.ctx.exists(&name) {
+                self.ctx.set(&name, exit);
+            }
         }
         if entry_condition.bool_val() != Some(true) {
             for (name, previous) in previous_targets {
@@ -1062,6 +1126,15 @@ impl IRGenerator {
         }
         if returned {
             self.ctx.set_return_guarantee();
+        }
+        match not_broken {
+            None => {}
+            Some(None) => {
+                for stmt in orelse {
+                    self.visit(stmt);
+                }
+            }
+            Some(Some(not_broken)) => self.visit_branches(not_broken, orelse, &[], true),
         }
     }
 
@@ -1232,7 +1305,9 @@ impl IRGenerator {
                     // loop: `while True: ... return x` guarantees a
                     // return. (The guarantee flag lives on the Loop scope
                     // and would otherwise vanish at loop_leave.)
-                    if self.ctx.check_return_guaranteed() && test_static == Some(true) {
+                    // Not after a `break`, which leaves the loop on paths
+                    // that do not return (review 4, R4).
+                    if self.ctx.check_return_guaranteed() && test_static == Some(true) && !self.ctx.loop_may_break() {
                         returned_guaranteed_outside = true;
                     }
                     terminated = true;
@@ -1904,7 +1979,11 @@ impl IRGenerator {
         let mut result_values = Vec::new();
         let mut result_guards = Vec::new();
         let active = self.builder.ir_constant_bool(true);
+        // The targets are local to the comprehension, as in Python 3 (review
+        // 4, R5: they used to leak into, or overwrite, the function's names).
+        self.ctx.generator_enter();
         self.expand_generators(&n.generators, 0, &n.elt, &mut result_values, &mut result_guards, &active);
+        self.ctx.generator_leave();
 
         // Runtime comprehension filters select a prefix of a bounded array;
         // they must not be discarded simply because their truth is unknown.
@@ -2044,8 +2123,12 @@ impl IRGenerator {
                 let should_merge = self.ctx.exists(&t.name)
                     && conditional_select
                     && self.ctx.has_nontrivial_condition();
-                let predicate = self.builder.write_predicate().cloned();
-                self.ctx.note_assignment(&t.name, predicate.as_ref());
+                // A loop target (`conditional_select` false) is recorded by
+                // `unroll_loop` with its iteration's predicate.
+                if conditional_select {
+                    let predicate = self.builder.write_predicate().cloned();
+                    self.ctx.note_assignment(&t.name, predicate.as_ref());
+                }
                 if should_merge {
                     let orig = self.ctx.get(&t.name).unwrap();
                     let cond = self.ctx.get_condition_value(&mut self.builder);
