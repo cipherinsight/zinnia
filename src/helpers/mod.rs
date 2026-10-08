@@ -6,5 +6,6 @@ pub mod ndarray;
 pub mod promote;
 pub mod segment;
 pub mod shape_arith;
+pub mod static_args;
 pub mod static_array;
 pub mod value_ops;

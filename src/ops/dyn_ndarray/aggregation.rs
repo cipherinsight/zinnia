@@ -169,7 +169,7 @@ pub fn dyn_aggregate_all(b: &mut IRBuilder, data: &DynamicNDArrayData, agg: DynA
         data: data.clone(),
         agg,
     };
-    let set = dyn_aggregate_all_strategies(b, &inputs);
+    let set = dyn_aggregate_all_strategies(&inputs);
     crate::optim::dispatch_strategy(b, "dyn_aggregate_all", &inputs, &set)
 }
 
@@ -257,7 +257,6 @@ pub(crate) struct DynAggAllInputs {
 /// matches the op it lowers. Mirrors the `boundary-read-on-sorted` shape
 /// already in place for max/min/argmax/argmin.
 fn dyn_aggregate_all_strategies(
-    b: &IRBuilder,
     inputs: &DynAggAllInputs,
 ) -> crate::optim::OpStrategySet<DynAggAllInputs, Value> {
     use crate::optim::predicates::formula::{ContractTerm, ContractVar};
@@ -277,15 +276,13 @@ fn dyn_aggregate_all_strategies(
     // Level-2 short-circuit: `is_sorted(arr)` ⇒ closed-form for the four
     // monotone-respecting reductions. The precondition is constructed
     // against the concrete input ValueId — strategies are per-call sets,
-    // not contract templates, so we embed `Var(Value(_))` directly. The
-    // fact describes the elements when it was stated, so the strategy is
-    // offered only while the array has not been written since (an
-    // in-place write through another name keeps the value id).
+    // not contract templates, so we embed `Var(Value(_))` directly. (The
+    // fact is not proved once the array was written since it was stated:
+    // `builder/array_facts.rs`.)
     if matches!(
         inputs.agg,
         DynAggKind::Max | DynAggKind::Min | DynAggKind::Argmax | DynAggKind::Argmin
     ) && is_flat_buffer(&inputs.data)
-        && b.sorted_fact_is_current(arr_vid)
     {
         strategies.push(OpStrategy {
             name: "boundary-read-on-sorted",
@@ -1882,7 +1879,7 @@ mod sorted_short_circuit_tests {
 
     /// State `is_sorted(data)` as the sorted constructors do.
     fn state_sorted(b: &mut IRBuilder, data: &DynamicNDArrayData) {
-        b.state_sorted(&Value::DynamicNDArray(data.clone()), "sort_is_sorted");
+        b.state_array_fact(&Value::DynamicNDArray(data.clone()), "sort_is_sorted");
     }
 
     /// The number of `IR::ArrayRead` statements in `b.stmts`.

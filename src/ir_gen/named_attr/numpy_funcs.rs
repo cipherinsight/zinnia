@@ -706,7 +706,7 @@ fn np_tensordot_ds1000(
 
 fn np_diag(b: &mut crate::builder::IRBuilder, args: &[Value]) -> Value {
     assert!(!args.is_empty(), "np.diag: requires an input array");
-    let k = args.get(1).and_then(|v| v.int_val()).unwrap_or(0);
+    let k = crate::helpers::static_args::static_int_arg(args.get(1), 0, "np.diag: `k`");
     if k != 0 {
         panic!("np.diag: nonzero k is not yet supported");
     }
@@ -1347,12 +1347,15 @@ impl IRGenerator {
                     )
                 } else {
                     // P4c: native StaticArray dispatch — uses orig args (un-converted).
-                    let raw_axis = visited_kwargs_orig
-                        .get("axis")
-                        .or_else(|| visited_args_orig.get(1))
-                        .and_then(|v| v.int_val())
-                        .unwrap_or(0);
-                    if let Some(arrays_arg) = visited_args_orig.first() {
+                    // `axis=None` (flatten the inputs first) takes the list path.
+                    let axis_arg = visited_kwargs_orig.get("axis").or_else(|| visited_args_orig.get(1));
+                    let flatten = matches!(axis_arg, Some(Value::None));
+                    let raw_axis = if flatten {
+                        0
+                    } else {
+                        crate::helpers::static_args::static_int_arg(axis_arg, 0, "np.concatenate: `axis`")
+                    };
+                    if let Some(arrays_arg) = visited_args_orig.first().filter(|_| !flatten) {
                         if list_contains_static_array(arrays_arg) {
                             if let Some(out) =
                                 crate::helpers::static_array::shape::try_apply_concatenate(
@@ -1668,13 +1671,7 @@ impl IRGenerator {
                     Err(msg) => panic!("np.take: {}", msg),
                 };
                 // Group 5c (E-axis): content fact relay.
-                if let (Some(in_vid), Some(out_vid)) = (arr.value_id(), out.value_id()) {
-                    crate::optim::resolver::relay_forall_eq_const_from_input(
-                        &mut self.builder,
-                        in_vid,
-                        out_vid,
-                    );
-                }
+                crate::optim::resolver::relay_forall_eq_const_from_input(&mut self.builder, &arr, &out);
                 out
             }
             ("np", "split") => {

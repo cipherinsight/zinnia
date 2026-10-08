@@ -1159,34 +1159,6 @@ fn input_param_name_of_static_array(b: &IRBuilder, arr: &Value) -> Option<String
         .then(|| param.to_string())
 }
 
-/// When an `array_in_range` fact was stated: the array's storages (a static
-/// complex array has two) and the store's write clock then. The fact is used
-/// only while none of those storages has been written since, so it does not
-/// outlive a write to the array, an alias or a view of it (which share its
-/// storage).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ArrayContents {
-    storages: Vec<u32>,
-    clock: u64,
-}
-
-impl ArrayContents {
-    pub(crate) fn of(b: &IRBuilder, arr: &Value) -> Option<ArrayContents> {
-        let storage = match arr {
-            Value::StaticArray { segment_id, .. } => *segment_id,
-            Value::DynamicNDArray(d) => d.segment_id,
-            _ => return None,
-        };
-        let storages = std::iter::once(storage).chain(b.imag_storage(storage)).collect();
-        Some(ArrayContents { storages, clock: b.storage_write_clock() })
-    }
-
-    /// The array still holds what it held when this was recorded.
-    pub(crate) fn unchanged(&self, b: &IRBuilder) -> bool {
-        self.storages.iter().all(|&s| !b.storage_written_since(s, self.clock))
-    }
-}
-
 /// Propagate `forall(<input>, in_range/lt_bound/is_nonneg)` element
 /// bounds to a reduction's scalar output, by depositing `Cmp` facts on
 /// the output's `value_id`. Currently fires for `min`/`max` only —
@@ -1246,11 +1218,9 @@ pub(crate) fn read_array_element_bounds(b: &IRBuilder, arr: &Value) -> Option<(i
     // (b) array_in_range fact scan keyed on the array's value_id, for
     // derived arrays whose origin can't be traced back to a single input
     // name. A fact counts only while the array has not been written since
-    // it was stated (`ArrayContents`): an in-place write keeps the value_id.
-    let unchanged = arr_vid
-        .and_then(|vid| b.array_in_range_contents.get(&vid))
-        .is_some_and(|contents| contents.unchanged(b));
-    if let Some(vid) = arr_vid.filter(|_| unchanged) {
+    // it was stated (`builder/array_facts.rs`): a write through another
+    // name keeps the value_id.
+    if let Some(vid) = arr_vid.filter(|&vid| b.array_facts_are_current(vid)) {
         for fact in b.facts.visible_facts() {
             if let ContractTerm::PredicateApp { kind, args } = fact {
                 if kind != "array_in_range" || args.len() != 3 {
@@ -1284,8 +1254,8 @@ pub(crate) fn read_array_element_bounds(b: &IRBuilder, arr: &Value) -> Option<(i
 /// out by `prove` consumers via the connectivity fast-path's set semantics.
 pub(crate) fn deposit_array_in_range_fact(b: &mut IRBuilder, arr: &Value, lo: i64, hi: i64) {
     use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    let (Some(arr_vid), Some(contents)) = (arr.value_id(), ArrayContents::of(b, arr)) else { return };
-    b.array_in_range_contents.insert(arr_vid, contents);
+    let Some(arr_vid) = arr.value_id() else { return };
+    b.record_array_contents(arr);
     b.facts.insert_for(
         arr_vid,
         ContractTerm::PredicateApp {

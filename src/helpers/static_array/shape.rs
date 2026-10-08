@@ -224,9 +224,7 @@ pub fn try_apply_reshape(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Opti
             b.link_storages(*out_segment, segment_id, crate::builder::COPIED_VIEW);
         }
     }
-    if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
-        crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
-    }
+    crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
     Some(out)
 }
 
@@ -430,9 +428,7 @@ pub fn try_apply_transpose(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Op
         imag_segment_id: imag_seg,
         value_id: ValueId::next(),
     };
-    if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
-        crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
-    }
+    crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
     Some(out)
 }
 
@@ -493,9 +489,7 @@ pub fn try_apply_moveaxis(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Opt
         imag_segment_id: imag_seg,
         value_id: ValueId::next(),
     };
-    if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
-        crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
-    }
+    crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
     Some(out)
 }
 
@@ -557,9 +551,7 @@ pub fn try_apply_expand_dims(
         imag_segment_id: imag_seg,
         value_id: ValueId::next(),
     };
-    if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
-        crate::optim::resolver::relay_forall_eq_const_from_input(_b, in_vid, out_vid);
-    }
+    crate::optim::resolver::relay_forall_eq_const_from_input(_b, &val, &out);
     Some(out)
 }
 
@@ -658,9 +650,7 @@ pub fn try_apply_squeeze(
             value_id: ValueId::next(),
         }
     };
-    if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
-        crate::optim::resolver::relay_forall_eq_const_from_input(_b, in_vid, out_vid);
-    }
+    crate::optim::resolver::relay_forall_eq_const_from_input(_b, &val, &out);
     Some(out)
 }
 
@@ -723,9 +713,7 @@ pub fn try_apply_flatten(b: &mut IRBuilder, val: &Value, copy: bool) -> Option<V
         let flat = materialise_to_flat(b, val);
         build_static_array_from_flat(b, flat, vec![total], dtype)
     };
-    if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
-        crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
-    }
+    crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
     Some(out)
 }
 

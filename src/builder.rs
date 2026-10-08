@@ -6,6 +6,7 @@ use crate::lower::Constant;
 use crate::optim::resolver::{Resolver, StaticOnlyResolver};
 use crate::types::{NumberType, ScalarValue, StmtId, StringValue, Value};
 
+mod array_facts;
 mod arrays;
 mod store;
 mod stale;
@@ -212,16 +213,10 @@ pub struct IRBuilder {
     /// but treating it as a Fact pinned the downstream slice shape and
     /// broke 0509's output type).
     pub scalar_value_bounds: HashMap<crate::types::ValueId, (i64, i64)>,
-    /// For each array carrying an `array_in_range` fact, what it held when
-    /// the fact was stated; the fact is used only while that is unchanged
-    /// (`helpers::static_array::reductions::ArrayContents`).
-    pub(crate) array_in_range_contents:
-        HashMap<crate::types::ValueId, crate::helpers::static_array::reductions::ArrayContents>,
-    /// For each array carrying an `is_sorted` fact, what it held when the
-    /// fact was stated (`Self::state_sorted`); the fact is used only while
-    /// that is unchanged (`Self::sorted_fact_is_current`).
-    sorted_contents:
-        HashMap<crate::types::ValueId, crate::helpers::static_array::reductions::ArrayContents>,
+    /// For each array that facts about its elements were stated about, what
+    /// it held then; the facts are used only while that is unchanged
+    /// (`builder/array_facts.rs`).
+    array_fact_records: HashMap<crate::types::ValueId, array_facts::ArrayContents>,
     /// Which statements and segments hold values of NumPy's fixed-width
     /// integer types (`builder/fixed_width.rs`).
     fixed_width: fixed_width::FixedWidthValues,
@@ -271,8 +266,7 @@ impl IRBuilder {
             // builder construction so this matches the desired semantics.
             telemetry: crate::optim::telemetry::TelemetrySink::from_env(),
             scalar_value_bounds: HashMap::new(),
-            array_in_range_contents: HashMap::new(),
-            sorted_contents: HashMap::new(),
+            array_fact_records: HashMap::new(),
             fixed_width: fixed_width::FixedWidthValues::default(),
             bool_segments: HashSet::new(),
             bool_cells: HashSet::new(),
@@ -699,30 +693,6 @@ impl IRBuilder {
             self.discharge_requires(name, &term);
         }
         self.plant_contract_ensures(name, output_vid, formals);
-    }
-
-    /// State that the array `arr` is sorted (non-decreasing in row-major
-    /// order) by firing `contract`, whose postcondition is
-    /// `is_sorted(Output)`, on its value id, and record what `arr` holds
-    /// now. A write through another name for the same array (`y = x;
-    /// y[0] = 5`) changes `x`'s elements but keeps its value id, so the
-    /// fact is used only while `arr`'s storage has not been written since
-    /// (`Self::sorted_fact_is_current`).
-    pub(crate) fn state_sorted(&mut self, arr: &Value, contract: &str) {
-        let Some(vid) = arr.value_id() else { return };
-        let Some(contents) = crate::helpers::static_array::reductions::ArrayContents::of(self, arr)
-        else {
-            return;
-        };
-        self.sorted_contents.insert(vid, contents);
-        self.fire_contract(contract, vid, &HashMap::new());
-    }
-
-    /// Whether the array with value id `arr` still holds what it held when
-    /// an `is_sorted` fact was stated on it by [`Self::state_sorted`].
-    /// `false` when none was.
-    pub(crate) fn sorted_fact_is_current(&self, arr: crate::types::ValueId) -> bool {
-        self.sorted_contents.get(&arr).is_some_and(|contents| contents.unchanged(self))
     }
 
     /// The `requires` half of [`Self::fire_contract`] for a contract whose

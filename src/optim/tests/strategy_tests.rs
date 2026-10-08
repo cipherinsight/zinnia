@@ -154,7 +154,7 @@ mod tests {
         };
 
         // State is_sorted(arr) as the sorted constructors do.
-        b.state_sorted(&Value::DynamicNDArray(data.clone()), "sort_is_sorted");
+        b.state_array_fact(&Value::DynamicNDArray(data.clone()), "sort_is_sorted");
 
         let result = dyn_aggregate_all(&mut b, &data, DynAggKind::Max);
         // The last cell, read from the array's storage (known: no IR).

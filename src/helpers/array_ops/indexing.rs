@@ -828,9 +828,7 @@ fn dyn_slice_axis(
 
     if rank == 1 {
         let out = dyn_slice_1d(b, data, start, stop, step);
-        if let Some(out_vid) = out.value_id() {
-            crate::optim::resolver::relay_forall_eq_const_from_input(b, data.value_id, out_vid);
-        }
+        crate::optim::resolver::relay_forall_eq_const_from_input(b, &Value::DynamicNDArray(data.clone()), &out);
         return out;
     }
 
@@ -1000,9 +998,7 @@ fn dyn_slice_axis(
         },
         value_id: ValueId::next(),
     });
-    if let Some(out_vid) = out.value_id() {
-        crate::optim::resolver::relay_forall_eq_const_from_input(b, data.value_id, out_vid);
-    }
+    crate::optim::resolver::relay_forall_eq_const_from_input(b, &Value::DynamicNDArray(data.clone()), &out);
     out
 }
 

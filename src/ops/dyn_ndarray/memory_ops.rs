@@ -398,9 +398,8 @@ pub fn dyn_repeat(
             value_id: ValueId::next(),
         }
     };
-    let out_vid = result.value_id;
     let out = Value::DynamicNDArray(result);
-    crate::optim::resolver::relay_forall_eq_const_from_input(b, data.value_id, out_vid);
+    crate::optim::resolver::relay_forall_eq_const_from_input(b, &Value::DynamicNDArray(data.clone()), &out);
     out
 }
 
@@ -522,7 +521,7 @@ pub fn dyn_concatenate(
     let axis = if axis_is_none {
         0i64
     } else {
-        axis_val.and_then(|v| v.int_val()).unwrap_or(0)
+        crate::helpers::static_args::static_int_arg(axis_val, 0, "concatenate: `axis`")
     };
     let ndim = arrays[0].meta.logical_shape.len();
     let ax = if axis < 0 {
@@ -858,14 +857,7 @@ pub fn dyn_concatenate(
         b.facts.insert_for(len_vid, equality);
     }
 
-    let out_value_id = ValueId::next();
-    let input_vids: Vec<crate::types::ValueId> =
-        raw_values.iter().filter_map(|v| v.value_id()).collect();
-    if input_vids.len() == raw_values.len() {
-        crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &input_vids, out_value_id);
-    }
-
-    Value::DynamicNDArray(DynamicNDArrayData {
+    let out = Value::DynamicNDArray(DynamicNDArrayData {
         envelope,
         dtype: out_dtype,
         segment_id,
@@ -882,8 +874,10 @@ pub fn dyn_concatenate(
                 .collect(),
             runtime_offset: ScalarValue::new(Some(0), None),
         },
-        value_id: out_value_id,
-    })
+        value_id: ValueId::next(),
+    });
+    crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &raw_values, &out);
+    out
 }
 
 /// The runtime extent of axis `d` (the buffer extent when none is recorded).
@@ -1058,14 +1052,7 @@ pub fn dyn_stack(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Val
     };
     let runtime_length = b.ir_mul_i(&num_arr_val, &input_runtime_len);
 
-    let out_value_id = ValueId::next();
-    let input_vids: Vec<crate::types::ValueId> =
-        raw_values.iter().filter_map(|v| v.value_id()).collect();
-    if input_vids.len() == raw_values.len() {
-        crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &input_vids, out_value_id);
-    }
-
-    Value::DynamicNDArray(DynamicNDArrayData {
+    let out = Value::DynamicNDArray(DynamicNDArrayData {
         envelope,
         dtype: out_dtype,
         segment_id,
@@ -1082,8 +1069,10 @@ pub fn dyn_stack(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Val
                 .collect(),
             runtime_offset: ScalarValue::new(Some(0), None),
         },
-        value_id: out_value_id,
-    })
+        value_id: ValueId::next(),
+    });
+    crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &raw_values, &out);
+    out
 }
 
 /// Split a dynamic array into parts along an axis.
