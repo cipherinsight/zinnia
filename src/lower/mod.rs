@@ -47,7 +47,7 @@ mod simplify;
 pub mod sort;
 pub mod stats;
 #[cfg(test)]
-mod array_facts_tests;
+pub(crate) mod array_facts_tests;
 #[cfg(test)]
 mod tests;
 

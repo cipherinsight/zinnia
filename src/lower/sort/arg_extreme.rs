@@ -150,28 +150,59 @@ impl Construction for ArgExtremeOfSorted {
     }
 
     fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
-        let Some((max, float)) = line(group) else { return Vec::new() };
-        let list = ListId::of_stmts(&group.shared);
-        let ordered = Fact::everywhere(Claim::NonDecreasing(list));
-        if !cx.established(&ordered) {
-            return Vec::new();
-        }
-        let n = group.shared.len() as u64;
-        let emitter = |how: How| Box::new(SortedEmitter { cells: group.shared.clone(), float, how });
-        if !max {
-            return vec![with_pre(every_lane(group, 0, emitter(How::First)), ordered)];
-        }
-        let increasing = Fact::everywhere(Claim::StrictlyIncreasing(list));
-        if cx.established(&increasing) {
-            return vec![with_pre(every_lane(group, 0, emitter(How::Last)), increasing)];
-        }
-        let (compare, _) = comparison_costs(cx.target);
-        let costs = cost::unit_costs(cx.target);
-        let hinted = costs.reads(n as usize, 2) + 2 * compare + crate::lower::checks::range_check_cost(n, false, cx.target);
-        vec![
-            with_pre(every_lane(group, (n - 1) * compare, emitter(How::Count)), ordered),
-            with_pre(every_lane(group, hinted, emitter(How::Hinted)), ordered),
-        ]
+        sorted_candidates(group, cx).into_iter().map(|(_, candidate)| candidate).collect()
+    }
+}
+
+/// [`ArgExtremeOfSorted`]'s candidates, each with how it finds the position.
+fn sorted_candidates(group: &Group, cx: &Context) -> Vec<(How, Candidate)> {
+    let Some((max, float)) = line(group) else { return Vec::new() };
+    let list = ListId::of_stmts(&group.shared);
+    let ordered = Fact::everywhere(Claim::NonDecreasing(list));
+    if !cx.established(&ordered) {
+        return Vec::new();
+    }
+    let n = group.shared.len() as u64;
+    let candidate = |how: How, cost: u64, fact: Fact| {
+        let emitter = Box::new(SortedEmitter { cells: group.shared.clone(), float, how });
+        (how, with_pre(every_lane(group, cost, emitter), fact))
+    };
+    if !max {
+        return vec![candidate(How::First, 0, ordered)];
+    }
+    let increasing = Fact::everywhere(Claim::StrictlyIncreasing(list));
+    if cx.established(&increasing) {
+        return vec![candidate(How::Last, 0, increasing)];
+    }
+    let (compare, _) = comparison_costs(cx.target);
+    let costs = cost::unit_costs(cx.target);
+    let hinted = costs.reads(n as usize, 2) + 2 * compare + crate::lower::checks::range_check_cost(n, false, cx.target);
+    vec![candidate(How::Count, (n - 1) * compare, ordered), candidate(How::Hinted, hinted, ordered)]
+}
+
+/// [`ArgExtremeOfSorted`] restricted to finding the argmax by a count
+/// (`hinted == false`) or by a hinted position (tests).
+#[cfg(test)]
+pub(crate) struct ForcedSortedArgmax {
+    pub hinted: bool,
+}
+
+#[cfg(test)]
+impl Construction for ForcedSortedArgmax {
+    fn name(&self) -> &'static str {
+        "argextreme: sorted line (forced)"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        sorted_candidates(group, cx)
+            .into_iter()
+            .filter(|(how, _)| match how {
+                How::Count => !self.hinted,
+                How::Hinted => self.hinted,
+                How::First | How::Last => true,
+            })
+            .map(|(_, candidate)| candidate)
+            .collect()
     }
 }
 
