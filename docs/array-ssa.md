@@ -709,6 +709,21 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
     record of a name the join drops (bound in one arm only) is forgotten, so a later
     binding does not inherit it. Zinnia still drops such a name at the join: where Python
     keeps the arm's value and a later loop may skip its own assignment, there is no proof.
+  - Validation against bc584e01 (`array-ssa-data/fix3/`, code at 7b59f95c): IR and
+    `main.nr` digests identical on all 179 perf cases on both targets (scattering
+    included); acceptance 327 outcomes identical; check_outputs 100/100 on halo2-base and
+    Noir; noir_differential 100/100; costs_halo2 `--check` 100/100; Python suite 4,503
+    passed (538 tests in `test_array_ssa_review3.py`, 165 of which fail on bcc20473 and
+    178 on bc584e01); Rust lib the known 18 failures; determinism 200/200 and 158/158 over
+    3 processes. The reviewers' fuzzers on their round-2 and round-3 seeds and on new seeds
+    (141,600 programs, in the automatic, forced-RAM, Noir native RAM, `@selects`,
+    `@delegate`, joint-selection and layer-facts ablation configurations, 5,100 of them
+    on all three backends) and `fuzz_unbound.py` (2,689 programs x 12 inputs, 214 of them
+    on all three backends):
+    no wrong output, no hang, no crash; 6 `fuzz_rebind` programs have no proof for an
+    input Python runs, all of the branch-join drop described above. Every `r3/q3_*.py`
+    and `r2/q_*.py` reproducer matches NumPy, is a compile error, or has no proof where
+    Python raises.
 
 ### Open
 - Dynamic-array lanes beyond the runtime length: `1.0 / x[x > 0]` and `x[x > 0] ** -1.5` used to
