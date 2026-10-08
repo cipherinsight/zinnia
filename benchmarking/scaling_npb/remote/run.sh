@@ -40,12 +40,16 @@
 # exactly as in every other timing session; the zkVMs, far slower, get the whole machine. Same
 # timeout for every system.
 #
-# Usage (on the remote, after `remote.sh push` of branch scaling-npb to $WT and `remote.sh put` of
-# the data directory to $DATA):  bash $WT/benchmarking/scaling_npb/remote/run.sh [stages...]
+# Usage, from the local machine (T=eval-redo/tools/remote.sh):
+#   $T push wt/scaling-npb /home/zhantong/zinnia-eval-run/zinnia-post scaling-npb   # src/ = 4115cecb
+#   $T put eval-redo/scaling/npb-data /home/zhantong/zinnia-eval-run                 # -> $RUN/npb-data
+#   $T bg scaling-npb 'bash zinnia-post/benchmarking/scaling_npb/remote/run.sh'      # or: ... run.sh S V P A
+# Variables: WT, DATA, OUT, RES, CAPS ("32 64 128"), REPEATS_<cap>, HEAVY_REPEATS, COUNT_TIMEOUT,
+# TIMEOUT (overrides the per-cap timeout of stage A), ZKVM_MEMORY, ZK_SEED.
 set -uo pipefail
 RUN=${RUN:-/home/zhantong/zinnia-eval-run}
 WT=${WT:-$RUN/zinnia-post}                  # checkout of branch scaling-npb (src/ = 4115cecb), built
-DATA=${DATA:-$RUN/scaling-npb-data}         # eval-redo/scaling/npb-data, copied
+DATA=${DATA:-$RUN/npb-data}                 # eval-redo/scaling/npb-data (remote.sh put ... $RUN)
 OUT=${OUT:-$RUN/scaling-npb}                # counts, probe, logs
 RES=${RES:-$OUT/results}                    # harness epochs
 ZK_SEED=${ZK_SEED:-$RUN/zinnia-src}         # a checkout whose sp1/risc0 target dirs seed the build
