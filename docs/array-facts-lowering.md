@@ -136,23 +136,29 @@ no backend sees one. Nothing else reads them.
 | fact | used by |
 |---|---|
 | `ElementsWithin` | bounds of the values for the fact-decided statements (`lower::simplify`), the narrow range of a sort's hinted values, `Within`/`InRange`/`NonNegative` preconditions (and index checks) of the values |
-| `NonDecreasing` | sort of a sorted input (`sort::SortedInput`), argmax/argmin of a sorted line (`sort::arg_extreme`), ordered pairs for the fact-decided maxima and minima |
+| `NonDecreasing` | sort of a sorted input (`sort::SortedInput`), argmax/argmin of a sorted line (`sort::arg_extreme`), `np.searchsorted` over a runtime table (the table's order, `sort::search`), the scans of monotone flags (`gather::ScanOfMonotoneFlags*`), ordered pairs for the fact-decided maxima and minima |
 | `StrictlyIncreasing` | as `NonDecreasing`; the argmax of a strictly increasing line is `n - 1` |
 | `Distinct` | implied by the two above and by `Permutation`; no construction keys on it alone yet |
 | `CountBound` | none yet (section 7) |
-| `Permutation` | the permutation scatter (`gather::ScatterByHits`), the bounds of the values |
+| `Permutation` | the permutation scatters (`gather::ScatterByHits`, `gather::ScatterByWrites`), the bounds of the values |
+| `NonNegative` (scalar, implied by `ElementsWithin` with `lo >= 0`) | the wrap of an index that cannot be negative (`memory::WrapOfNonNegative`), the domain check of an `np.sqrt` argument |
 
 ## 5. Constructions and rules keyed on array facts
 
 | rule | fact | operator | code |
 |---|---|---|---|
 | Range realization (merged range check) | the checks bounding a value on both sides | the value's checks | `checks::range_merges` |
-| Narrow comparisons and selects | a value's established range | comparisons, selects, sort networks (through the backends' widths) | `checks::range_merges`, `prove/halo2_base/synthesizer/ranges.rs` (`prove_range` across offsets), `builder.rs` (provenance across offsets), `prove/noir/emit.rs` (`settle_range_widths`) |
+| Narrow comparisons and selects | a value's established range | comparisons, selects, sort networks (through the backends' widths) | `checks::range_merges`, `prove/halo2_base/synthesizer/ranges.rs` (`prove_range` across offsets), `builder.rs` (provenance across offsets), `prove/noir/emit.rs` (`settle_range_widths`, `packed_gap_bits`) |
 | Narrow hinted sort values | `ElementsWithin(elements)` | every hinted sort plan | `sort::narrow_range`, `sort::emit::Elements::bound` |
 | Fact-decided comparisons, maxima and minima (clip/where identities) | ranges and orders of the operands | `<`, `<=`, `>`, `>=`, `select(a > b, a, b)` | `lower::simplify` |
 | Sort of a sorted input | `NonDecreasing(elements)` | `np.sort`, `np.argsort`, `np.max`, `np.min`, `np.median`, `np.percentile` | `sort::sorted_input` |
-| Argmax/argmin of a sorted line | `NonDecreasing`, `StrictlyIncreasing` | `np.argmax`, `np.argmin` | `sort::arg_extreme` |
+| Argmax/argmin of a sorted line | `NonDecreasing`, `StrictlyIncreasing` | `np.argmax`, `np.argmin` | `sort::arg_extreme` (`ArgExtremeOfSorted`, `ArgExtremeOfSortedByPosition`) |
+| Counts by positions in the sorted values | the sort's own order (definitional) | `(np.sort(a) > t).argmax()` and its mirrored forms | `sort::SortCountsByPosition` |
+| `np.searchsorted` over a runtime sorted table | `NonDecreasing(table)` (NumPy's precondition: checked when not established) | `np.searchsorted` | `sort::search` (`SearchByCount`, `SearchByPosition`, `runtime_position_cost`) |
+| Scan of monotone flags | `NonDecreasing` of the compared line | `(a > t).argmax()` over a sorted runtime line | `gather::ScanOfMonotoneFlags`, `gather::ScanOfMonotoneFlagsByPosition` |
+| Permutation scatter | `Permutation(p, 0..n)` | `c[p] = v` | `gather::ScatterByHits`, `gather::ScatterByWrites` |
 | Permutation implies its range | `Permutation(p, 0..n)` | index and window checks of `p`'s values | `array_facts::implies` |
+| Wrap of a non-negative index | `NonNegative(i)` | NumPy's negative-index wrap of a runtime index | `memory::WrapOfNonNegative` |
 | Non-negative by definition | squares, absolute values, sums of them | domain checks (`x >= 0` before `np.sqrt`, halo2-base) | `array_facts::non_negative_by_definition`, `checks::kept_for_backend` |
 
 Each has its soundness argument in its doc comment; `eval-redo/layer/fact-rules.md` has the

@@ -229,8 +229,9 @@ fn count_lanes(group: &Group) -> u64 {
 /// * Postconditions: every lane of the sort.
 /// * Soundness: the count of elements `<= e` (`< e`) is the count of sorted
 ///   values `<= e` (`< e`), the same multiset; `position_in_sorted` pins it.
-/// * Cost: the plan's for every rank's value, and per count lane a position
-///   in `n` values (`search::runtime_position_cost`), against `n`
+/// * Cost: the plan's for every rank's value, and the positions of the
+///   count lanes in `n` values (`search::runtime_position_cost`: the line
+///   made readable once, two reads per lane), against `n`
 ///   comparisons per count lane in the other plans: the plan for the sort
 ///   (`(np.sort(a) > t).argmax()` with several `t`).
 pub struct SortCountsByPosition;
@@ -249,7 +250,10 @@ impl Construction for SortCountsByPosition {
         let mut demand = demand(group, cx);
         demand.values = (0..n).collect();
         let costs = cost::unit_costs(cx.target);
-        let positions = counts * search::runtime_position_cost(n, 1, cx.target);
+        // One extended line of the sorted values serves every count lane
+        // (`SortEmitter::counts_by_position` keeps it), so the line is paid
+        // once and the reads per lane.
+        let positions = search::runtime_position_cost(n, counts, cx.target);
         let range = narrow_range(group, cx);
         let mut offers: Vec<(Plan, u64, bool)> = cost::network_plans(&demand, &costs).into_iter().map(|(p, c)| (p, c, false)).collect();
         offers.push({
