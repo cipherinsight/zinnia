@@ -711,6 +711,48 @@ impl IRBuilder {
         self.plant_contract_ensures(name, output_vid, formals);
     }
 
+    /// Whether the solver-free tiers prove `term` where the current code
+    /// runs: a comparison of an integer value with an integer constant, or
+    /// a conjunction of such, each decided by [`Self::cheap_bounds`].
+    /// `false` (no information) for anything else.
+    fn cheap_tiers_prove(&self, term: &crate::optim::predicates::formula::ContractTerm) -> bool {
+        use crate::optim::predicates::formula::{BoolOp, CmpOp, ContractTerm, ContractVar};
+        match term {
+            ContractTerm::BoolComb { op: BoolOp::And, operands } => operands.iter().all(|t| self.cheap_tiers_prove(t)),
+            ContractTerm::Cmp { op, lhs, rhs } => {
+                let (op, vid, c) = match (lhs.as_ref(), rhs.as_ref()) {
+                    (ContractTerm::Var(ContractVar::Value(v)), ContractTerm::LitInt(c)) => (*op, *v, *c),
+                    (ContractTerm::LitInt(c), ContractTerm::Var(ContractVar::Value(v))) => {
+                        let swapped = match op {
+                            CmpOp::Lt => CmpOp::Gt,
+                            CmpOp::Le => CmpOp::Ge,
+                            CmpOp::Gt => CmpOp::Lt,
+                            CmpOp::Ge => CmpOp::Le,
+                            other => *other,
+                        };
+                        (swapped, *v, *c)
+                    }
+                    _ => return false,
+                };
+                let Some(sid) = self.value_id_to_stmt_id(vid) else { return false };
+                if self.is_float_stmt(sid) {
+                    return false;
+                }
+                let Some(v) = self.value_of_vid(vid) else { return false };
+                let (lo, hi) = self.cheap_bounds(&v, Where::Here);
+                match op {
+                    CmpOp::Ge => lo.is_some_and(|l| l >= c),
+                    CmpOp::Gt => lo.is_some_and(|l| l > c),
+                    CmpOp::Le => hi.is_some_and(|h| h <= c),
+                    CmpOp::Lt => hi.is_some_and(|h| h < c),
+                    CmpOp::Ne => lo.is_some_and(|l| l > c) || hi.is_some_and(|h| h < c),
+                    CmpOp::Eq => lo == Some(c) && hi == Some(c),
+                }
+            }
+            _ => false,
+        }
+    }
+
     /// The `requires` half of [`Self::fire_contract`] for a contract whose
     /// preconditions mention only the operands (formals), discharged
     /// before the operation is emitted: the check then precedes the
@@ -799,7 +841,11 @@ impl IRBuilder {
     ) {
         use crate::optim::prove::ProveOutcome;
 
-        let outcome = self.prove(term);
+        // The tiers that use no solver first (`builder/bound_queries.rs`:
+        // constants, intervals over the IR, the scalar facts, the array
+        // facts), for a precondition that bounds integer values by
+        // constants; then `prove`.
+        let outcome = if self.cheap_tiers_prove(term) { ProveOutcome::Proved } else { self.prove(term) };
         match outcome {
             ProveOutcome::Proved => {
                 tracing::debug!(

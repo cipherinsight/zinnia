@@ -582,3 +582,43 @@ def kernel(n: Integer, c: Integer):
 @pytest.mark.parametrize("n, c", [(5, 1), (5, 0), (2, 1)])
 def test_a_sorted_array_written_under_a_branch_is_not_sorted(n, c):
     assert_all_backends_match_numpy(SORTED_CONDITIONAL_WRITE, n, c)
+
+
+# ── Operator preconditions: the divisor of an integer division ────────────
+
+DIVISOR = """
+@requires(lambda a, x, i: forall(a, in_range(1, 5)))
+def kernel(a: Integer[Array, '4'], x: Integer, i: Integer):
+    {write}
+    return 60 // a[i]
+"""
+
+
+def divisor_checks(program):
+    """The `!= 0` checks of a division's divisor."""
+    return [c for c in classes(program) if c == "NotEqualIIR"]
+
+
+def test_an_array_fact_discharges_a_divisor_check():
+    # `a[i]` is read from cells in [1, 5]: the division needs no `!= 0` check.
+    assert divisor_checks(compile_source(DIVISOR.format(write="pass"))) == []
+    assert divisor_checks(compile_source(without_requires(DIVISOR.format(write="pass")))) != []
+    assert_all_backends_match_numpy(DIVISOR.format(write="pass"), np.array([1, 5, 2, 3]), 0, 2)
+
+
+@pytest.mark.parametrize("write", [
+    "a[0] = x",
+    "b = a\n    b[1] = x",
+    "a[x % 4] = x",
+    "if x > 3:\n        a[2] = x - 4",
+])
+def test_a_divisor_fact_does_not_outlive_a_write(write):
+    source = DIVISOR.format(write=write)
+    assert divisor_checks(compile_source(source)) != []
+    assert_all_backends_match_numpy(source, np.array([1, 5, 2, 3]), 3, 3)
+    # A zero divisor has no proof (Zinnia's integer division requires a
+    # non-zero divisor; NumPy warns and gives 0), whether or not a fact
+    # was known before the write.
+    zero = {"a[0] = x": (0, 0), "b = a\n    b[1] = x": (0, 1), "a[x % 4] = x": (0, 0),
+            "if x > 3:\n        a[2] = x - 4": (4, 2)}[write]
+    assert has_no_proof(source, np.array([1, 5, 2, 3]), *zero)
