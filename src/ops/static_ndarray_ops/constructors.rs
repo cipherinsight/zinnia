@@ -13,6 +13,7 @@ use crate::optim::resolver::{
 };
 use crate::types::{Value, ZinniaType};
 use crate::helpers::dtype::Dtype;
+use crate::helpers::static_args::{static_bool_arg, static_int_arg};
 
 // ── Numpy-like helpers ────────────────────────────────────────────
 
@@ -27,9 +28,7 @@ fn fire_fill_content_contract(b: &mut IRBuilder, out: &Value, fill_value: i64) {
         1 => "ones_content",
         _ => return,
     };
-    if let Some(vid) = out.value_id() {
-        b.fire_contract(name, vid, &HashMap::new());
-    }
+    b.state_array_fact(out, name);
 }
 
 fn fire_full_static_content_fact(b: &mut IRBuilder, out: &Value, fill: &Value) {
@@ -51,6 +50,7 @@ fn fire_full_static_content_fact(b: &mut IRBuilder, out: &Value, fill: &Value) {
         }
         _ => return,
     };
+    b.record_array_contents(out);
     b.facts.insert_for(
         out_vid,
         ContractTerm::PredicateApp {
@@ -632,9 +632,7 @@ pub fn np_identity(b: &mut IRBuilder, args: &[Value]) -> Value {
                 vec![n, n],
                 crate::types::NumberType::Integer,
             );
-            if let Some(vid) = out.value_id() {
-                b.fire_contract("identity_content", vid, &HashMap::new());
-            }
+            b.state_array_fact(&out, "identity_content");
             out
         }
         BoundedInt::Bounded { max, .. } => {
@@ -672,9 +670,7 @@ pub fn np_identity(b: &mut IRBuilder, args: &[Value]) -> Value {
             let mut formals = std::collections::HashMap::new();
             formals.insert("N".to_string(), n_vid);
             b.fire_contract("dyn_identity", runtime_length_vid, &formals);
-            if let Some(vid) = result.value_id() {
-                b.fire_contract("identity_content", vid, &HashMap::new());
-            }
+            b.state_array_fact(&result, "identity_content");
             result
         }
         BoundedInt::Neither => {
@@ -965,19 +961,12 @@ fn arange_static(b: &mut IRBuilder, start: i64, stop: i64, step: i64) -> Value {
 fn np_linspace_array(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
     use crate::helpers::value_ops::ensure_float;
 
-    let num = args
-        .get(2)
-        .or_else(|| kwargs.get("num"))
-        .and_then(|v| v.int_val())
-        .unwrap_or(50);
+    let num = static_int_arg(args.get(2).or_else(|| kwargs.get("num")), 50, "np.linspace with array endpoints: `num`");
     assert!(num >= 0, "np.linspace: num must be non-negative");
     let n = num as usize;
-    let endpoint = kwargs
-        .get("endpoint")
-        .and_then(|v| v.bool_val())
-        .unwrap_or(true);
+    let endpoint = static_bool_arg(kwargs.get("endpoint"), true, "np.linspace: `endpoint`");
     let use_int = linspace_dtype(kwargs).is_some_and(|d| d.storage() == crate::types::NumberType::Integer);
-    let axis_raw = kwargs.get("axis").and_then(|v| v.int_val()).unwrap_or(0);
+    let axis_raw = static_int_arg(kwargs.get("axis"), 0, "np.linspace: `axis`");
 
     let to_list = |b: &mut IRBuilder, v: &Value| -> Value {
         if matches!(v, Value::StaticArray { .. }) {
@@ -1034,17 +1023,22 @@ fn np_linspace_array(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String,
     };
     let denom_c = b.ir_constant_float(denom);
 
-    // samples[k][t] = start_k + t * (stop_k - start_k) / denom
+    // samples[k][t] = start_k + t * (stop_k - start_k) / denom, the last
+    // one stop_k itself when `endpoint` (as NumPy sets it).
     let mut samples: Vec<Vec<Value>> = Vec::with_capacity(pairs);
     for k in 0..pairs {
         let diff = b.ir_sub_f(&e_leaves[k], &s_leaves[k]);
         let step = b.ir_div_f(&diff, &denom_c);
         let mut row = Vec::with_capacity(n);
         for t in 0..n {
-            let t_c = b.ir_constant_float(t as f64);
-            let off = b.ir_mul_f(&t_c, &step);
-            let v = b.ir_add_f(&s_leaves[k], &off);
-            row.push(if use_int { b.ir_int_cast(&v) } else { v });
+            let v = if endpoint && t == n - 1 {
+                e_leaves[k].clone()
+            } else {
+                let t_c = b.ir_constant_float(t as f64);
+                let off = b.ir_mul_f(&t_c, &step);
+                b.ir_add_f(&s_leaves[k], &off)
+            };
+            row.push(linspace_store(b, v, use_int));
         }
         samples.push(row);
     }
@@ -1082,6 +1076,29 @@ fn linspace_dtype(kwargs: &HashMap<String, Value>) -> Option<Dtype> {
 /// `np.linspace`: the samples computed as int64 (an integer dtype) or float
 /// values, then converted into a bool, fixed-width or complex dtype.
 pub fn np_linspace(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+    // `np.linspace(start, stop, num=50, endpoint=True, retstep=False,
+    // dtype=None, axis=0)`: the arguments after `num` by keyword, so that
+    // none is read from one place and ignored in the other.
+    const PARAMETERS: [&str; 7] = ["start", "stop", "num", "endpoint", "retstep", "dtype", "axis"];
+    let mut kwargs = kwargs.clone();
+    for (position, value) in args.iter().enumerate().skip(3) {
+        let name = PARAMETERS
+            .get(position)
+            .unwrap_or_else(|| panic!("np.linspace: takes at most 7 positional arguments"));
+        assert!(
+            kwargs.insert(name.to_string(), value.clone()).is_none(),
+            "np.linspace: got multiple values for argument `{name}`"
+        );
+    }
+    let args = &args[..args.len().min(3)];
+    let kwargs = &kwargs;
+    for key in kwargs.keys() {
+        assert!(PARAMETERS[2..].contains(&key.as_str()), "np.linspace: unexpected keyword argument `{key}`");
+    }
+    assert!(
+        !static_bool_arg(kwargs.get("retstep"), false, "np.linspace: `retstep`"),
+        "np.linspace: retstep=True is not supported"
+    );
     let out = np_linspace_of(b, args, kwargs);
     match linspace_dtype(kwargs) {
         Some(dtype @ (Dtype::Bool | Dtype::FixedInt(_) | Dtype::Complex)) => {
@@ -1096,8 +1113,7 @@ fn np_linspace_of(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Va
         return Value::None;
     }
     // Array start/stop (numpy broadcasts them and places the sample axis
-    // at `axis`): handled by the dedicated static path. The scalar path
-    // below would silently read them as 0.0.
+    // at `axis`): handled by the dedicated static path.
     let arr_like = |v: &Value| {
         matches!(
             v,
@@ -1107,18 +1123,10 @@ fn np_linspace_of(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Va
     if arr_like(&args[0]) || arr_like(&args[1]) {
         return np_linspace_array(b, args, kwargs);
     }
-    let start = args[0]
-        .float_val()
-        .or_else(|| args[0].int_val().map(|v| v as f64))
-        .unwrap_or(0.0);
-    let stop = args[1]
-        .float_val()
-        .or_else(|| args[1].int_val().map(|v| v as f64))
-        .unwrap_or(0.0);
-    let endpoint = kwargs
-        .get("endpoint")
-        .and_then(|v| v.bool_val())
-        .unwrap_or(true);
+    let endpoints = LinspaceEndpoints::of(&args[0], &args[1]);
+    let endpoint = static_bool_arg(kwargs.get("endpoint"), true, "np.linspace: `endpoint`");
+    let axis = static_int_arg(kwargs.get("axis"), 0, "np.linspace: `axis`");
+    assert!(matches!(axis, 0 | -1), "np.linspace: axis {axis} is out of bounds for scalar endpoints");
     let use_int = linspace_dtype(kwargs).is_some_and(|d| d.storage() == crate::types::NumberType::Integer);
     let dtype = if use_int {
         crate::types::NumberType::Integer
@@ -1131,26 +1139,17 @@ fn np_linspace_of(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Va
     // fall back to literal 50 when neither path supplies one.
     let num_val: Option<&Value> = args.get(2).or_else(|| kwargs.get("num"));
 
-    if let Some(num_arg) = num_val {
-        match resolve_int_or_bounded(b, num_arg, SiteKind::LinspaceNum, None) {
-            BoundedInt::Static(n) => {
-                return np_linspace_static(
-                    b,
-                    start,
-                    stop,
-                    n.max(0) as usize,
-                    endpoint,
-                    use_int,
-                    dtype,
-                );
-            }
+    let num = match num_val {
+        None => 50,
+        Some(num_arg) => match resolve_int_or_bounded(b, num_arg, SiteKind::LinspaceNum, None) {
+            BoundedInt::Static(n) => n.max(0) as usize,
             BoundedInt::Bounded { max, .. } => {
                 // Soundness guard: `denom = num - 1` (endpoint=true) or
                 // `denom = num` (endpoint=false) feeds `ir_div_f`. To avoid
                 // division by zero, require `num >= 2` for endpoint and
                 // `num >= 1` for !endpoint. If not provable, refuse rather
                 // than silently producing NaN.
-                use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
+                use crate::optim::predicates::formula::CmpOp;
                 use crate::optim::prove::ProveOutcome;
                 let needed_min: i64 = if endpoint { 2 } else { 1 };
                 let num_vid = num_arg
@@ -1168,33 +1167,83 @@ fn np_linspace_of(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Va
                     );
                 }
                 let num_max = max.max(0) as usize;
-                return np_linspace_bounded(b, start, stop, num_arg, num_max, endpoint, use_int);
+                return np_linspace_bounded(b, &endpoints, num_arg, num_max, endpoint, use_int);
             }
             BoundedInt::Neither => {
-                // Fall through to the legacy default-50 path, preserving
-                // backward compatibility: if `num` is unresolvable we
-                // can't admit it as bounded either, so try `int_val()`
-                // one last time (handles the constant-folded fallback).
-                if let Some(n) = num_arg.int_val() {
-                    return np_linspace_static(
-                        b,
-                        start,
-                        stop,
-                        n.max(0) as usize,
-                        endpoint,
-                        use_int,
-                        dtype,
-                    );
+                // If `num` is unresolvable we can't admit it as bounded
+                // either, so try `int_val()` one last time (handles the
+                // constant-folded fallback).
+                match num_arg.int_val() {
+                    Some(n) => n.max(0) as usize,
+                    None => {
+                        let _: i64 = require_provable_static_int(b, num_arg, SiteKind::LinspaceNum);
+                        unreachable!("require_provable_static_int just panicked above");
+                    }
                 }
-                let _: i64 = require_provable_static_int(b, num_arg, SiteKind::LinspaceNum);
-                unreachable!("require_provable_static_int just panicked above");
             }
+        },
+    };
+    match endpoints {
+        LinspaceEndpoints::Constant { start, stop } => {
+            np_linspace_static(b, start, stop, num, endpoint, use_int, dtype)
+        }
+        LinspaceEndpoints::Runtime { .. } => {
+            np_linspace_runtime_endpoints(b, &endpoints, num, endpoint, use_int, dtype)
+        }
+    }
+}
+
+/// The scalar endpoints of `np.linspace`: both compile-time numbers, or
+/// at least one known only at run time (then both are used as IR values).
+enum LinspaceEndpoints {
+    Constant { start: f64, stop: f64 },
+    Runtime { start: Value, stop: Value },
+}
+
+impl LinspaceEndpoints {
+    fn of(start: &Value, stop: &Value) -> Self {
+        for v in [start, stop] {
+            if !matches!(v, Value::Integer(_) | Value::Float(_) | Value::Boolean(_)) {
+                panic!("np.linspace: start and stop must be real numbers or arrays of them, got {:?}", v.zinnia_type());
+            }
+        }
+        let constant = |v: &Value| v.float_val().or_else(|| v.int_val().map(|i| i as f64)).or_else(|| v.bool_val().map(f64::from));
+        match (constant(start), constant(stop)) {
+            (Some(start), Some(stop)) => LinspaceEndpoints::Constant { start, stop },
+            _ => LinspaceEndpoints::Runtime { start: start.clone(), stop: stop.clone() },
         }
     }
 
-    np_linspace_static(b, start, stop, 50, endpoint, use_int, dtype)
+    /// `(start, stop)` as float IR values.
+    fn as_floats(&self, b: &mut IRBuilder) -> (Value, Value) {
+        match self {
+            LinspaceEndpoints::Constant { start, stop } => (b.ir_constant_float(*start), b.ir_constant_float(*stop)),
+            LinspaceEndpoints::Runtime { start, stop } => (b.ir_float_cast(start), b.ir_float_cast(stop)),
+        }
+    }
+
+    /// Whether the samples are known to be non-decreasing.
+    fn ascending(&self) -> bool {
+        matches!(self, LinspaceEndpoints::Constant { start, stop } if start <= stop)
+    }
 }
 
+/// A float sample of `np.linspace` stored as the output dtype: NumPy
+/// floors the samples for an integer dtype (NumPy 2), so `-0.5` becomes
+/// `-1`, where a cast to int would truncate to 0.
+fn linspace_store(b: &mut IRBuilder, sample: Value, use_int: bool) -> Value {
+    if !use_int {
+        return sample;
+    }
+    let one = b.ir_constant_float(1.0);
+    let floored = b.ir_floor_div_f(&sample, &one);
+    b.ir_int_cast(&floored)
+}
+
+/// `np.linspace` of compile-time endpoints and a compile-time `num`,
+/// computed in f64 as NumPy computes it: `i * step + start`
+/// (`(i / div) * delta + start` when the step underflows to 0), the last
+/// sample `stop` itself when `endpoint`, floored for an integer dtype.
 fn np_linspace_static(
     b: &mut IRBuilder,
     start: f64,
@@ -1204,58 +1253,71 @@ fn np_linspace_static(
     use_int: bool,
     dtype: crate::types::NumberType,
 ) -> Value {
-    if num == 0 {
-        return crate::helpers::static_array::base::build_static_array_from_flat(
-            b,
-            vec![],
-            vec![0],
-            dtype,
-        );
-    }
-    if num == 1 {
-        let v = if use_int {
-            b.ir_constant_int(start as i64)
-        } else {
-            b.ir_constant_float(start)
-        };
-        return crate::helpers::static_array::base::build_static_array_from_flat(
-            b,
-            vec![v],
-            vec![1],
-            dtype,
-        );
-    }
-
-    let divisor = if endpoint {
-        (num - 1) as f64
-    } else {
-        num as f64
-    };
-    let step = (stop - start) / divisor;
-    let mut values = Vec::new();
-    for i in 0..num {
-        let fval = start + step * i as f64;
-        if use_int {
-            values.push(b.ir_constant_int(fval as i64));
-        } else {
-            values.push(b.ir_constant_float(fval));
-        }
-    }
-    let len = values.len();
+    let div = if endpoint { num.saturating_sub(1) } else { num } as f64;
+    let delta = stop - start;
+    let step = delta / div;
+    let samples: Vec<f64> = (0..num)
+        .map(|i| match i {
+            0 => start,
+            _ if endpoint && i == num - 1 => stop,
+            _ if step == 0.0 => (i as f64 / div) * delta + start,
+            _ => i as f64 * step + start,
+        })
+        .collect();
+    let values = samples
+        .iter()
+        .map(|&y| if use_int { b.ir_constant_int(y.floor() as i64) } else { b.ir_constant_float(y) })
+        .collect();
     let result = crate::helpers::static_array::base::build_static_array_from_flat(
         b,
         values,
-        vec![len],
+        vec![num],
         dtype,
     );
     // No array fact is stated: the cells are constants (see `arange_static`).
     result
 }
 
+/// `np.linspace` with a compile-time `num` and an endpoint known only at
+/// run time: the same samples as [`np_linspace_static`], computed in IR.
+fn np_linspace_runtime_endpoints(
+    b: &mut IRBuilder,
+    endpoints: &LinspaceEndpoints,
+    num: usize,
+    endpoint: bool,
+    use_int: bool,
+    dtype: crate::types::NumberType,
+) -> Value {
+    let (start, stop) = endpoints.as_floats(b);
+    let mut values = Vec::with_capacity(num);
+    if num > 0 {
+        let div = if endpoint { num - 1 } else { num };
+        let delta = b.ir_sub_f(&stop, &start);
+        let div = b.ir_constant_float(div.max(1) as f64);
+        let step = b.ir_div_f(&delta, &div);
+        for i in 0..num {
+            let sample = match i {
+                0 => start.clone(),
+                _ if endpoint && i == num - 1 => stop.clone(),
+                _ => {
+                    let i = b.ir_constant_float(i as f64);
+                    let offset = b.ir_mul_f(&i, &step);
+                    b.ir_add_f(&start, &offset)
+                }
+            };
+            values.push(linspace_store(b, sample, use_int));
+        }
+    }
+    crate::helpers::static_array::base::build_static_array_from_flat(b, values, vec![num], dtype)
+}
+
+/// `np.linspace` with a runtime `num` in `[needed_min, num_max]`: a
+/// bounded-dynamic array of `num_max` slots whose first `num` hold the
+/// samples `start + i * step`, the one at `num - 1` being `stop` itself
+/// when `endpoint` (as NumPy sets it), floored for an integer dtype.
 fn np_linspace_bounded(
     b: &mut IRBuilder,
-    start: f64,
-    stop: f64,
+    endpoints: &LinspaceEndpoints,
     num_arg: &Value,
     num_max: usize,
     endpoint: bool,
@@ -1285,9 +1347,8 @@ fn np_linspace_bounded(
         num_arg.clone()
     };
     let denom_f = b.ir_float_cast(&denom_i);
-    let start_const = b.ir_constant_float(start);
-    let stop_const = b.ir_constant_float(stop);
-    let span = b.ir_sub_f(&stop_const, &start_const);
+    let (start, stop) = endpoints.as_floats(b);
+    let span = b.ir_sub_f(&stop, &start);
     let step = b.ir_div_f(&span, &denom_f);
 
     // Allocate output segment of `num_max` slots and overwrite the active
@@ -1305,13 +1366,14 @@ fn np_linspace_bounded(
     for i in 0..num_max {
         let i_const_f = b.ir_constant_float(i as f64);
         let offset = b.ir_mul_f(&i_const_f, &step);
-        let val_f = b.ir_add_f(&start_const, &offset);
-        let val = if use_int {
-            b.ir_int_cast(&val_f)
-        } else {
-            val_f
-        };
+        let mut sample = b.ir_add_f(&start, &offset);
         let i_const_i = b.ir_constant_int(i as i64);
+        if endpoint && i >= 1 {
+            // Slot `num - 1` holds `stop` exactly.
+            let is_last = b.ir_equal_i(&i_const_i, &denom_i);
+            sample = b.ir_select_f(&is_last, &stop, &sample);
+        }
+        let val = linspace_store(b, sample, use_int);
         b.storage_write_at(segment_id, &i_const_i, &val);
     }
 
@@ -1346,22 +1408,27 @@ fn np_linspace_bounded(
         value_id: crate::types::ValueId::next(),
     });
 
-    // With `start <= stop` the cells are non-decreasing on every path, by
-    // their definition: cell `i` is `start + i * step` with `step = (stop -
-    // start) / denom >= 0` (a non-negative span over a positive count), the
-    // product of the integer `i` and the fixed-point `step` is exact, and
-    // the integer cast of a non-decreasing sequence does not decrease. Every
-    // capacity cell is written that way, the ones past `num` included.
-    if start <= stop {
-        let order = crate::optim::array_facts::ElemFacts {
-            order: Some(crate::optim::array_facts::Order::NonDecreasing),
-            ..crate::optim::array_facts::ElemFacts::TOP
+    // With constant endpoints `start <= stop` the live samples (the first
+    // `num` cells) are non-decreasing on every path, by their definition:
+    // cell `i < num - 1` is `start + i * step` with `step = (stop - start) /
+    // denom >= 0` (a non-negative span over a positive count; the product of
+    // the integer `i` and the fixed-point `step` is exact), and cell `num - 1`
+    // (with `endpoint`) is `stop`, which is at least `start + (num - 2) *
+    // step`; flooring for an integer dtype keeps the order. The cells past
+    // `num` are not ordered (the last live one is `stop` exactly), so the
+    // fact is a segment ending at `num`.
+    if endpoints.ascending() {
+        use crate::optim::array_facts::{Bound, ElemFacts, FactGuard, Order, Segmentation};
+        let live_end = match (num_arg.int_val(), num_arg.stmt_id()) {
+            (Some(n), _) => Some(Bound::Const(n.clamp(0, num_max as i64))),
+            (None, Some(stmt)) => Some(Bound::stmt(stmt)),
+            (None, None) => None,
         };
-        b.state_storage_facts(
-            segment_id,
-            crate::optim::array_facts::Segmentation::uniform(num_max, order),
-            crate::optim::array_facts::FactGuard::Always,
-        );
+        if let Some(live_end) = live_end {
+            let ordered = ElemFacts { order: Some(Order::NonDecreasing), ..ElemFacts::TOP };
+            let facts = Segmentation::live_then_padding(num_max, live_end, ordered, ElemFacts::TOP);
+            b.state_storage_facts(segment_id, facts, FactGuard::Always);
+        }
     }
 
     result

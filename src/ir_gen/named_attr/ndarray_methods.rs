@@ -290,13 +290,7 @@ impl IRGenerator {
                     values: flat,
                     value_id: ValueId::next(),
                 });
-                if let (Some(in_vid), Some(out_vid)) = (val_orig.value_id(), out.value_id()) {
-                    crate::optim::resolver::relay_forall_eq_const_from_input(
-                        &mut self.builder,
-                        in_vid,
-                        out_vid,
-                    );
-                }
+                crate::optim::resolver::relay_forall_eq_const_from_input(&mut self.builder, &val_orig, &out);
                 out
             }
             "flat" => {
@@ -313,13 +307,7 @@ impl IRGenerator {
                     values: flat,
                     value_id: ValueId::next(),
                 });
-                if let (Some(in_vid), Some(out_vid)) = (val_orig.value_id(), out.value_id()) {
-                    crate::optim::resolver::relay_forall_eq_const_from_input(
-                        &mut self.builder,
-                        in_vid,
-                        out_vid,
-                    );
-                }
+                crate::optim::resolver::relay_forall_eq_const_from_input(&mut self.builder, &val_orig, &out);
                 out
             }
             "reshape" => {
@@ -387,13 +375,7 @@ impl IRGenerator {
                     values: flat,
                     value_id: ValueId::next(),
                 });
-                if let (Some(in_vid), Some(out_vid)) = (val_orig.value_id(), out.value_id()) {
-                    crate::optim::resolver::relay_forall_eq_const_from_input(
-                        &mut self.builder,
-                        in_vid,
-                        out_vid,
-                    );
-                }
+                crate::optim::resolver::relay_forall_eq_const_from_input(&mut self.builder, &val_orig, &out);
                 out
             }
             "swapaxes" => {

@@ -27,15 +27,14 @@ pub(super) fn write_into(
     array_compat::write_output(b, result, target, None)
 }
 
+/// The compile-time Boolean keyword argument `name` (`keepdims=`,
+/// `strict=`), or `default` when it is absent; a runtime value is rejected.
 pub(super) fn kwarg_static_truthy(
     kwargs: &HashMap<String, Value>,
     name: &str,
     default: bool,
 ) -> bool {
-    kwargs
-        .get(name)
-        .and_then(|v| v.bool_val().or_else(|| v.int_val().map(|i| i != 0)))
-        .unwrap_or(default)
+    crate::helpers::static_args::static_bool_arg(kwargs.get(name), default, &format!("`{name}=`"))
 }
 
 /// Bundle of dispatcher inputs shared across category sub-dispatchers.
@@ -564,13 +563,7 @@ impl IRGenerator {
                     values: flat,
                     value_id: ValueId::next(),
                 });
-                if let (Some(in_vid), Some(out_vid)) = (target_orig.value_id(), out.value_id()) {
-                    crate::optim::resolver::relay_forall_eq_const_from_input(
-                        &mut self.builder,
-                        in_vid,
-                        out_vid,
-                    );
-                }
+                crate::optim::resolver::relay_forall_eq_const_from_input(&mut self.builder, &target_orig, &out);
                 out
             }
             "reshape" => {

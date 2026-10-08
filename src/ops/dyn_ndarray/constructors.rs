@@ -68,11 +68,13 @@ pub fn dyn_eye(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
         .first()
         .and_then(|v| v.int_val())
         .expect("eye: N must be constant int") as usize;
-    let m = args
-        .get(1)
-        .or_else(|| kwargs.get("M"))
-        .and_then(|v| v.int_val())
-        .unwrap_or(n as i64) as usize;
+    let m = crate::helpers::static_args::static_int_arg(
+        args.get(1).or_else(|| kwargs.get("M")),
+        n as i64,
+        "eye: `M`",
+    ) as usize;
+    let k = crate::helpers::static_args::static_int_arg(args.get(2).or_else(|| kwargs.get("k")), 0, "eye: `k`");
+    assert!(k == 0, "eye: only the main diagonal (k = 0) is supported");
     let dtype = parse_dtype_kwarg(kwargs);
 
     let max_length = n * m;
@@ -468,9 +470,7 @@ pub fn dyn_fill_with_active(
         1 => Some("ones_content"),
         _ => None,
     } {
-        if let Some(vid) = result.value_id() {
-            b.fire_contract(name, vid, &std::collections::HashMap::new());
-        }
+        b.state_array_fact(&result, name);
     }
 
     result

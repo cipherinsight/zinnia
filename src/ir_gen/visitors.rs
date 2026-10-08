@@ -82,13 +82,7 @@ impl IRGenerator {
         if !Self::subscript_output_can_relay_forall_eq_const(output) {
             return;
         }
-        if let (Some(in_vid), Some(out_vid)) = (input.value_id(), output.value_id()) {
-            crate::optim::resolver::relay_forall_eq_const_from_input(
-                &mut self.builder,
-                in_vid,
-                out_vid,
-            );
-        }
+        crate::optim::resolver::relay_forall_eq_const_from_input(&mut self.builder, &input, &output);
     }
 
     fn simple_name_target(target: &ASTNode) -> Option<&str> {

@@ -3116,10 +3116,13 @@ fn np_linspace_bounded_output_is_non_decreasing_when_ascending() {
     let num = bounded_input(&mut b, "num", 2, 20);
     let start = b.ir_constant_int(0);
     let stop = b.ir_constant_int(1);
-    let out = np_linspace(&mut b, &[start, stop, num], &std::collections::HashMap::new());
+    let out = np_linspace(&mut b, &[start, stop, num.clone()], &std::collections::HashMap::new());
     assert!(matches!(out, crate::types::Value::DynamicNDArray(_)));
-    assert!(b.array_has_order(&out, Order::NonDecreasing, Where::Everywhere));
-    assert!(!b.array_has_order(&out, Order::Increasing, Where::Everywhere), "ties are possible");
+    // The live samples (the first `num`) are ordered; the cells past them
+    // are not (the last live sample is `stop` itself).
+    assert!(b.live_prefix_has_order(&out, &num, Order::NonDecreasing, Where::Everywhere));
+    assert!(!b.live_prefix_has_order(&out, &num, Order::Increasing, Where::Everywhere), "ties are possible");
+    assert!(!b.array_has_order(&out, Order::NonDecreasing, Where::Everywhere), "not the whole capacity");
 }
 
 #[test]
@@ -3165,7 +3168,7 @@ fn relay_forall_eq_const_zero_through_tile() {
         },
     );
 
-    let fired = relay_forall_eq_const_from_input(&mut b, in_vid, out_vid);
+    let fired = relay_forall_eq_const_from_input(&mut b, &in_val, &out_val);
     assert!(fired, "relay should fire when forall_eq_const(in, 0) holds");
 
     let query = ContractTerm::PredicateApp {
@@ -3202,7 +3205,7 @@ fn relay_forall_eq_const_one() {
         },
     );
 
-    let fired = relay_forall_eq_const_from_input(&mut b, in_vid, out_vid);
+    let fired = relay_forall_eq_const_from_input(&mut b, &in_val, &out_val);
     assert!(fired, "relay should fire when forall_eq_const(in, 1) holds");
 
     let query = ContractTerm::PredicateApp {
@@ -3228,7 +3231,7 @@ fn relay_forall_eq_const_skips_when_no_fact() {
     let in_vid = in_val.value_id().unwrap();
     let out_vid = out_val.value_id().unwrap();
 
-    let fired = relay_forall_eq_const_from_input(&mut b, in_vid, out_vid);
+    let fired = relay_forall_eq_const_from_input(&mut b, &in_val, &out_val);
     assert!(
         !fired,
         "relay should not fire when no content fact is visible"
@@ -3279,7 +3282,7 @@ fn relay_forall_eq_const_zero_wins_when_both_proved() {
         );
     }
 
-    let fired = relay_forall_eq_const_from_input(&mut b, in_vid, out_vid);
+    let fired = relay_forall_eq_const_from_input(&mut b, &in_val, &out_val);
     assert!(fired);
 
     let zero_query = ContractTerm::PredicateApp {
@@ -3510,7 +3513,7 @@ fn relay_concat_all_zeros_emits_zeros() {
         );
     }
 
-    let fired = relay_forall_eq_const_from_all_inputs(&mut b, &[in1_vid, in2_vid], out_vid);
+    let fired = relay_forall_eq_const_from_all_inputs(&mut b, &[in1.clone(), in2.clone()], &out_val);
     assert!(fired);
 
     let query = ContractTerm::PredicateApp {
@@ -3554,7 +3557,7 @@ fn relay_concat_all_ones_emits_ones() {
     }
 
     let fired =
-        relay_forall_eq_const_from_all_inputs(&mut b, &[in1_vid, in2_vid, in3_vid], out_vid);
+        relay_forall_eq_const_from_all_inputs(&mut b, &[in1.clone(), in2.clone(), in3.clone()], &out_val);
     assert!(fired);
 
     let query = ContractTerm::PredicateApp {
@@ -3604,7 +3607,7 @@ fn relay_concat_mixed_zero_one_emits_nothing() {
         },
     );
 
-    let fired = relay_forall_eq_const_from_all_inputs(&mut b, &[in1_vid, in2_vid], out_vid);
+    let fired = relay_forall_eq_const_from_all_inputs(&mut b, &[in1.clone(), in2.clone()], &out_val);
     assert!(!fired);
 
     for k in [0i64, 1i64] {
@@ -3646,7 +3649,7 @@ fn relay_concat_one_input_no_fact_skips() {
         },
     );
 
-    let fired = relay_forall_eq_const_from_all_inputs(&mut b, &[in1_vid, in2_vid], out_vid);
+    let fired = relay_forall_eq_const_from_all_inputs(&mut b, &[in1.clone(), in2.clone()], &out_val);
     assert!(!fired);
 
     for k in [0i64, 1i64] {
@@ -3670,7 +3673,7 @@ fn relay_concat_empty_input_list_returns_false() {
     let out_val = b.ir_read_integer(InputPath::new("out", vec![]), false);
     let out_vid = out_val.value_id().unwrap();
 
-    let fired = relay_forall_eq_const_from_all_inputs(&mut b, &[], out_vid);
+    let fired = relay_forall_eq_const_from_all_inputs(&mut b, &[], &out_val);
     assert!(!fired);
 }
 
@@ -3982,7 +3985,7 @@ mod group_5c_gather_content {
             .expect("fancy_index_static output should have a value_id");
 
         let fired =
-            crate::optim::resolver::relay_forall_eq_const_from_input(&mut b, in_vid, out_vid);
+            crate::optim::resolver::relay_forall_eq_const_from_input(&mut b, &arr, &out);
         assert!(fired, "relay should fire when forall_eq_const(in, 0) holds");
         assert_forall_eq_const_proved(&mut b, out_vid, 0);
     }
@@ -4006,7 +4009,7 @@ mod group_5c_gather_content {
         let out_vid = out.value_id().expect("output should have a value_id");
 
         let fired =
-            crate::optim::resolver::relay_forall_eq_const_from_input(&mut b, in_vid, out_vid);
+            crate::optim::resolver::relay_forall_eq_const_from_input(&mut b, &arr, &out);
         assert!(fired, "relay should fire when forall_eq_const(in, 1) holds");
         assert_forall_eq_const_proved(&mut b, out_vid, 1);
     }
@@ -4028,7 +4031,7 @@ mod group_5c_gather_content {
         let out_vid = out.value_id().expect("output should have a value_id");
 
         let fired =
-            crate::optim::resolver::relay_forall_eq_const_from_input(&mut b, in_vid, out_vid);
+            crate::optim::resolver::relay_forall_eq_const_from_input(&mut b, &arr, &out);
         assert!(!fired, "relay should NOT fire without a source fact");
         for k in [0i64, 1i64] {
             let query = ContractTerm::PredicateApp {
@@ -4228,7 +4231,7 @@ fn disable_switch_skips_relay() {
             ],
         },
     );
-    let fired = crate::optim::resolver::relay_forall_eq_const_from_input(&mut b, in_vid, out_vid);
+    let fired = crate::optim::resolver::relay_forall_eq_const_from_input(&mut b, &inp, &out);
     assert!(
         !fired,
         "ZINNIA_REQ_DISABLE=1 must make relay_forall_eq_const_from_input no-op"

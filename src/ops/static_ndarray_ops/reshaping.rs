@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 use crate::builder::IRBuilder;
 use crate::helpers::shape_arith::resolve_axis;
+use crate::helpers::static_args::static_int_arg;
 use crate::optim::resolver::{
     require_provable_static_int, resolve_int_or_bounded, BoundedInt, SiteKind,
 };
@@ -64,11 +65,7 @@ pub(super) fn concat_recursive(arrays: &[Value], axis: usize) -> Value {
 }
 
 pub fn np_concatenate(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
-    let raw_axis = kwargs
-        .get("axis")
-        .or_else(|| args.get(1))
-        .and_then(|v| v.int_val())
-        .unwrap_or(0);
+    let axis_arg = kwargs.get("axis").or_else(|| args.get(1));
 
     let data = match args.first() {
         Some(Value::List(d)) | Some(Value::Tuple(d)) => d,
@@ -77,6 +74,15 @@ pub fn np_concatenate(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String
     if data.values.is_empty() {
         return Value::None;
     }
+    // `axis=None` concatenates the flattened inputs.
+    if matches!(axis_arg, Some(Value::None)) {
+        let flat: Vec<Value> = data.values.iter().flat_map(crate::helpers::composite::flatten_composite).collect();
+        let types = flat.iter().map(|v| v.zinnia_type()).collect();
+        let out = Value::List(CompositeData { elements_type: types, values: flat, value_id: ValueId::next() });
+        crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &data.values, &out);
+        return out;
+    }
+    let raw_axis = static_int_arg(axis_arg, 0, "np.concatenate: `axis`");
 
     let ndim = crate::helpers::composite::get_composite_shape(&data.values[0]).len();
     let resolved = if raw_axis < 0 {
@@ -92,12 +98,7 @@ pub fn np_concatenate(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String
     }
 
     let out = concat_recursive(&data.values, resolved as usize);
-    let input_vids: Vec<ValueId> = data.values.iter().filter_map(|v| v.value_id()).collect();
-    if let Some(out_vid) = out.value_id() {
-        if input_vids.len() == data.values.len() {
-            crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &input_vids, out_vid);
-        }
-    }
+    crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &data.values, &out);
     out
 }
 
@@ -170,12 +171,7 @@ pub fn np_stack(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Valu
     }
 
     let out = stack_recursive(&data.values, resolved as usize);
-    let input_vids: Vec<ValueId> = data.values.iter().filter_map(|v| v.value_id()).collect();
-    if let Some(out_vid) = out.value_id() {
-        if input_vids.len() == data.values.len() {
-            crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &input_vids, out_vid);
-        }
-    }
+    crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &data.values, &out);
     out
 }
 
@@ -455,9 +451,7 @@ pub fn ndarray_repeat(
                     },
                     value_id: crate::types::ValueId::next(),
                 });
-                if let (Some(in_vid), Some(out_vid)) = (val.value_id(), result.value_id()) {
-                    crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
-                }
+                crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &result);
                 return result;
             }
             BoundedInt::Static(_) | BoundedInt::Neither => {
@@ -492,9 +486,7 @@ pub fn ndarray_repeat(
                     values: new_vals,
                     value_id: ValueId::next(),
                 });
-                if let (Some(in_vid), Some(out_vid)) = (val.value_id(), result.value_id()) {
-                    crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
-                }
+                crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &result);
                 return result;
             }
         }
@@ -528,9 +520,7 @@ pub fn ndarray_repeat(
             values: new_vals,
             value_id: ValueId::next(),
         });
-        if let (Some(in_vid), Some(out_vid)) = (val.value_id(), result.value_id()) {
-            crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
-        }
+        crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &result);
         result
     }
 }
@@ -826,19 +816,15 @@ pub fn np_rot90(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Valu
     if ndim < 2 {
         panic!("rot90: input must be at least 2-D");
     }
-    let k = kwargs
-        .get("k")
-        .or_else(|| args.get(1))
-        .and_then(|v| v.int_val())
-        .unwrap_or(1);
+    let k = static_int_arg(kwargs.get("k").or_else(|| args.get(1)), 1, "rot90: `k`");
     let axes_arg = kwargs.get("axes").or_else(|| args.get(2));
-    let (a0, a1) = match axes_arg {
+    let (a0, a1) = match axes_arg.filter(|v| !matches!(v, Value::None)) {
+        None => (0usize, 1usize),
         Some(Value::Tuple(d)) | Some(Value::List(d)) if d.values.len() == 2 => {
-            let a = resolve_axis(d.values[0].int_val().unwrap_or(0), ndim, "rot90");
-            let bb = resolve_axis(d.values[1].int_val().unwrap_or(1), ndim, "rot90");
-            (a, bb)
+            let axis = |v: &Value| resolve_axis(static_int_arg(Some(v), 0, "rot90: `axes`"), ndim, "rot90");
+            (axis(&d.values[0]), axis(&d.values[1]))
         }
-        _ => (0usize, 1usize),
+        Some(_) => panic!("rot90: axes must be a pair of axes"),
     };
     if a0 == a1 {
         panic!("rot90: axes must be different");
@@ -912,16 +898,12 @@ pub fn np_squeeze(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Va
     let flat = crate::helpers::composite::flatten_composite(val);
     if new_shape.is_empty() {
         let out = flat.into_iter().next().unwrap_or(Value::None);
-        if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
-            crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
-        }
+        crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
         return out;
     }
     let types = flat.iter().map(|v| v.zinnia_type()).collect();
     let out = crate::helpers::composite::build_nested_value(flat, types, &new_shape);
-    if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
-        crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
-    }
+    crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
     out
 }
 
@@ -973,9 +955,7 @@ pub fn np_expand_dims(b: &mut IRBuilder, args: &[Value]) -> Value {
         }
     }
     let out = insert_at(val, pos);
-    if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
-        crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
-    }
+    crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
     out
 }
 
@@ -1016,9 +996,7 @@ pub fn np_broadcast_to(b: &mut IRBuilder, args: &[Value]) -> Value {
     // new element equals an existing one — `forall_eq_const(in, k)` ⇒
     // `forall_eq_const(out, k)`.
     let out = crate::helpers::broadcast::materialize_to_shape(val, &target);
-    if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
-        crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
-    }
+    crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
     out
 }
 
@@ -1101,9 +1079,7 @@ pub fn np_tile(b: &mut IRBuilder, args: &[Value]) -> Value {
                 formals.insert("len_arr".to_string(), len_vid);
                 formals.insert("k".to_string(), k_vid);
                 b.fire_contract("dyn_tile", runtime_length_vid, &formals);
-                if let (Some(in_vid), Some(out_vid)) = (val.value_id(), result.value_id()) {
-                    crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
-                }
+                crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &result);
                 return result;
             }
             BoundedInt::Static(_) | BoundedInt::Neither => {
@@ -1177,9 +1153,7 @@ pub fn np_tile(b: &mut IRBuilder, args: &[Value]) -> Value {
     }
     let types = out_flat.iter().map(|v| v.zinnia_type()).collect();
     let out = crate::helpers::composite::build_nested_value(out_flat, types, &target_shape);
-    if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
-        crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
-    }
+    crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
     out
 }
 
@@ -1238,12 +1212,7 @@ pub fn np_vstack(b: &mut IRBuilder, args: &[Value]) -> Value {
     };
     let promoted: Vec<Value> = arrays.values.iter().map(promote_to_row).collect();
     let out = concat_recursive(&promoted, 0);
-    let input_vids: Vec<ValueId> = arrays.values.iter().filter_map(|v| v.value_id()).collect();
-    if let Some(out_vid) = out.value_id() {
-        if input_vids.len() == arrays.values.len() {
-            crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &input_vids, out_vid);
-        }
-    }
+    crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &arrays.values, &out);
     out
 }
 
@@ -1260,12 +1229,7 @@ pub fn np_hstack(b: &mut IRBuilder, args: &[Value]) -> Value {
         .any(|v| crate::helpers::composite::get_composite_shape(v).len() >= 2);
     let axis = if any_multi { 1 } else { 0 };
     let out = concat_recursive(&arrays.values, axis);
-    let input_vids: Vec<ValueId> = arrays.values.iter().filter_map(|v| v.value_id()).collect();
-    if let Some(out_vid) = out.value_id() {
-        if input_vids.len() == arrays.values.len() {
-            crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &input_vids, out_vid);
-        }
-    }
+    crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &arrays.values, &out);
     out
 }
 
@@ -1301,12 +1265,7 @@ pub fn np_dstack(b: &mut IRBuilder, args: &[Value]) -> Value {
         })
         .collect();
     let out = concat_recursive(&promoted, 2);
-    let input_vids: Vec<ValueId> = raw_values.iter().filter_map(|v| v.value_id()).collect();
-    if let Some(out_vid) = out.value_id() {
-        if input_vids.len() == raw_values.len() {
-            crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &input_vids, out_vid);
-        }
-    }
+    crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &raw_values, &out);
     out
 }
 
@@ -1318,12 +1277,7 @@ pub fn np_column_stack(b: &mut IRBuilder, args: &[Value]) -> Value {
     };
     let promoted: Vec<Value> = arrays.values.iter().map(promote_to_column).collect();
     let out = concat_recursive(&promoted, 1);
-    let input_vids: Vec<ValueId> = arrays.values.iter().filter_map(|v| v.value_id()).collect();
-    if let Some(out_vid) = out.value_id() {
-        if input_vids.len() == arrays.values.len() {
-            crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &input_vids, out_vid);
-        }
-    }
+    crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &arrays.values, &out);
     out
 }
 
