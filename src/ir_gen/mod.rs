@@ -12,6 +12,7 @@ use crate::optim::prove::{maximize_shape_param, minimize_shape_param};
 use crate::optim::resolver::{LayeredResolver, Resolver, StaticOnlyResolver};
 use crate::types::{NumberType, ShapeDim, Value, ZinniaType};
 
+mod array_fact_sources;
 mod chip_external;
 mod detached_copies;
 mod helpers;
@@ -580,11 +581,11 @@ impl IRGenerator {
                     bound_value.as_ref(),
                 );
             }
-            // No `array_in_range` fact is deposited for the input: the
-            // `forall` bound is found through the input's cells
-            // (`reductions::read_array_element_bounds`), which a write to the
-            // array, an alias or a view replaces. A fact keyed by the array's
-            // value_id outlived such writes (AF-1).
+            // Array facts (`docs/array-facts.md`): what the predicate's checks
+            // (just emitted) enforce on every element of the input, stated on
+            // the input's cells. Keyed by the cells, a fact says nothing about
+            // the array after a write to it, an alias or a view (AF-1).
+            self.state_requires_array_facts(&req.kind, &req.args);
         }
 
         // Emit scalar-precondition atoms + their witness-time enforcement.

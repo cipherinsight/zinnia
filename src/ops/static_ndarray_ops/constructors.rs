@@ -17,49 +17,6 @@ use crate::helpers::static_args::{static_bool_arg, static_int_arg};
 
 // ── Numpy-like helpers ────────────────────────────────────────────
 
-/// Fire the `forall_eq_const` content fact for `np.zeros` / `np.ones`
-/// (and their `*_like` variants) on the output value. No-op for fill
-/// values other than 0 and 1 — `np.full(shape, k)` for arbitrary k is
-/// handled by Group 4b's multi-formal contract. No-op when the output
-/// Value carries no `value_id` (e.g., the static-array codepath).
-fn fire_fill_content_contract(b: &mut IRBuilder, out: &Value, fill_value: i64) {
-    let name = match fill_value {
-        0 => "zeros_content",
-        1 => "ones_content",
-        _ => return,
-    };
-    b.state_array_fact(out, name);
-}
-
-fn fire_full_static_content_fact(b: &mut IRBuilder, out: &Value, fill: &Value) {
-    let Some(out_vid) = out.value_id() else {
-        return;
-    };
-    let term = match fill {
-        Value::Integer(_) | Value::Boolean(_) => {
-            let Some(k) = fill.int_val() else {
-                return;
-            };
-            ContractTerm::LitInt(k)
-        }
-        Value::Float(_) => {
-            let Some(k) = fill.float_val() else {
-                return;
-            };
-            ContractTerm::LitFloat(k.into())
-        }
-        _ => return,
-    };
-    b.record_array_contents(out);
-    b.facts.insert_for(
-        out_vid,
-        ContractTerm::PredicateApp {
-            kind: "forall_eq_const".to_string(),
-            args: vec![ContractTerm::Var(ContractVar::Value(out_vid)), term],
-        },
-    );
-}
-
 /// The fill value of `np.full` / `np.full_like` converted into the dtype.
 fn fill_of_dtype(b: &mut IRBuilder, fill: &Value, dtype: Dtype) -> Value {
     if dtype == Dtype::Complex || matches!(fill, Value::Complex { .. }) {
@@ -169,13 +126,10 @@ fn fill_array(
                                     vec![n as usize],
                                     crate::types::NumberType::Integer,
                                 );
-                            fire_fill_content_contract(b, &out, fill_value);
                             return out;
                         } else {
                             crate::types::NumberType::Integer
                         };
-                    // dyn_fill_with_active itself fires the content contract
-                    // (zeros_content / ones_content) when fill_value is 0 or 1.
                     return crate::ops::dyn_ndarray::constructors::dyn_fill_with_active(
                         b,
                         max as usize,
@@ -270,7 +224,6 @@ fn fill_array(
                                 n,
                                 dtype,
                             );
-                            fire_fill_content_contract(b, &out, fill_value);
                             return out;
                         }
                     }
@@ -285,7 +238,6 @@ fn fill_array(
                                 total_bound,
                                 dtype,
                             );
-                            fire_fill_content_contract(b, &out, fill_value);
                             return out;
                         }
                     }
@@ -300,7 +252,6 @@ fn fill_array(
                     runtime_length,
                     dtype,
                 );
-                fire_fill_content_contract(b, &out, fill_value);
                 return out;
             }
             max_shape
@@ -321,7 +272,6 @@ fn fill_array(
         let out = crate::helpers::static_array::base::build_static_array_from_flat_complex(
             b, reals, imags, shape,
         );
-        fire_fill_content_contract(b, &out, fill_value);
         return out;
     }
 
@@ -342,7 +292,6 @@ fn fill_array(
     // P1 segarr-foundation: numeric constructors emit Value::StaticArray.
     let out =
         crate::helpers::static_array::base::build_static_array_from_flat(b, values, shape, dtype);
-    fire_fill_content_contract(b, &out, fill_value);
     out
 }
 
@@ -359,7 +308,6 @@ pub fn np_full(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
         .unwrap_or_else(|| dtype_of_fill(fill_arg));
     let fill_value = fill_of_dtype(b, fill_arg, dtype);
     let out = np_full_with_value(b, shape_arg, &fill_value, dtype.storage());
-    fire_full_static_content_fact(b, &out, &fill_value);
     mark_array_dtype(b, out, dtype)
 }
 
@@ -528,7 +476,6 @@ pub fn np_fill_like(
         let out = crate::helpers::static_array::base::build_static_array_from_flat_complex(
             b, reals, imags, shape,
         );
-        fire_fill_content_contract(b, &out, fill_value);
         return out;
     }
     let fill = match dtype {
@@ -544,7 +491,6 @@ pub fn np_fill_like(
     // P1 segarr-foundation: numeric constructors emit Value::StaticArray.
     let out =
         crate::helpers::static_array::base::build_static_array_from_flat(b, values, shape, dtype);
-    fire_fill_content_contract(b, &out, fill_value);
     out
 }
 
@@ -597,7 +543,6 @@ pub fn np_full_like(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, 
         }
     };
     let out = np_full_with_value(b, &shape_arg, &fill_value, dtype.storage());
-    fire_full_static_content_fact(b, &out, &fill_value);
     mark_array_dtype(b, out, dtype)
 }
 
@@ -632,7 +577,6 @@ pub fn np_identity(b: &mut IRBuilder, args: &[Value]) -> Value {
                 vec![n, n],
                 crate::types::NumberType::Integer,
             );
-            b.state_array_fact(&out, "identity_content");
             out
         }
         BoundedInt::Bounded { max, .. } => {
@@ -670,7 +614,6 @@ pub fn np_identity(b: &mut IRBuilder, args: &[Value]) -> Value {
             let mut formals = std::collections::HashMap::new();
             formals.insert("N".to_string(), n_vid);
             b.fire_contract("dyn_identity", runtime_length_vid, &formals);
-            b.state_array_fact(&result, "identity_content");
             result
         }
         BoundedInt::Neither => {
@@ -788,10 +731,6 @@ fn np_arange_int(b: &mut IRBuilder, args: &[Value]) -> Value {
                     );
                     let start = b.ir_constant_int(0);
                     length.fire_length_contract(b, &result, &start, stop_val);
-                    // 1-arg form: step is implicit 1 ⇒ always ascending ⇒
-                    // is_sorted(out) holds. Fire on the array's value_id
-                    // (not the length-bearing scalar).
-                    b.state_array_fact(&result, "arange_is_sorted");
                     result
                 }
                 BoundedInt::Neither => {
@@ -825,8 +764,6 @@ fn np_arange_int(b: &mut IRBuilder, args: &[Value]) -> Value {
                         crate::types::NumberType::Integer,
                     );
                     length.fire_length_contract(b, &result, &start_constant, stop_val);
-                    // 2-arg form: step is implicit 1 ⇒ always ascending.
-                    b.state_array_fact(&result, "arange_is_sorted");
                     result
                 }
                 BoundedInt::Neither => {
@@ -882,11 +819,6 @@ fn np_arange_int(b: &mut IRBuilder, args: &[Value]) -> Value {
                         runtime_length,
                         crate::types::NumberType::Integer,
                     );
-                    // Bounded 3-arg path reaches here only when `step > 0`
-                    // (the `step < 0` branch above already panicked), so the
-                    // direction check has effectively been made — fire
-                    // unconditionally here.
-                    b.state_array_fact(&result, "arange_is_sorted");
                     result
                 }
                 BoundedInt::Neither => {
@@ -961,19 +893,8 @@ fn arange_static(b: &mut IRBuilder, start: i64, stop: i64, step: i64) -> Value {
         vec![len],
         crate::types::NumberType::Integer,
     );
-    // Fire `is_sorted(out)` when the step is positive (ascending). The
-    // 3-arg call site above fires its own conditional and bypasses this
-    // helper for the descending case via panic, but `arange_static` is
-    // also reached by the 1-arg / 2-arg static branches (step is
-    // implicitly 1) and by the 3-arg static-stop branch (step is the
-    // user's literal). Gating here keeps the soundness check local. The
-    // `Value::StaticArray` returned by `build_static_array_from_flat`
-    // does not carry a value_id today, so the fire is a no-op for the
-    // static composite — but if a future revision attaches an identity
-    // to static arrays, the fact will start landing automatically.
-    if step > 0 {
-        b.state_array_fact(&result, "arange_is_sorted");
-    }
+    // No array fact is stated: the cells are constants, whose range, order
+    // and formula every query reads off them (`array_facts::constant_facts`).
     result
 }
 
@@ -1296,10 +1217,7 @@ fn np_linspace_static(
         vec![num],
         dtype,
     );
-    // `is_sorted(out)` when start <= stop (ascending or equal).
-    if start <= stop && num >= 2 {
-        b.state_array_fact(&result, "linspace_is_sorted");
-    }
+    // No array fact is stated: the cells are constants (see `arange_static`).
     result
 }
 
@@ -1433,11 +1351,27 @@ fn np_linspace_bounded(
         value_id: crate::types::ValueId::next(),
     });
 
-    // `is_sorted(out)` on the dyn-ndarray's value_id when the endpoints are
-    // compile-time constants with start <= stop (ascending or all-equal).
-    // Anchored on the array's value_id, not the length-bearing scalar.
+    // With constant endpoints `start <= stop` the live samples (the first
+    // `num` cells) are non-decreasing on every path, by their definition:
+    // cell `i < num - 1` is `start + i * step` with `step = (stop - start) /
+    // denom >= 0` (a non-negative span over a positive count; the product of
+    // the integer `i` and the fixed-point `step` is exact), and cell `num - 1`
+    // (with `endpoint`) is `stop`, which is at least `start + (num - 2) *
+    // step`; flooring for an integer dtype keeps the order. The cells past
+    // `num` are not ordered (the last live one is `stop` exactly), so the
+    // fact is a segment ending at `num`.
     if endpoints.ascending() {
-        b.state_array_fact(&result, "linspace_is_sorted");
+        use crate::optim::array_facts::{Bound, ElemFacts, FactGuard, Order, Segmentation};
+        let live_end = match (num_arg.int_val(), num_arg.stmt_id()) {
+            (Some(n), _) => Some(Bound::Const(n.clamp(0, num_max as i64))),
+            (None, Some(stmt)) => Some(Bound::stmt(stmt)),
+            (None, None) => None,
+        };
+        if let Some(live_end) = live_end {
+            let ordered = ElemFacts { order: Some(Order::NonDecreasing), ..ElemFacts::TOP };
+            let facts = Segmentation::live_then_padding(num_max, live_end, ordered, ElemFacts::TOP);
+            b.state_storage_facts(segment_id, facts, FactGuard::Always);
+        }
     }
 
     result

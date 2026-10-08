@@ -403,33 +403,6 @@ fn build_registry() -> HashMap<&'static str, PredicateRegistration> {
         );
     }
 
-    // ── array_in_range (value_id-keyed element bounds) ────────────────
-    //
-    // `array_in_range(Var(Value(arr_vid)), lo, hi)`: every element of
-    // the array `arr_vid` is in the integer range `[lo, hi]`. Mirrors
-    // `forall_in_range` but keyed on the array's compilation-layer
-    // ValueId (not on an Input name), so it can be deposited on
-    // *derived* or *in-place-mutated* arrays whose elements aren't
-    // tied to a single source parameter. Used by the in-place mutation
-    // contract (compiler.op-contract-inplace-mutation): after
-    // `arr[mask] = value`, the contract deposits a widened-union
-    // `array_in_range(arr_vid, min(arr_lo, val_lo), max(arr_hi,
-    // val_hi))` so downstream reductions can still see element bounds.
-    //
-    // No meta-facts: the predicate is an opaque Bool symbol; per-cell
-    // semantics are out of scope.
-    m.insert(
-        "array_in_range",
-        PredicateRegistration {
-            kind: "array_in_range",
-            arity: 3,
-            encode_fn: |args| cached_uninterpreted_predicate("array_in_range", args),
-            meta_facts_fn: |_args| Vec::new(),
-            is_pure_opaque: true,
-            cache_key: "array_in_range",
-        },
-    );
-
     m
 }
 

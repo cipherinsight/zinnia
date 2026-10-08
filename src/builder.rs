@@ -7,7 +7,9 @@ use crate::optim::resolver::{Resolver, StaticOnlyResolver};
 use crate::types::{NumberType, ScalarValue, StmtId, StringValue, Value};
 
 mod array_facts;
+pub use array_facts::Where;
 mod arrays;
+mod bound_queries;
 mod store;
 mod stale;
 pub use stale::COPIED_VIEW;
@@ -167,10 +169,6 @@ pub struct IRBuilder {
     /// to the source array do not change it). Assigning through such a
     /// tuple, `a[np.where(m)] = v`, is NumPy's `a[m] = v`.
     pub nonzero_index_masks: HashMap<crate::types::ValueId, Value>,
-    /// Integer vectors (their elements' statements, in order) a
-    /// precondition asserts to be a permutation of `0..len`
-    /// (`record_permutation`).
-    known_permutations: Vec<Vec<StmtId>>,
     /// Small expression-provenance side table for StaticArray results whose
     /// concrete payload can be reconstructed exactly, but may be consumed by
     /// a fused lowering before materializing every intermediate cell.
@@ -213,10 +211,6 @@ pub struct IRBuilder {
     /// but treating it as a Fact pinned the downstream slice shape and
     /// broke 0509's output type).
     pub scalar_value_bounds: HashMap<crate::types::ValueId, (i64, i64)>,
-    /// For each array that facts about its elements were stated about, what
-    /// it held then; the facts are used only while that is unchanged
-    /// (`builder/array_facts.rs`).
-    array_fact_records: HashMap<crate::types::ValueId, array_facts::ArrayContents>,
     /// Which statements and segments hold values of NumPy's fixed-width
     /// integer types (`builder/fixed_width.rs`).
     fixed_width: fixed_width::FixedWidthValues,
@@ -231,6 +225,8 @@ pub struct IRBuilder {
     array_defs: HashMap<StmtId, Vec<Value>>,
     /// The `ArrayInit` of every list of cells `array_of_cells` built.
     array_inits: HashMap<(crate::ir_array::ArrayElem, Vec<StmtId>), Value>,
+    /// Facts about whole arrays (`optim::array_facts`, `builder/array_facts.rs`).
+    pub(crate) array_facts: array_facts::ArrayFactState,
 }
 
 impl Default for IRBuilder {
@@ -253,7 +249,6 @@ impl IRBuilder {
             next_array_id: 0,
             dim_table: crate::types::DimTable::new(),
             nonzero_index_masks: HashMap::new(),
-            known_permutations: Vec::new(),
             static_array_product_provenance: HashMap::new(),
             provenance: crate::provenance::ProvenanceTable::new(),
             resolver: Box::new(StaticOnlyResolver::new()),
@@ -266,12 +261,12 @@ impl IRBuilder {
             // builder construction so this matches the desired semantics.
             telemetry: crate::optim::telemetry::TelemetrySink::from_env(),
             scalar_value_bounds: HashMap::new(),
-            array_fact_records: HashMap::new(),
             fixed_width: fixed_width::FixedWidthValues::default(),
             bool_segments: HashSet::new(),
             bool_cells: HashSet::new(),
             array_defs: HashMap::new(),
             array_inits: HashMap::new(),
+            array_facts: array_facts::ArrayFactState::default(),
         }
     }
 
@@ -322,7 +317,8 @@ impl IRBuilder {
 
     /// Record that `elements` are asserted (on every path) to be a
     /// permutation of `0..len`, with the range facts `0 <= e < len` for the
-    /// index checks that follow.
+    /// index checks that follow, and as an array fact (a permutation of
+    /// `0..len`, [`Self::is_known_permutation`]).
     pub fn record_permutation(&mut self, elements: &[Value]) {
         use crate::optim::predicates::formula::{BoolOp, CmpOp, ContractTerm, ContractVar};
         let n = elements.len() as i64;
@@ -340,15 +336,14 @@ impl IRBuilder {
                 },
             );
         }
-        if let Some(stmts) = elements.iter().map(Value::stmt_id).collect::<Option<Vec<_>>>() {
-            self.known_permutations.push(stmts);
-        }
-    }
-
-    /// Whether `elements` (in order) were recorded as a permutation.
-    pub fn is_known_permutation(&self, elements: &[Value]) -> bool {
-        let Some(stmts) = elements.iter().map(Value::stmt_id).collect::<Option<Vec<_>>>() else { return false };
-        self.known_permutations.contains(&stmts)
+        // The precondition's check (`lower/permutation.rs`) is emitted at
+        // entry on every path, and the layer keeps it.
+        let permutation = crate::optim::array_facts::Segmentation::uniform(
+            elements.len(),
+            crate::optim::array_facts::ElemFacts::TOP,
+        )
+        .with_permutation();
+        self.state_array_facts(elements, permutation, self.facts.guard().clone());
     }
 
     /// Reconstruct an integer `Value` wrapper for a recorded `ValueId`
@@ -420,6 +415,27 @@ impl IRBuilder {
     /// contracts. Facts can only tighten (or supply) bounds; they never
     /// invent looser ones.
     pub fn ask_bounds(&mut self, val: &Value) -> Option<(i64, i64)> {
+        let scalar = self.ask_scalar_bounds(val);
+        // The array facts of the arrays `val` is a cell of or is read from
+        // (`builder/array_facts.rs`; lookups, no solver), met with the
+        // scalar answer: both hold where the current code runs, so their
+        // intersection does.
+        let Some(cell) = crate::optim::array_facts::Cell::of(val).filter(|_| val.is_integer()) else { return scalar };
+        let (lo, hi) = self.array_fact_range(&cell, val, Where::Here).interval(&self.oracle(Where::Here));
+        match scalar {
+            Some((mn, mx)) => {
+                let (mn, mx) = (lo.map_or(mn, |l| mn.max(l)), hi.map_or(mx, |h| mx.min(h)));
+                (mn <= mx).then_some((mn, mx)).or(scalar)
+            }
+            None => match (lo, hi) {
+                (Some(l), Some(h)) if l <= h => Some((l, h)),
+                _ => None,
+            },
+        }
+    }
+
+    /// [`Self::ask_bounds`] without the array facts.
+    fn ask_scalar_bounds(&mut self, val: &Value) -> Option<(i64, i64)> {
         // Try the resolver first. A "useful" resolver answer requires
         // both halves AND a non-trivial range (min < max). The
         // SMT-optimizer path returns (Some(0), Some(0)) for unbounded
@@ -602,7 +618,7 @@ impl IRBuilder {
     /// arithmetic-on-leaf when the resolver's range pass doesn't see
     /// facts. Recursive but bounded — only fires when the inner operand
     /// itself recurses through this path, and each step strips a stmt.
-    fn ask_bounds_via_arith(&mut self, val: &Value) -> Option<(i64, i64)> {
+    fn ask_bounds_via_arith(&self, val: &Value) -> Option<(i64, i64)> {
         use crate::ir_defs::IR;
         let stmt_id = val.stmt_id()?;
         let stmt = self.stmts.get(stmt_id as usize)?.clone();
@@ -695,6 +711,48 @@ impl IRBuilder {
         self.plant_contract_ensures(name, output_vid, formals);
     }
 
+    /// Whether the solver-free tiers prove `term` where the current code
+    /// runs: a comparison of an integer value with an integer constant, or
+    /// a conjunction of such, each decided by [`Self::cheap_bounds`].
+    /// `false` (no information) for anything else.
+    fn cheap_tiers_prove(&self, term: &crate::optim::predicates::formula::ContractTerm) -> bool {
+        use crate::optim::predicates::formula::{BoolOp, CmpOp, ContractTerm, ContractVar};
+        match term {
+            ContractTerm::BoolComb { op: BoolOp::And, operands } => operands.iter().all(|t| self.cheap_tiers_prove(t)),
+            ContractTerm::Cmp { op, lhs, rhs } => {
+                let (op, vid, c) = match (lhs.as_ref(), rhs.as_ref()) {
+                    (ContractTerm::Var(ContractVar::Value(v)), ContractTerm::LitInt(c)) => (*op, *v, *c),
+                    (ContractTerm::LitInt(c), ContractTerm::Var(ContractVar::Value(v))) => {
+                        let swapped = match op {
+                            CmpOp::Lt => CmpOp::Gt,
+                            CmpOp::Le => CmpOp::Ge,
+                            CmpOp::Gt => CmpOp::Lt,
+                            CmpOp::Ge => CmpOp::Le,
+                            other => *other,
+                        };
+                        (swapped, *v, *c)
+                    }
+                    _ => return false,
+                };
+                let Some(sid) = self.value_id_to_stmt_id(vid) else { return false };
+                if self.is_float_stmt(sid) {
+                    return false;
+                }
+                let Some(v) = self.value_of_vid(vid) else { return false };
+                let (lo, hi) = self.cheap_bounds(&v, Where::Here);
+                match op {
+                    CmpOp::Ge => lo.is_some_and(|l| l >= c),
+                    CmpOp::Gt => lo.is_some_and(|l| l > c),
+                    CmpOp::Le => hi.is_some_and(|h| h <= c),
+                    CmpOp::Lt => hi.is_some_and(|h| h < c),
+                    CmpOp::Ne => lo.is_some_and(|l| l > c) || hi.is_some_and(|h| h < c),
+                    CmpOp::Eq => lo == Some(c) && hi == Some(c),
+                }
+            }
+            _ => false,
+        }
+    }
+
     /// The `requires` half of [`Self::fire_contract`] for a contract whose
     /// preconditions mention only the operands (formals), discharged
     /// before the operation is emitted: the check then precedes the
@@ -783,7 +841,11 @@ impl IRBuilder {
     ) {
         use crate::optim::prove::ProveOutcome;
 
-        let outcome = self.prove(term);
+        // The tiers that use no solver first (`builder/bound_queries.rs`:
+        // constants, intervals over the IR, the scalar facts, the array
+        // facts), for a precondition that bounds integer values by
+        // constants; then `prove`.
+        let outcome = if self.cheap_tiers_prove(term) { ProveOutcome::Proved } else { self.prove(term) };
         match outcome {
             ProveOutcome::Proved => {
                 tracing::debug!(
@@ -1726,7 +1788,7 @@ impl IRBuilder {
             ),
             Some(_) => {}
             None => {
-                if !self.ask_bounds(exp).is_some_and(|(lo, _)| lo >= 0) {
+                if !self.proves_at_least(exp, 0) {
                     self.ir_assert_non_neg_i(exp);
                 }
             }
@@ -2822,6 +2884,16 @@ impl IRBuilder {
         let op = Self::sort_lane(elements.len(), None, index);
         let out = self.ir_array_op(op, elements, std::slice::from_ref(rank));
         self.publish_sorted_index_bounds(&out, index, elements.len());
+        if !index {
+            // The lane is the sorted line's lane at `rank` (no witness for a
+            // rank outside it), one of `elements`: in their range (array
+            // facts, derived where those hold).
+            let elements: Vec<Value> = elements.to_vec();
+            self.state_derived_facts(std::slice::from_ref(&out), |b, at| {
+                let range = b.join_of(&elements, at);
+                (!range.is_top()).then(|| crate::optim::array_facts::Segmentation::uniform(1, crate::optim::array_facts::ElemFacts::range(range)))
+            });
+        }
         out
     }
 

@@ -165,7 +165,50 @@ pub fn try_apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value
     if both_bool && matches!(op, "mul" | "or") {
         b.mark_bool_array(&out);
     }
+    state_elementwise_facts(b, op, &out, lhs, Some(rhs));
     Some(out)
+}
+
+/// Array facts of an integer element-wise result (`docs/array-facts.md`):
+/// the interval transfer of the operands' ranges, once for the whole array.
+/// Each output cell is `op` of one cell of each operand, computed exactly
+/// over the integers; `//` and `%` by a positive constant follow Python's
+/// floor rules. Derived from what is known of the operands, where that
+/// holds. Comparisons need nothing: the intervals of the IR bound them.
+fn state_elementwise_facts(b: &mut IRBuilder, op: &str, out: &Value, lhs: &Value, rhs: Option<&Value>) {
+    use crate::optim::array_facts::{transfer, ElemFacts, Range, Segmentation};
+    if !matches!(out, Value::StaticArray { dtype: NumberType::Integer, .. })
+        || !matches!(op, "add" | "sub" | "mul" | "usub" | "floor_div" | "mod")
+    {
+        return;
+    }
+    let constant_rhs = rhs.and_then(Value::int_val);
+    if op == "mod" {
+        // In `[0, c - 1]` whatever the dividend is: the intervals of the IR
+        // already know it.
+        return;
+    }
+    if op == "floor_div" && constant_rhs.is_none_or(|c| c <= 0) {
+        return;
+    }
+    let Some(cells) = b.leaf_cells(out) else { return };
+    let (lhs, rhs) = (lhs.clone(), rhs.cloned());
+    b.state_derived_facts(&cells, |b, at| {
+        let x = b.range_of(&lhs, at);
+        let y = rhs.as_ref().map_or(Range::TOP, |r| b.range_of(r, at));
+        if x.is_top() && y.is_top() {
+            return None;
+        }
+        let oracle = b.oracle(at);
+        let range = match op {
+            "add" => transfer::add(&x, &y, &oracle),
+            "sub" => transfer::sub(&x, &y, &oracle),
+            "mul" => transfer::mul(&x, &y, &oracle),
+            "usub" => transfer::neg(&x, &oracle),
+            _ => transfer::floor_div_by(&x, constant_rhs?, &oracle),
+        };
+        (!range.is_top()).then(|| Segmentation::uniform(cells.len(), ElemFacts::range(range)))
+    });
 }
 
 /// A bool array, or a bool (`builder/bool_dtype.rs`).
@@ -418,7 +461,9 @@ pub fn try_apply_unary_op(b: &mut IRBuilder, op: &str, operand: &Value) -> Optio
                 "not" | "invert" => NumberType::Integer,
                 _ => arr_dtype,
             };
-            Some(unary_array(b, op, operand, &arr_shape, out_dtype))
+            let out = unary_array(b, op, operand, &arr_shape, out_dtype);
+            state_elementwise_facts(b, op, &out, operand, None);
+            Some(out)
         }
         _ => None,
     }

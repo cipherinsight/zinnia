@@ -1,7 +1,7 @@
 //! Free facts: facts that hold without any construction, so requirements
 //! they imply cost nothing.
 //!
-//! Two sources, both read off the IR's statements (never off witness
+//! Three sources, all read off the IR's statements (never off witness
 //! values, never off the program's own checks):
 //!
 //! * **Bounds** from forward interval propagation over the statements that
@@ -11,6 +11,10 @@
 //!   itself.
 //! * **Gadget postconditions**: what the constraints of a scalar statement
 //!   the program emits anyway prove about its operands, on every backend.
+//! * **Operator semantics** of array facts (`docs/array-facts.md` 2.7c),
+//!   from `array_facts::definitional`: for example, the argsort lanes of one
+//!   sorted line, all ranks once, are a permutation of `0..n`, and the value
+//!   lanes are non-decreasing.
 
 use std::cell::RefCell;
 
@@ -153,5 +157,49 @@ impl<'a> FreeFacts<'a> {
         let min = range.resolve_min_with_stmts(&value, &self.graph.stmts)?;
         let max = range.resolve_max_with_stmts(&value, &self.graph.stmts)?;
         Some((min, max))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::FreeFacts;
+    use crate::builder::IRBuilder;
+    use crate::circuit_input::InputPath;
+    use crate::lower::graph::{Claim, Fact, ListId};
+    use crate::types::{StmtId, Value};
+
+    /// Two lines of 3 floats and their argsort lanes (rank order).
+    fn argsort_lines() -> (crate::ir::IRGraph, Vec<StmtId>, Vec<StmtId>, Vec<StmtId>) {
+        let mut b = IRBuilder::new();
+        let line = |b: &mut IRBuilder, name: &str| -> Arc<[Value]> {
+            (0..3).map(|i| b.ir_read_float(InputPath::new(&format!("{name}{i}"), vec![]), false)).collect()
+        };
+        let (x, y) = (line(&mut b, "x"), line(&mut b, "y"));
+        let lanes = |b: &mut IRBuilder, l: &Arc<[Value]>, index: bool| -> Vec<StmtId> {
+            (0..3).map(|r| b.ir_sorted(l, r, index).stmt_id().expect("a statement")).collect()
+        };
+        let ax = lanes(&mut b, &x, true);
+        let ay = lanes(&mut b, &y, true);
+        let sx = lanes(&mut b, &x, false);
+        (b.export_ir_graph(), ax, ay, sx)
+    }
+
+    fn permutation(values: &[StmtId], n: usize) -> Fact {
+        Fact::everywhere(Claim::Permutation(ListId::of_stmts(values), ListId::range(n)))
+    }
+
+    #[test]
+    fn the_argsort_lanes_of_a_line_are_a_permutation() {
+        let (graph, ax, ay, sx) = argsort_lines();
+        let facts = FreeFacts::new(&graph);
+        assert!(facts.proves(&permutation(&ax, 3)));
+        assert!(facts.proves(&permutation(&[ax[2], ax[0], ax[1]], 3)), "any order of the ranks");
+        assert!(!facts.proves(&permutation(&[ax[0], ax[1]], 3)), "a missing rank");
+        assert!(!facts.proves(&permutation(&[ax[0], ax[0], ax[1]], 3)), "a repeated rank");
+        assert!(!facts.proves(&permutation(&[ax[0], ax[1], ay[2]], 3)), "lanes of two lines");
+        assert!(!facts.proves(&permutation(&sx, 3)), "sorted values are not positions");
+        assert!(!FreeFacts::none(&graph).proves(&permutation(&ax, 3)), "the ablation proves nothing");
     }
 }

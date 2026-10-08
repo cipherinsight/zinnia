@@ -101,9 +101,7 @@ pub fn prove(b: &IRBuilder, term: &ContractTerm) -> ProveOutcome {
     if crate::optim::resolver::req_disabled() {
         return ProveOutcome::Unknown;
     }
-    // Facts about the elements of an array written since they were stated
-    // no longer hold (`builder/array_facts.rs`).
-    let facts: Vec<&Fact> = b.facts.visible_facts().into_iter().filter(|fact| b.fact_is_current(fact)).collect();
+    let facts: Vec<&Fact> = b.facts.visible_facts().into_iter().collect();
     let paths: Vec<&Fact> = b.facts.visible_path_conditions().into_iter().collect();
     prove_typed(term, &facts, &paths, Floats(Some(b)))
 }

@@ -67,24 +67,6 @@ fn dynamic_array_to_unpackable_list(
 }
 
 impl IRGenerator {
-    fn subscript_output_can_relay_forall_eq_const(out: &Value) -> bool {
-        matches!(
-            out,
-            Value::NDArray(_)
-                | Value::DynamicNDArray(_)
-                | Value::StaticArray { .. }
-                | Value::List(_)
-                | Value::Tuple(_)
-        )
-    }
-
-    fn relay_forall_eq_const_to_shaped_subscript_output(&mut self, input: &Value, output: &Value) {
-        if !Self::subscript_output_can_relay_forall_eq_const(output) {
-            return;
-        }
-        crate::optim::resolver::relay_forall_eq_const_from_input(&mut self.builder, &input, &output);
-    }
-
     fn simple_name_target(target: &ASTNode) -> Option<&str> {
         match target {
             ASTNode::ASTNameAssignTarget(t) => Some(t.name.as_str()),
@@ -1686,13 +1668,6 @@ impl IRGenerator {
                     &slice_values,
                 )
             };
-            // Group 5c (E-axis): content fact relay for gather of a
-            // `forall_eq_const(arr, k)` input. Idempotent w.r.t. any inner
-            // relays already fired by slice helpers. Scalar element reads
-            // deliberately skip the relay: `forall_eq_const` is an array
-            // content fact, and probing it for every dynamic scalar read is
-            // expensive pre-optimizer work with no shaped output to inform.
-            self.relay_forall_eq_const_to_shaped_subscript_output(&val, &out);
             self.record_subscript_copy(&val, &slice_values, &out);
             let index_key = self.loop_index_expr_key(&n.slicing);
             self.record_loop_guard_read_reuse(array_identity, index_key, &out);

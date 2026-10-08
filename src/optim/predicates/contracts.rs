@@ -883,66 +883,6 @@ fn build_contract_registry() -> HashMap<&'static str, OpContract> {
         ),
     );
 
-    // ── zeros_content / ones_content (fill-constructor content fact) ──
-    //
-    // Soundness: every output element of `np.zeros(shape)` is the IR
-    // constant 0; every output element of `np.ones(shape)` is the IR
-    // constant 1. The `*_like` variants build the output from a fresh
-    // fill operation (not a copy of the input), so the same fact applies.
-    // `forall_eq_const` is registered as a cached uninterpreted predicate
-    // (see `registry.rs`); the deposited fact is observable via
-    // `prove(forall_eq_const(out, k))` returning `Proved`.
-    //
-    // The `_content` suffix in the registry names distinguishes from
-    // length-related entries on the same op family. `np.full(shape, k)`
-    // for arbitrary k uses a multi-formal template (Group 4b, separate).
-    m.insert(
-        "zeros_content",
-        OpContract::pure(
-            vec![],
-            vec![ContractFormula::new(ContractTerm::PredicateApp {
-                kind: "forall_eq_const".to_string(),
-                args: vec![
-                    ContractTerm::Var(ContractVar::Output),
-                    ContractTerm::LitInt(0),
-                ],
-            })],
-        ),
-    );
-    m.insert(
-        "ones_content",
-        OpContract::pure(
-            vec![],
-            vec![ContractFormula::new(ContractTerm::PredicateApp {
-                kind: "forall_eq_const".to_string(),
-                args: vec![
-                    ContractTerm::Var(ContractVar::Output),
-                    ContractTerm::LitInt(1),
-                ],
-            })],
-        ),
-    );
-
-    // ── identity_content (np.identity content fact) ──────────────────
-    //
-    // Soundness: `np.identity(N)` produces an N×N matrix whose element
-    // at `(i, j)` equals `1` iff `i == j`, else `0` — definitionally the
-    // identity matrix. The `is_identity` predicate (registered as a
-    // cached uninterpreted Bool in `registry.rs`) names this property;
-    // the deposited fact is observable via `prove(is_identity(out))`
-    // returning `Proved`. Consumed by the matmul Phase F strategy set to
-    // short-circuit `I @ B → B` and `A @ I → A`.
-    m.insert(
-        "identity_content",
-        OpContract::pure(
-            vec![],
-            vec![ContractFormula::new(ContractTerm::PredicateApp {
-                kind: "is_identity".to_string(),
-                args: vec![ContractTerm::Var(ContractVar::Output)],
-            })],
-        ),
-    );
-
     // ── dyn_identity (bounded `np.identity` admission) ───────────────
     //
     // Soundness: the bounded branch in `np_identity` builds a 2-D
@@ -1084,49 +1024,6 @@ fn build_contract_registry() -> HashMap<&'static str, OpContract> {
     m.insert(
         "pow_f",
         OpContract::pure(vec![requires_pow_float()], vec![]),
-    );
-
-    // ── arange_is_sorted / linspace_is_sorted (range-constructor content) ──
-    //
-    // Soundness: `np.arange(stop)`, `np.arange(start, stop)` and
-    // `np.arange(start, stop, step)` with `step > 0` produce a strictly
-    // ascending sequence; `np.linspace(start, stop, num)` with
-    // `start <= stop` produces a (non-strictly) ascending sequence. In
-    // both cases `is_sorted(out)` holds. The firing sites in
-    // `np_arange` / `np_linspace` (static + dyn) gate the emission on a
-    // call-site direction check, so descending or unknown-direction
-    // forms simply skip the fire — no false claim. Kept as separate
-    // registry entries so the firing-site name in traces matches the
-    // user-visible op.
-    m.insert(
-        "arange_is_sorted",
-        OpContract::pure(
-            vec![],
-            vec![ContractFormula::new(ContractTerm::PredicateApp {
-                kind: "is_sorted".to_string(),
-                args: vec![ContractTerm::Var(ContractVar::Output)],
-            })],
-        ),
-    );
-    m.insert(
-        "linspace_is_sorted",
-        OpContract::pure(
-            vec![],
-            vec![ContractFormula::new(ContractTerm::PredicateApp {
-                kind: "is_sorted".to_string(),
-                args: vec![ContractTerm::Var(ContractVar::Output)],
-            })],
-        ),
-    );
-    m.insert(
-        "sort_is_sorted",
-        OpContract::pure(
-            vec![],
-            vec![ContractFormula::new(ContractTerm::PredicateApp {
-                kind: "is_sorted".to_string(),
-                args: vec![ContractTerm::Var(ContractVar::Output)],
-            })],
-        ),
     );
 
     m

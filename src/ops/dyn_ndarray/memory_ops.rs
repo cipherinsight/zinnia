@@ -399,7 +399,6 @@ pub fn dyn_repeat(
         }
     };
     let out = Value::DynamicNDArray(result);
-    crate::optim::resolver::relay_forall_eq_const_from_input(b, &Value::DynamicNDArray(data.clone()), &out);
     out
 }
 
@@ -876,7 +875,6 @@ pub fn dyn_concatenate(
         },
         value_id: ValueId::next(),
     });
-    crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &raw_values, &out);
     out
 }
 
@@ -1071,7 +1069,6 @@ pub fn dyn_stack(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Val
         },
         value_id: ValueId::next(),
     });
-    crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &raw_values, &out);
     out
 }
 

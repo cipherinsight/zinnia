@@ -2803,653 +2803,111 @@ fn fire_contract_argextremum_includes_lt_len_upper_bound() {
 
 // ── Group 4a (compiler.op-fact-group-4a-fill-constructors-forall-eq-const) ──
 
-#[test]
-fn fire_contract_zeros_content_deposits_forall_eq_const_zero() {
-    use crate::circuit_input::InputPath;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use std::collections::HashMap;
 
-    let mut b = crate::builder::IRBuilder::new();
-    let out = b.ir_read_integer(InputPath::new("out", vec![]), false);
-    let out_vid = out.value_id().unwrap();
 
-    b.fire_contract("zeros_content", out_vid, &HashMap::new());
-
-    let query = ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(out_vid)),
-            ContractTerm::LitInt(0),
-        ],
-    };
-    assert_eq!(b.prove(&query), ProveOutcome::Proved);
-}
-
-#[test]
-fn fire_contract_ones_content_deposits_forall_eq_const_one() {
-    use crate::circuit_input::InputPath;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use std::collections::HashMap;
-
-    let mut b = crate::builder::IRBuilder::new();
-    let out = b.ir_read_integer(InputPath::new("out", vec![]), false);
-    let out_vid = out.value_id().unwrap();
-
-    b.fire_contract("ones_content", out_vid, &HashMap::new());
-
-    let query = ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(out_vid)),
-            ContractTerm::LitInt(1),
-        ],
-    };
-    assert_eq!(b.prove(&query), ProveOutcome::Proved);
-}
-
-#[test]
-fn fire_contract_zeros_content_does_not_imply_forall_eq_one() {
-    // Soundness: planting `forall_eq_const(out, 0)` must not let the
-    // resolver conclude `forall_eq_const(out, 1)`. The predicate is
-    // encoded as a cached uninterpreted Bool keyed by (kind, args), so
-    // the two queries lower to different symbols.
-    use crate::circuit_input::InputPath;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use std::collections::HashMap;
-
-    let mut b = crate::builder::IRBuilder::new();
-    let out = b.ir_read_integer(InputPath::new("out", vec![]), false);
-    let out_vid = out.value_id().unwrap();
-
-    b.fire_contract("zeros_content", out_vid, &HashMap::new());
-
-    let query_one = ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(out_vid)),
-            ContractTerm::LitInt(1),
-        ],
-    };
-    assert_eq!(b.prove(&query_one), ProveOutcome::Unknown);
-}
 
 // ── Group 8b (compiler.op-fact-group-8b-matmul-identity-short-circuit) ──
 
-#[test]
-fn fire_contract_identity_content_emits_is_identity_predicate() {
-    // Firing `identity_content` plants `is_identity(Output)`. The cached
-    // uninterpreted Bool encoding means `prove(is_identity(out_vid))`
-    // returns `Proved` only when the matching fact is in scope.
-    use crate::circuit_input::InputPath;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use std::collections::HashMap;
 
-    let mut b = crate::builder::IRBuilder::new();
-    let out = b.ir_read_integer(InputPath::new("out", vec![]), false);
-    let out_vid = out.value_id().unwrap();
 
-    b.fire_contract("identity_content", out_vid, &HashMap::new());
 
-    let query = ContractTerm::PredicateApp {
-        kind: "is_identity".to_string(),
-        args: vec![ContractTerm::Var(ContractVar::Value(out_vid))],
-    };
-    assert_eq!(b.prove(&query), ProveOutcome::Proved);
-}
 
-#[test]
-fn fire_contract_identity_content_does_not_imply_other_arrays() {
-    // Soundness: planting `is_identity(out_a)` must not let the
-    // resolver conclude `is_identity(out_b)` for a different value.
-    use crate::circuit_input::InputPath;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use std::collections::HashMap;
-
-    let mut b = crate::builder::IRBuilder::new();
-    let out_a = b.ir_read_integer(InputPath::new("a", vec![]), false);
-    let out_b = b.ir_read_integer(InputPath::new("b", vec![]), false);
-    let a_vid = out_a.value_id().unwrap();
-    let b_vid = out_b.value_id().unwrap();
-
-    b.fire_contract("identity_content", a_vid, &HashMap::new());
-
-    let query_b = ContractTerm::PredicateApp {
-        kind: "is_identity".to_string(),
-        args: vec![ContractTerm::Var(ContractVar::Value(b_vid))],
-    };
-    assert_eq!(b.prove(&query_b), ProveOutcome::Unknown);
-}
-
-#[test]
-fn np_identity_static_path_fires_identity_content() {
-    // Integration: `np_identity` static path produces a StaticArray
-    // value carrying `is_identity(out)` as a planted fact.
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use crate::types::Value;
-
-    let mut b = crate::builder::IRBuilder::new();
-    let n = b.ir_constant_int(4);
-    let out = crate::ops::static_ndarray_ops::np_identity(&mut b, &[n]);
-    let out_vid = match &out {
-        Value::StaticArray { value_id, .. } => *value_id,
-        other => panic!(
-            "expected StaticArray from static np_identity, got {:?}",
-            other.zinnia_type()
-        ),
-    };
-
-    let query = ContractTerm::PredicateApp {
-        kind: "is_identity".to_string(),
-        args: vec![ContractTerm::Var(ContractVar::Value(out_vid))],
-    };
-    assert_eq!(b.prove(&query), ProveOutcome::Proved);
-}
-
-#[test]
-fn np_fill_call_site_fires_zeros_for_zero_fill_value() {
-    // Integration: exercise `np_fill` end-to-end. The bounded-axis
-    // path produces a `DynamicNDArray` whose `value_id` we use to query
-    // `forall_eq_const`. Plant `n + n <= 20` / `n + n >= 0` so the
-    // outward-doubling probe in `resolve_int_or_bounded` admits `n` as
-    // bounded — this routes through `dyn_fill_with_active`.
-    use crate::circuit_input::InputPath;
-    use crate::ops::static_ndarray_ops::np_fill;
-    use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use crate::optim::resolver::LayeredResolver;
-    use crate::types::Value;
-    use std::collections::HashMap;
-
-    let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
-    )));
-
-    let n = b.ir_read_integer(InputPath::new("n", vec![]), false);
-    let n_vid = n.value_id().unwrap();
-    let n_plus_n = ContractTerm::Arith {
-        op: ArithOp::Add,
-        lhs: Box::new(ContractTerm::Var(ContractVar::Value(n_vid))),
-        rhs: Box::new(ContractTerm::Var(ContractVar::Value(n_vid))),
-    };
-    b.facts.insert_for(
-        n_vid,
-        ContractTerm::Cmp {
-            op: CmpOp::Le,
-            lhs: Box::new(n_plus_n.clone()),
-            rhs: Box::new(ContractTerm::LitInt(20)),
-        },
-    );
-    b.facts.insert_for(
-        n_vid,
-        ContractTerm::Cmp {
-            op: CmpOp::Ge,
-            lhs: Box::new(n_plus_n),
-            rhs: Box::new(ContractTerm::LitInt(0)),
-        },
-    );
-
-    let out = np_fill(&mut b, &[n.clone()], &HashMap::new(), 0);
-    let out_vid = match &out {
-        Value::DynamicNDArray(d) => d.value_id,
-        other => panic!(
-            "expected dyn-ndarray from bounded np_fill, got {:?}",
-            other.zinnia_type()
-        ),
-    };
-
-    let zeros_query = ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(out_vid)),
-            ContractTerm::LitInt(0),
-        ],
-    };
-    assert_eq!(
-        b.prove(&zeros_query),
-        ProveOutcome::Proved,
-        "np_fill(n, fill_value=0) should fire zeros_content on the dyn output",
-    );
-
-    // Sanity: ones-fill at the same site should fire ones_content, not zeros.
-    let mut b2 = crate::builder::IRBuilder::new();
-    b2.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
-    )));
-    let n2 = b2.ir_read_integer(InputPath::new("n", vec![]), false);
-    let n2_vid = n2.value_id().unwrap();
-    let n2_plus_n2 = ContractTerm::Arith {
-        op: ArithOp::Add,
-        lhs: Box::new(ContractTerm::Var(ContractVar::Value(n2_vid))),
-        rhs: Box::new(ContractTerm::Var(ContractVar::Value(n2_vid))),
-    };
-    b2.facts.insert_for(
-        n2_vid,
-        ContractTerm::Cmp {
-            op: CmpOp::Le,
-            lhs: Box::new(n2_plus_n2.clone()),
-            rhs: Box::new(ContractTerm::LitInt(20)),
-        },
-    );
-    b2.facts.insert_for(
-        n2_vid,
-        ContractTerm::Cmp {
-            op: CmpOp::Ge,
-            lhs: Box::new(n2_plus_n2),
-            rhs: Box::new(ContractTerm::LitInt(0)),
-        },
-    );
-    let out_ones = np_fill(&mut b2, &[n2.clone()], &HashMap::new(), 1);
-    let out_ones_vid = match &out_ones {
-        Value::DynamicNDArray(d) => d.value_id,
-        other => panic!("expected dyn-ndarray, got {:?}", other.zinnia_type()),
-    };
-    let ones_query = ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(out_ones_vid)),
-            ContractTerm::LitInt(1),
-        ],
-    };
-    assert_eq!(b2.prove(&ones_query), ProveOutcome::Proved);
-}
-
-// ── Group 4b: range constructors emit is_sorted ───────────────────────
+// ── Group 4b: range constructors produce ordered arrays ──────────────
 //
-// `np.arange(stop)` and `np.linspace(a, b, N)` produce strictly /
-// non-strictly ascending arrays when the direction check holds
-// (step > 0 / a <= b). The constructor fires `is_sorted(out)` on the
-// array's value_id so downstream Phase-F consumers (boundary-read on
-// max/min/argmax/argmin) can specialize. Descending or unknown-direction
-// forms simply skip the fire — no false claim.
+// `np.arange` and `np.linspace` with `start <= stop` produce ascending
+// arrays. Their order is an array fact of the output's contents
+// (`builder/array_facts.rs`): `np.arange`'s cells are constants, ordered by
+// inspection; `np.linspace` with a runtime length states it on its cells.
 
-#[test]
-fn fire_contract_arange_is_sorted_deposits_is_sorted() {
+/// A bounded integer input `name` in `[lo, hi]` (the outward-doubling probe
+/// of the bounded constructors admits it).
+fn bounded_input(b: &mut crate::builder::IRBuilder, name: &str, lo: i64, hi: i64) -> crate::types::Value {
     use crate::circuit_input::InputPath;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use std::collections::HashMap;
-
-    let mut b = crate::builder::IRBuilder::new();
-    let out = b.ir_read_integer(InputPath::new("out", vec![]), false);
-    let out_vid = out.value_id().unwrap();
-
-    b.fire_contract("arange_is_sorted", out_vid, &HashMap::new());
-
-    let query = ContractTerm::PredicateApp {
-        kind: "is_sorted".to_string(),
-        args: vec![ContractTerm::Var(ContractVar::Value(out_vid))],
+    use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
+    let v = b.ir_read_integer(InputPath::new(name, vec![]), false);
+    let vid = v.value_id().unwrap();
+    let twice = ContractTerm::Arith {
+        op: ArithOp::Add,
+        lhs: Box::new(ContractTerm::Var(ContractVar::Value(vid))),
+        rhs: Box::new(ContractTerm::Var(ContractVar::Value(vid))),
     };
-    assert_eq!(b.prove(&query), ProveOutcome::Proved);
+    for (op, bound) in [(CmpOp::Ge, 2 * lo), (CmpOp::Le, 2 * hi)] {
+        b.facts.insert_for(vid, ContractTerm::Cmp { op, lhs: Box::new(twice.clone()), rhs: Box::new(ContractTerm::LitInt(bound)) });
+    }
+    v
 }
 
 #[test]
-fn fire_contract_linspace_is_sorted_deposits_is_sorted() {
-    use crate::circuit_input::InputPath;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use std::collections::HashMap;
-
-    let mut b = crate::builder::IRBuilder::new();
-    let out = b.ir_read_integer(InputPath::new("out", vec![]), false);
-    let out_vid = out.value_id().unwrap();
-
-    b.fire_contract("linspace_is_sorted", out_vid, &HashMap::new());
-
-    let query = ContractTerm::PredicateApp {
-        kind: "is_sorted".to_string(),
-        args: vec![ContractTerm::Var(ContractVar::Value(out_vid))],
-    };
-    assert_eq!(b.prove(&query), ProveOutcome::Proved);
-}
-
-#[test]
-fn np_arange_bounded_call_site_fires_is_sorted_on_output() {
-    // Integration: exercise `np_arange` end-to-end via the bounded 1-arg
-    // form. The result is a `DynamicNDArray`; the call site should fire
-    // `arange_is_sorted` on the array's `value_id` (not the length-bearing
-    // scalar) — so `prove(is_sorted(out_vid))` returns `Proved`.
-    use crate::circuit_input::InputPath;
+fn np_arange_bounded_output_is_ascending() {
+    use crate::builder::Where;
     use crate::ops::static_ndarray_ops::np_arange;
-    use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
+    use crate::optim::array_facts::Order;
     use crate::optim::resolver::LayeredResolver;
-    use crate::types::Value;
 
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
         crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
-
-    let n = b.ir_read_integer(InputPath::new("n", vec![]), false);
-    let n_vid = n.value_id().unwrap();
-    let n_plus_n = ContractTerm::Arith {
-        op: ArithOp::Add,
-        lhs: Box::new(ContractTerm::Var(ContractVar::Value(n_vid))),
-        rhs: Box::new(ContractTerm::Var(ContractVar::Value(n_vid))),
-    };
-    b.facts.insert_for(
-        n_vid,
-        ContractTerm::Cmp {
-            op: CmpOp::Le,
-            lhs: Box::new(n_plus_n.clone()),
-            rhs: Box::new(ContractTerm::LitInt(20)),
-        },
-    );
-    b.facts.insert_for(
-        n_vid,
-        ContractTerm::Cmp {
-            op: CmpOp::Ge,
-            lhs: Box::new(n_plus_n),
-            rhs: Box::new(ContractTerm::LitInt(0)),
-        },
-    );
-
-    let out = np_arange(&mut b, &[n.clone()], &std::collections::HashMap::new());
-    let out_vid = match &out {
-        Value::DynamicNDArray(d) => d.value_id,
-        other => panic!("expected DynamicNDArray, got {:?}", other.zinnia_type()),
-    };
-
-    let query = ContractTerm::PredicateApp {
-        kind: "is_sorted".to_string(),
-        args: vec![ContractTerm::Var(ContractVar::Value(out_vid))],
-    };
-    assert_eq!(
-        b.prove(&query),
-        ProveOutcome::Proved,
-        "np.arange(n) should fire is_sorted on the dyn-ndarray output",
-    );
+    let n = bounded_input(&mut b, "n", 0, 10);
+    let out = np_arange(&mut b, &[n], &std::collections::HashMap::new());
+    assert!(matches!(out, crate::types::Value::DynamicNDArray(_)));
+    assert!(b.array_has_order(&out, Order::Increasing, Where::Everywhere));
 }
 
 #[test]
-fn np_linspace_bounded_call_site_fires_is_sorted_when_ascending() {
-    // Integration: exercise `np_linspace` end-to-end via the bounded form
-    // with `start <= stop`. The result is a `DynamicNDArray`; the call
-    // site should fire `linspace_is_sorted` on the array's `value_id`.
-    use crate::circuit_input::InputPath;
+fn np_linspace_bounded_output_is_non_decreasing_when_ascending() {
+    use crate::builder::Where;
     use crate::ops::static_ndarray_ops::np_linspace;
-    use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
+    use crate::optim::array_facts::Order;
     use crate::optim::resolver::LayeredResolver;
-    use crate::types::Value;
-    use std::collections::HashMap;
 
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
         crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
-
-    let num = b.ir_read_integer(InputPath::new("num", vec![]), false);
-    let num_vid = num.value_id().unwrap();
-    // num ∈ [2, 20]: plant `num + num >= 4` and `num + num <= 40` so the
-    // outward-doubling probe admits it as bounded. The static
-    // soundness-guard inside `np_linspace` requires `num >= 2` for the
-    // default `endpoint=True` path.
-    let np = ContractTerm::Arith {
-        op: ArithOp::Add,
-        lhs: Box::new(ContractTerm::Var(ContractVar::Value(num_vid))),
-        rhs: Box::new(ContractTerm::Var(ContractVar::Value(num_vid))),
-    };
-    b.facts.insert_for(
-        num_vid,
-        ContractTerm::Cmp {
-            op: CmpOp::Ge,
-            lhs: Box::new(np.clone()),
-            rhs: Box::new(ContractTerm::LitInt(4)),
-        },
-    );
-    b.facts.insert_for(
-        num_vid,
-        ContractTerm::Cmp {
-            op: CmpOp::Le,
-            lhs: Box::new(np),
-            rhs: Box::new(ContractTerm::LitInt(40)),
-        },
-    );
-
+    let num = bounded_input(&mut b, "num", 2, 20);
     let start = b.ir_constant_int(0);
     let stop = b.ir_constant_int(1);
-    let kwargs = HashMap::new();
-    let out = np_linspace(&mut b, &[start, stop, num.clone()], &kwargs);
-    let out_vid = match &out {
-        Value::DynamicNDArray(d) => d.value_id,
-        other => panic!("expected DynamicNDArray, got {:?}", other.zinnia_type()),
-    };
-
-    let query = ContractTerm::PredicateApp {
-        kind: "is_sorted".to_string(),
-        args: vec![ContractTerm::Var(ContractVar::Value(out_vid))],
-    };
-    assert_eq!(
-        b.prove(&query),
-        ProveOutcome::Proved,
-        "np.linspace(0, 1, num) should fire is_sorted on the dyn-ndarray output",
-    );
+    let out = np_linspace(&mut b, &[start, stop, num.clone()], &std::collections::HashMap::new());
+    assert!(matches!(out, crate::types::Value::DynamicNDArray(_)));
+    // The live samples (the first `num`) are ordered; the cells past them
+    // are not (the last live sample is `stop` itself).
+    assert!(b.live_prefix_has_order(&out, &num, Order::NonDecreasing, Where::Everywhere));
+    assert!(!b.live_prefix_has_order(&out, &num, Order::Increasing, Where::Everywhere), "ties are possible");
+    assert!(!b.array_has_order(&out, Order::NonDecreasing, Where::Everywhere), "not the whole capacity");
 }
 
 #[test]
-fn np_arange_call_site_does_not_emit_for_negative_step() {
-    // Soundness: `np.arange(10, 0, -1)` produces a descending sequence.
-    // The is_sorted (ascending) fact MUST NOT be deposited. The
-    // call-site direction check in `arange_static` gates on `step > 0`,
-    // so we exercise that branch and confirm no `is_sorted` fact
-    // surfaces anywhere in the FactStack. (We can't anchor on the
-    // output's value_id because the fully-static descending path returns
-    // a `Value::StaticArray` with no value_id — so we instead scan all
-    // deposited facts and assert none match the `is_sorted` predicate
-    // shape.)
+fn np_arange_with_a_negative_step_is_not_ascending() {
+    use crate::builder::Where;
     use crate::ops::static_ndarray_ops::np_arange;
-    use crate::optim::predicates::formula::ContractTerm;
+    use crate::optim::array_facts::Order;
 
     let mut b = crate::builder::IRBuilder::new();
     let start = b.ir_constant_int(10);
     let stop = b.ir_constant_int(0);
     let step = b.ir_constant_int(-1);
-    let _out = np_arange(&mut b, &[start, stop, step], &std::collections::HashMap::new());
-
-    let any_is_sorted = b.facts.per_value.values().any(|bucket| {
-        bucket.iter().any(|fact| {
-            matches!(
-                fact,
-                ContractTerm::PredicateApp { kind, .. } if kind == "is_sorted"
-            )
-        })
-    });
-    assert!(
-        !any_is_sorted,
-        "np.arange(10, 0, -1) should NOT deposit an is_sorted fact (descending), \
-         but one was found on the FactStack",
-    );
+    let out = np_arange(&mut b, &[start, stop, step], &std::collections::HashMap::new());
+    assert!(!b.array_has_order(&out, Order::NonDecreasing, Where::Everywhere));
+    assert!(b.array_has_order(&out, Order::Decreasing, Where::Everywhere));
 }
 
-// ── Group 4c (compiler.op-fact-group-4c-tile-repeat-content-relay) ──
-
-#[test]
-fn relay_forall_eq_const_zero_through_tile() {
-    // Plant `forall_eq_const(in, 0)` as a fact on a synthetic input vid,
-    // call the relay, and assert the output carries the same fact.
-    use crate::circuit_input::InputPath;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use crate::optim::resolver::relay_forall_eq_const_from_input;
-
-    let mut b = crate::builder::IRBuilder::new();
-    let in_val = b.ir_read_integer(InputPath::new("inp", vec![]), false);
-    let out_val = b.ir_read_integer(InputPath::new("out", vec![]), false);
-    let in_vid = in_val.value_id().unwrap();
-    let out_vid = out_val.value_id().unwrap();
-
-    b.facts.insert_for(
-        in_vid,
-        ContractTerm::PredicateApp {
-            kind: "forall_eq_const".to_string(),
-            args: vec![
-                ContractTerm::Var(ContractVar::Value(in_vid)),
-                ContractTerm::LitInt(0),
-            ],
-        },
-    );
-
-    let fired = relay_forall_eq_const_from_input(&mut b, &in_val, &out_val);
-    assert!(fired, "relay should fire when forall_eq_const(in, 0) holds");
-
-    let query = ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(out_vid)),
-            ContractTerm::LitInt(0),
-        ],
-    };
-    assert_eq!(b.prove(&query), ProveOutcome::Proved);
-}
-
-#[test]
-fn relay_forall_eq_const_one() {
-    use crate::circuit_input::InputPath;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use crate::optim::resolver::relay_forall_eq_const_from_input;
-
-    let mut b = crate::builder::IRBuilder::new();
-    let in_val = b.ir_read_integer(InputPath::new("inp", vec![]), false);
-    let out_val = b.ir_read_integer(InputPath::new("out", vec![]), false);
-    let in_vid = in_val.value_id().unwrap();
-    let out_vid = out_val.value_id().unwrap();
-
-    b.facts.insert_for(
-        in_vid,
-        ContractTerm::PredicateApp {
-            kind: "forall_eq_const".to_string(),
-            args: vec![
-                ContractTerm::Var(ContractVar::Value(in_vid)),
-                ContractTerm::LitInt(1),
-            ],
-        },
-    );
-
-    let fired = relay_forall_eq_const_from_input(&mut b, &in_val, &out_val);
-    assert!(fired, "relay should fire when forall_eq_const(in, 1) holds");
-
-    let query = ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(out_vid)),
-            ContractTerm::LitInt(1),
-        ],
-    };
-    assert_eq!(b.prove(&query), ProveOutcome::Proved);
-}
-
-#[test]
-fn relay_forall_eq_const_skips_when_no_fact() {
-    use crate::circuit_input::InputPath;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use crate::optim::resolver::relay_forall_eq_const_from_input;
-
-    let mut b = crate::builder::IRBuilder::new();
-    let in_val = b.ir_read_integer(InputPath::new("inp", vec![]), false);
-    let out_val = b.ir_read_integer(InputPath::new("out", vec![]), false);
-    let in_vid = in_val.value_id().unwrap();
-    let out_vid = out_val.value_id().unwrap();
-
-    let fired = relay_forall_eq_const_from_input(&mut b, &in_val, &out_val);
-    assert!(
-        !fired,
-        "relay should not fire when no content fact is visible"
-    );
-
-    for k in [0i64, 1i64] {
-        let query = ContractTerm::PredicateApp {
-            kind: "forall_eq_const".to_string(),
-            args: vec![
-                ContractTerm::Var(ContractVar::Value(out_vid)),
-                ContractTerm::LitInt(k),
-            ],
-        };
-        assert_eq!(b.prove(&query), ProveOutcome::Unknown);
-    }
-}
-
-#[test]
-fn relay_forall_eq_const_zero_wins_when_both_proved() {
-    // Pathological case: both `forall_eq_const(in, 0)` and
-    // `forall_eq_const(in, 1)` are simultaneously Proved. Semantically this
-    // implies the array is empty (no element can equal both 0 and 1), but
-    // the relay sees both facts as proven via the per_value fact bucket.
-    // Declared order picks `zeros_content`: relay fires `zeros_content`,
-    // not `ones_content`. Output carries `forall_eq_const(out, 0)` only;
-    // `forall_eq_const(out, 1)` remains Unknown.
-    use crate::circuit_input::InputPath;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use crate::optim::resolver::relay_forall_eq_const_from_input;
-
-    let mut b = crate::builder::IRBuilder::new();
-    let in_val = b.ir_read_integer(InputPath::new("inp", vec![]), false);
-    let out_val = b.ir_read_integer(InputPath::new("out", vec![]), false);
-    let in_vid = in_val.value_id().unwrap();
-    let out_vid = out_val.value_id().unwrap();
-
-    for k in [0i64, 1i64] {
-        b.facts.insert_for(
-            in_vid,
-            ContractTerm::PredicateApp {
-                kind: "forall_eq_const".to_string(),
-                args: vec![
-                    ContractTerm::Var(ContractVar::Value(in_vid)),
-                    ContractTerm::LitInt(k),
-                ],
-            },
-        );
-    }
-
-    let fired = relay_forall_eq_const_from_input(&mut b, &in_val, &out_val);
-    assert!(fired);
-
-    let zero_query = ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(out_vid)),
-            ContractTerm::LitInt(0),
-        ],
-    };
-    let one_query = ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(out_vid)),
-            ContractTerm::LitInt(1),
-        ],
-    };
-    assert_eq!(b.prove(&zero_query), ProveOutcome::Proved);
-    assert_eq!(b.prove(&one_query), ProveOutcome::Unknown);
-}
-
-// ── Group 6 (compiler.op-fact-group-6-shape-preserving-relay) ──
+// ── Constant contents through shape operations, slices and gathers ──
+//
+// "Every element is k" is read off an array's cells (constants carry their
+// own facts, `builder/array_facts.rs`): a view, reshape, transpose, slice,
+// broadcast, tile, concatenation or gather of constant cells has the same
+// constant cells, with no relay in the operator.
 
 #[cfg(test)]
-mod group_6_shape_preserving {
+mod constant_contents {
     use crate::builder::IRBuilder;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use crate::types::{CompositeData, NumberType, Value, ValueId};
+    use crate::types::{CompositeData, NumberType, SliceIndex, Value, ValueId};
     use std::collections::HashMap;
 
     /// Build a 2-D StaticArray of integers from row-major literals.
     fn make_2d_int(b: &mut IRBuilder, rows: &[&[i64]]) -> Value {
-        let mut flat: Vec<Value> = Vec::new();
-        for r in rows {
-            for &n in *r {
-                flat.push(b.ir_constant_int(n));
-            }
-        }
+        let flat: Vec<Value> = rows.iter().flat_map(|r| r.iter()).map(|&n| b.ir_constant_int(n)).collect();
         crate::helpers::static_array::base::build_static_array_from_flat(
             b,
             flat,
@@ -3461,349 +2919,121 @@ mod group_6_shape_preserving {
     /// Build a 1-D StaticArray of integers.
     fn make_1d_int(b: &mut IRBuilder, vals: &[i64]) -> Value {
         let flat: Vec<Value> = vals.iter().map(|n| b.ir_constant_int(*n)).collect();
-        crate::helpers::static_array::base::build_static_array_from_flat(
-            b,
-            flat,
-            vec![vals.len()],
-            NumberType::Integer,
-        )
+        crate::helpers::static_array::base::build_static_array_from_flat(b, flat, vec![vals.len()], NumberType::Integer)
     }
 
-    fn plant_forall_eq_const(b: &mut IRBuilder, vid: ValueId, k: i64) {
-        b.facts.insert_for(
-            vid,
-            ContractTerm::PredicateApp {
-                kind: "forall_eq_const".to_string(),
-                args: vec![
-                    ContractTerm::Var(ContractVar::Value(vid)),
-                    ContractTerm::LitInt(k),
-                ],
-            },
-        );
+    /// A `Value::List` of integer leaves.
+    fn make_1d_list_int(b: &mut IRBuilder, vals: &[i64]) -> Value {
+        let values: Vec<Value> = vals.iter().map(|n| b.ir_constant_int(*n)).collect();
+        let elements_type = values.iter().map(|v| v.zinnia_type()).collect();
+        Value::List(CompositeData { elements_type, values, value_id: ValueId::next() })
     }
 
-    fn assert_forall_eq_const_proved(b: &mut IRBuilder, vid: ValueId, k: i64) {
-        let query = ContractTerm::PredicateApp {
-            kind: "forall_eq_const".to_string(),
-            args: vec![
-                ContractTerm::Var(ContractVar::Value(vid)),
-                ContractTerm::LitInt(k),
-            ],
-        };
-        assert_eq!(
-            b.prove(&query),
-            ProveOutcome::Proved,
-            "expected forall_eq_const(out, {}) to prove",
-            k
-        );
+    fn assert_all(b: &IRBuilder, out: &Value, k: i64) {
+        assert!(b.array_all_equal(out, k), "every element of the output should be {k}");
+        assert!(!b.array_all_equal(out, 1 - k), "and not {}", 1 - k);
+    }
+
+    fn assert_neither(b: &IRBuilder, out: &Value) {
+        for k in [0, 1] {
+            assert!(!b.array_all_equal(out, k), "not every element is {k}");
+        }
     }
 
     #[test]
-    fn relay_forall_eq_const_through_transpose() {
+    fn through_transpose_reshape_squeeze_expand_dims() {
         let mut b = IRBuilder::new();
         let a = make_2d_int(&mut b, &[&[0, 0, 0], &[0, 0, 0]]);
-        let in_vid = a.value_id().unwrap();
-        plant_forall_eq_const(&mut b, in_vid, 0);
-
-        let out = crate::helpers::array_ops::transpose(&mut b, &a, &[]);
-        let out_vid = out
-            .value_id()
-            .expect("transpose output should have value_id");
-        assert_forall_eq_const_proved(&mut b, out_vid, 0);
-    }
-
-    #[test]
-    fn relay_forall_eq_const_through_reshape() {
-        let mut b = IRBuilder::new();
-        let a = make_1d_int(&mut b, &[1, 1, 1, 1, 1, 1]);
-        let in_vid = a.value_id().unwrap();
-        plant_forall_eq_const(&mut b, in_vid, 1);
-
-        let two = b.ir_constant_int(2);
-        let three = b.ir_constant_int(3);
-        let out = crate::helpers::array_ops::reshape(&mut b, &a, &[two, three]);
-        let out_vid = out.value_id().expect("reshape output should have value_id");
-        assert_forall_eq_const_proved(&mut b, out_vid, 1);
-    }
-
-    #[test]
-    fn relay_forall_eq_const_through_squeeze() {
-        let mut b = IRBuilder::new();
-        // Shape (1, 3) — squeezable to (3,).
-        let a_2d = make_2d_int(&mut b, &[&[0, 0, 0]]);
-        let in_vid = a_2d.value_id().unwrap();
-        plant_forall_eq_const(&mut b, in_vid, 0);
-
-        let kwargs = HashMap::new();
-        let out = crate::ops::static_ndarray_ops::np_squeeze(&mut b, &[a_2d], &kwargs);
-        let out_vid = out.value_id().expect("squeeze output should have value_id");
-        assert_forall_eq_const_proved(&mut b, out_vid, 0);
-    }
-
-    #[test]
-    fn relay_forall_eq_const_through_expand_dims() {
-        let mut b = IRBuilder::new();
-        let a = make_1d_int(&mut b, &[0, 0, 0]);
-        let in_vid = a.value_id().unwrap();
-        plant_forall_eq_const(&mut b, in_vid, 0);
-
+        let t = crate::helpers::array_ops::transpose(&mut b, &a, &[]);
+        assert_all(&b, &t, 0);
+        let ones = make_1d_int(&mut b, &[1, 1, 1, 1, 1, 1]);
+        let (two, three) = (b.ir_constant_int(2), b.ir_constant_int(3));
+        let r = crate::helpers::array_ops::reshape(&mut b, &ones, &[two, three]);
+        assert_all(&b, &r, 1);
+        let row = make_2d_int(&mut b, &[&[0, 0, 0]]);
+        let sq = crate::ops::static_ndarray_ops::np_squeeze(&mut b, &[row], &HashMap::new());
+        assert_all(&b, &sq, 0);
+        let v = make_1d_int(&mut b, &[0, 0, 0]);
         let axis = b.ir_constant_int(0);
-        let out = crate::ops::static_ndarray_ops::np_expand_dims(&mut b, &[a, axis]);
-        let out_vid = out
-            .value_id()
-            .expect("expand_dims output should have value_id");
-        assert_forall_eq_const_proved(&mut b, out_vid, 0);
+        let e = crate::ops::static_ndarray_ops::np_expand_dims(&mut b, &[v, axis]);
+        assert_all(&b, &e, 0);
+        let mixed = make_2d_int(&mut b, &[&[1, 2, 3], &[4, 5, 6]]);
+        let t = crate::helpers::array_ops::transpose(&mut b, &mixed, &[]);
+        assert_neither(&b, &t);
     }
 
     #[test]
-    fn relay_forall_eq_const_through_broadcast_to() {
+    fn through_broadcast_to() {
         let mut b = IRBuilder::new();
-        // `np_broadcast_to` walks the legacy `flatten_composite` path which
-        // expects a nested `Value::List` of leaves, so build one directly
-        // rather than starting from a StaticArray.
-        let leaves: Vec<Value> = (0..3).map(|_| b.ir_constant_int(1)).collect();
-        let a = Value::List(CompositeData {
-            elements_type: leaves.iter().map(|v| v.zinnia_type()).collect(),
-            values: leaves,
-            value_id: ValueId::next(),
-        });
-        let in_vid = a.value_id().unwrap();
-        plant_forall_eq_const(&mut b, in_vid, 1);
-
-        // Broadcast (3,) → (2, 3).
-        let two = b.ir_constant_int(2);
-        let three = b.ir_constant_int(3);
+        let a = make_1d_list_int(&mut b, &[1, 1, 1]);
+        let (two, three) = (b.ir_constant_int(2), b.ir_constant_int(3));
         let shape = Value::Tuple(CompositeData {
             elements_type: vec![crate::types::ZinniaType::Integer; 2],
             values: vec![two, three],
             value_id: ValueId::next(),
         });
         let out = crate::ops::static_ndarray_ops::np_broadcast_to(&mut b, &[a, shape]);
-        let out_vid = out
-            .value_id()
-            .expect("broadcast_to output should have value_id");
-        assert_forall_eq_const_proved(&mut b, out_vid, 1);
+        assert_all(&b, &out, 1);
     }
 
     #[test]
-    fn relay_forall_eq_const_through_transpose_no_fact_no_relay() {
+    fn through_slices() {
         let mut b = IRBuilder::new();
-        let a = make_2d_int(&mut b, &[&[1, 2, 3], &[4, 5, 6]]);
-        // No fact planted on `a`.
-        let out = crate::helpers::array_ops::transpose(&mut b, &a, &[]);
-        let out_vid = out
-            .value_id()
-            .expect("transpose output should have value_id");
-        for k in [0i64, 1i64] {
-            let query = ContractTerm::PredicateApp {
-                kind: "forall_eq_const".to_string(),
-                args: vec![
-                    ContractTerm::Var(ContractVar::Value(out_vid)),
-                    ContractTerm::LitInt(k),
-                ],
-            };
-            assert_eq!(
-                b.prove(&query),
-                ProveOutcome::Unknown,
-                "no source fact ⇒ output should remain Unknown for k={}",
-                k
-            );
-        }
-    }
-}
-
-// ── Group 7 (compiler.op-fact-group-7-concat-stack-relay) ──
-
-#[test]
-fn relay_concat_all_zeros_emits_zeros() {
-    use crate::circuit_input::InputPath;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use crate::optim::resolver::relay_forall_eq_const_from_all_inputs;
-
-    let mut b = crate::builder::IRBuilder::new();
-    let in1 = b.ir_read_integer(InputPath::new("in1", vec![]), false);
-    let in2 = b.ir_read_integer(InputPath::new("in2", vec![]), false);
-    let out_val = b.ir_read_integer(InputPath::new("out", vec![]), false);
-    let in1_vid = in1.value_id().unwrap();
-    let in2_vid = in2.value_id().unwrap();
-    let out_vid = out_val.value_id().unwrap();
-
-    for vid in [in1_vid, in2_vid] {
-        b.facts.insert_for(
-            vid,
-            ContractTerm::PredicateApp {
-                kind: "forall_eq_const".to_string(),
-                args: vec![
-                    ContractTerm::Var(ContractVar::Value(vid)),
-                    ContractTerm::LitInt(0),
-                ],
-            },
-        );
-    }
-
-    let fired = relay_forall_eq_const_from_all_inputs(&mut b, &[in1.clone(), in2.clone()], &out_val);
-    assert!(fired);
-
-    let query = ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(out_vid)),
-            ContractTerm::LitInt(0),
-        ],
-    };
-    assert_eq!(b.prove(&query), ProveOutcome::Proved);
-}
-
-#[test]
-fn relay_concat_all_ones_emits_ones() {
-    use crate::circuit_input::InputPath;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use crate::optim::resolver::relay_forall_eq_const_from_all_inputs;
-
-    let mut b = crate::builder::IRBuilder::new();
-    let in1 = b.ir_read_integer(InputPath::new("in1", vec![]), false);
-    let in2 = b.ir_read_integer(InputPath::new("in2", vec![]), false);
-    let in3 = b.ir_read_integer(InputPath::new("in3", vec![]), false);
-    let out_val = b.ir_read_integer(InputPath::new("out", vec![]), false);
-    let in1_vid = in1.value_id().unwrap();
-    let in2_vid = in2.value_id().unwrap();
-    let in3_vid = in3.value_id().unwrap();
-    let out_vid = out_val.value_id().unwrap();
-
-    for vid in [in1_vid, in2_vid, in3_vid] {
-        b.facts.insert_for(
-            vid,
-            ContractTerm::PredicateApp {
-                kind: "forall_eq_const".to_string(),
-                args: vec![
-                    ContractTerm::Var(ContractVar::Value(vid)),
-                    ContractTerm::LitInt(1),
-                ],
-            },
-        );
-    }
-
-    let fired =
-        relay_forall_eq_const_from_all_inputs(&mut b, &[in1.clone(), in2.clone(), in3.clone()], &out_val);
-    assert!(fired);
-
-    let query = ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(out_vid)),
-            ContractTerm::LitInt(1),
-        ],
-    };
-    assert_eq!(b.prove(&query), ProveOutcome::Proved);
-}
-
-#[test]
-fn relay_concat_mixed_zero_one_emits_nothing() {
-    use crate::circuit_input::InputPath;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use crate::optim::resolver::relay_forall_eq_const_from_all_inputs;
-
-    let mut b = crate::builder::IRBuilder::new();
-    let in1 = b.ir_read_integer(InputPath::new("in1", vec![]), false);
-    let in2 = b.ir_read_integer(InputPath::new("in2", vec![]), false);
-    let out_val = b.ir_read_integer(InputPath::new("out", vec![]), false);
-    let in1_vid = in1.value_id().unwrap();
-    let in2_vid = in2.value_id().unwrap();
-    let out_vid = out_val.value_id().unwrap();
-
-    // in1 is zeros, in2 is ones — no single k satisfies both.
-    b.facts.insert_for(
-        in1_vid,
-        ContractTerm::PredicateApp {
-            kind: "forall_eq_const".to_string(),
-            args: vec![
-                ContractTerm::Var(ContractVar::Value(in1_vid)),
-                ContractTerm::LitInt(0),
-            ],
-        },
-    );
-    b.facts.insert_for(
-        in2_vid,
-        ContractTerm::PredicateApp {
-            kind: "forall_eq_const".to_string(),
-            args: vec![
-                ContractTerm::Var(ContractVar::Value(in2_vid)),
-                ContractTerm::LitInt(1),
-            ],
-        },
-    );
-
-    let fired = relay_forall_eq_const_from_all_inputs(&mut b, &[in1.clone(), in2.clone()], &out_val);
-    assert!(!fired);
-
-    for k in [0i64, 1i64] {
-        let query = ContractTerm::PredicateApp {
-            kind: "forall_eq_const".to_string(),
-            args: vec![
-                ContractTerm::Var(ContractVar::Value(out_vid)),
-                ContractTerm::LitInt(k),
-            ],
+        let range = |b: &mut IRBuilder, start: i64, stop: i64| {
+            SliceIndex::Range(Some(b.ir_constant_int(start)), Some(b.ir_constant_int(stop)), None)
         };
-        assert_eq!(b.prove(&query), ProveOutcome::Unknown);
+        let zeros = make_1d_int(&mut b, &[0; 10]);
+        let idx = range(&mut b, 2, 5);
+        let out = crate::helpers::static_array::read::static_array_subscript(&mut b, &zeros, &[idx]);
+        assert_all(&b, &out, 0);
+        let mixed = make_1d_int(&mut b, &[1, 2, 3, 4, 5, 6]);
+        let idx = range(&mut b, 1, 4);
+        let out = crate::helpers::static_array::read::static_array_subscript(&mut b, &mixed, &[idx]);
+        assert_neither(&b, &out);
     }
-}
 
-#[test]
-fn relay_concat_one_input_no_fact_skips() {
-    use crate::circuit_input::InputPath;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use crate::optim::resolver::relay_forall_eq_const_from_all_inputs;
-
-    let mut b = crate::builder::IRBuilder::new();
-    let in1 = b.ir_read_integer(InputPath::new("in1", vec![]), false);
-    let in2 = b.ir_read_integer(InputPath::new("in2", vec![]), false);
-    let out_val = b.ir_read_integer(InputPath::new("out", vec![]), false);
-    let in1_vid = in1.value_id().unwrap();
-    let in2_vid = in2.value_id().unwrap();
-    let out_vid = out_val.value_id().unwrap();
-
-    // Only in1 has a fact; in2 has none.
-    b.facts.insert_for(
-        in1_vid,
-        ContractTerm::PredicateApp {
-            kind: "forall_eq_const".to_string(),
-            args: vec![
-                ContractTerm::Var(ContractVar::Value(in1_vid)),
-                ContractTerm::LitInt(0),
-            ],
-        },
-    );
-
-    let fired = relay_forall_eq_const_from_all_inputs(&mut b, &[in1.clone(), in2.clone()], &out_val);
-    assert!(!fired);
-
-    for k in [0i64, 1i64] {
-        let query = ContractTerm::PredicateApp {
-            kind: "forall_eq_const".to_string(),
-            args: vec![
-                ContractTerm::Var(ContractVar::Value(out_vid)),
-                ContractTerm::LitInt(k),
-            ],
-        };
-        assert_eq!(b.prove(&query), ProveOutcome::Unknown);
+    #[test]
+    fn through_a_static_gather() {
+        let mut b = IRBuilder::new();
+        let ones = make_1d_list_int(&mut b, &[1, 1, 1, 1, 1, 1]);
+        let idx = make_1d_list_int(&mut b, &[0, 2, 4]);
+        let Value::List(data) = &ones else { unreachable!() };
+        let out = crate::helpers::ndarray::fancy_index_static(data, &idx).expect("a gather of literals");
+        assert_all(&b, &out, 1);
+        let mixed = make_1d_list_int(&mut b, &[1, 2, 3, 4, 5, 6]);
+        let Value::List(data) = &mixed else { unreachable!() };
+        let out = crate::helpers::ndarray::fancy_index_static(data, &idx).expect("a gather of literals");
+        assert_neither(&b, &out);
     }
-}
 
-#[test]
-fn relay_concat_empty_input_list_returns_false() {
-    use crate::circuit_input::InputPath;
-    use crate::optim::resolver::relay_forall_eq_const_from_all_inputs;
+    #[test]
+    fn a_write_through_another_name_is_seen() {
+        // `y = x; y[0] = 5`: the storage's cells change, so `x` is no
+        // longer all zeros (fact-staleness: the zeros fact used to outlive it).
+        let mut b = IRBuilder::new();
+        let x = make_1d_int(&mut b, &[0, 0, 0, 0]);
+        assert_all(&b, &x, 0);
+        let Value::StaticArray { segment_id, .. } = &x else { unreachable!() };
+        let five = b.ir_constant_int(5);
+        b.storage_write(*segment_id, 0, &five);
+        assert_neither(&b, &x);
+    }
 
-    let mut b = crate::builder::IRBuilder::new();
-    let out_val = b.ir_read_integer(InputPath::new("out", vec![]), false);
-    let out_vid = out_val.value_id().unwrap();
-
-    let fired = relay_forall_eq_const_from_all_inputs(&mut b, &[], &out_val);
-    assert!(!fired);
+    #[test]
+    fn the_identity_is_read_off_its_cells() {
+        let mut b = IRBuilder::new();
+        let n = b.ir_constant_int(3);
+        let eye = crate::ops::static_ndarray_ops::np_identity(&mut b, &[n]);
+        assert!(b.array_is_identity(&eye));
+        let not_square = make_2d_int(&mut b, &[&[1, 0, 0], &[0, 1, 0]]);
+        assert!(!b.array_is_identity(&not_square));
+        let other = make_2d_int(&mut b, &[&[1, 0], &[1, 1]]);
+        assert!(!b.array_is_identity(&other));
+        let Value::StaticArray { segment_id, .. } = &eye else { unreachable!() };
+        let two = b.ir_constant_int(2);
+        b.storage_write(*segment_id, 4, &two);
+        assert!(!b.array_is_identity(&eye), "a written identity is not one");
+    }
 }
 
 // ── Group 3e (compiler.op-fact-group-3e-var-std) ─────────────────────
@@ -3920,264 +3150,6 @@ fn fire_contract_std_emits_output_nonneg() {
         "expected Output >= 0.0 ensures fact after fire_contract(std); got {:?}",
         facts,
     );
-}
-
-// ── Group 5b (compiler.op-fact-group-5b-slice-content-relay) ──
-
-#[cfg(test)]
-mod group_5b_slice_content {
-    use crate::builder::IRBuilder;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use crate::types::{NumberType, SliceIndex, Value, ValueId};
-
-    /// Build a 1-D StaticArray of integers.
-    fn make_1d_int(b: &mut IRBuilder, vals: &[i64]) -> Value {
-        let flat: Vec<Value> = vals.iter().map(|n| b.ir_constant_int(*n)).collect();
-        crate::helpers::static_array::base::build_static_array_from_flat(
-            b,
-            flat,
-            vec![vals.len()],
-            NumberType::Integer,
-        )
-    }
-
-    fn plant_forall_eq_const(b: &mut IRBuilder, vid: ValueId, k: i64) {
-        b.facts.insert_for(
-            vid,
-            ContractTerm::PredicateApp {
-                kind: "forall_eq_const".to_string(),
-                args: vec![
-                    ContractTerm::Var(ContractVar::Value(vid)),
-                    ContractTerm::LitInt(k),
-                ],
-            },
-        );
-    }
-
-    fn assert_forall_eq_const_proved(b: &mut IRBuilder, vid: ValueId, k: i64) {
-        let query = ContractTerm::PredicateApp {
-            kind: "forall_eq_const".to_string(),
-            args: vec![
-                ContractTerm::Var(ContractVar::Value(vid)),
-                ContractTerm::LitInt(k),
-            ],
-        };
-        assert_eq!(
-            b.prove(&query),
-            ProveOutcome::Proved,
-            "expected forall_eq_const(out, {}) to prove",
-            k
-        );
-    }
-
-    /// Build a static-bound 1-D range slice `[start:stop]`.
-    fn static_range(b: &mut IRBuilder, start: i64, stop: i64) -> SliceIndex {
-        SliceIndex::Range(
-            Some(b.ir_constant_int(start)),
-            Some(b.ir_constant_int(stop)),
-            None,
-        )
-    }
-
-    #[test]
-    fn relay_forall_eq_const_zero_through_slice() {
-        let mut b = IRBuilder::new();
-        let a = make_1d_int(&mut b, &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        let in_vid = a.value_id().unwrap();
-        plant_forall_eq_const(&mut b, in_vid, 0);
-
-        let idx = static_range(&mut b, 2, 5);
-        let out = crate::helpers::static_array::read::static_array_subscript(&mut b, &a, &[idx]);
-        let out_vid = out.value_id().expect("slice output should have value_id");
-        assert_forall_eq_const_proved(&mut b, out_vid, 0);
-    }
-
-    #[test]
-    fn relay_forall_eq_const_one_through_slice() {
-        let mut b = IRBuilder::new();
-        let a = make_1d_int(&mut b, &[1, 1, 1, 1, 1, 1]);
-        let in_vid = a.value_id().unwrap();
-        plant_forall_eq_const(&mut b, in_vid, 1);
-
-        let idx = static_range(&mut b, 1, 4);
-        let out = crate::helpers::static_array::read::static_array_subscript(&mut b, &a, &[idx]);
-        let out_vid = out.value_id().expect("slice output should have value_id");
-        assert_forall_eq_const_proved(&mut b, out_vid, 1);
-    }
-
-    #[test]
-    fn relay_forall_eq_const_skips_on_unbounded_slice() {
-        // No fact planted on the source — slice output must remain Unknown
-        // for both k=0 and k=1.
-        let mut b = IRBuilder::new();
-        let a = make_1d_int(&mut b, &[1, 2, 3, 4, 5, 6]);
-        let idx = static_range(&mut b, 1, 4);
-        let out = crate::helpers::static_array::read::static_array_subscript(&mut b, &a, &[idx]);
-        let out_vid = out.value_id().expect("slice output should have value_id");
-        for k in [0i64, 1i64] {
-            let query = ContractTerm::PredicateApp {
-                kind: "forall_eq_const".to_string(),
-                args: vec![
-                    ContractTerm::Var(ContractVar::Value(out_vid)),
-                    ContractTerm::LitInt(k),
-                ],
-            };
-            assert_eq!(
-                b.prove(&query),
-                ProveOutcome::Unknown,
-                "no source fact ⇒ slice output should remain Unknown for k={}",
-                k
-            );
-        }
-    }
-}
-
-// ── Group 5c (compiler.op-fact-group-5c-gather-content-relay) ──
-
-#[cfg(test)]
-mod group_5c_gather_content {
-    use crate::builder::IRBuilder;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-    use crate::types::{CompositeData, Value, ValueId};
-
-    /// Build a `Value::List` of integer leaves with a fresh `value_id`.
-    fn make_1d_list_int(b: &mut IRBuilder, vals: &[i64]) -> Value {
-        let values: Vec<Value> = vals.iter().map(|n| b.ir_constant_int(*n)).collect();
-        let elements_type = values.iter().map(|v| v.zinnia_type()).collect();
-        Value::List(CompositeData {
-            elements_type,
-            values,
-            value_id: ValueId::next(),
-        })
-    }
-
-    /// Build a Python-list-like index array `[i, j, k]` of integer literals.
-    fn make_index_list(b: &mut IRBuilder, idxs: &[i64]) -> Value {
-        let values: Vec<Value> = idxs.iter().map(|n| b.ir_constant_int(*n)).collect();
-        let elements_type = values.iter().map(|v| v.zinnia_type()).collect();
-        Value::List(CompositeData {
-            elements_type,
-            values,
-            value_id: ValueId::next(),
-        })
-    }
-
-    fn plant_forall_eq_const(b: &mut IRBuilder, vid: ValueId, k: i64) {
-        b.facts.insert_for(
-            vid,
-            ContractTerm::PredicateApp {
-                kind: "forall_eq_const".to_string(),
-                args: vec![
-                    ContractTerm::Var(ContractVar::Value(vid)),
-                    ContractTerm::LitInt(k),
-                ],
-            },
-        );
-    }
-
-    fn assert_forall_eq_const_proved(b: &mut IRBuilder, vid: ValueId, k: i64) {
-        let query = ContractTerm::PredicateApp {
-            kind: "forall_eq_const".to_string(),
-            args: vec![
-                ContractTerm::Var(ContractVar::Value(vid)),
-                ContractTerm::LitInt(k),
-            ],
-        };
-        assert_eq!(
-            b.prove(&query),
-            ProveOutcome::Proved,
-            "expected forall_eq_const(out, {}) to prove",
-            k
-        );
-    }
-
-    #[test]
-    fn relay_forall_eq_const_zero_through_fancy_index_static() {
-        // Plant `forall_eq_const(in, 0)` on a List input, fancy-index it, and
-        // fire the gather-site relay (mirroring the visitors.rs wiring).
-        let mut b = IRBuilder::new();
-        let arr = make_1d_list_int(&mut b, &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        let in_vid = arr.value_id().unwrap();
-        plant_forall_eq_const(&mut b, in_vid, 0);
-
-        let idx = make_index_list(&mut b, &[2, 5, 8]);
-        let data = match &arr {
-            Value::List(d) => d.clone(),
-            _ => unreachable!(),
-        };
-        let out = crate::helpers::ndarray::fancy_index_static(&data, &idx)
-            .expect("fancy_index_static should succeed on int literals");
-        let out_vid = out
-            .value_id()
-            .expect("fancy_index_static output should have a value_id");
-
-        let fired =
-            crate::optim::resolver::relay_forall_eq_const_from_input(&mut b, &arr, &out);
-        assert!(fired, "relay should fire when forall_eq_const(in, 0) holds");
-        assert_forall_eq_const_proved(&mut b, out_vid, 0);
-    }
-
-    #[test]
-    fn relay_forall_eq_const_one_through_take() {
-        // Same shape as the fancy-index case but driving the relay via the
-        // np.take dispatch (which lowers to fancy_index_static under the hood).
-        let mut b = IRBuilder::new();
-        let arr = make_1d_list_int(&mut b, &[1, 1, 1, 1, 1, 1]);
-        let in_vid = arr.value_id().unwrap();
-        plant_forall_eq_const(&mut b, in_vid, 1);
-
-        let idx = make_index_list(&mut b, &[0, 2, 4]);
-        let data = match &arr {
-            Value::List(d) => d.clone(),
-            _ => unreachable!(),
-        };
-        let out = crate::helpers::ndarray::fancy_index_static(&data, &idx)
-            .expect("fancy_index_static should succeed on int literals");
-        let out_vid = out.value_id().expect("output should have a value_id");
-
-        let fired =
-            crate::optim::resolver::relay_forall_eq_const_from_input(&mut b, &arr, &out);
-        assert!(fired, "relay should fire when forall_eq_const(in, 1) holds");
-        assert_forall_eq_const_proved(&mut b, out_vid, 1);
-    }
-
-    #[test]
-    fn relay_forall_eq_const_skips_when_no_fact() {
-        // No fact planted on the source — gather output must remain Unknown
-        // for both k=0 and k=1 even after invoking the relay.
-        let mut b = IRBuilder::new();
-        let arr = make_1d_list_int(&mut b, &[1, 2, 3, 4, 5, 6]);
-        let in_vid = arr.value_id().unwrap();
-        let idx = make_index_list(&mut b, &[0, 2, 4]);
-        let data = match &arr {
-            Value::List(d) => d.clone(),
-            _ => unreachable!(),
-        };
-        let out = crate::helpers::ndarray::fancy_index_static(&data, &idx)
-            .expect("fancy_index_static should succeed on int literals");
-        let out_vid = out.value_id().expect("output should have a value_id");
-
-        let fired =
-            crate::optim::resolver::relay_forall_eq_const_from_input(&mut b, &arr, &out);
-        assert!(!fired, "relay should NOT fire without a source fact");
-        for k in [0i64, 1i64] {
-            let query = ContractTerm::PredicateApp {
-                kind: "forall_eq_const".to_string(),
-                args: vec![
-                    ContractTerm::Var(ContractVar::Value(out_vid)),
-                    ContractTerm::LitInt(k),
-                ],
-            };
-            assert_eq!(
-                b.prove(&query),
-                ProveOutcome::Unknown,
-                "no source fact ⇒ gather output should remain Unknown for k={}",
-                k
-            );
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4336,41 +3308,3 @@ fn disable_switch_preserves_witness_emit() {
     );
 }
 
-#[test]
-fn disable_switch_skips_relay() {
-    use crate::circuit_input::InputPath;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-
-    let _guard = ScopedReqDisable::set("1");
-
-    let mut b = crate::builder::IRBuilder::new();
-    let inp = b.ir_read_integer(InputPath::new("inp", vec![]), false);
-    let out = b.ir_read_integer(InputPath::new("out", vec![]), false);
-    let in_vid = inp.value_id().unwrap();
-    let out_vid = out.value_id().unwrap();
-    // Plant `forall_eq_const(in_vid, 0)` so the relay would normally
-    // see a Proved precondition and emit a content fact on out_vid.
-    b.facts.insert_for(
-        in_vid,
-        ContractTerm::PredicateApp {
-            kind: "forall_eq_const".to_string(),
-            args: vec![
-                ContractTerm::Var(ContractVar::Value(in_vid)),
-                ContractTerm::LitInt(0),
-            ],
-        },
-    );
-    let fired = crate::optim::resolver::relay_forall_eq_const_from_input(&mut b, &inp, &out);
-    assert!(
-        !fired,
-        "ZINNIA_REQ_DISABLE=1 must make relay_forall_eq_const_from_input no-op"
-    );
-    // And no fact should have been deposited on out_vid.
-    assert!(
-        b.facts
-            .per_value
-            .get(&out_vid)
-            .map_or(true, |s: &Vec<_>| s.is_empty()),
-        "kill switch must not relay any fact onto the output",
-    );
-}

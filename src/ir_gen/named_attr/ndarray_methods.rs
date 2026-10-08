@@ -290,7 +290,6 @@ impl IRGenerator {
                     values: flat,
                     value_id: ValueId::next(),
                 });
-                crate::optim::resolver::relay_forall_eq_const_from_input(&mut self.builder, &val_orig, &out);
                 out
             }
             "flat" => {
@@ -307,7 +306,6 @@ impl IRGenerator {
                     values: flat,
                     value_id: ValueId::next(),
                 });
-                crate::optim::resolver::relay_forall_eq_const_from_input(&mut self.builder, &val_orig, &out);
                 out
             }
             "reshape" => {
@@ -375,7 +373,6 @@ impl IRGenerator {
                     values: flat,
                     value_id: ValueId::next(),
                 });
-                crate::optim::resolver::relay_forall_eq_const_from_input(&mut self.builder, &val_orig, &out);
                 out
             }
             "swapaxes" => {

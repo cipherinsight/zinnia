@@ -33,6 +33,14 @@ use z3::{Optimize, Params, SatResult, Solver, Statistics};
 /// costliest such query takes about 1,200 steps.
 pub const RESOLVER_RLIMIT: u32 = 1_000_000;
 
+/// Steps for a decision query that only tries to tighten a bound a cheaper
+/// tier already gives (`optim::resolver::Effort::Tighten`): `v >= 0` asked of
+/// a `v` the intervals put in `[-1, 8]`. Such a check is speculative, so it
+/// gets a tenth of [`RESOLVER_RLIMIT`]. The tightenings that succeed on the
+/// corpora take at most a few thousand steps; one that fails would otherwise
+/// spend the full budget on a formula a loop has made hard.
+pub const TIGHTEN_RLIMIT: u32 = 100_000;
+
 /// Steps for one resolver query of the optimizer
 /// (`LayeredResolver::range_then_smt`); it replaced a 500 ms timeout.
 pub const OPTIMIZER_RESOLVER_RLIMIT: u32 = 5_000_000;
@@ -167,8 +175,24 @@ fn traced(site: &str, stats: &impl Fn() -> Statistics, check: impl FnOnce() -> S
     let result = check();
     let elapsed_ms = started.elapsed().as_secs_f64() * 1e3;
     let used = step_count(&stats()).saturating_sub(before);
-    eprintln!("[zinnia-z3] site={site} result={result:?} rlimit={used} ms={elapsed_ms:.3}");
+    let caller = if std::env::var_os("ZINNIA_Z3_TRACE_CALLER").is_some() { caller_frames() } else { String::new() };
+    eprintln!("[zinnia-z3] site={site} result={result:?} rlimit={used} ms={elapsed_ms:.3}{caller}");
     result
+}
+
+/// Measurement only (`ZINNIA_Z3_TRACE_CALLER`): the first compiler frames
+/// outside the reasoning modules that led to a query, as ` caller=a<b<c`.
+fn caller_frames() -> String {
+    let bt = std::backtrace::Backtrace::force_capture().to_string();
+    let frames: Vec<String> = bt
+        .lines()
+        .filter_map(|l| l.trim().split_once(": ").map(|(_, f)| f.to_string()))
+        .filter(|f| f.starts_with("_zinnia_core::"))
+        .filter(|f| !["optim::resolver", "optim::z3_budget", "optim::prove", "builder::IRBuilder>::ask_bounds", "optim::range"].iter().any(|m| f.contains(m)))
+        .map(|f| f.trim_start_matches("_zinnia_core::").split("::h").next().unwrap_or("").to_string())
+        .take(3)
+        .collect();
+    format!(" caller={}", frames.join("<"))
 }
 
 /// The Z3 context's step count so far.

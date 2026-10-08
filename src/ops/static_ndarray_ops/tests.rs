@@ -391,14 +391,28 @@ fn np_sort_static_array_sorts_values_and_fires_sorted_fact() {
             .map(|v| v.int_val())
             .collect();
     assert_eq!(vals, vec![Some(1), Some(2), Some(3)]);
+    // The sorted array's order is an array fact of its contents.
+    assert!(b.array_has_order(
+        &out,
+        crate::optim::array_facts::Order::NonDecreasing,
+        crate::builder::Where::Everywhere
+    ));
+}
 
-    let term = ContractTerm::PredicateApp {
-        kind: "is_sorted".to_string(),
-        args: vec![ContractTerm::Var(ContractVar::Value(
-            out.value_id().unwrap(),
-        ))],
-    };
-    assert_eq!(b.prove(&term), ProveOutcome::Proved);
+#[test]
+fn np_sort_of_runtime_values_states_a_non_decreasing_order() {
+    let mut b = IRBuilder::new();
+    let cells: Vec<Value> = (0..3)
+        .map(|k| b.ir_read_integer(crate::circuit_input::InputPath::new(&format!("x{k}"), vec![]), false))
+        .collect();
+    let arr = crate::helpers::static_array::base::build_static_array_from_flat(&mut b, cells, vec![3], NumberType::Integer);
+    let out = crate::helpers::static_array::sorting::try_apply_sort(&mut b, &arr, None, false).unwrap();
+    use crate::optim::array_facts::Order;
+    assert!(b.array_has_order(&out, Order::NonDecreasing, crate::builder::Where::Everywhere));
+    assert!(!b.array_has_order(&out, Order::Increasing, crate::builder::Where::Everywhere), "ties are possible");
+    let index = crate::helpers::static_array::sorting::try_apply_sort(&mut b, &arr, None, true).unwrap();
+    let lanes = crate::helpers::static_array::elementwise::payload_cells(&mut b, &index);
+    assert!(b.is_known_permutation(&lanes), "argsort lanes are a permutation");
 }
 
 #[test]
@@ -441,7 +455,9 @@ fn np_take_static_array_axis_one_and_negative_indices() {
 }
 
 #[test]
-fn np_full_static_known_fill_fires_forall_eq_const() {
+fn np_full_static_known_fill_is_constant() {
+    // The cells are the fill constant: every element is 7 (array facts read
+    // it off them).
     let mut b = IRBuilder::new();
     let shape = Value::Tuple(CompositeData {
         elements_type: vec![ZinniaType::Integer; 2],
@@ -450,14 +466,8 @@ fn np_full_static_known_fill_fires_forall_eq_const() {
     });
     let fill = b.ir_constant_int(7);
     let out = np_full(&mut b, &[shape, fill], &std::collections::HashMap::new());
-    let term = ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(out.value_id().unwrap())),
-            ContractTerm::LitInt(7),
-        ],
-    };
-    assert_eq!(b.prove(&term), ProveOutcome::Proved);
+    assert!(b.array_all_equal(&out, 7));
+    assert!(!b.array_all_equal(&out, 0));
 }
 
 #[test]

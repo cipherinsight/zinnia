@@ -85,6 +85,14 @@ b.ir_array_fact(ArrayFactKind::NonDecreasing, &cells, &basis);
 
 `IRBuilder::ir_array_fact(kind, cells, basis)` emits one `IR::ArrayFact` statement whose operands
 are the cells, then the basis. It has no value and constrains nothing.
+`IRBuilder::ir_array_fact_scoped(kind, cells, basis, Some(p))` states a claim that holds where the
+Boolean `p` holds (a fact derived under an execution predicate): `p` is the last operand, and the
+layer reads the fact with the scope `When(p)`, so it justifies only what holds under `p` too.
+`IRBuilder::state_definitional_facts` (`builder/array_facts.rs`) states a definitional segmentation
+in the frontend's store and hands what these claims can say of it to the layer (the hull of its
+ranges with ends the interval engine fixes from the statements, the order of each segment between
+constant cuts, a permutation); the sources of `np.nonzero`, `np.flatnonzero`, `np.argwhere` and
+`np.unique` call it.
 
 | `ArrayFactKind` | the claim about `cells` |
 |---|---|
@@ -113,8 +121,8 @@ are the cells, then the basis. It has no value and constrains nothing.
 memory version. A write to an array produces new cells (or a new version), which the fact does not
 mention, so a fact never goes stale in the IR: state it on the cells as they are when the
 operator produces them. A fact about cells the program later overwrites simply stops being
-relevant. (The frontend's own fact store, `builder/array_facts.rs`, must expire its facts on
-writes because it keys them by array; the IR statement does not need to.) An array whose cells
+relevant. (The frontend's store, `optim::array_facts`, follows the same model: a fact is about
+a list of cells or an IR array version, and every query reads the array's current value.) An array whose cells
 the IR generator does not know (a memory version read at runtime indices) has no cells to state
 a fact about; state the fact on the cells written into it, or on the values read out.
 
@@ -200,10 +208,19 @@ next to each source's `state_defined_facts`, `builder/array_facts.rs`):
 | `np.nonzero` / `np.flatnonzero` lane, `np.argwhere` | `ElementsWithin { 0, extent - 1 }` on the lane's cells (padding 0 included), no basis |
 | `np.unique` inverse | `ElementsWithin { 0, n - 1 }` (the constant hull of `[0, count - 1]`), no basis |
 | `np.unique` values | none (the order holds on the live prefix only, cut at the runtime count) |
-| sort / argsort lines | none (the layer's `definitional` already has them; the store's `FreeFacts::is_argsort_line` is subsumed by it and should go at the merge) |
+| sort / argsort lines | none (the layer's `definitional` has them; it replaced `FreeFacts::is_argsort_line` at the merge) |
 | `@requires(forall(a, in_range(lo, hi)))` (constant ends), `lt_bound`, `is_nonneg`, `eq_const` | `ElementsWithin` on the input's cells, basis: the asserted comparisons |
 | Boolean input arrays | `ElementsWithin { 0, 1 }`, basis: the domain checks |
 | `np.linspace` with a runtime `num`, constant ascending endpoints | none (ordered on the live prefix only) |
 
 Nothing measured needs these yet (the perf cases' facts are all established by the layer's own
 routes), so array-facts-port does not emit any; the calls are a few lines each.
+
+*Follow-up in fact-rules, after the merge of `array-facts-port` (64b56f03):* limit 1 is lifted
+(`ir_array_fact_scoped` states a fact under a predicate); the sentence of section 4 now describes
+the store as above; and `IRBuilder::state_definitional_facts` hands the definitional facts of the
+table's `np.nonzero` / `np.flatnonzero` / `np.argwhere` and `np.unique` rows to the layer. The
+`@requires` element facts reach the layer from the witness emitters (`optim/predicates/witness.rs`),
+with their asserted comparisons as the basis; the sort and argsort lines from the layer's own
+`definitional`, which replaced `FreeFacts::is_argsort_line`. One switch,
+`ZINNIA_ABLATE_ARRAY_FACTS=1`, turns off both the store's queries and the layer's claims.

@@ -303,9 +303,13 @@ fn select_value_of_fresh(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value
             for i in 0..total {
                 out.push(select_value(b, cond, &t_cells[i], &f_cells[i]));
             }
-            return crate::helpers::static_array::base::build_static_array_from_flat(
+            let merged = crate::helpers::static_array::base::build_static_array_from_flat(
                 b, out, shape, dtype,
             );
+            // The merged array is `tv` or `fv` as a whole (one condition for
+            // every cell): what holds for both holds for it (array facts).
+            b.state_merged_facts(&merged, tv, fv);
+            return merged;
         }
     }
     if (matches!(tv, Value::StaticArray { .. }) || matches!(fv, Value::StaticArray { .. }))
@@ -1115,7 +1119,7 @@ pub fn apply_scalar_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Va
 fn is_zero_or_one(b: &mut IRBuilder, v: &Value) -> bool {
     match v {
         Value::Boolean(_) => true,
-        Value::Integer(_) => b.ask_bounds(v).is_some_and(|(min, max)| min >= 0 && max <= 1),
+        Value::Integer(_) => b.proves_within(v, 0, 1),
         _ => false,
     }
 }

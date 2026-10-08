@@ -458,20 +458,9 @@ pub fn dyn_fill_with_active(
         b.fire_contract("dyn_fill_with_active", active_sv.value_id, &formals);
     }
 
-    // Group 4a (compiler.op-fact-group-4a-fill-constructors-forall-eq-const):
-    // fill values 0 / 1 deposit `forall_eq_const(out, k)` on the result so
-    // downstream consumers (Group 3d sum-on-constant, future where/select
-    // arm-copy) can specialize. Fired right next to the length contract
-    // because the content fact is the second half of the same constructor
-    // semantics. Other fill values are handled by Group 4b's multi-formal
-    // `full` contract.
-    if let Some(name) = match fill_value {
-        0 => Some("zeros_content"),
-        1 => Some("ones_content"),
-        _ => None,
-    } {
-        b.state_array_fact(&result, name);
-    }
+    // The cells are the fill constant: what every element is, every query
+    // reads off them (`builder/array_facts.rs`, constants carry their own
+    // facts).
 
     result
 }

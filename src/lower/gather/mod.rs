@@ -98,10 +98,7 @@ pub fn window_lanes(b: &mut IRBuilder, cells: &[Value], shape: &[usize], bounds:
 /// permutation.
 pub fn permutation_scatter_lanes(b: &mut IRBuilder, p: &[Value], values: &[Value]) -> Option<Vec<Value>> {
     let n = p.len();
-    // (An argsort is a permutation by an array claim, which
-    // `ZINNIA_ABLATE_ARRAY_FACTS` turns off.)
-    let known = b.is_known_permutation(p) || (!crate::ablated("ZINNIA_ABLATE_ARRAY_FACTS") && is_argsort(b, p));
-    if n == 0 || values.len() != n || !known || !values.iter().all(Value::is_number) {
+    if n == 0 || values.len() != n || !b.is_known_permutation(p) || !values.iter().all(Value::is_number) {
         return None;
     }
     let operands: Vec<Value> = p.iter().chain(values).map(|v| b.ensure_ptr(v)).collect();
@@ -114,34 +111,6 @@ pub fn permutation_scatter_lanes(b: &mut IRBuilder, p: &[Value], values: &[Value
             })
             .collect(),
     )
-}
-
-/// Whether `p` are the `n` index lanes of one sort of `n` elements at every
-/// rank, in any order (`np.argsort(a)`, or a permutation of it): the stable
-/// argsort is a permutation of `0..n` by definition, and the layer proves
-/// `Permutation(p, 0..n)` without a check (`lower::array_facts::
-/// definitional`), so `c[np.argsort(a)] = v` is a permutation scatter.
-fn is_argsort(b: &IRBuilder, p: &[Value]) -> bool {
-    let n = p.len();
-    let mut elements: Option<std::sync::Arc<[Value]>> = None;
-    let mut ranks = vec![false; n];
-    for v in p {
-        let Some(placeholder) = v.stmt_id().and_then(|s| b.array_op_placeholder_at(s)) else { return false };
-        let op = &placeholder.op;
-        if op.kind != OpKind::Sort || op.output != crate::lower::sort::INDICES || placeholder.shared.len() != n {
-            return false;
-        }
-        match &elements {
-            Some(e) if !std::sync::Arc::ptr_eq(e, &placeholder.shared) => return false,
-            Some(_) => {}
-            None => elements = Some(placeholder.shared.clone()),
-        }
-        match op.position.map(|r| r as usize) {
-            Some(r) if r < n && !ranks[r] => ranks[r] = true,
-            _ => return false,
-        }
-    }
-    ranks.iter().all(|&hit| hit)
 }
 
 /// `cells[index]` as a placeholder, when `index` has a known one-hot (a

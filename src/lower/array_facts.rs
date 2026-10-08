@@ -353,7 +353,7 @@ pub fn definitional(graph: &IRGraph, claim: &Claim) -> bool {
             // order): the stable argsort, a permutation of `0..n`.
             index_lanes(graph, values).is_some_and(|(elements, mut ranks)| {
                 ranks.sort_unstable();
-                elements == n && ranks.iter().enumerate().all(|(k, &r)| r as usize == k)
+                elements == n && ranks.len() == n && ranks.iter().enumerate().all(|(k, &r)| r as usize == k)
             })
         }
         Claim::CountBound { list, max_nonzero } => list.len() <= max_nonzero as usize,

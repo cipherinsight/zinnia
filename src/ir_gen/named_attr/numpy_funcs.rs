@@ -1670,8 +1670,6 @@ impl IRGenerator {
                     Ok(v) => v,
                     Err(msg) => panic!("np.take: {}", msg),
                 };
-                // Group 5c (E-axis): content fact relay.
-                crate::optim::resolver::relay_forall_eq_const_from_input(&mut self.builder, &arr, &out);
                 out
             }
             ("np", "split") => {

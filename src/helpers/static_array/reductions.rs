@@ -1085,6 +1085,48 @@ fn axis_argmax_argmin(
 // Public entry points
 // ────────────────────────────────────────────────────────────────────────
 
+/// Propagate what every element of `input` satisfies to a `min`/`max`
+/// reduction's scalar output (the output is one of the elements), as facts
+/// on the output's `value_id` where the current code runs. The elements'
+/// range comes from the array facts of `input`'s current contents
+/// (`builder/array_facts.rs`): the cells' own facts (e.g.
+/// `@requires(forall(x, in_range(0, K)))` on an input's cells), stated
+/// segmentations, or an array version's. A write to the array, an alias or
+/// a view gives it other contents, whose facts are their own (AF-1).
+fn propagate_forall_bounds_to_reduction_output(
+    b: &mut IRBuilder,
+    op: &str,
+    input: &Value,
+    output: &Value,
+) {
+    use crate::optim::array_facts::{ElemFacts, Segmentation};
+    use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
+    if !matches!(op, "min" | "max") {
+        return;
+    }
+    let Some(out_vid) = output.value_id() else { return };
+    // As an array fact of the output (a one-cell list): the bound queries
+    // see an end known alone, and a symbolic end.
+    let elements = input.clone();
+    b.state_derived_facts(std::slice::from_ref(output), |b, at| {
+        let range = b.array_range(&elements, at);
+        (!range.is_top()).then(|| Segmentation::uniform(1, ElemFacts::range(range)))
+    });
+    // As scalar facts, for `prove`.
+    let (lo, hi) = b.array_range(input, crate::builder::Where::Here).interval(&b.oracle(crate::builder::Where::Here));
+    for (cmp, bound) in [(CmpOp::Ge, lo), (CmpOp::Le, hi)] {
+        let Some(bound) = bound else { continue };
+        b.facts.insert_for(
+            out_vid,
+            ContractTerm::Cmp {
+                op: cmp,
+                lhs: Box::new(ContractTerm::Var(ContractVar::Value(out_vid))),
+                rhs: Box::new(ContractTerm::LitInt(bound)),
+            },
+        );
+    }
+}
+
 /// Try to apply a reduction op (`sum` / `prod` / `min` / `max` / `mean` /
 /// `any` / `all`) natively on a `Value::StaticArray`. Returns `Some(result)`
 /// when this path handles the case; `None` otherwise (caller should fall
@@ -1092,190 +1134,6 @@ fn axis_argmax_argmin(
 ///
 /// `axis_arg` follows the named-attr convention: `None` or `Value::None`
 /// means whole-array reduction; an integer means axis-aware.
-/// If the input `arr` is a StaticArray whose cells trace back to a
-/// single input parameter (via `IR::ReadInteger` / `ReadFloat` with
-/// `path.segments = [Index(_)]`), return that parameter's name.
-/// Used to bind reduction outputs to `@requires(forall(<name>, ...))`
-/// preconditions for element-bound propagation.
-///
-/// Every cell of the array's storage (`builder/store.rs`), not only the
-/// first, must be such a read: a `forall` bound holds for the input's
-/// elements as passed, so it holds for an array all of whose cells are those
-/// elements (the input, a view or alias of it, which share its storage), and
-/// says nothing once a write has put another value in a cell. A storage
-/// whose cells are not known (after a write at a runtime position) has no
-/// bound this way.
-fn input_param_name_of_static_array(b: &IRBuilder, arr: &Value) -> Option<String> {
-    use crate::circuit_input::PathSegment;
-    use crate::ir_defs::IR;
-    let seg = match arr {
-        Value::StaticArray { segment_id, .. } => *segment_id,
-        _ => return None,
-    };
-    let param_of = |cell: &Value| -> Option<&str> {
-        let stmt = b.stmts.get(cell.value_id().and_then(|_| cell.stmt_id())? as usize)?;
-        let path = match &stmt.ir {
-            IR::ReadInteger { path, .. } | IR::ReadFloat { path, .. } => path,
-            _ => return None,
-        };
-        matches!(path.segments.first(), Some(PathSegment::Index(_))).then_some(path.param.as_str())
-    };
-    let param = param_of(b.known_cell_now(seg, 0)?)?;
-    (0..b.storage_len(seg))
-        .all(|address| b.known_cell_now(seg, address).and_then(param_of) == Some(param))
-        .then(|| param.to_string())
-}
-
-/// Propagate `forall(<input>, in_range/lt_bound/is_nonneg)` element
-/// bounds to a reduction's scalar output, by depositing `Cmp` facts on
-/// the output's `value_id`. Currently fires for `min`/`max` only —
-/// those preserve element bounds exactly (output is one of the input
-/// elements). Other reductions (`sum`, `mean`, etc.) need different
-/// bound rules and are out of scope for this first cut.
-/// Read the tightest known element bounds for an array `Value`, drawing
-/// from BOTH (a) `@requires(forall(input_name, in_range/lt_bound/
-/// is_nonneg))` structural-predicate atoms attached to the input name
-/// the array traces back to, and (b) `PredicateApp { kind:
-/// "array_in_range", args: [Var(Value(arr_vid)), lo, hi] }` facts
-/// deposited on the array's `value_id` by other ops (e.g. the in-place
-/// mutation contract, the boolean-mask-read pass-through).
-///
-/// Returns `(lo, hi)` if either source provides a bound; if both
-/// provide bounds, the tightest intersection is returned.
-pub(crate) fn read_array_element_bounds(b: &IRBuilder, arr: &Value) -> Option<(i64, i64)> {
-    use crate::ir_defs::IR;
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-
-    let arr_vid = arr.value_id();
-    let input_name = input_param_name_of_static_array(b, arr);
-
-    let mut lo: Option<i64> = None;
-    let mut hi: Option<i64> = None;
-
-    // (a) Structural-predicate scan (works for original input arrays
-    // whose payload cache is still populated).
-    if let Some(ref name) = input_name {
-        for s in &b.stmts {
-            if let IR::StructuralPredicate { kind, args, .. } = &s.ir {
-                if args.first().map(|s| s.as_str()) != Some(name.as_str()) {
-                    continue;
-                }
-                match kind.as_str() {
-                    "forall_in_range" if args.len() == 3 => {
-                        if let (Ok(l), Ok(h)) = (args[1].parse::<i64>(), args[2].parse::<i64>()) {
-                            lo = Some(lo.map_or(l, |x| x.max(l)));
-                            hi = Some(hi.map_or(h, |x| x.min(h)));
-                        }
-                    }
-                    "forall_lt_bound" if args.len() == 2 => {
-                        if let Ok(h) = args[1].parse::<i64>() {
-                            let new_hi = h - 1;
-                            hi = Some(hi.map_or(new_hi, |x| x.min(new_hi)));
-                        }
-                    }
-                    "forall_is_nonneg" if args.len() == 1 => {
-                        lo = Some(lo.map_or(0, |x| x.max(0)));
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    // (b) array_in_range fact scan keyed on the array's value_id, for
-    // derived arrays whose origin can't be traced back to a single input
-    // name. A fact counts only while the array has not been written since
-    // it was stated (`builder/array_facts.rs`): a write through another
-    // name keeps the value_id.
-    if let Some(vid) = arr_vid.filter(|&vid| b.array_facts_are_current(vid)) {
-        for fact in b.facts.visible_facts() {
-            if let ContractTerm::PredicateApp { kind, args } = fact {
-                if kind != "array_in_range" || args.len() != 3 {
-                    continue;
-                }
-                let matches_vid = matches!(
-                    &args[0],
-                    ContractTerm::Var(ContractVar::Value(v)) if *v == vid
-                );
-                if !matches_vid {
-                    continue;
-                }
-                if let (ContractTerm::LitInt(l), ContractTerm::LitInt(h)) = (&args[1], &args[2]) {
-                    lo = Some(lo.map_or(*l, |x| x.max(*l)));
-                    hi = Some(hi.map_or(*h, |x| x.min(*h)));
-                }
-            }
-        }
-    }
-
-    match (lo, hi) {
-        (Some(l), Some(h)) if l <= h => Some((l, h)),
-        _ => None,
-    }
-}
-
-/// Deposit an `array_in_range(arr, lo, hi)` fact on `arr`'s value_id,
-/// stating that every element of `arr` as it is now lies in `[lo, hi]`; when
-/// it was stated is recorded so that the fact is not used after a write
-/// (`read_array_element_bounds`). Idempotent — duplicate facts are filtered
-/// out by `prove` consumers via the connectivity fast-path's set semantics.
-pub(crate) fn deposit_array_in_range_fact(b: &mut IRBuilder, arr: &Value, lo: i64, hi: i64) {
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    let Some(arr_vid) = arr.value_id() else { return };
-    b.record_array_contents(arr);
-    b.facts.insert_for(
-        arr_vid,
-        ContractTerm::PredicateApp {
-            kind: "array_in_range".to_string(),
-            args: vec![
-                ContractTerm::Var(ContractVar::Value(arr_vid)),
-                ContractTerm::LitInt(lo),
-                ContractTerm::LitInt(hi),
-            ],
-        },
-    );
-}
-
-fn propagate_forall_bounds_to_reduction_output(
-    b: &mut IRBuilder,
-    op: &str,
-    input: &Value,
-    output: &Value,
-) {
-    use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
-    if !matches!(op, "min" | "max") {
-        return;
-    }
-    let out_vid = match output.value_id() {
-        Some(v) => v,
-        None => return,
-    };
-    let (lo, hi) = match read_array_element_bounds(b, input) {
-        Some((l, h)) => (Some(l), Some(h)),
-        None => return,
-    };
-    if let Some(l) = lo {
-        b.facts.insert_for(
-            out_vid,
-            ContractTerm::Cmp {
-                op: CmpOp::Ge,
-                lhs: Box::new(ContractTerm::Var(ContractVar::Value(out_vid))),
-                rhs: Box::new(ContractTerm::LitInt(l)),
-            },
-        );
-    }
-    if let Some(h) = hi {
-        b.facts.insert_for(
-            out_vid,
-            ContractTerm::Cmp {
-                op: CmpOp::Le,
-                lhs: Box::new(ContractTerm::Var(ContractVar::Value(out_vid))),
-                rhs: Box::new(ContractTerm::LitInt(h)),
-            },
-        );
-    }
-}
-
 pub fn try_apply_reduce(
     b: &mut IRBuilder,
     op: &str,

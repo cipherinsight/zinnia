@@ -204,50 +204,33 @@ fn lower_mean_generic(b: &mut IRBuilder, inputs: &MeanInputs) -> Value {
     mean
 }
 
-/// Strategy A for `mean`: `forall_eq_const(arr, 0)` ⇒ output is `0.0`.
+/// Strategy A for `mean`: every element is 0 ⇒ output is `0.0`.
 /// Sound because `(0 + 0 + ... + 0) / N == 0.0` for N >= 1 (guaranteed
 /// here by `builtin_reduce`'s empty short-circuit).
 fn lower_mean_constant_zero(b: &mut IRBuilder, _inputs: &MeanInputs) -> Value {
     b.ir_constant_float(0.0)
 }
 
-/// Strategy B for `mean`: `forall_eq_const(arr, 1)` ⇒ output is `1.0`.
+/// Strategy B for `mean`: every element is 1 ⇒ output is `1.0`.
 /// Sound because `(1 + 1 + ... + 1) / N == N / N == 1.0` for N >= 1.
 fn lower_mean_constant_one(b: &mut IRBuilder, _inputs: &MeanInputs) -> Value {
     b.ir_constant_float(1.0)
 }
 
-fn mean_strategy_set(
-    arr_vid: crate::types::ValueId,
-) -> crate::optim::OpStrategySet<MeanInputs, Value> {
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::{CostHint, OpStrategy, OpStrategySet};
+/// The strategies of `mean`: the constant `0.0` or `1.0` when every element
+/// of the array is 0 or 1 (offered only when the array facts of its current
+/// contents decide it, `builder/array_facts.rs`).
+fn mean_strategy_set(b: &IRBuilder, val: &Value) -> crate::optim::OpStrategySet<MeanInputs, Value> {
+    use crate::optim::{decided, CostHint, OpStrategy, OpStrategySet};
 
-    let pred_eq_k = |k: i64| ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(arr_vid)),
-            ContractTerm::LitInt(k),
-        ],
-    };
-
-    OpStrategySet {
-        strategies: vec![
-            OpStrategy {
-                name: "forall_eq_const_zero",
-                precondition: pred_eq_k(0),
-                cost_hint: CostHint::O1,
-                lower: lower_mean_constant_zero,
-            },
-            OpStrategy {
-                name: "forall_eq_const_one",
-                precondition: pred_eq_k(1),
-                cost_hint: CostHint::O1,
-                lower: lower_mean_constant_one,
-            },
-        ],
-        default: lower_mean_generic,
+    let mut strategies = Vec::new();
+    if b.array_all_equal(val, 0) {
+        strategies.push(OpStrategy { name: "forall_eq_const_zero", precondition: decided(), cost_hint: CostHint::O1, lower: lower_mean_constant_zero });
     }
+    if b.array_all_equal(val, 1) {
+        strategies.push(OpStrategy { name: "forall_eq_const_one", precondition: decided(), cost_hint: CostHint::O1, lower: lower_mean_constant_one });
+    }
+    OpStrategySet { strategies, default: lower_mean_generic }
 }
 
 /// `np.mean(arr, axis=None)` — element-wise mean. With no axis, the result
@@ -284,7 +267,7 @@ pub fn np_mean(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
         };
         match val.value_id() {
             Some(_) => {
-                let set = mean_strategy_set(inputs.arr_vid);
+                let set = mean_strategy_set(b, val);
                 crate::optim::dispatch_strategy(b, "mean", &inputs, &set)
             }
             None => lower_mean_generic(b, &inputs),
@@ -455,7 +438,36 @@ pub fn np_cumulative(
 }
 
 pub fn np_cumsum(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
-    np_cumulative(b, args, kwargs, "add")
+    let out = np_cumulative(b, args, kwargs, "add");
+    let flattened = kwargs.get("axis").or_else(|| args.get(1)).is_none_or(|v| matches!(v, Value::None));
+    if let (Some(input), true) = (args.first(), flattened) {
+        state_cumsum_facts(b, input, &out);
+    }
+    out
+}
+
+/// Array facts of a flattened `np.cumsum` (a 1-D result) of integer cells in
+/// `[lo, hi]` with `lo >= 0` (`docs/array-facts.md`): the partial sums are
+/// non-decreasing and lie in `[lo, n * hi]`. The circuit adds exactly over
+/// the integers (`n` values of at most `2^63` stay far below the field
+/// size), so each partial sum is the previous one plus a non-negative cell.
+/// Both facts rest on the input's range, so they are derived where it holds.
+fn state_cumsum_facts(b: &mut IRBuilder, input: &Value, out: &Value) {
+    use crate::optim::array_facts::{Bound, ElemFacts, Order, Range, Segmentation};
+    let Some(cells) = b.leaf_cells(out) else { return };
+    if cells.is_empty() || cells.iter().any(|c| !c.is_integer()) {
+        return;
+    }
+    let input = input.clone();
+    let n = cells.len();
+    b.state_derived_facts(&cells, |b, at| {
+        let (Some(lo), hi) = b.range_of(&input, at).interval(&b.oracle(at)) else { return None };
+        if lo < 0 {
+            return None;
+        }
+        let range = Range { lo: Some(Bound::Const(lo)), hi: hi.and_then(|h| h.checked_mul(n as i64)).map(Bound::Const) };
+        Some(Segmentation::uniform(n, ElemFacts { range, order: Some(Order::NonDecreasing), affine: None }))
+    });
 }
 
 pub fn np_cumprod(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {

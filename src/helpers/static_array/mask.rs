@@ -38,7 +38,8 @@
 //! pattern of cells, so the segment's cache entry is dropped (option (a)
 //! from the P3 card).
 
-use crate::builder::IRBuilder;
+use crate::builder::{IRBuilder, Where};
+use crate::optim::array_facts::{ElemFacts, Range, Segmentation};
 use crate::ops::dyn_ndarray::value_to_scalar_i64;
 use crate::types::{DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value, ValueId};
 
@@ -166,12 +167,12 @@ pub fn try_apply_boolean_mask_read(b: &mut IRBuilder, arr: &Value, mask: &Value)
     }
 
     // Dynamic mask: produce a DynamicNDArray of shape `(true_count,
-    // *trailing_dims)` with `total_bound == arr.size`. Element bounds
-    // are preserved by the filter (selecting a subset of elements
-    // doesn't change their values), so propagate any known element
-    // bounds from the input array to the output via
-    // `array_in_range` on the new value_id.
-    let input_bounds = super::reductions::read_array_element_bounds(b, arr);
+    // *trailing_dims)` with `total_bound == arr.size`. Every output cell is
+    // one of the input cells or the padding 0 (the compaction network selects
+    // among them in-circuit, `compact_by_mask`), so the output's cells lie in
+    // the input's range joined with 0 (array facts, derived where the input's
+    // range holds).
+    let input_ranges = [Where::Everywhere, Where::Here].map(|at| b.array_range(arr, at));
     let keeps_bool = crate::helpers::array_ops::is_bool_array(b, arr);
     let out = dynamic_mask_read(
         b,
@@ -181,8 +182,13 @@ pub fn try_apply_boolean_mask_read(b: &mut IRBuilder, arr: &Value, mask: &Value)
         leading_total,
         &trailing_dims,
     );
-    if let Some((lo, hi)) = input_bounds {
-        super::reductions::deposit_array_in_range_fact(b, &out, lo, hi);
+    if let Value::DynamicNDArray(d) = &out {
+        let len = d.max_length();
+        b.state_derived_storage_facts(d.segment_id, |b, at| {
+            let input = input_ranges[at as usize];
+            let range = input.join(&crate::optim::array_facts::Range::point(0), &b.oracle(at));
+            (!input.is_top()).then(|| Segmentation::uniform(len, ElemFacts::range(range)))
+        });
     }
     // The kept elements keep their dtype (the compaction's selects do not).
     if let (true, Value::DynamicNDArray(d)) = (keeps_bool, &out) {
@@ -201,23 +207,19 @@ pub fn try_apply_boolean_mask_read(b: &mut IRBuilder, arr: &Value, mask: &Value)
 /// pattern is data-dependent (any cell could have been overwritten if
 /// the mask is dynamic; even for a static mask the write changes a
 /// compile-time-known subset of cells).
-/// Post-mutation element-bound widening for boolean-mask writes
-/// (`arr[mask] = value`, or `arr[mask] op= delta` after `+=` lowering).
-/// Reads `arr`'s element bounds and `value`'s element bounds, then
-/// deposits `array_in_range(arr.value_id, min(arr_lo, val_lo),
-/// max(arr_hi, val_hi))` so downstream reductions can still see a
-/// sound bound.
-///
-/// Called from the IR-gen visitor's setitem-on-StaticArray dispatch
-/// path so it covers BOTH the fast-path (`try_apply_boolean_mask_write`)
-/// and the fallback `static_array_setitem` path.
-/// Capture pre-mutation element-bound and value-bound information for
-/// a boolean-mask write. Call this BEFORE the write; pair it with
-/// `deposit_mask_write_post` which deposits the widened union on the
-/// post-write SSA value.
+/// Element facts across a boolean-mask write (`arr[mask] = value`, or
+/// `arr[mask] op= delta` after `+=` lowering): capture the array's and the
+/// value's ranges before the write ([`capture_mask_write_pre_bounds`]), and
+/// state their join on the written array's cells after it
+/// ([`deposit_mask_write_post`]): each cell of the written array is its old
+/// value or (an element of) the written one, the write rule of
+/// `docs/array-facts.md`. Called from the IR-gen visitor's
+/// setitem-on-StaticArray dispatch, so it covers both the fast path
+/// (`try_apply_boolean_mask_write`) and the fallback `static_array_setitem`.
 pub struct MaskWritePreBounds {
-    arr_bounds: Option<(i64, i64)>,
-    val_bounds: Option<(i64, i64)>,
+    /// Per context (`Where::Everywhere`, `Where::Here`): the array's range
+    /// and the value's.
+    ranges: [(Range, Range); 2],
 }
 
 pub fn capture_mask_write_pre_bounds(
@@ -225,45 +227,23 @@ pub fn capture_mask_write_pre_bounds(
     arr: &Value,
     value: &Value,
 ) -> MaskWritePreBounds {
-    let arr_dtype = match arr {
-        Value::StaticArray { dtype, .. } => *dtype,
-        _ => {
-            return MaskWritePreBounds {
-                arr_bounds: None,
-                val_bounds: None,
-            }
-        }
-    };
-    if !matches!(arr_dtype, NumberType::Integer) {
-        return MaskWritePreBounds {
-            arr_bounds: None,
-            val_bounds: None,
-        };
-    }
-    let arr_bounds = super::reductions::read_array_element_bounds(b, arr);
-    let val_bounds = if let Some(n) = value.int_val() {
-        Some((n, n))
-    } else if value.is_number() {
-        b.ask_bounds(value)
-    } else if matches!(value, Value::StaticArray { .. } | Value::DynamicNDArray(_)) {
-        super::reductions::read_array_element_bounds(b, value)
-    } else {
-        None
-    };
-    MaskWritePreBounds {
-        arr_bounds,
-        val_bounds,
-    }
+    let nothing = MaskWritePreBounds { ranges: [(Range::TOP, Range::TOP); 2] };
+    let Value::StaticArray { dtype: NumberType::Integer, .. } = arr else { return nothing };
+    let ranges = [Where::Everywhere, Where::Here].map(|at| (b.array_range(arr, at), b.range_of(value, at)));
+    MaskWritePreBounds { ranges }
 }
 
 pub fn deposit_mask_write_post(b: &mut IRBuilder, pre: MaskWritePreBounds, updated: &Value) {
-    let MaskWritePreBounds {
-        arr_bounds,
-        val_bounds,
-    } = pre;
-    if let (Some((arr_lo, arr_hi)), Some((val_lo, val_hi))) = (arr_bounds, val_bounds) {
-        super::reductions::deposit_array_in_range_fact(b, updated, arr_lo.min(val_lo), arr_hi.max(val_hi));
-    }
+    let Some(cells) = b.leaf_cells(updated) else { return };
+    let len = cells.len();
+    b.state_derived_facts(&cells, |b, at| {
+        let (arr, val) = pre.ranges[at as usize];
+        if arr.is_top() || val.is_top() {
+            return None;
+        }
+        let joined = arr.join(&val, &b.oracle(at));
+        (!joined.is_top()).then(|| Segmentation::uniform(len, ElemFacts::range(joined)))
+    });
 }
 
 pub fn try_apply_boolean_mask_write(

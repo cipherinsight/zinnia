@@ -269,7 +269,7 @@ pub fn to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
 
 /// Numpy-wrap a runtime index to the `-axis_len <= i < axis_len` contract:
 /// a negative index becomes `i + axis_len`. A literal or provably-non-negative
-/// index (per `ask_bounds`) passes through unchanged so we don't emit a
+/// index (a decision query, `proves_at_least`) passes through unchanged so we don't emit a
 /// needless `select` wire.
 ///
 /// This is the single canonical wrap of the static array paths (reads and
@@ -278,14 +278,14 @@ pub(crate) fn normalize_dynamic_index(b: &mut IRBuilder, idx: &Value, axis_len: 
     if idx.int_val().is_some() {
         return idx.clone();
     }
-    if b.ask_bounds(idx).map(|(min, _)| min >= 0).unwrap_or(false) {
+    if b.proves_at_least(idx, 0) {
         return idx.clone();
     }
     // An index whose range the facts bound to a few bits has a cheap sign
     // test (the comparison is sized by the range); any other one pins a
     // hinted sign instead of comparing at the full 64-bit width.
     const NARROW: i64 = 1 << 16;
-    if b.ask_bounds(idx).is_some_and(|(min, max)| -NARROW < min && max < NARROW) {
+    if b.proves_within(idx, -NARROW + 1, NARROW - 1) {
         let zero_v = b.ir_constant_int(0);
         let len_v = b.ir_constant_int(axis_len as i64);
         let is_neg = b.ir_less_than_i(idx, &zero_v);

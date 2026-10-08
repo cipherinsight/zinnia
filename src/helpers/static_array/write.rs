@@ -128,7 +128,7 @@ fn discharge_runtime_single_indices(b: &mut IRBuilder, shape: &[usize], indices:
         if let SliceIndex::Single(v) = idx {
             if v.int_val().is_none() {
                 let n = shape[ax] as i64;
-                let non_negative = b.ask_bounds(v).is_some_and(|(min, _)| min >= 0);
+                let non_negative = b.proves_at_least(v, 0);
                 let lo = if non_negative { 0 } else { -n };
                 crate::optim::resolver::discharge_index_in_range(b, v, lo, n, "static_array_setitem");
             }

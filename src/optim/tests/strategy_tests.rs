@@ -153,8 +153,8 @@ mod tests {
             _ => unreachable!(),
         };
 
-        // State is_sorted(arr) as the sorted constructors do.
-        b.state_array_fact(&Value::DynamicNDArray(data.clone()), "sort_is_sorted");
+        // Ascending constant cells: sorted by inspection
+        // (`array_facts::constant_facts`).
 
         let result = dyn_aggregate_all(&mut b, &data, DynAggKind::Max);
         // The last cell, read from the array's storage (known: no IR).
@@ -212,17 +212,6 @@ mod tests {
         }
     }
 
-    fn plant_forall_eq_const_on(b: &mut IRBuilder, vid: ValueId, k: i64) {
-        let fact = ContractTerm::PredicateApp {
-            kind: "forall_eq_const".to_string(),
-            args: vec![
-                ContractTerm::Var(ContractVar::Value(vid)),
-                ContractTerm::LitInt(k),
-            ],
-        };
-        b.facts.insert_for(vid, fact);
-    }
-
     #[test]
     fn dyn_sum_zero_strategy_fires() {
         // Plant `forall_eq_const(arr_vid, 0)`. dyn_aggregate_all(Sum) must
@@ -232,8 +221,7 @@ mod tests {
         use crate::ops::dyn_ndarray::DynAggKind;
 
         let mut b = IRBuilder::new();
-        let data = make_dyn_int_const(&mut b, &[5, 6, 7, 8]); // values irrelevant
-        plant_forall_eq_const_on(&mut b, data.value_id, 0);
+        let data = make_dyn_int_const(&mut b, &[0, 0, 0, 0]); 
 
         let pre_adds = b.stmts.iter().filter(|s| matches!(s.ir, IR::AddI)).count();
         let result = dyn_aggregate_all(&mut b, &data, DynAggKind::Sum);
@@ -262,8 +250,7 @@ mod tests {
         use crate::ops::dyn_ndarray::DynAggKind;
 
         let mut b = IRBuilder::new();
-        let data = make_dyn_int_const(&mut b, &[3, 3, 3, 3]); // values match the planted fact
-        plant_forall_eq_const_on(&mut b, data.value_id, 1);
+        let data = make_dyn_int_const(&mut b, &[1, 1, 1, 1]); 
 
         let pre_adds = b.stmts.iter().filter(|s| matches!(s.ir, IR::AddI)).count();
         let result = dyn_aggregate_all(&mut b, &data, DynAggKind::Sum);
@@ -291,8 +278,7 @@ mod tests {
         use crate::ops::dyn_ndarray::DynAggKind;
 
         let mut b = IRBuilder::new();
-        let data = make_dyn_int_const(&mut b, &[7, 8, 9, 10]);
-        plant_forall_eq_const_on(&mut b, data.value_id, 1);
+        let data = make_dyn_int_const(&mut b, &[1, 1, 1, 1]);
 
         let pre_muls = b.stmts.iter().filter(|s| matches!(s.ir, IR::MulI)).count();
         let result = dyn_aggregate_all(&mut b, &data, DynAggKind::Prod);
@@ -330,8 +316,7 @@ mod tests {
         use crate::ops::dyn_ndarray::DynAggKind;
 
         let mut b = IRBuilder::new();
-        let data = make_dyn_int_const(&mut b, &[0, 0, 0, 0]); // values match the planted fact
-        plant_forall_eq_const_on(&mut b, data.value_id, 0);
+        let data = make_dyn_int_const(&mut b, &[0, 0, 0, 0]); 
 
         let pre_muls = b.stmts.iter().filter(|s| matches!(s.ir, IR::MulI)).count();
         let _result = dyn_aggregate_all(&mut b, &data, DynAggKind::Prod);
@@ -364,17 +349,6 @@ mod tests {
         let leaves: Vec<Value> = vals.iter().map(|n| b.ir_constant_int(*n)).collect();
         let types = leaves.iter().map(|v| v.zinnia_type()).collect();
         Value::List(CompositeData::new(types, leaves))
-    }
-
-    fn plant_forall_eq_const(b: &mut IRBuilder, vid: ValueId, k: i64) {
-        let fact = ContractTerm::PredicateApp {
-            kind: "forall_eq_const".to_string(),
-            args: vec![
-                ContractTerm::Var(ContractVar::Value(vid)),
-                ContractTerm::LitInt(k),
-            ],
-        };
-        b.facts.insert_for(vid, fact);
     }
 
     fn count_ir_kind<F: Fn(&IR) -> bool>(b: &IRBuilder, pred: F) -> usize {
@@ -452,9 +426,8 @@ mod tests {
         // Plant `forall_eq_const(list_vid, 0)`. builtin_reduce("sum") must
         // resolve to a constant 0 instead of an N-1 chain of AddI ops.
         let mut b = IRBuilder::new();
-        let lst = make_int_list(&mut b, &[7, 8, 9, 10]); // values irrelevant
+        let lst = make_int_list(&mut b, &[0, 0, 0, 0]); 
         let vid = lst.value_id().expect("list has value_id");
-        plant_forall_eq_const(&mut b, vid, 0);
 
         let pre_adds = count_ir_kind(&b, |ir| matches!(ir, IR::AddI));
         let result = builtin_reduce(&mut b, "sum", &lst);
@@ -476,9 +449,8 @@ mod tests {
         // Plant `forall_eq_const(list_vid, 1)`. builtin_reduce("sum") must
         // resolve to a constant N (here, 4) — no AddI emitted.
         let mut b = IRBuilder::new();
-        let lst = make_int_list(&mut b, &[3, 3, 3, 3]);
+        let lst = make_int_list(&mut b, &[1, 1, 1, 1]);
         let vid = lst.value_id().expect("list has value_id");
-        plant_forall_eq_const(&mut b, vid, 1);
 
         let pre_adds = count_ir_kind(&b, |ir| matches!(ir, IR::AddI));
         let result = builtin_reduce(&mut b, "sum", &lst);
@@ -519,9 +491,8 @@ mod tests {
         // Plant `forall_eq_const(list_vid, 0)`. builtin_reduce("prod") must
         // resolve to a constant 0 — no MulI emitted.
         let mut b = IRBuilder::new();
-        let lst = make_int_list(&mut b, &[7, 8, 9, 10]);
+        let lst = make_int_list(&mut b, &[0, 0, 0, 0]);
         let vid = lst.value_id().expect("list has value_id");
-        plant_forall_eq_const(&mut b, vid, 0);
 
         let pre_muls = count_ir_kind(&b, |ir| matches!(ir, IR::MulI));
         let result = builtin_reduce(&mut b, "prod", &lst);
@@ -543,9 +514,8 @@ mod tests {
         // Plant `forall_eq_const(list_vid, 1)`. builtin_reduce("prod") must
         // resolve to constant 1 — no MulI emitted.
         let mut b = IRBuilder::new();
-        let lst = make_int_list(&mut b, &[7, 8, 9, 10]);
+        let lst = make_int_list(&mut b, &[1, 1, 1, 1]);
         let vid = lst.value_id().expect("list has value_id");
-        plant_forall_eq_const(&mut b, vid, 1);
 
         let pre_muls = count_ir_kind(&b, |ir| matches!(ir, IR::MulI));
         let result = builtin_reduce(&mut b, "prod", &lst);
@@ -615,9 +585,8 @@ mod tests {
         // Plant `forall_eq_const(list_vid, 0)`. np_mean (no-axis) must
         // resolve to constant 0.0 — no AddI / DivF emitted.
         let mut b = IRBuilder::new();
-        let lst = make_int_list(&mut b, &[7, 8, 9, 10]);
+        let lst = make_int_list(&mut b, &[0, 0, 0, 0]);
         let vid = lst.value_id().expect("list has value_id");
-        plant_forall_eq_const(&mut b, vid, 0);
 
         let pre_adds = count_ir_kind(&b, |ir| matches!(ir, IR::AddI));
         let pre_divs = count_ir_kind(&b, |ir| matches!(ir, IR::DivF));
@@ -645,9 +614,8 @@ mod tests {
         // Plant `forall_eq_const(list_vid, 1)`. np_mean (no-axis) must
         // resolve to constant 1.0 — no AddI / DivF emitted.
         let mut b = IRBuilder::new();
-        let lst = make_int_list(&mut b, &[7, 8, 9, 10]);
+        let lst = make_int_list(&mut b, &[1, 1, 1, 1]);
         let vid = lst.value_id().expect("list has value_id");
-        plant_forall_eq_const(&mut b, vid, 1);
 
         let pre_adds = count_ir_kind(&b, |ir| matches!(ir, IR::AddI));
         let pre_divs = count_ir_kind(&b, |ir| matches!(ir, IR::DivF));
@@ -791,7 +759,6 @@ mod tests {
         let x = make_int_list(&mut b, &[10, 20, 30, 40]);
         let y = make_int_list(&mut b, &[1, 2, 3, 4]);
         let cond_vid = cond.value_id().expect("bool list has value_id");
-        plant_forall_eq_const(&mut b, cond_vid, 1);
 
         let pre_selects = count_ir_kind(&b, |ir| matches!(ir, IR::SelectI));
         let result = np_where(&mut b, &[cond.clone(), x.clone(), y.clone()]);
@@ -821,7 +788,6 @@ mod tests {
         let x = make_int_list(&mut b, &[10, 20, 30, 40]);
         let y = make_int_list(&mut b, &[1, 2, 3, 4]);
         let cond_vid = cond.value_id().expect("bool list has value_id");
-        plant_forall_eq_const(&mut b, cond_vid, 0);
 
         let pre_selects = count_ir_kind(&b, |ir| matches!(ir, IR::SelectI));
         let result = np_where(&mut b, &[cond.clone(), x.clone(), y.clone()]);
@@ -872,7 +838,6 @@ mod tests {
         let x = make_int_list(&mut b, &[10, 20, 30, 40]);
         let y = make_int_list(&mut b, &[1, 2, 3, 4]);
         let cond_vid = cond.value_id().expect("bool list has value_id");
-        plant_forall_eq_const(&mut b, cond_vid, 2);
 
         let pre_selects = count_ir_kind(&b, |ir| matches!(ir, IR::SelectI));
         let _ = np_where(&mut b, &[cond, x, y]);
@@ -918,7 +883,6 @@ mod tests {
         let lhs = make_int_matrix(&mut b, 2, 3);
         let rhs = make_int_matrix(&mut b, 3, 4);
         let lhs_vid = lhs.value_id().expect("matrix has value_id");
-        plant_forall_eq_const(&mut b, lhs_vid, 0);
 
         let pre_muls = count_ir_kind(&b, |ir| matches!(ir, IR::MulI));
         let pre_adds = count_ir_kind(&b, |ir| matches!(ir, IR::AddI));
@@ -950,7 +914,6 @@ mod tests {
         let lhs = make_int_matrix(&mut b, 2, 3);
         let rhs = make_int_matrix(&mut b, 3, 4);
         let rhs_vid = rhs.value_id().expect("matrix has value_id");
-        plant_forall_eq_const(&mut b, rhs_vid, 0);
 
         let pre_muls = count_ir_kind(&b, |ir| matches!(ir, IR::MulI));
         let pre_adds = count_ir_kind(&b, |ir| matches!(ir, IR::AddI));
@@ -1007,10 +970,9 @@ mod tests {
         // 1D@1D dot product short-circuits to a scalar 0 when either
         // operand is provably all-zeros. No MulI / AddI emitted.
         let mut b = IRBuilder::new();
-        let lhs = make_int_list(&mut b, &[1, 2, 3, 4]);
+        let lhs = make_int_list(&mut b, &[0, 0, 0, 0]);
         let rhs = make_int_list(&mut b, &[5, 6, 7, 8]);
         let lhs_vid = lhs.value_id().expect("list has value_id");
-        plant_forall_eq_const(&mut b, lhs_vid, 0);
 
         let pre_muls = count_ir_kind(&b, |ir| matches!(ir, IR::MulI));
         let pre_adds = count_ir_kind(&b, |ir| matches!(ir, IR::AddI));

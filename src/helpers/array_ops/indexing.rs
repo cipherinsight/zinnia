@@ -828,7 +828,6 @@ fn dyn_slice_axis(
 
     if rank == 1 {
         let out = dyn_slice_1d(b, data, start, stop, step);
-        crate::optim::resolver::relay_forall_eq_const_from_input(b, &Value::DynamicNDArray(data.clone()), &out);
         return out;
     }
 
@@ -998,7 +997,6 @@ fn dyn_slice_axis(
         },
         value_id: ValueId::next(),
     });
-    crate::optim::resolver::relay_forall_eq_const_from_input(b, &Value::DynamicNDArray(data.clone()), &out);
     out
 }
 
@@ -1369,30 +1367,21 @@ fn dyn_gather_rows(b: &mut IRBuilder, data: &DynamicNDArrayData, idx: &Value) ->
         == Some(data.meta.logical_shape[0] as i64);
     let fully_used = !matches!(idx, Value::DynamicNDArray(d)
         if d.meta.runtime_length.static_val != Some(d.max_length() as i64));
-    let (Some(indices_vid), true) = (idx.value_id(), axis0_static && fully_used) else {
+    if idx.value_id().is_none() || !(axis0_static && fully_used) {
         return dyn_gather_rows_lower(b, data, idx, true);
-    };
-    let precondition = {
-        use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-        ContractTerm::PredicateApp {
-            kind: "forall_in_range".to_string(),
-            args: vec![
-                ContractTerm::Var(ContractVar::Value(indices_vid)),
-                ContractTerm::LitInt(0),
-                ContractTerm::LitInt(data.meta.logical_shape[0] as i64),
-            ],
-        }
-    };
+    }
+    // The array facts of the indices' current contents decide whether every
+    // one is in `[0, n)` (`builder/array_facts.rs`).
+    let in_range = b.array_within(idx, 0, data.meta.logical_shape[0] as i64 - 1);
     let inputs = DynGatherInputs { data: data.clone(), idx: idx.clone() };
+    let skip = crate::optim::OpStrategy {
+        name: "gather_skip_bounds_check",
+        precondition: crate::optim::decided(),
+        cost_hint: crate::optim::CostHint::ON,
+        lower: |b, inputs: &DynGatherInputs| dyn_gather_rows_lower(b, &inputs.data, &inputs.idx, false),
+    };
     let set = crate::optim::OpStrategySet {
-        strategies: vec![crate::optim::OpStrategy {
-            name: "gather_skip_bounds_check",
-            precondition,
-            cost_hint: crate::optim::CostHint::ON,
-            lower: |b, inputs: &DynGatherInputs| {
-                dyn_gather_rows_lower(b, &inputs.data, &inputs.idx, false)
-            },
-        }],
+        strategies: if in_range { vec![skip] } else { Vec::new() },
         default: |b, inputs: &DynGatherInputs| {
             dyn_gather_rows_lower(b, &inputs.data, &inputs.idx, true)
         },
@@ -1716,7 +1705,7 @@ fn wrap_negative_index(b: &mut IRBuilder, idx: &Value, len: &Value) -> Value {
             }
         };
     }
-    if b.ask_bounds(idx).map(|(min, _)| min >= 0).unwrap_or(false) {
+    if b.proves_at_least(idx, 0) {
         return idx.clone();
     }
     let zero = b.ir_constant_int(0);
@@ -1797,20 +1786,6 @@ mod tests_case_b {
         Value::List(CompositeData::new(types, values))
     }
 
-    fn plant_forall_in_range(b: &mut IRBuilder, indices_vid: ValueId, lo: i64, hi: i64) {
-        use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-
-        let fact = ContractTerm::PredicateApp {
-            kind: "forall_in_range".to_string(),
-            args: vec![
-                ContractTerm::Var(ContractVar::Value(indices_vid)),
-                ContractTerm::LitInt(lo),
-                ContractTerm::LitInt(hi),
-            ],
-        };
-        b.facts.insert_for(indices_vid, fact);
-    }
-
     /// Bounds checks: an index check is one `AssertU128Lt` (or an `Assert`
     /// of a comparison chain for a non-zero lower bound).
     fn count_asserts(irs: &[IR]) -> usize {
@@ -1880,8 +1855,16 @@ mod tests_case_b {
             _ => unreachable!(),
         };
         let indices = make_dynamic_index_list(&mut b, 3);
-        let indices_vid = indices.value_id().expect("index composite has value_id");
-        plant_forall_in_range(&mut b, indices_vid, 0, 4);
+        // The indices' cells are in [0, 3] (an array fact, as a
+        // `@requires(forall(idx, in_range(0, 3)))` states on an input's cells).
+        let cells = b.leaf_cells(&indices).expect("an index list of scalars");
+        b.state_defined_facts(
+            &cells,
+            crate::optim::array_facts::Segmentation::uniform(
+                cells.len(),
+                crate::optim::array_facts::ElemFacts::range(crate::optim::array_facts::Range::new(0, 3)),
+            ),
+        );
 
         let (_out, irs) = emitted_during(&mut b, |b| dyn_gather_rows(b, &data, &indices));
         let assert_count = count_asserts(&irs);

@@ -39,7 +39,6 @@ pub fn transpose(b: &mut IRBuilder, val: &Value, axes_args: &[Value]) -> Value {
             crate::helpers::ndarray::ndarray_transpose(b, &val_m, axes_args)
         }
     };
-    crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
     out
 }
 
@@ -63,7 +62,6 @@ pub fn moveaxis(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value {
             crate::ops::static_ndarray_ops::ndarray_moveaxis(b, &val_m, args)
         }
     };
-    crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
     out
 }
 
@@ -105,7 +103,6 @@ pub fn reshape(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value {
             crate::ops::static_ndarray_ops::ndarray_reshape(b, &val_m, args)
         }
     };
-    crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
     out
 }
 
@@ -142,12 +139,10 @@ pub fn swapaxes(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value {
             let d = promote(b, val);
             // Recursive call handles its own relay; return its result directly.
             let out = swapaxes(b, &Value::DynamicNDArray(d), args);
-            crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
             return out;
         }
 
         crate::ops::static_ndarray_ops::ndarray_swapaxes(b, val, args)
     };
-    crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
     out
 }

@@ -7,6 +7,7 @@ use crate::builder::IRBuilder;
 use crate::circuit_input::InputPath;
 use crate::ir::IRGraph;
 use crate::ir_defs::IR;
+use crate::optim::array_facts::{ElemFacts, Range, Segmentation};
 use crate::types::{StmtId, Value};
 
 use super::array_facts::{self, basis};
@@ -705,6 +706,9 @@ fn a_permutation_scatter_by_an_argsort_is_numpys() {
     let v = read_inputs(&mut b, "v", n);
     let elements: Arc<[Value]> = a.into();
     let p: Vec<Value> = (0..n as u32).map(|r| b.ir_sorted(&elements, r, true)).collect();
+    // What the frontend's argsort states of its lanes (`helpers/static_array/sorting.rs`).
+    let argsort = Segmentation::uniform(n, ElemFacts::range(Range::new(0, n as i64 - 1))).with_permutation();
+    b.state_defined_facts(&p, argsort);
     let cells = super::gather::permutation_scatter_lanes(&mut b, &p, &v).expect("an argsort is a permutation");
     for cell in &cells {
         b.ir_expose_public_i(cell);

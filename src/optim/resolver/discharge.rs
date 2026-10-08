@@ -60,15 +60,11 @@ pub fn probe_in_range(b: &mut crate::builder::IRBuilder, idx: &Value, lo: i64, h
     };
 
     // Fact-fallback (compiler.fact-aware-chokepoints-batch): if the
-    // resolver couldn't prove `idx ∈ [lo, hi)`, op-contract facts on
-    // `idx.stmt_id()` may still pin it. Facts only tighten — we accept the
-    // fallback iff both halves of `(min, max)` straddle `[lo, hi)`.
-    if !in_range {
-        if let Some((min, max)) = b.ask_bounds(idx) {
-            if min >= lo && max < hi {
-                in_range = true;
-            }
-        }
+    // resolver couldn't prove `idx ∈ [lo, hi)`, the facts on `idx` (scalar
+    // and array facts) may still pin it: a decision query
+    // (`builder/bound_queries.rs`).
+    if !in_range && hi > i64::MIN && b.proves_within(idx, lo, hi - 1) {
+        in_range = true;
     }
 
     if let (Some(t), Some(before)) = (tel.as_ref(), smt_before) {
@@ -117,8 +113,7 @@ pub fn provably_in_range(b: &mut crate::builder::IRBuilder, v: &Value, lo: i64, 
             },
         ],
     };
-    matches!(b.prove(&term), ProveOutcome::Proved)
-        || b.ask_bounds(v).is_some_and(|(min, max)| min >= lo && max < hi)
+    matches!(b.prove(&term), ProveOutcome::Proved) || (hi > i64::MIN && b.proves_within(v, lo, hi - 1))
 }
 
 /// Load-bearing Phase-E-style discharge of `lo <= idx < hi` at an
@@ -212,9 +207,10 @@ pub fn discharge_index_in_range(
             // upper bound is recorded as `Var(len_vid)` (e.g. from the
             // `dyn_argextremum` contract) but our term has `LitInt(hi)` —
             // the pattern doesn't unify even though `len_vid` constant-folds
-            // to `hi`. `ask_bounds` collapses the chain and gives concrete
-            // (min, max). Mirrors the same fallback in `is_index_in_range`.
-            let bounded = b.ask_bounds(idx).is_some_and(|(min, max)| min >= lo && max < hi);
+            // to `hi`. A decision query (`builder/bound_queries.rs`: the
+            // cheap tiers, the array facts, then one satisfiability check)
+            // sees through that chain.
+            let bounded = hi > i64::MIN && b.proves_within(idx, lo, hi - 1);
             if !bounded {
                 if crate::builder::op_requires_strict() {
                     let value_ids = crate::optim::predicates::collect_value_ids(&term);
@@ -322,11 +318,19 @@ pub fn discharge_index_below_value(
     // `idx >= lo` residual. The upper half is probed first; an Unknown
     // there falls straight through to the combined path so the common
     // unprovable case costs no extra Z3 invocations vs the old code.
-    let p_hi = b.prove(&hi_term);
+    //
+    // The array facts are asked first (`docs/array-facts.md`): `idx` may be
+    // a cell of an array whose facts bound it by the same runtime statement
+    // (`np.unique`'s inverse is `<= count - 1`, and `count` is the axis
+    // length here), which `prove` cannot see.
+    let (fact_lo, fact_hi) = index_facts_below(b, idx, lo, hi);
+    let p_hi = if fact_hi { ProveOutcome::Proved } else { b.prove(&hi_term) };
     if matches!(p_hi, ProveOutcome::Disproved) {
         return disproved(b);
     }
-    let p_lo = if matches!(p_hi, ProveOutcome::Proved) {
+    let p_lo = if fact_lo {
+        ProveOutcome::Proved
+    } else if matches!(p_hi, ProveOutcome::Proved) {
         b.prove(&lo_term)
     } else {
         ProveOutcome::Unknown
@@ -382,6 +386,20 @@ pub fn discharge_index_below_value(
         }
     }
     guarded
+}
+
+/// Whether the array facts of `idx` prove `idx >= lo` and `idx < hi` where
+/// the current code runs, for a runtime `hi` (a statement): `idx` is a cell
+/// of, or is read from, an array whose facts bound it (each source argues
+/// why its facts hold, `docs/array-facts.md`).
+fn index_facts_below(b: &crate::builder::IRBuilder, idx: &Value, lo: i64, hi: &Value) -> (bool, bool) {
+    use crate::builder::Where;
+    use crate::optim::array_facts::{Bound, Cell};
+    let Some(cell) = Cell::of(idx).filter(|_| idx.is_integer()) else { return (false, false) };
+    let range = b.array_fact_range(&cell, idx, Where::Here);
+    let oracle = b.oracle(Where::Here);
+    let below_hi = hi.stmt_id().is_some_and(|stmt| range.implies_le(&Bound::Stmt { stmt, offset: -1 }, &oracle));
+    (range.implies_ge(&Bound::Const(lo), &oracle), below_hi)
 }
 
 fn emit_index_bound_assert(b: &mut crate::builder::IRBuilder, idx: &Value, lo: &Value, hi: &Value) {

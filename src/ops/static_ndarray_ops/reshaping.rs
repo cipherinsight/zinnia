@@ -64,7 +64,7 @@ pub(super) fn concat_recursive(arrays: &[Value], axis: usize) -> Value {
     })
 }
 
-pub fn np_concatenate(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+pub fn np_concatenate(_b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
     let axis_arg = kwargs.get("axis").or_else(|| args.get(1));
 
     let data = match args.first() {
@@ -79,7 +79,6 @@ pub fn np_concatenate(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String
         let flat: Vec<Value> = data.values.iter().flat_map(crate::helpers::composite::flatten_composite).collect();
         let types = flat.iter().map(|v| v.zinnia_type()).collect();
         let out = Value::List(CompositeData { elements_type: types, values: flat, value_id: ValueId::next() });
-        crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &data.values, &out);
         return out;
     }
     let raw_axis = static_int_arg(axis_arg, 0, "np.concatenate: `axis`");
@@ -98,7 +97,6 @@ pub fn np_concatenate(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String
     }
 
     let out = concat_recursive(&data.values, resolved as usize);
-    crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &data.values, &out);
     out
 }
 
@@ -140,7 +138,7 @@ fn stack_recursive(arrays: &[Value], axis: usize) -> Value {
     })
 }
 
-pub fn np_stack(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+pub fn np_stack(_b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
     let raw_axis = kwargs
         .get("axis")
         .or_else(|| args.get(1))
@@ -171,7 +169,6 @@ pub fn np_stack(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Valu
     }
 
     let out = stack_recursive(&data.values, resolved as usize);
-    crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &data.values, &out);
     out
 }
 
@@ -451,7 +448,6 @@ pub fn ndarray_repeat(
                     },
                     value_id: crate::types::ValueId::next(),
                 });
-                crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &result);
                 return result;
             }
             BoundedInt::Static(_) | BoundedInt::Neither => {
@@ -486,7 +482,6 @@ pub fn ndarray_repeat(
                     values: new_vals,
                     value_id: ValueId::next(),
                 });
-                crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &result);
                 return result;
             }
         }
@@ -520,7 +515,6 @@ pub fn ndarray_repeat(
             values: new_vals,
             value_id: ValueId::next(),
         });
-        crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &result);
         result
     }
 }
@@ -898,12 +892,10 @@ pub fn np_squeeze(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Va
     let flat = crate::helpers::composite::flatten_composite(val);
     if new_shape.is_empty() {
         let out = flat.into_iter().next().unwrap_or(Value::None);
-        crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
         return out;
     }
     let types = flat.iter().map(|v| v.zinnia_type()).collect();
     let out = crate::helpers::composite::build_nested_value(flat, types, &new_shape);
-    crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
     out
 }
 
@@ -955,7 +947,6 @@ pub fn np_expand_dims(b: &mut IRBuilder, args: &[Value]) -> Value {
         }
     }
     let out = insert_at(val, pos);
-    crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
     out
 }
 
@@ -996,7 +987,6 @@ pub fn np_broadcast_to(b: &mut IRBuilder, args: &[Value]) -> Value {
     // new element equals an existing one — `forall_eq_const(in, k)` ⇒
     // `forall_eq_const(out, k)`.
     let out = crate::helpers::broadcast::materialize_to_shape(val, &target);
-    crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
     out
 }
 
@@ -1079,7 +1069,6 @@ pub fn np_tile(b: &mut IRBuilder, args: &[Value]) -> Value {
                 formals.insert("len_arr".to_string(), len_vid);
                 formals.insert("k".to_string(), k_vid);
                 b.fire_contract("dyn_tile", runtime_length_vid, &formals);
-                crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &result);
                 return result;
             }
             BoundedInt::Static(_) | BoundedInt::Neither => {
@@ -1153,7 +1142,6 @@ pub fn np_tile(b: &mut IRBuilder, args: &[Value]) -> Value {
     }
     let types = out_flat.iter().map(|v| v.zinnia_type()).collect();
     let out = crate::helpers::composite::build_nested_value(out_flat, types, &target_shape);
-    crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
     out
 }
 
@@ -1205,20 +1193,19 @@ fn promote_to_column(val: &Value) -> Value {
 }
 
 /// `np.vstack(arrays)` — stack along axis 0, promoting 1-D inputs to rows.
-pub fn np_vstack(b: &mut IRBuilder, args: &[Value]) -> Value {
+pub fn np_vstack(_b: &mut IRBuilder, args: &[Value]) -> Value {
     let arrays = match args.first() {
         Some(Value::List(d)) | Some(Value::Tuple(d)) => d,
         _ => return Value::None,
     };
     let promoted: Vec<Value> = arrays.values.iter().map(promote_to_row).collect();
     let out = concat_recursive(&promoted, 0);
-    crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &arrays.values, &out);
     out
 }
 
 /// `np.hstack(arrays)` — concatenate along axis 1 for ≥2-D inputs, or along
 /// axis 0 for 1-D inputs (NumPy convention).
-pub fn np_hstack(b: &mut IRBuilder, args: &[Value]) -> Value {
+pub fn np_hstack(_b: &mut IRBuilder, args: &[Value]) -> Value {
     let arrays = match args.first() {
         Some(Value::List(d)) | Some(Value::Tuple(d)) => d,
         _ => return Value::None,
@@ -1229,7 +1216,6 @@ pub fn np_hstack(b: &mut IRBuilder, args: &[Value]) -> Value {
         .any(|v| crate::helpers::composite::get_composite_shape(v).len() >= 2);
     let axis = if any_multi { 1 } else { 0 };
     let out = concat_recursive(&arrays.values, axis);
-    crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &arrays.values, &out);
     out
 }
 
@@ -1265,19 +1251,17 @@ pub fn np_dstack(b: &mut IRBuilder, args: &[Value]) -> Value {
         })
         .collect();
     let out = concat_recursive(&promoted, 2);
-    crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &raw_values, &out);
     out
 }
 
 /// `np.column_stack(arrays)` — 1-D arrays become columns of a 2-D output.
-pub fn np_column_stack(b: &mut IRBuilder, args: &[Value]) -> Value {
+pub fn np_column_stack(_b: &mut IRBuilder, args: &[Value]) -> Value {
     let arrays = match args.first() {
         Some(Value::List(d)) | Some(Value::Tuple(d)) => d,
         _ => return Value::None,
     };
     let promoted: Vec<Value> = arrays.values.iter().map(promote_to_column).collect();
     let out = concat_recursive(&promoted, 1);
-    crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &arrays.values, &out);
     out
 }
 

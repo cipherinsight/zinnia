@@ -381,12 +381,16 @@ impl IRGenerator {
                 // dual-segment StaticArray.
                 match dtype {
                     crate::types::NumberType::Integer | crate::types::NumberType::Float => {
-                        crate::helpers::static_array::base::build_static_array_from_flat(
+                        let array = crate::helpers::static_array::base::build_static_array_from_flat(
                             &mut self.builder,
                             values,
                             shape.clone(),
                             *dtype,
-                        )
+                        );
+                        if boolean {
+                            self.state_boolean_input_facts(&array);
+                        }
+                        array
                     }
                     crate::types::NumberType::Complex => {
                         // Split each Complex element into (real, imag) Floats.

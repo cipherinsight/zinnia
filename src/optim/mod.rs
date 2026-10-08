@@ -11,6 +11,7 @@ mod pattern_match_optim;
 mod predicated_simplification;
 mod select_merge;
 mod select_chain_forwarding;
+pub mod array_facts;
 pub mod predicates;
 pub mod prove;
 pub mod range;
@@ -43,7 +44,7 @@ pub use resolver::{
     StaticInt, StaticOnlyResolver,
 };
 pub use smt_encoding::{IROp, SmtEncodingCtx, Z3Term};
-pub use strategy::{dispatch_strategy, CostHint, OpStrategy, OpStrategySet};
+pub use strategy::{decided, dispatch_strategy, CostHint, OpStrategy, OpStrategySet};
 pub use telemetry::{
     discharge_event, now_unix_ns, strategy_dispatch_event, SmtTelemetry, TelemetryEvent,
     TelemetrySink,

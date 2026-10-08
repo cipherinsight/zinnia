@@ -214,50 +214,32 @@ pub fn dyn_scalar_binary_op(
         value_id: ValueId::next(),
     });
 
-    // Element-bound propagation (compiler.op-contract-inplace-mutation):
-    // for arithmetic ops (`add`, `sub`, `mul`) on integer arrays, derive
-    // new element bounds from the input array's bounds combined with
-    // the scalar's bounds. Skip comparisons (output dtype = Integer 0/1
-    // is trivially bounded but it's not informative downstream) and
-    // skip Float/Complex (no integer bound representation today).
+    // Array facts (`docs/array-facts.md`): output cell `k` is `op(cell k,
+    // scalar)` for every cell of the storage, padding included, computed
+    // exactly over the integers, so the output's cells lie in the interval
+    // transfer of the input's range and the scalar's (derived where those
+    // hold). The input is read from its contiguous copy, whose cells are
+    // the ones `arr_vals` holds.
     if matches!(op, "add" | "sub" | "mul") && out_dtype == NumberType::Integer {
-        let scalar_arr = Value::DynamicNDArray(arr.clone());
-        let arr_bounds =
-            crate::helpers::static_array::reductions::read_array_element_bounds(b, &scalar_arr);
-        let scalar_bounds = if let Some(n) = scalar.int_val() {
-            Some((n, n))
-        } else {
-            b.ask_bounds(scalar)
-        };
-        if let (Some((alo, ahi)), Some((slo, shi))) = (arr_bounds, scalar_bounds) {
-            let (xlo, xhi, ylo, yhi) = if scalar_is_lhs {
-                (slo, shi, alo, ahi)
-            } else {
-                (alo, ahi, slo, shi)
-            };
-            let computed = match op {
-                "add" => Some((xlo.checked_add(ylo), xhi.checked_add(yhi))),
-                "sub" => Some((xlo.checked_sub(yhi), xhi.checked_sub(ylo))),
-                "mul" => {
-                    let c1 = xlo.checked_mul(ylo);
-                    let c2 = xlo.checked_mul(yhi);
-                    let c3 = xhi.checked_mul(ylo);
-                    let c4 = xhi.checked_mul(yhi);
-                    match (c1, c2, c3, c4) {
-                        (Some(a), Some(b), Some(c), Some(d)) => {
-                            Some((Some(a.min(b).min(c).min(d)), Some(a.max(b).max(c).max(d))))
-                        }
-                        _ => None,
-                    }
-                }
-                _ => None,
-            };
-            if let Some((Some(new_lo), Some(new_hi))) = computed {
-                crate::helpers::static_array::reductions::deposit_array_in_range_fact(
-                    b, &out_val, new_lo, new_hi,
-                );
+        use crate::optim::array_facts::{transfer, ElemFacts, Segmentation};
+        let input = Value::DynamicNDArray(arr.clone());
+        let scalar = scalar.clone();
+        let len = arr_vals.len();
+        b.state_derived_storage_facts(segment_id, |b, at| {
+            let arr_range = b.array_range(&input, at);
+            let scalar_range = b.value_range(&scalar, at);
+            if arr_range.is_top() {
+                return None;
             }
-        }
+            let (x, y) = if scalar_is_lhs { (scalar_range, arr_range) } else { (arr_range, scalar_range) };
+            let oracle = b.oracle(at);
+            let range = match op {
+                "add" => transfer::add(&x, &y, &oracle),
+                "sub" => transfer::sub(&x, &y, &oracle),
+                _ => transfer::mul(&x, &y, &oracle),
+            };
+            (!range.is_top()).then(|| Segmentation::uniform(len, ElemFacts::range(range)))
+        });
     }
 
     out_val

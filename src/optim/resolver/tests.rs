@@ -1996,3 +1996,104 @@ fn relay_arctan2_with_unbounded_y_skips_emit() {
     assert!(!emitted, "unbounded y must skip emit");
     assert!(b.facts.per_value.get(&out_vid).is_none());
 }
+
+// ---------------------------------------------------------------------------
+// Decision queries (`Resolver::proves_bound_with_stmts`) and remembered
+// extremes.
+// ---------------------------------------------------------------------------
+
+fn stmt(id: StmtId, ir: IR, args: Vec<StmtId>) -> IRStatement {
+    IRStatement::new(id, crate::types::ValueId::next(), ir, args, vec![], None)
+}
+
+/// `w = select(x < 50, x, 0)` over a free input `x`: always `<= 49` (either
+/// branch), but not always `>= 0` (`x = -1`).
+fn clamp_below_50() -> Vec<IRStatement> {
+    vec![
+        stmt(0, IR::ReadInteger { path: InputPath::new("x", vec![]), is_public: false }, vec![]),
+        stmt(1, IR::ConstantInt { value: 50 }, vec![]),
+        stmt(2, IR::LtI, vec![0, 1]),
+        stmt(3, IR::ConstantInt { value: 0 }, vec![]),
+        stmt(4, IR::SelectI, vec![2, 0, 3]),
+    ]
+}
+
+#[test]
+fn smt_decision_proves_a_bound_the_interval_misses() {
+    let stmts = clamp_below_50();
+    let w = runtime_int(4);
+    let mut r = SmtResolver::new();
+    assert!(r.proves_bound_with_stmts(&w, &stmts, 49, Side::AtMost, Effort::Full));
+    // The interval layer alone sees `select(_, unbounded, 0)`: nothing.
+    let mut range = crate::optim::range::RangeResolver::new();
+    assert!(!range.proves_bound_with_stmts(&w, &stmts, 49, Side::AtMost, Effort::Full));
+}
+
+#[test]
+fn smt_decision_does_not_prove_a_false_bound() {
+    let stmts = clamp_below_50();
+    let w = runtime_int(4);
+    let mut r = SmtResolver::new();
+    assert!(!r.proves_bound_with_stmts(&w, &stmts, 0, Side::AtLeast, Effort::Full), "x = -1 gives w = -1");
+    assert!(!r.proves_bound_with_stmts(&w, &stmts, 48, Side::AtMost, Effort::Full), "x = 49 gives w = 49");
+    // Asked again: the same answer (remembered).
+    assert!(!r.proves_bound_with_stmts(&w, &stmts, 0, Side::AtLeast, Effort::Full));
+    assert!(r.proves_bound_with_stmts(&w, &stmts, 50, Side::AtMost, Effort::Full));
+}
+
+#[test]
+fn layered_decision_tries_the_interval_layer_first() {
+    // y = 3 + 4: the interval layer proves 0 <= y <= 7 without Z3.
+    let stmts = vec![
+        stmt(0, IR::ConstantInt { value: 3 }, vec![]),
+        stmt(1, IR::ConstantInt { value: 4 }, vec![]),
+        stmt(2, IR::AddI, vec![0, 1]),
+    ];
+    let y = runtime_int(2);
+    let mut r = LayeredResolver::range_then_smt();
+    assert!(r.proves_bound_with_stmts(&y, &stmts, 7, Side::AtMost, Effort::Full));
+    assert!(r.proves_bound_with_stmts(&y, &stmts, 7, Side::AtLeast, Effort::Full));
+    assert!(!r.proves_bound_with_stmts(&y, &stmts, 8, Side::AtLeast, Effort::Full));
+}
+
+#[test]
+fn smt_remembers_an_extreme_without_a_bound() {
+    // A free input has no maximum; the second query is answered from memory
+    // (counted as a cache hit), with the same answer.
+    let stmts = clamp_below_50();
+    let x = runtime_int(0);
+    let mut r = SmtResolver::new();
+    assert_eq!(r.resolve_max_with_stmts(&x, &stmts), None);
+    let before = r.telemetry().queries_cache_hit.load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(r.resolve_max_with_stmts(&x, &stmts), None);
+    let after = r.telemetry().queries_cache_hit.load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(after, before + 1);
+    r.on_ir_mutated(&[]);
+    assert_eq!(r.resolve_max_with_stmts(&x, &stmts), None);
+    assert_eq!(r.telemetry().queries_cache_hit.load(std::sync::atomic::Ordering::Relaxed), after, "cleared by on_ir_mutated");
+}
+
+#[test]
+fn a_tightening_answers_with_its_small_budget_and_a_full_query_may_retry() {
+    // `d = (x*x*x*x >= 0) ? 1 : 2` is always 1, but proving `d <= 1` needs
+    // nonlinear reasoning (`smt_honours_tight_rlimit` uses the same shape).
+    let stmts = vec![
+        stmt(0, IR::ReadInteger { path: InputPath::new("x", vec![]), is_public: false }, vec![]),
+        stmt(1, IR::MulI, vec![0, 0]),
+        stmt(2, IR::MulI, vec![1, 1]),
+        stmt(3, IR::ConstantInt { value: 0 }, vec![]),
+        stmt(4, IR::GteI, vec![2, 3]),
+        stmt(5, IR::ConstantInt { value: 1 }, vec![]),
+        stmt(6, IR::ConstantInt { value: 2 }, vec![]),
+        stmt(7, IR::SelectI, vec![4, 5, 6]),
+    ];
+    let d = runtime_int(7);
+    // With a tightening budget of one step nothing is proved; the full
+    // budget then proves it (the failed tightening does not stick).
+    let mut r = SmtResolver::new().with_rlimit(1);
+    assert!(!r.proves_bound_with_stmts(&d, &stmts, 1, Side::AtMost, Effort::Tighten));
+    let mut r = SmtResolver::new();
+    assert!(r.proves_bound_with_stmts(&d, &stmts, 1, Side::AtMost, Effort::Full));
+    // A proof is remembered for any effort.
+    assert!(r.proves_bound_with_stmts(&d, &stmts, 1, Side::AtMost, Effort::Tighten));
+}

@@ -591,14 +591,14 @@ fn where_rec(b: &mut IRBuilder, c: &Value, x: &Value, y: &Value) -> Value {
     }
 }
 
-/// Strategy A for `where`: `forall_eq_const(cond, 1)` ⇒ every element of
-/// `cond` is true ⇒ select picks `x` at every position ⇒ output is `x_b`.
+/// Strategy A for `where`: every element of `cond` is true ⇒ select picks
+/// `x` at every position ⇒ output is `x_b`.
 fn lower_where_to_x(_b: &mut IRBuilder, inp: &WhereInputs) -> Value {
     inp.x_b.clone()
 }
 
-/// Strategy B for `where`: `forall_eq_const(cond, 0)` ⇒ every element of
-/// `cond` is false ⇒ select picks `y` at every position ⇒ output is `y_b`.
+/// Strategy B for `where`: every element of `cond` is false ⇒ select picks
+/// `y` at every position ⇒ output is `y_b`.
 fn lower_where_to_y(_b: &mut IRBuilder, inp: &WhereInputs) -> Value {
     inp.y_b.clone()
 }
@@ -609,46 +609,29 @@ fn lower_where_generic(b: &mut IRBuilder, inp: &WhereInputs) -> Value {
     where_rec(b, &inp.cond_b, &inp.x_b, &inp.y_b)
 }
 
-/// Build the `OpStrategySet` for `np.where` gated on
-/// `forall_eq_const(cond, k)` for k ∈ {0, 1}.
-fn where_strategy_set(cond_vid: ValueId) -> crate::optim::OpStrategySet<WhereInputs, Value> {
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::{CostHint, OpStrategy, OpStrategySet};
+/// The strategies of `np.where`: `x` when every element of `cond` is true,
+/// `y` when every one is false (offered only when the array facts of its
+/// current contents decide it, `builder/array_facts.rs`).
+fn where_strategy_set(b: &IRBuilder, cond: &Value) -> crate::optim::OpStrategySet<WhereInputs, Value> {
+    use crate::optim::{decided, CostHint, OpStrategy, OpStrategySet};
 
-    let pred_eq_k = |k: i64| ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(cond_vid)),
-            ContractTerm::LitInt(k),
-        ],
-    };
-
-    OpStrategySet {
-        strategies: vec![
-            OpStrategy {
-                name: "cond_all_true",
-                precondition: pred_eq_k(1),
-                cost_hint: CostHint::O1,
-                lower: lower_where_to_x,
-            },
-            OpStrategy {
-                name: "cond_all_false",
-                precondition: pred_eq_k(0),
-                cost_hint: CostHint::O1,
-                lower: lower_where_to_y,
-            },
-        ],
-        default: lower_where_generic,
+    let mut strategies = Vec::new();
+    if b.array_all_equal(cond, 1) {
+        strategies.push(OpStrategy { name: "cond_all_true", precondition: decided(), cost_hint: CostHint::O1, lower: lower_where_to_x });
     }
+    if b.array_all_equal(cond, 0) {
+        strategies.push(OpStrategy { name: "cond_all_false", precondition: decided(), cost_hint: CostHint::O1, lower: lower_where_to_y });
+    }
+    OpStrategySet { strategies, default: lower_where_generic }
 }
 
 /// `np.where(cond, x, y)` — element-wise ternary select. All three args
 /// are broadcast to a common shape, then a per-element select fires.
 ///
 /// When `cond` carries a `value_id`, the Phase F strategy dispatcher
-/// short-circuits to `x` (resp. `y`) if `forall_eq_const(cond, 1)` (resp.
-/// `0`) is provable from the visible facts. Otherwise, the default
-/// recursive per-element select runs.
+/// short-circuits to `x` (resp. `y`) if every element of `cond` is true
+/// (resp. false) by the array facts of its current contents. Otherwise,
+/// the default recursive per-element select runs.
 pub fn np_where(b: &mut IRBuilder, args: &[Value]) -> Value {
     // One-argument `np.where(cond)` is NumPy's `np.nonzero(cond)`: a tuple
     // of index arrays, one per axis. (It used to return `cond` itself,
@@ -690,7 +673,10 @@ pub fn np_where(b: &mut IRBuilder, args: &[Value]) -> Value {
     let cond_b = crate::helpers::broadcast::materialize_to_shape(cond, &target);
     let x_b = crate::helpers::broadcast::materialize_to_shape(x, &target);
     let y_b = crate::helpers::broadcast::materialize_to_shape(y, &target);
-    match cond.value_id() {
+    // Each output cell is `select(c, x, y)` of one cell of each, so it lies
+    // in the join of their ranges (array facts, `docs/array-facts.md`).
+    let (x_src, y_src) = (x_b.clone(), y_b.clone());
+    let out = match cond.value_id() {
         Some(cond_vid) => {
             let inputs = WhereInputs {
                 cond_b,
@@ -698,9 +684,11 @@ pub fn np_where(b: &mut IRBuilder, args: &[Value]) -> Value {
                 y_b,
                 cond_vid,
             };
-            let set = where_strategy_set(inputs.cond_vid);
+            let set = where_strategy_set(b, cond);
             crate::optim::dispatch_strategy(b, "where", &inputs, &set)
         }
         None => where_rec(b, &cond_b, &x_b, &y_b),
-    }
+    };
+    b.state_selected_from(&out, &[&x_src, &y_src]);
+    out
 }
