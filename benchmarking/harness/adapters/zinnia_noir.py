@@ -23,7 +23,7 @@ from benchmarking.harness.adapters import noir_toolchain
 from benchmarking.harness.adapters.base import (Adapter, ProveResult, SetupResult,
                                                 StepContext, StepFailure, VerifyResult)
 from benchmarking.harness.adapters.zinnia_common import (compile_case, describe_compiled,
-                                                         zinnia_publics)
+                                                         delegate_forcing, zinnia_publics)
 from benchmarking.harness.fixtures import PROVE_INPUT, SETUP_INPUT
 from benchmarking.harness.outputs import BN254_MODULUS, float_to_q32
 
@@ -164,3 +164,24 @@ class ZinniaNoirAdapter(Adapter):
         package = noir_toolchain.NoirPackage(ctx.work_dir / "package", PACKAGE_NAME)
         return noir_toolchain.verify_proof(package.vk, ctx.proof_path, ctx.tamper,
                                            has_outputs=bool(state["expose_kinds"]))
+
+
+class ZinniaNoirDelegateAdapter(ZinniaNoirAdapter):
+    """The same pipeline with every runtime-index array access left to Noir's ROM/RAM:
+    the baseline for the array-lowering layer's choices."""
+
+    name = "zinnia_noir_delegate"
+    description = (ZinniaNoirAdapter.description
+                   + "; runtime-index array accesses by Noir's ROM/RAM (ZINNIA_FORCE_CONSTRUCTION=@delegate)")
+
+    def setup(self, ctx: StepContext) -> SetupResult:
+        with delegate_forcing():
+            return super().setup(ctx)
+
+    def prove(self, ctx: StepContext) -> ProveResult:
+        with delegate_forcing():
+            return super().prove(ctx)
+
+    def verify(self, ctx: StepContext) -> VerifyResult:
+        with delegate_forcing():
+            return super().verify(ctx)

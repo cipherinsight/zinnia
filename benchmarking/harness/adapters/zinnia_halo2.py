@@ -56,7 +56,8 @@ from pathlib import Path
 from benchmarking.harness.adapters.base import (Adapter, ProveResult, SetupResult,
                                                 StepContext, StepFailure, VerifyResult)
 from benchmarking.harness.adapters.zinnia_common import (check_same_build, compile_case,
-                                                         describe_compiled, zinnia_publics)
+                                                         describe_compiled, delegate_forcing,
+                                                         zinnia_publics)
 from benchmarking.harness.fixtures import PROVE_INPUT, SETUP_INPUT
 from benchmarking.harness.outputs import field_from_le_hex, field_to_le_hex
 
@@ -244,3 +245,24 @@ class ZinniaHalo2Adapter(Adapter):
             timings["verify_s"] = report["verify_seconds"]
         return VerifyResult(verified=bool(report["valid"]), verify_s=report["verify_seconds"],
                             timings_s=timings, details={"error": report["error"]})
+
+
+class ZinniaHalo2DelegateAdapter(ZinniaHalo2Adapter):
+    """The same pipeline with every runtime-index array access left to halo2-base's lookup table or RAM trace:
+    the baseline for the array-lowering layer's choices."""
+
+    name = "zinnia_halo2_delegate"
+    description = (ZinniaHalo2Adapter.description
+                   + "; runtime-index array accesses by halo2-base's lookup table or RAM trace (ZINNIA_FORCE_CONSTRUCTION=@delegate)")
+
+    def setup(self, ctx: StepContext) -> SetupResult:
+        with delegate_forcing():
+            return super().setup(ctx)
+
+    def prove(self, ctx: StepContext) -> ProveResult:
+        with delegate_forcing():
+            return super().prove(ctx)
+
+    def verify(self, ctx: StepContext) -> VerifyResult:
+        with delegate_forcing():
+            return super().verify(ctx)
