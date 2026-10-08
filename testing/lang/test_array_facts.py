@@ -633,3 +633,100 @@ def test_the_ablation_turns_array_facts_off(monkeypatch):
     monkeypatch.setenv("ZINNIA_ABLATE_ARRAY_FACTS", "1")
     assert index_checks(compile_source(FORALL_INDEX)) != []
     assert_all_backends_match_numpy(FORALL_INDEX, np.array([3, 0, 4, 1]))
+
+
+# ── More sources and consumers ────────────────────────────────────────────
+
+MORE = {
+    # argwhere: every packed coordinate is in [0, max extent - 1].
+    "argwhere": ("@requires(lambda m, i: 0 <= i <= 1)\n"
+                 "def kernel(m: NDArray[Integer, 2, 3], i: Integer):\n"
+                 "    w = np.argwhere(m)\n    d = np.array([10, 20, 30])\n    return d[w[0, i]]\n",
+                 (np.array([[0, 2, 0], [1, 0, 0]]), 1)),
+    # A boolean-mask read: its cells are the input's or 0.
+    "mask read": ("@requires(lambda a, i: forall(a, in_range(0, 4)))\n"
+                  "@requires(lambda a, i: 0 <= i <= 1)\n"
+                  "def kernel(a: Integer[Array, '6'], i: Integer):\n"
+                  "    x = a[a > 1]\n    d = np.array([10, 20, 30, 40, 50])\n    return d[x[i]]\n",
+                  (np.array([0, 3, 1, 4, 2, 1]), 1)),
+    # `array op scalar` on a runtime-shaped array.
+    "runtime-shaped op scalar": ("@requires(lambda a, i: forall(a, in_range(0, 3)))\n"
+                                 "@requires(lambda a, i: 0 <= i <= 1)\n"
+                                 "def kernel(a: Integer[Array, '6'], i: Integer):\n"
+                                 "    x = a[a > 0] + 1\n    d = np.array([10, 20, 30, 40, 50])\n    return d[x[i]]\n",
+                                 (np.array([0, 3, 1, 0, 2, 1]), 1)),
+    # The exponent of an integer power: no `>= 0` check.
+    "integer power": ("@requires(lambda a, i: forall(a, in_range(0, 3)))\n"
+                      "def kernel(a: Integer[Array, '4'], i: Integer):\n"
+                      "    return 2 ** a[i]\n",
+                      (np.array([3, 0, 2, 1]), 2)),
+}
+
+
+def sign_checks(program):
+    """Statements that only a possibly negative value needs: the hinted wrap
+    of an index, and the `>= 0` check of an integer power's exponent."""
+    return [s for s in index_checks(program) if s == "sign"] + \
+        [c for c in classes(program) if c == "AssertNonNegIIR"]
+
+
+@pytest.mark.parametrize("name", sorted(MORE))
+def test_more_sources_and_consumers(name):
+    source, args = MORE[name]
+    program = compile_source(source)
+    if name == "integer power":
+        assert len(sign_checks(program)) < len(sign_checks(compile_source(without_requires(source))))
+    elif name == "argwhere":
+        assert "bound" not in index_checks(program)
+    else:
+        assert len(index_checks(program)) <= len(index_checks(compile_source(without_requires(source)))) - 1
+    # The Noir backend has no integer power at a runtime exponent.
+    assert_all_backends_match_numpy(source, *args, noir=name != "integer power")
+
+
+BOOL_AND = """
+def kernel(m: Bool[Array, '4'], i: Integer, j: Integer):
+    return (m[i] + 0) & (m[j] + 0)
+"""
+
+
+def test_boolean_elements_are_combined_as_booleans():
+    # `m[i] + 0` is read from cells in [0, 1]: `&` is a logical and, not a
+    # bitwise one over 64-bit integers.
+    assert "BitAndIIR" not in classes(compile_source(BOOL_AND))
+    m = np.array([True, False, True, True])
+    for i, j in ((0, 2), (0, 1), (1, 1)):
+        assert_all_backends_match_numpy(BOOL_AND, m, i, j)
+
+
+SIZED_BY_A_FACT = """
+@requires(lambda a: forall(a, in_range(0, 5)))
+def kernel(a: Integer[Array, '4']):
+    z = np.zeros(np.max(a) + 1, dtype=int)
+    z[a[0]] = 7
+    return np.sum(z)
+"""
+
+
+def test_a_capacity_bounded_by_an_array_fact():
+    # `np.max(a) + 1 <= 6` sizes the runtime-shaped array.
+    assert_all_backends_match_numpy(SIZED_BY_A_FACT, np.array([2, 5, 0, 1]))
+    assert has_no_proof(SIZED_BY_A_FACT, np.array([2, 6, 0, 1]))
+
+
+WRITTEN_PERMUTATION = """
+@requires(lambda p, k: is_permutation(p))
+def kernel(p: Integer[Array, '4'], x: Float[Array, '4'], k: Integer):
+    q = p
+    q[0] = k
+    y = np.zeros(4)
+    y[p] = x
+    return y
+"""
+
+
+@pytest.mark.parametrize("k", [0, 2, 3])
+def test_a_permutation_written_through_another_name_is_no_permutation(k):
+    # After `q[0] = k` the array `p` may repeat a position: the scatter keeps
+    # NumPy's last write per position instead of assuming a permutation.
+    assert_all_backends_match_numpy(WRITTEN_PERMUTATION, np.array([2, 0, 3, 1]), np.array([1.0, 2.0, 3.0, 4.0]), k)
