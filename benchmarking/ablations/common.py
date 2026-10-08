@@ -56,6 +56,11 @@ NATIVE_MEMORY = ("memory: element by table read", "memory: native RAM", "memory:
 HELPERS = ("memory: index bits",)
 
 
+def case_set_file(name: str) -> Path:
+    """A case set by name (`CASE_SETS`) or by path (e.g. a scaled set outside the dataset)."""
+    return CASE_SETS[name] if name in CASE_SETS else Path(name)
+
+
 def perf_entries(case_set: Path) -> dict[str, dict]:
     """The case set's `perf` entries by case name."""
     entries = json.loads(case_set.read_text())["cases"]

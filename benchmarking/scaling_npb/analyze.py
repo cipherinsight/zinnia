@@ -1,0 +1,205 @@
+"""Analysis of the remote runs: Zinnia against the zkVMs per cap, and Zinnia's Noir gates
+against Noir's own array lowering (`@delegate`).
+
+Inputs: the Zinnia epochs (stage B of `remote/run.sh`: zinnia_halo2 and
+zinnia_noir, every cap and shard) and the zkVM epochs (stage C: sp1 and risc0),
+optionally the CAP-16 epochs of the performance set (`--reference-zinnia`,
+`--reference-zkvm`, the same measurement at the acceptance study's sizes), and
+the count files of stage A (`ablations/measure.py` with configurations `final`
+and `fix_delegate`).
+
+Per cap, over that cap's scaled points (an unchanged point is the program of
+an earlier cap and is not measured again):
+
+* completion per system: how many points finished (`ok`) and how the others
+  ended (failure class: timeout, out_of_memory, ...); nothing is dropped;
+* for every pair (Zinnia backend, zkVM) and both clocks (prove_core_s,
+  end_to_end_s): per point the ratio median(Zinnia samples) / zkVM sample (the
+  zkVMs ran once), and over the points where both completed the geometric mean
+  with the harness's bootstrap 95 % interval (`harness.analysis.stats`) and
+  the number of points, the copy-only points (`data_movement_only`) apart, as
+  `eval-redo/tools/pooled.py` and the harness do;
+* Noir gates: Zinnia (`final`) / `@delegate` (`fix_delegate`) per point and
+  their geometric mean, with how many points are cheaper, equal, costlier;
+  halo2-base cells of `final` are listed per point too.
+
+Writes `OUT/scaling_npb.json` and `OUT/scaling_npb.md` (default OUT: DATA/analysis).
+"""
+
+from __future__ import annotations
+
+import json
+from collections import Counter
+from pathlib import Path
+
+from benchmarking.harness.analysis import aggregate, stats
+from benchmarking.harness.protocol import OK
+
+ZINNIA = ("zinnia_halo2", "zinnia_noir")
+ZKVMS = ("sp1", "risc0")
+CLOCKS = ("prove_core_s", "end_to_end_s")
+REFERENCE_CAP = 16
+
+
+def case_sets(data: Path) -> dict[int, list[dict]]:
+    out = {}
+    for path in sorted((data / "case_sets").glob("npbench_pythran_cap*.json")):
+        cap = int(path.stem.rsplit("cap", 1)[1])
+        out[cap] = json.loads(path.read_text())["cases"]
+    return out
+
+
+def medians(data: aggregate.EpochData, system: str, clock: str) -> dict[str, float]:
+    out = {}
+    for case, record in data.records.get(system, {}).items():
+        values = aggregate.clock_values(record, clock)
+        if record["status"] == OK and values:
+            out[case] = stats.median(values)
+    return out
+
+
+def summarize(ratios: dict[str, float]) -> dict:
+    values = list(ratios.values())
+    if not values:
+        return {"n": 0}
+    low, high = stats.bootstrap_geomean_interval(values)
+    return {"n": len(values), "geomean": stats.geometric_mean(values), "ci95": [low, high],
+            "zinnia_faster": sum(v < 1 for v in values), "zinnia_slower": sum(v > 1 for v in values)}
+
+
+def completion(epochs: aggregate.EpochData | None, systems: tuple[str, ...], cases: list[str]) -> dict:
+    out = {}
+    for system in systems:
+        records = epochs.records.get(system, {}) if epochs else {}
+        statuses = Counter(records[c]["status"] if c in records else "not_run" for c in cases)
+        out[system] = {"points": len(cases), "ok": statuses.get(OK, 0),
+                       "not_ok": {k: v for k, v in sorted(statuses.items()) if k != OK}}
+    return out
+
+
+def time_comparison(zinnia: aggregate.EpochData, zkvm: aggregate.EpochData, cases: list[str],
+                    copy_only: set[str]) -> dict:
+    result = {}
+    for clock in CLOCKS:
+        z_medians = {s: medians(zinnia, s, clock) for s in ZINNIA}
+        k_medians = {s: medians(zkvm, s, clock) for s in ZKVMS}
+        for z in ZINNIA:
+            for k in ZKVMS:
+                both = [c for c in cases if c in z_medians[z] and c in k_medians[k]]
+                ratios = {c: z_medians[z][c] / k_medians[k][c] for c in both}
+                result[f"{z}/{k}/{clock}"] = {
+                    "headline": summarize({c: r for c, r in ratios.items() if c not in copy_only}),
+                    "copy_only": summarize({c: r for c, r in ratios.items() if c in copy_only}),
+                    "per_point": ratios}
+    return result
+
+
+def load_counts(paths: list[Path]) -> dict[str, dict[str, dict]]:
+    """config name -> case -> target -> record, over every case set in the files."""
+    out: dict[str, dict[str, dict]] = {}
+    for path in paths:
+        document = json.loads(path.read_text())
+        config = document["config"]["name"]
+        for set_name, by_case in document.items():
+            if set_name != "config":
+                out.setdefault(config, {}).update(by_case)
+    return out
+
+
+def gate_comparison(counts: dict[str, dict[str, dict]], cases: list[str]) -> dict:
+    final, delegate = counts.get("final", {}), counts.get("fix_delegate", {})
+    rows, ratios = {}, {}
+    for case in cases:
+        zinnia_gates = (final.get(case, {}).get("noir") or {}).get("gates")
+        delegate_gates = (delegate.get(case, {}).get("noir") or {}).get("gates")
+        cells = (final.get(case, {}).get("halo2") or {}).get("cells")
+        rows[case] = {"halo2_cells": cells, "noir_gates": zinnia_gates, "delegate_noir_gates": delegate_gates,
+                      "errors": {f"{cfg}/{t}": r["error"][:300] for cfg, by in (("final", final), ("fix_delegate", delegate))
+                                 for t, r in by.get(case, {}).items() if "error" in r}}
+        if zinnia_gates and delegate_gates:
+            ratios[case] = zinnia_gates / delegate_gates
+    values = list(ratios.values())
+    summary = {"n": len(values), "points": len(cases)}
+    if values:
+        summary.update(geomean=stats.geometric_mean(values), cheaper=sum(v < 1 for v in values),
+                       equal=sum(v == 1 for v in values), costlier=sum(v > 1 for v in values))
+    return {"summary": summary, "per_point": rows}
+
+
+def load(dirs: list[Path] | None) -> aggregate.EpochData | None:
+    return aggregate.load_shards(dirs) if dirs else None
+
+
+def analyze(data: Path, zinnia_dirs: list[Path], zkvm_dirs: list[Path], count_files: list[Path],
+            reference_zinnia: list[Path] | None = None, reference_zkvm: list[Path] | None = None) -> dict:
+    zinnia, zkvm = load(zinnia_dirs), load(zkvm_dirs)
+    counts = load_counts(count_files)
+    report: dict = {"caps": {}}
+    for cap, entries in sorted(case_sets(data).items()):
+        scaled = [e["case"] for e in entries if e["status"] == "perf"]
+        copy_only = {e["case"] for e in entries if e.get("data_movement_only")}
+        groups = {g: [c for c in scaled if c.startswith(g)] for g in ("npbench", "pythran")}
+        report["caps"][cap] = {
+            "points": {"scaled": len(scaled), **Counter(e["status"] for e in entries if e["status"] != "perf")},
+            "completion": {**completion(zinnia, ZINNIA, scaled), **completion(zkvm, ZKVMS, scaled)},
+            "time": time_comparison(zinnia, zkvm, scaled, copy_only) if zinnia and zkvm else {},
+            "time_by_group": {g: time_comparison(zinnia, zkvm, cs, copy_only) for g, cs in groups.items()}
+            if zinnia and zkvm else {},
+            "gates": gate_comparison(counts, scaled) if counts else {},
+        }
+    if reference_zinnia and reference_zkvm:
+        ref_z, ref_k = load(reference_zinnia), load(reference_zkvm)
+        cases = sorted(set(ref_z.records.get("zinnia_halo2", {})) | set(ref_z.records.get("zinnia_noir", {})))
+        copy_only = aggregate.data_movement_cases(ref_z)
+        report["caps"][REFERENCE_CAP] = {"points": {"scaled": len(cases)},
+                                         "completion": {**completion(ref_z, ZINNIA, cases),
+                                                        **completion(ref_k, ZKVMS, cases)},
+                                         "time": time_comparison(ref_z, ref_k, cases, copy_only),
+                                         "gates": gate_comparison(counts, cases) if counts else {}}
+    return report
+
+
+def fmt(summary: dict) -> str:
+    if not summary.get("n"):
+        return "n = 0"
+    low, high = summary["ci95"]
+    return (f"{summary['geomean']:.3g} [{low:.3g}, {high:.3g}] n = {summary['n']} "
+            f"(faster {summary['zinnia_faster']}, slower {summary['zinnia_slower']})")
+
+
+def markdown(report: dict) -> str:
+    lines = ["# NPBench/Pythran scaling study", ""]
+    for cap, part in sorted(report["caps"].items(), key=lambda kv: int(kv[0])):
+        lines += [f"## CAP {cap}", "", f"Points: {part['points']}", "", "| system | ok | not ok |", "|---|---|---|"]
+        for system, done in part["completion"].items():
+            lines.append(f"| {system} | {done['ok']}/{done['points']} | {done['not_ok'] or ''} |")
+        if part.get("time"):
+            lines += ["", "| Zinnia / zkVM | clock | geomean [95 % CI], points (headline) | copy-only |",
+                      "|---|---|---|---|"]
+            for key, comparison in part["time"].items():
+                z, k, clock = key.split("/")
+                lines.append(f"| {z} / {k} | {clock} | {fmt(comparison['headline'])} | {fmt(comparison['copy_only'])} |")
+        gates = (part.get("gates") or {}).get("summary")
+        if gates and gates.get("n"):
+            lines += ["", f"Noir gates, Zinnia / @delegate: geomean {gates['geomean']:.3g} over {gates['n']} of "
+                      f"{gates['points']} points (cheaper {gates['cheaper']}, equal {gates['equal']}, costlier "
+                      f"{gates['costlier']})."]
+        lines.append("")
+    return "\n".join(lines)
+
+
+def main(data: Path, zinnia_dirs: list[Path], zkvm_dirs: list[Path], count_files: list[Path],
+         out: Path | None, reference_zinnia: list[Path] | None = None,
+         reference_zkvm: list[Path] | None = None) -> int:
+    out = out or data / "analysis"
+    out.mkdir(parents=True, exist_ok=True)
+    report = analyze(data, zinnia_dirs, zkvm_dirs, count_files, reference_zinnia, reference_zkvm)
+    (out / "scaling_npb.json").write_text(json.dumps(report, indent=1, default=str) + "\n")
+    text = markdown(report)
+    (out / "scaling_npb.md").write_text(text)
+    print(text)
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - use `python -m benchmarking.scaling_npb analyze`
+    raise SystemExit("use: python -m benchmarking.scaling_npb analyze ...")
