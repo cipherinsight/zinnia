@@ -161,6 +161,28 @@ impl IRContext {
         }
     }
 
+    /// Record that the join of a runtime `if` binds `key`, assigned in both
+    /// arms and not bound before, in the enclosing scope, where the `if`
+    /// runs under `predicate`. In a loop body the loop may leave before the
+    /// `if`, that is a first binding as in [`Self::note_assignment`]. A name
+    /// already recorded keeps its record: an arm may have bound it only on
+    /// some of its paths, so the `if`'s predicate would claim too much.
+    pub fn note_join_binding(&mut self, key: &str, predicate: Option<&Value>) {
+        if self.possibly_unbound.last().is_some_and(|names| names.contains_key(key)) {
+            return;
+        }
+        self.note_assignment(key, predicate);
+    }
+
+    /// Forget the assignments recorded for `key`: the join of a runtime `if`
+    /// drops a name bound in one arm only, so it is unbound for Zinnia after
+    /// the `if`, and a later binding starts afresh.
+    pub fn forget_assignments(&mut self, key: &str) {
+        if let Some(names) = self.possibly_unbound.last_mut() {
+            names.remove(key);
+        }
+    }
+
     /// The predicates of the assignments to `key` when it may be unbound
     /// (see [`Self::note_assignment`]); it is bound where one of them held.
     pub fn possibly_unbound(&self, key: &str) -> Option<&[Value]> {

@@ -60,7 +60,7 @@ impl IRGenerator {
     /// array; `false` when rebinding `name` to `result` is equivalent (no
     /// other binding can observe the old object, or the value is immutable).
     pub(crate) fn update_in_place(&mut self, name: &str, result: &Value) -> bool {
-        let Some(current) = self.ctx.get(name) else { return false };
+        let Some(current) = self.usable_name_value(name) else { return false };
         // Views and detached copies of the array (or of the arrays a list
         // holds) see the update, whether it is written in place or rebinds
         // `name`.

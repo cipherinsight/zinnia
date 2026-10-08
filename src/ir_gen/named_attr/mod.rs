@@ -117,9 +117,14 @@ impl IRGenerator {
         if let Some(target_name) = target {
             // A method or attribute of a variable: the variable must be
             // bound here and have a known shape (`visit_load` checks the
-            // same for a bare name).
-            if self.ctx.exists(target_name) {
-                self.check_name_usable(target_name);
+            // same for a bare name). The methods look the variable up
+            // themselves, so a stand-in for arrays of different shapes is
+            // rejected even where the path would select one of them.
+            if let Some(value) = self.ctx.get(target_name) {
+                self.usable_name_value(target_name);
+                if let Some(reason) = self.builder.unknown_shape_reason_in(&value) {
+                    panic!("Using `{}` is not supported here: {}", target_name, reason);
+                }
             }
             if target_name == "copy" && matches!(member, "copy" | "deepcopy") {
                 return visited_args_orig.first().cloned().unwrap_or(Value::None);

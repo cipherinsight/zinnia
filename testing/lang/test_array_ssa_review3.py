@@ -676,3 +676,92 @@ def test_reading_the_cells_of_a_stale_array_is_still_rejected():
     source = H + '    t = np.flip(m)\n    m[0, 0] = 1\n    return t.shape[0] + t[0, 0]\n'
     with pytest.raises(ZinniaException, match=STALE):
         compile_kernel(source)
+
+
+# ── Found by fuzzing this branch's first commit ──────────────────────────
+#
+# - `name op= value` (and an element write) through a name rebound, in a
+#   branch, to an array of another shape wrote into the stand-in instead of
+#   the array the name holds there (the reviewer's `fuzz_rebind`, seeds 103
+#   and 202). Both now resolve the name to the array the path selects.
+# - A name bound in both arms of an `if` in a loop the loop may leave
+#   before the `if` was not recorded as possibly unbound; and the record of
+#   a name an `if` join drops (bound in one arm only) was kept, so a later
+#   binding inherited it (`fuzz_unbound.py`, seeds 601 and 603).
+
+REBIND_IN_BRANCH = {
+    "op= through an alias": H + '    if c:\n        m = x\n        m += 1\n    return x\n',
+    "op= then rebound": H + '    if c:\n        m = x\n        m += 1\n    m = x\n    return x\n',
+    "element write through an alias": H + '    if c:\n        m = x\n        m[0] = 100\n    m = x\n    return x\n',
+    "op= through a view": H + '    if c:\n        m = x[::2]\n        m += 1\n    return x\n',
+    "op= through asarray": H + '    if c:\n        m = np.asarray(x)\n        m += 1\n    x = np.array(x)\n    m = x + -2\n    return x\n',
+    "op= on a local copy": H + '    if c:\n        m = x * 1\n        m += 1\n        x[0] = m[1]\n    return x\n',
+}
+JOIN_IN_LOOP = LB + '    s = 0\n    for k in range(2):\n        if x[k] < 0:\n            continue\n        if x[0] > 0:\n            y = x[3]\n        else:\n            y = x[5]\n        s = s + y\n    return s + y\n'
+DROPPED_THEN_LOOP = LB + '    s = 0\n    for k0 in range(2):\n        if c:\n            for k1 in range(2):\n                w = x[5] - 1\n        for k2 in range(2):\n            if x[k2] > 3:\n                continue\n            w = x[3] + 3\n        s = s + w\n    return s\n'
+
+FUZZ_X0 = np.array([3, -1, 4, -6, 5, 9], dtype=np.int64)
+FUZZ_M0 = np.array([[1, -2, 3, 0], [-4, 5, -6, 2], [7, -8, 9, -1]], dtype=np.int64)
+FUZZ_UNBOUND_INPUTS = [(x, np.arange(12, dtype=np.int64).reshape(3, 4) - 5, c, d)
+                       for x in (FUZZ_X0, -np.abs(FUZZ_X0), np.full(6, 9, dtype=np.int64))
+                       for c in (False, True) for d in (False, True)]
+FUZZ_UNBOUND_PROGRAMS = {
+    'fz_unbound_601 #103': 'def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], c: Boolean, d: Boolean):\n    s = 0\n    y = x[:4] * 2\n    s = s + np.sum(y)\n    for k0 in range(3):\n        if x[k0] < 4:\n            continue\n        if c:\n            for k1 in range(2):\n                if x[k1] < 3:\n                    break\n                w = x[5] - 2\n                w = x[5] - 1\n                s = s + np.sum(y)\n            s = s + np.sum(y)\n        for k2 in range(3):\n            if x[k2] > 3:\n                continue\n            for k3 in range(1):\n                if x[k3] < 2:\n                    break\n                w = x[3] - -3\n                w = x[0] - 3\n            s = s + np.sum(w)\n        s = s + np.sum(w)\n    s = s + np.sum(y)\n    s = s + np.sum(w)\n    return s\n',
+    'fz_unbound_601 #353': 'def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], c: Boolean, d: Boolean):\n    s = 0\n    for k0 in range(2):\n        if x[k0] < 0:\n            continue\n        if x[0] > 0:\n            y = x[3] + 0\n        else:\n            y = x[0] + -3\n            y = x[5] + -2\n            y = x[3] + -2\n        s = s + np.sum(y)\n        y = x[5] + -2\n    s = s + np.sum(y)\n    return s\n',
+    'fz_unbound_601 #810': 'def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], c: Boolean, d: Boolean):\n    s = 0\n    for k0 in range(2):\n        if x[k0] < 3:\n            continue\n        if d:\n            w = x[3] - 1\n            s = s + np.sum(w)\n            y = x[2] + 1\n        else:\n            y = x[2] + 2\n    s = s + np.sum(y * 0 + 1)\n    return s\n',
+    'fz_unbound_601 #919': 'def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], c: Boolean, d: Boolean):\n    s = 0\n    for k0 in range(2):\n        if x[k0] < -4:\n            break\n        z = m[1] * 1\n        for k1 in range(3):\n            if x[k1] > -2:\n                break\n            if d:\n                z = m[1] * 2\n                z = m[1] * 2\n                z = m[0] * -1\n            else:\n                y = x[5] + 1\n                z = m[2] * -3\n            if d:\n                w = x[5] - 1\n                y = x[0] + 1\n            else:\n                y = x[4] + -3\n    s = s + np.sum(z)\n    s = s + np.sum(y)\n    return s\n',
+    'fz_unbound_601 #966': 'def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], c: Boolean, d: Boolean):\n    s = 0\n    y = x[5] + 3\n    y = x[0] + 3\n    for k0 in range(2):\n        if x[k0] < 2:\n            break\n        if d:\n            z = m[0] * 2\n            if d:\n                z = m[1] * 2\n        else:\n            if x[0] > 0:\n                y = x[3] + 0\n                z = m[2] * -1\n                y = x[2] + 2\n            z = m[0] * 3\n        s = s + np.sum(y * 0 + 1)\n        z = m[2] * 1\n    s = s + np.sum(y * 0 + 1)\n    s = s + np.sum(z)\n    return s\n',
+    'fz_unbound_603 #418': 'def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], c: Boolean, d: Boolean):\n    s = 0\n    for k0 in range(3):\n        if x[k0] > 0:\n            break\n        w = x[4] - -2\n        for k1 in range(3):\n            if x[k1] < -3:\n                break\n            if x[0] > 0:\n                z = m[2] * -3\n                s = s + np.sum(w)\n            else:\n                z = m[0] * 1\n                w = x[4] - 1\n            w = x[5] - 1\n        if c:\n            s = s + np.sum(z)\n    for k2 in range(2):\n        if x[k2] < 1:\n            continue\n        w = x[3] - -1\n        if x[0] > 0:\n            s = s + np.sum(z)\n    y = x[1] + 0\n    s = s + np.sum(w * 0 + 1)\n    s = s + np.sum(y)\n    return s\n',
+    'fz_unbound_603 #720': 'def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], c: Boolean, d: Boolean):\n    s = 0\n    for k0 in range(1):\n        if x[k0] > 5:\n            continue\n        z = m[0] * 2\n        for k1 in range(3):\n            if x[k1] > 0:\n                break\n            s = s + np.sum(z)\n            if d:\n                y = x[3] + 2\n            else:\n                y = x[1] + -1\n            s = s + np.sum(y * 0 + 1)\n        s = s + np.sum(z)\n    s = s + np.sum(y)\n    for k2 in range(1):\n        s = s + np.sum(y)\n        z = m[1] * 0\n    s = s + np.sum(z)\n    s = s + np.sum(y)\n    return s\n',
+}
+FUZZ_REBIND_PROGRAMS = {
+    'fz_rebind_103_noirram #1704': ('def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], i: Integer, j: Integer, c: Boolean, d: Boolean):\n    s = 0\n    x[x > 1] = -4\n    x[-6] += m[(i + 2) % 3, (j % 4 - 4)] + 2\n    a1 = np.expand_dims(x, 0)\n    np.copyto(x, -5, where=x < 0)\n    if c:\n        for k in range(2):\n            if x[k] > 3:\n                break\n            s = s + 6\n        if i > 1:\n            m = x[::2]\n            m += 1\n        else:\n            s = s + x[0] + 2\n    m = x + 1\n    x[(j % 6 - 6)] += -6\n    m[2] = m[(i % 6 - 6)] + -2\n    return s, x, m, a1\n', (5, 3, True, False)),
+    'fz_rebind_202_safe_ram #2669': ('def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], i: Integer, j: Integer, c: Boolean, d: Boolean):\n    s = 0\n    if c:\n        m = np.asarray(x)\n        m += 1\n    x = np.array(x)\n    if i > 1:\n        m = x * 1\n        m = m + 1\n    m = x + -2\n    x = x + 2\n    x = m + -1\n    s = s + 2\n    return s, x, m\n', (1, 2, True, False)),
+}
+
+
+def assert_never_wrong(source, *args):
+    """NumPy's values on every backend, or no proof where Python raises or
+    where Zinnia cannot follow it (never another value)."""
+    try:
+        expected, _ = numpy_outputs(source, *args)
+    except Exception:  # noqa: BLE001
+        assert_no_backend_proves(source, *args)
+        return
+    try:
+        program = compile_kernel(source)
+    except ZinniaException:
+        return
+    satisfied, values, _ = run_mock_layout(program, *args)
+    if satisfied:
+        assert values == expected
+        assert_all_backends_match_numpy(source, *args)
+
+
+@pytest.mark.parametrize("name", list(REBIND_IN_BRANCH))
+@pytest.mark.parametrize("c", [False, True])
+def test_an_update_through_a_name_rebound_in_a_branch_reaches_the_array(name, c):
+    assert_all_backends_match_numpy(REBIND_IN_BRANCH[name], X6, M34, c)
+
+
+@pytest.mark.parametrize("x", [X6, X6_POSITIVE, -np.abs(X6)])
+def test_a_name_bound_by_both_arms_in_a_skippable_loop_is_recorded(x):
+    assert_never_wrong(JOIN_IN_LOOP, x, True)
+
+
+@pytest.mark.parametrize("x", [X6, np.full(6, 9, dtype=np.int64), -np.abs(X6)])
+@pytest.mark.parametrize("c", [False, True])
+def test_a_name_dropped_at_a_join_starts_a_new_record(x, c):
+    assert_never_wrong(DROPPED_THEN_LOOP, x, c)
+
+
+@pytest.mark.parametrize("name", list(FUZZ_UNBOUND_PROGRAMS))
+@pytest.mark.parametrize("inputs", range(len(FUZZ_UNBOUND_INPUTS)))
+def test_fuzz_unbound_program_is_never_wrong(name, inputs):
+    assert_never_wrong(FUZZ_UNBOUND_PROGRAMS[name], *FUZZ_UNBOUND_INPUTS[inputs])
+
+
+@pytest.mark.parametrize("name", list(FUZZ_REBIND_PROGRAMS))
+def test_fuzz_rebind_program_is_never_wrong(name):
+    source, scalars = FUZZ_REBIND_PROGRAMS[name]
+    assert_never_wrong(source, FUZZ_X0, FUZZ_M0, *scalars)

@@ -854,12 +854,16 @@ impl IRGenerator {
                     let then_val = t.value.clone();
                     let else_val = e.value.clone();
                     let merged = self.merge_binding(condition, &then_val, &else_val);
+                    let predicate = self.builder.write_predicate().cloned();
+                    self.ctx.note_join_binding(&name, predicate.as_ref());
                     self.ctx.set(&name, merged);
                 }
                 (Some(one), None) | (None, Some(one)) => {
                     if self.ctx.exists(&name) {
                         let val = one.value.clone();
                         self.ctx.set(&name, val);
+                    } else {
+                        self.ctx.forget_assignments(&name);
                     }
                 }
                 (None, None) => unreachable!(),
@@ -2298,10 +2302,9 @@ impl IRGenerator {
 
     /// `name[indices] = value` for any subscriptable value bound to `name`.
     fn assign_to_subscript_of_name(&mut self, var_name: &str, indices: Vec<SliceIndex>, value: Value) {
-        let Some(current) = self.ctx.get(var_name) else {
+        let Some(current) = self.usable_name_value(var_name) else {
             panic!("Variable `{}` not found", var_name);
         };
-        self.check_name_usable(var_name);
         self.builder.check_assignment(&current, &value);
         let updated = match &current {
             Value::Tuple(_) => panic!("'tuple' object does not support item assignment"),

@@ -33,16 +33,21 @@ impl IRGenerator {
         self.builder.ir_assert(&bound);
     }
 
-    /// Check a use of the variable `name` that does not read it through a
-    /// bare name (a method or attribute of it, a write to an element of it):
-    /// the name must be bound, and its array must have a known shape (see
-    /// `detached_copies::merge_of_different_shapes`). Its cells may be
-    /// stale; a read of them is rejected by the store.
-    pub(crate) fn check_name_usable(&mut self, name: &str) {
+    /// The value of the variable `name` for a use that does not read it
+    /// through a bare name (a method or attribute of it, a write to an
+    /// element of it, `name op= value`): the name must be bound, and its
+    /// array must have a known shape here. A stand-in for arrays of
+    /// different shapes is resolved to the array the current path selects
+    /// (see `detached_copies::resolve_different_shapes`); otherwise the use
+    /// is a compile error. The cells may be stale; a read of them is
+    /// rejected by the store. `None` when the name is not bound at all.
+    pub(crate) fn usable_name_value(&mut self, name: &str) -> Option<Value> {
+        let value = self.ctx.get(name)?;
         self.check_bound(name);
-        let Some(value) = self.ctx.get(name) else { return };
+        let value = self.resolve_different_shapes(value);
         if let Some(reason) = self.builder.unknown_shape_reason_in(&value) {
             panic!("Using `{}` is not supported here: {}", name, reason);
         }
+        Some(value)
     }
 }
