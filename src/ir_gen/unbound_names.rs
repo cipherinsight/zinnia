@@ -50,4 +50,14 @@ impl IRGenerator {
         }
         Some(value)
     }
+
+    /// Whether `name` is bound to a stand-in for arrays of different shapes
+    /// that [`Self::usable_name_value`] resolved to `resolved`. A write
+    /// through the name then goes into `resolved` in place, and the name
+    /// stays bound to the stand-in: rebinding it to `resolved` would drop
+    /// the other paths' arrays.
+    pub(crate) fn binds_stand_in(&self, name: &str, resolved: &Value) -> bool {
+        let binding = self.ctx.get(name).as_ref().and_then(super::detached_copies::array_segment);
+        binding.is_some() && binding != super::detached_copies::array_segment(resolved)
+    }
 }

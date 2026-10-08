@@ -700,8 +700,10 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
   - Found by fuzzing the first commit of the branch (the reviewer's `fuzz_rebind` and a new
     `fuzz_unbound.py` in `array-ssa-data/fix3/`): `name op= value` and element writes through
     a name rebound in a branch to an array of another shape went to the stand-in; they now
-    resolve the name to the array the path selects (`usable_name_value`), and are rejected
-    where the path does not decide it. A name bound in both arms of an `if` in a loop the
+    resolve the name to the array the path selects (`usable_name_value`) and write it in
+    place, leaving the name bound to the stand-in (rebinding it to the resolved array would
+    drop the other paths' arrays: that first version was wrong output, caught by the same
+    fuzzers), and are rejected where the path does not decide it. A name bound in both arms of an `if` in a loop the
     loop may leave before the `if` is recorded at the join (`note_join_binding`), and the
     record of a name the join drops (bound in one arm only) is forgotten, so a later
     binding does not inherit it. Zinnia still drops such a name at the join: where Python

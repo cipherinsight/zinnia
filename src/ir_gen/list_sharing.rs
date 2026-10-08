@@ -89,7 +89,9 @@ impl IRGenerator {
                     return false;
                 }
                 let written = super::named_attr::write_into(&mut self.builder, result, &current);
-                self.ctx.set(name, written);
+                if !self.binds_stand_in(name, &current) {
+                    self.ctx.set(name, written);
+                }
                 true
             }
             Value::DynamicNDArray(data) => {

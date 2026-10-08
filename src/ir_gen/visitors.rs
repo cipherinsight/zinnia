@@ -2321,6 +2321,15 @@ impl IRGenerator {
             }
         };
         self.note_array_write(&current);
+        if self.binds_stand_in(var_name, &current) {
+            if super::detached_copies::array_segment(&updated) != super::detached_copies::array_segment(&current) {
+                panic!(
+                    "this assignment to an element of `{var_name}`, a name bound to arrays of \
+                     different shapes on different paths, is not supported"
+                );
+            }
+            return;
+        }
         self.note_array_moved(&current, &updated);
         self.note_array_write(&updated);
         self.rebind_subscript_target(var_name, &current, updated);

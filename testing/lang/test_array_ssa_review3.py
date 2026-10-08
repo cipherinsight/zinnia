@@ -696,6 +696,14 @@ REBIND_IN_BRANCH = {
     "op= through a view": H + '    if c:\n        m = x[::2]\n        m += 1\n    return x\n',
     "op= through asarray": H + '    if c:\n        m = np.asarray(x)\n        m += 1\n    x = np.array(x)\n    m = x + -2\n    return x\n',
     "op= on a local copy": H + '    if c:\n        m = x * 1\n        m += 1\n        x[0] = m[1]\n    return x\n',
+    # The name keeps standing for both arrays after the branch.
+    "element op= on a local copy, then a use of the base": H + '    if c:\n        x = np.array(m)\n        x[-1] += 5\n        m[0, 0] = x[-1, 0]\n    return m\n',
+    "element write, then a merge in a later branch": H + '    if c:\n        x = m * 1\n        x[1] = -9\n    else:\n        m = m + 1\n    return m\n',
+}
+# Writes through the name must not rebind it to the array of one path.
+REBIND_IN_BRANCH_USED_AFTER = {
+    "element op=": H + '    if c:\n        x = np.array(m)\n        x[-1] += 5\n    return x\n',
+    "op=": H + '    if c:\n        x = m * 1\n        x += 1\n    return x\n',
 }
 JOIN_IN_LOOP = LB + '    s = 0\n    for k in range(2):\n        if x[k] < 0:\n            continue\n        if x[0] > 0:\n            y = x[3]\n        else:\n            y = x[5]\n        s = s + y\n    return s + y\n'
 DROPPED_THEN_LOOP = LB + '    s = 0\n    for k0 in range(2):\n        if c:\n            for k1 in range(2):\n                w = x[5] - 1\n        for k2 in range(2):\n            if x[k2] > 3:\n                continue\n            w = x[3] + 3\n        s = s + w\n    return s\n'
@@ -742,6 +750,12 @@ def assert_never_wrong(source, *args):
 @pytest.mark.parametrize("c", [False, True])
 def test_an_update_through_a_name_rebound_in_a_branch_reaches_the_array(name, c):
     assert_all_backends_match_numpy(REBIND_IN_BRANCH[name], X6, M34, c)
+
+
+@pytest.mark.parametrize("name", list(REBIND_IN_BRANCH_USED_AFTER))
+def test_a_name_written_through_in_a_branch_still_stands_for_both_arrays(name):
+    with pytest.raises(ZinniaException, match=SHAPES):
+        compile_kernel(REBIND_IN_BRANCH_USED_AFTER[name])
 
 
 @pytest.mark.parametrize("x", [X6, X6_POSITIVE, -np.abs(X6)])
