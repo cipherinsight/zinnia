@@ -194,14 +194,28 @@ fn plans(group: &Group, cx: &Context, offer: impl Fn(&Demand, &UnitCosts) -> Vec
         return Vec::new();
     }
     let demand = demand(group, cx);
+    let range = narrow_range(group, cx);
     offer(&demand, &cost::unit_costs(cx.target))
         .into_iter()
-        .map(|(plan, cost)| plan_candidate(group, demand.clone(), plan, cost))
+        .map(|(plan, cost)| {
+            let mut candidate = plan_candidate(group, demand.clone(), plan, cost, range.map(|(lo, hi, _)| (lo, hi)));
+            candidate.pre.extend(range.map(|(_, _, fact)| Requirement::Fact(fact)));
+            candidate
+        })
         .collect()
 }
 
-/// A candidate that lowers every lane of `group` by `plan`.
-fn plan_candidate(group: &Group, demand: Demand, plan: Plan, cost: u64) -> Candidate {
+/// The range of the sort's elements when the layer establishes one
+/// narrower than the int64 window (`Context::element_range`): the plans
+/// then bound each value they take to be an element into it
+/// (`emit::Elements::bound`), so that their comparisons are narrow.
+fn narrow_range(group: &Group, cx: &Context) -> Option<(i64, i64, crate::lower::Fact)> {
+    cx.element_range(&group.shared).filter(|&(lo, hi, _)| (hi as i128 - lo as i128) < 1i128 << 62)
+}
+
+/// A candidate that lowers every lane of `group` by `plan` (bounding the
+/// values it takes to be elements into `range`, when given).
+fn plan_candidate(group: &Group, demand: Demand, plan: Plan, cost: u64, range: Option<(i64, i64)>) -> Candidate {
     Candidate {
         pre: Vec::new(),
         post: group.lanes.iter().map(|lane| Requirement::Lane(lane.stmt)).collect(),
@@ -211,6 +225,7 @@ fn plan_candidate(group: &Group, demand: Demand, plan: Plan, cost: u64) -> Candi
             payloads: payload_arrays(group),
             demand,
             plan,
+            range,
             sort: None,
         }),
     }
@@ -290,6 +305,9 @@ struct SortEmitter {
     payloads: Vec<Vec<StmtId>>,
     demand: Demand,
     plan: Plan,
+    /// The elements' established range (`narrow_range`), when the plan
+    /// relies on it.
+    range: Option<(i64, i64)>,
     sort: Option<LoweredSort>,
 }
 
@@ -309,7 +327,7 @@ impl Emitter for SortEmitter {
                 Payload { slots, dtype }
             })
             .collect();
-        self.sort = Some(LoweredSort::new(b, &self.demand, &self.plan, &elements, payloads));
+        self.sort = Some(LoweredSort::new(b, &self.demand, &self.plan, &elements, payloads, self.range));
     }
 
     fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, lane: &Lane) -> Value {
@@ -335,6 +353,8 @@ impl Emitter for SortEmitter {
 struct LoweredSort {
     elements: Vec<Value>,
     dtype: NumberType,
+    /// The elements' established range (`narrow_range`).
+    range: Option<(i64, i64)>,
     /// Values and indices by constant rank.
     values: HashMap<usize, Value>,
     indices: HashMap<usize, Value>,
@@ -350,13 +370,21 @@ struct LoweredSort {
 }
 
 impl LoweredSort {
-    fn new(b: &mut IRBuilder, demand: &Demand, plan: &Plan, elements: &[Value], mut payloads: Vec<Payload>) -> LoweredSort {
+    fn new(
+        b: &mut IRBuilder,
+        demand: &Demand,
+        plan: &Plan,
+        elements: &[Value],
+        mut payloads: Vec<Payload>,
+        range: Option<(i64, i64)>,
+    ) -> LoweredSort {
         let dtype = if elements.iter().any(|v| matches!(v, Value::Float(_))) {
             NumberType::Float
         } else {
             NumberType::Integer
         };
         let mut sort = LoweredSort {
+            range,
             elements: elements.to_vec(),
             dtype,
             values: HashMap::new(),
@@ -472,7 +500,7 @@ impl LoweredSort {
     }
 
     fn as_elements(&self) -> Elements<'_> {
-        Elements { values: &self.elements, dtype: self.dtype }
+        Elements { values: &self.elements, dtype: self.dtype, range: self.range }
     }
 
     /// The elements' segment for reads at hinted indices, built once.

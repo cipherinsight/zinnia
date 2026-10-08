@@ -22,11 +22,36 @@ use super::cost::Network;
 pub(super) struct Elements<'a> {
     pub values: &'a [Value],
     pub dtype: NumberType,
+    /// Bounds every element's value (or float code) lies in on every
+    /// accepted witness, when the layer established them (the array claim
+    /// `ElementsWithin`, a precondition of the plan), else `None`.
+    pub range: Option<(i64, i64)>,
 }
 
 impl Elements<'_> {
     fn len(&self) -> usize {
         self.values.len()
+    }
+
+    /// Bound `v`, a value the plan takes to be an element (a hinted sorted
+    /// value, a read at a hinted index), into the elements' range, when one
+    /// is established: one narrow check `0 <= v - lo <= hi - lo`, after
+    /// which every comparison `v` takes part in is narrow on both backends
+    /// (halo2-base sizes it by the proven ranges, Noir by the interval the
+    /// check deposits). Complete: the value the constraints admit is an
+    /// element, inside the range on every accepted witness. Sound: it only
+    /// adds a constraint.
+    pub(super) fn bound(&self, b: &mut IRBuilder, v: &Value) {
+        let Some((lo, hi)) = self.range else { return };
+        let code = Value::Integer(crate::types::ScalarValue::new(None, v.stmt_id()));
+        let shifted = if lo == 0 {
+            code
+        } else {
+            let lo = b.ir_constant_int(lo);
+            b.ir_sub_i(&code, &lo)
+        };
+        let size = b.ir_constant_int(hi - lo + 1);
+        b.ir_assert_u128_lt(&shifted, &size);
     }
 
     /// Bits that hold every index `0..n` (at least one).
@@ -75,7 +100,7 @@ pub(super) struct Payload {
 impl Payload {
     /// Exchange slots `i < j` when `swap` (the key at `j` is the smaller).
     pub(super) fn exchange(&mut self, b: &mut IRBuilder, swap: &Value, i: usize, j: usize) {
-        let carried = Elements { values: &self.slots, dtype: self.dtype };
+        let carried = Elements { values: &self.slots, dtype: self.dtype, range: None };
         let low = carried.select(b, swap, &self.slots[j], &self.slots[i]);
         let high = carried.select(b, swap, &self.slots[i], &self.slots[j]);
         self.slots[i] = low;
@@ -243,6 +268,7 @@ impl ElementMemory {
         let n = b.ir_constant_int(elements.len() as i64);
         b.ir_assert_u128_lt(&p, &n);
         let value = crate::helpers::segment::read_typed(b, self.segment, &p, elements.dtype);
+        elements.bound(b, &value);
         Key { value, index: p }
     }
 }
@@ -355,6 +381,7 @@ pub(super) fn pinned_run(
 /// also makes `v` equal to some element, so `v` lies in the window.
 pub(super) fn order_statistic(b: &mut IRBuilder, elements: &Elements, rank: &Value) -> Value {
     let v = b.ir_hint(HintKind::SortedValues, elements.values, rank);
+    elements.bound(b, &v);
     let below: Vec<Value> = elements.values.iter().map(|a| elements.less(b, a, &v)).collect();
     let ties: Vec<Value> = elements.values.iter().map(|a| elements.equal(b, a, &v)).collect();
     let below = count(b, &below);
@@ -399,6 +426,7 @@ pub(super) fn extreme_value(b: &mut IRBuilder, elements: &Elements, largest: boo
     let n = elements.len();
     let rank = b.ir_constant_int(if largest { n as i64 - 1 } else { 0 });
     let v = b.ir_hint(HintKind::SortedValues, elements.values, &rank);
+    elements.bound(b, &v);
     let mut product: Option<Value> = None;
     let mut bits: Vec<Value> = Vec::new();
     for a in elements.values {
@@ -494,7 +522,7 @@ pub(crate) fn masked_order_statistic(
     dtype: NumberType,
     rank: &Value,
 ) -> Value {
-    let elements = Elements { values: elements, dtype };
+    let elements = Elements { values: elements, dtype, range: None };
     let mut operands = elements.values.to_vec();
     operands.extend(active.iter().cloned());
     let v = b.ir_hint(HintKind::MaskedSortedValues, &operands, rank);

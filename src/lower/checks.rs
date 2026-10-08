@@ -501,3 +501,25 @@ pub fn kept_for_backend(graph: &IRGraph, checks: &[ProgramCheck], target: Target
         .map(|c| c.stmt)
         .collect()
 }
+
+/// The bounds the checks state for each value (the tightest of each side),
+/// from their forms holding everywhere: `Within`, `InRange` with a constant
+/// bound, `NonNegative`.
+pub fn stated_ranges<'c>(forms: impl IntoIterator<Item = &'c Fact>) -> HashMap<StmtId, (Option<i64>, Option<i64>)> {
+    let mut ranges: HashMap<StmtId, (Option<i64>, Option<i64>)> = HashMap::new();
+    for form in forms.into_iter().filter(|f| f.scope == Scope::Everywhere) {
+        let (x, lo, hi) = match form.claim {
+            Claim::Within { x, lo, hi } => (x, lo, hi),
+            Claim::InRange { x, lo, hi: Bound::Const(h) } => (x, Some(lo), h.checked_sub(1)),
+            Claim::NonNegative(x) => (x, Some(0), None),
+            _ => continue,
+        };
+        let entry = ranges.entry(x).or_insert((None, None));
+        entry.0 = entry.0.max(lo);
+        entry.1 = match (entry.1, hi) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+    }
+    ranges
+}

@@ -130,7 +130,7 @@ impl Construction for ForcedPlan {
     fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
         let demand = super::demand(group, cx);
         let plan = plan_for(self.0, &demand);
-        vec![super::plan_candidate(group, demand, plan, 0)]
+        vec![super::plan_candidate(group, demand, plan, 0, None)]
     }
 }
 

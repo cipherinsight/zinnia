@@ -40,6 +40,7 @@ use super::facts::FreeFacts;
 use super::forcing::Forcing;
 use super::graph::{CellSource, Fact, Group, GroupId, Lane, Requirement, VersionLine};
 use super::select::{self, justifies, Node, Problem};
+use super::simplify::Decided;
 
 /// The array lowering pass for one compile target.
 pub struct ArrayLowering {
@@ -178,12 +179,14 @@ pub fn lower_with(
     let users = users_of(graph);
     let lane_group: HashMap<StmtId, GroupId> =
         groups.iter().flat_map(|g| g.lanes.iter().map(move |l| (l.stmt, g.id))).collect();
+    let stated = checks::stated_ranges(program_checks.iter().flat_map(|c| &c.forms));
     let cx = Context {
         target,
         graph,
         groups: &groups,
         facts: &facts,
         checks: &program_checks,
+        stated: &stated,
         users: &users,
         lane_group: &lane_group,
         alone: options.local,
@@ -235,7 +238,24 @@ pub fn lower_with(
     let mut dropped = freely_proven;
     dropped.extend(unselected_checks(&nodes, &selected));
     let in_place = checks_in_place_of(graph, &nodes, &selected, &program_checks, &dropped);
-    Some(emit(graph, &groups, &direct, nodes, &selected, &dropped, &in_place))
+    let emitted_checks: Vec<Fact> = selected
+        .iter()
+        .filter_map(|&i| match nodes[i].kind {
+            NodeKind::Check(fact) => Some(fact),
+            _ => None,
+        })
+        .collect();
+    let decided = Decided::new(graph, &facts, &program_checks, &dropped, &emitted_checks);
+    Some(emit(graph, &groups, &direct, nodes, &selected, &Rewrites { dropped: &dropped, in_place: &in_place, decided: &decided }))
+}
+
+/// What the emission changes besides lowering the placeholders: the
+/// program checks it drops, the checks it emits in their place, and the
+/// statements the established facts decide (`super::simplify`).
+struct Rewrites<'a> {
+    dropped: &'a HashSet<StmtId>,
+    in_place: &'a HashMap<StmtId, Vec<Fact>>,
+    decided: &'a Decided<'a>,
 }
 
 /// Where each selected check stands that replaces dropped program checks
@@ -860,9 +880,9 @@ fn emit(
     direct: &HashMap<StmtId, StmtId>,
     nodes: Vec<NodeEntry>,
     selected: &[usize],
-    dropped: &HashSet<StmtId>,
-    in_place: &HashMap<StmtId, Vec<Fact>>,
+    rewrites: &Rewrites,
 ) -> IRGraph {
+    let Rewrites { dropped, in_place, decided } = rewrites;
     let selected_set: HashSet<usize> = selected.iter().copied().collect();
     let mut lane_producer: HashMap<StmtId, usize> = HashMap::new();
     let mut state = EmitState {
@@ -977,6 +997,8 @@ fn emit(
                         }
                     }
                     Value::None
+                } else if let Some(value) = decided.replacement(&mut b, s, &lookup) {
+                    value
                 } else {
                     let stmt = &graph.stmts[s as usize];
                     let args: Vec<Value> = stmt.arguments.iter().map(|a| lookup[a].clone()).collect();

@@ -43,6 +43,7 @@ pub mod permutation;
 mod report;
 pub mod scatter;
 pub mod select;
+mod simplify;
 pub mod sort;
 pub mod stats;
 #[cfg(test)]

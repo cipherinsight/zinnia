@@ -110,7 +110,7 @@ impl Emitter for SortedInputEmitter {
             (PAYLOAD, Some(r)) => cx.value(lane.own[r as usize]),
             (COUNT_AT_MOST | COUNT_BELOW, _) => {
                 let values = cx.values(&self.elements);
-                let elements = Elements { values: &values, dtype: dtype_of(&values) };
+                let elements = Elements { values: &values, dtype: dtype_of(&values), range: None };
                 let e = cx.value(lane.own[0]);
                 super::counts::count_query(b, &elements, &e, lane.output == COUNT_AT_MOST)
             }

@@ -107,6 +107,9 @@ pub struct Context<'a> {
     pub(super) facts: &'a FreeFacts<'a>,
     /// The program's checks (none under `ZINNIA_ABLATE_LAYER_FACTS`).
     pub(super) checks: &'a [super::checks::ProgramCheck],
+    /// The bounds the program's checks state, per value
+    /// (`checks::stated_ranges`).
+    pub(super) stated: &'a HashMap<StmtId, (Option<i64>, Option<i64>)>,
     pub(super) users: &'a HashMap<StmtId, Vec<StmtId>>,
     pub(super) lane_group: &'a HashMap<StmtId, GroupId>,
     /// Price every group as if it were the only one (the local selection,
@@ -139,6 +142,36 @@ impl Context<'_> {
         stated(fact)
             || (fact.claim.is_array_claim()
                 && super::array_facts::basis_facts(fact).is_some_and(|basis| basis.iter().all(stated)))
+    }
+
+    /// The narrowest `[lo, hi]` holding every value of `stmts` on every
+    /// accepted witness that the program's checks and the free bounds
+    /// establish (each value bounded on both sides), with the array claim
+    /// `ElementsWithin` that states it; `None` when some value is unbounded
+    /// on a side, or array claims are off. A construction that relies on
+    /// the range lists the fact among its preconditions.
+    pub fn element_range(&self, stmts: &[StmtId]) -> Option<(i64, i64, Fact)> {
+        if !super::array_facts::enabled() || stmts.is_empty() {
+            return None;
+        }
+        let mut hull: Option<(i64, i64)> = None;
+        for &x in stmts {
+            let (stated_lo, stated_hi) = self.stated.get(&x).copied().unwrap_or((None, None));
+            let (free_lo, free_hi) = self.facts.bounds_of(x);
+            let lo = stated_lo.max(free_lo)?;
+            let hi = match (stated_hi, free_hi) {
+                (Some(a), Some(b)) => a.min(b),
+                (a, b) => a.or(b)?,
+            };
+            hull = Some(hull.map_or((lo, hi), |(l, h)| (l.min(lo), h.max(hi))));
+        }
+        let (lo, hi) = hull?;
+        let fact = Fact::everywhere(super::graph::Claim::ElementsWithin {
+            list: super::graph::ListId::of_stmts(stmts),
+            lo: Some(lo),
+            hi: Some(hi),
+        });
+        self.established(&fact).then_some((lo, hi, fact))
     }
 
     pub fn stmt(&self, id: StmtId) -> &IRStatement {

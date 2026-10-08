@@ -347,6 +347,9 @@ impl Claim {
             (InRange { x, lo, .. }, NonNegative(y)) => x == y && lo >= 0,
             (InRange { x, lo, .. }, NonZero(y)) => x == y && lo >= 1,
             (Within { x, lo, .. }, NonNegative(y)) => x == y && lo.is_some_and(|l| l >= 0),
+            (NonNegative(x), Within { x: y, lo, hi: None }) if super::array_facts::enabled() => {
+                x == y && lo.is_none_or(|l| l <= 0)
+            }
             (Within { x, lo, hi }, NonZero(y)) => x == y && (lo.is_some_and(|l| l >= 1) || hi.is_some_and(|h| h <= -1)),
             (Equal(a, b), Equal(c, d)) => (a, b) == (c, d) || (a, b) == (d, c),
             (Ordered { x, y, strict }, Ordered { x: x2, y: y2, strict: strict2 }) => {

@@ -105,6 +105,17 @@ impl<'a> FreeFacts<'a> {
         }
     }
 
+    /// Whether free facts are on (not `ZINNIA_ABLATE_LAYER_FACTS`).
+    pub fn enabled(&self) -> bool {
+        !self.disabled
+    }
+
+    /// The least and greatest value of an integer statement, each when
+    /// known.
+    pub fn bounds_of(&self, stmt: StmtId) -> (Option<i64>, Option<i64>) {
+        (self.min(stmt), self.max(stmt))
+    }
+
     /// The least value of an integer statement, when known.
     fn min(&self, stmt: StmtId) -> Option<i64> {
         if self.disabled {
