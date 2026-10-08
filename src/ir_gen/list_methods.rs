@@ -302,12 +302,17 @@ impl IRGenerator {
         if let (Some(target), Some(Value::List(data) | Value::Tuple(data))) =
             (args.first(), self.ctx.get(var))
         {
-            let start = args.get(1).and_then(|a| a.int_val()).unwrap_or(0) as usize;
-            // Generate dynamic index: find first match after start
+            // `list.index(x, start, stop)` searches `list[start:stop]`
+            // (Python's slice bounds: negative from the end, clamped).
+            let len = data.values.len() as i64;
+            let bound = |position: i64| if position < 0 { (position + len).max(0) } else { position.min(len) };
+            let start = bound(crate::helpers::static_args::static_int_arg(args.get(1), 0, "list.index: `start`"));
+            let stop = bound(crate::helpers::static_args::static_int_arg(args.get(2), len, "list.index: `stop`"));
+            // Generate dynamic index: find first match in [start, stop)
             let mut found = self.builder.ir_constant_bool(false);
             let mut answer = self.builder.ir_constant_int(0);
             for (i, elem) in data.values.iter().enumerate() {
-                if i < start {
+                if (i as i64) < start || (i as i64) >= stop {
                     continue;
                 }
                 let eq = self.builder.ir_equal_i(elem, target);

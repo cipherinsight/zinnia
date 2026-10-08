@@ -120,7 +120,7 @@ pub fn try_apply_sort(
     // The available `is_sorted` vocabulary is whole-array/flattened. Axis-local
     // N-D sort is only row/column-local, so do not claim that global fact.
     if !argsort && result_shape_is_globally_sorted(&result) {
-        b.state_sorted(&result, "sort_is_sorted");
+        b.state_array_fact(&result, "sort_is_sorted");
     }
     Some(result)
 }
@@ -294,8 +294,6 @@ pub fn try_apply_take(
     }
 
     let result = build_static_array_from_flat(b, out, out_shape, dtype);
-    if let (Some(in_vid), Some(out_vid)) = (arr.value_id(), result.value_id()) {
-        crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
-    }
+    crate::optim::resolver::relay_forall_eq_const_from_input(b, &arr, &result);
     Some(result)
 }

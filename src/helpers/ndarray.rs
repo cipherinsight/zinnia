@@ -262,9 +262,7 @@ pub fn subscript_with_index_array(b: &mut IRBuilder, val: &Value, idx: &Value) -
             // The selection is an ndarray: as the nested list it is built
             // as, `2 * v[[0, 2]]` repeated it instead of doubling.
             let out = super::static_array::base::to_static_array(b, &out).unwrap_or(out);
-            if let (Some(input), Some(output)) = (val.value_id(), out.value_id()) {
-                crate::optim::resolver::relay_forall_eq_const_from_input(b, input, output);
-            }
+            crate::optim::resolver::relay_forall_eq_const_from_input(b, &val, &out);
             return Some(out);
         }
     }

@@ -5,7 +5,6 @@
 //! output-bound, and deposits it on `output_vid`. All honour the
 //! `ZINNIA_REQ_DISABLE` kill switch via [`super::req_disabled`].
 
-use std::collections::HashMap;
 
 use super::intervals::{aggregate_element_bounds, derive_float_bounds_from_facts};
 use super::req_disabled;
@@ -543,14 +542,17 @@ pub fn relay_prod_output_interval_int(
     true
 }
 
-/// Relay `forall_eq_const(in, k)` for `k ∈ {0, 1}` from `input_vid` to
-/// `output_vid` by firing the corresponding `zeros_content` / `ones_content`
+/// Relay `forall_eq_const(in, k)` for `k ∈ {0, 1}` from `input` to
+/// `output` by stating the corresponding `zeros_content` / `ones_content`
 /// op contract on the output.
 ///
-/// Used by shape-preserving / element-replicating ops (`tile`, `repeat`, and
-/// — once new cards land — `concatenate`, `reshape`, `transpose`, `slice`)
-/// to forward the content fact that downstream reductions (`sum`, `prod`,
-/// `mean`) need for compile-time specialization.
+/// Used by shape-preserving / element-replicating ops (`tile`, `repeat`,
+/// `reshape`, `transpose`, slices, ...) to forward the content fact that
+/// downstream reductions (`sum`, `prod`, `mean`) need for compile-time
+/// specialization. The input's fact is not proved once the input was
+/// written since it was stated, and the output's fact is stated with a
+/// record of what the output holds now, so it lapses when the output (or an
+/// array sharing its storage) is written (`builder/array_facts.rs`).
 ///
 /// Returns `true` if a content fact was relayed, `false` otherwise. The
 /// `k = 0` probe is tried first; in the pathological case where both
@@ -559,82 +561,49 @@ pub fn relay_prod_output_interval_int(
 /// declaration order.
 pub fn relay_forall_eq_const_from_input(
     b: &mut crate::builder::IRBuilder,
-    input_vid: crate::types::ValueId,
-    output_vid: crate::types::ValueId,
+    input: &crate::types::Value,
+    output: &crate::types::Value,
 ) -> bool {
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
-    use crate::optim::prove::ProveOutcome;
-
-    if req_disabled() {
-        return false;
-    }
-    let pred_zero = ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(input_vid)),
-            ContractTerm::LitInt(0),
-        ],
-    };
-    if matches!(b.prove(&pred_zero), ProveOutcome::Proved) {
-        b.fire_contract("zeros_content", output_vid, &HashMap::new());
-        return true;
-    }
-    let pred_one = ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(input_vid)),
-            ContractTerm::LitInt(1),
-        ],
-    };
-    if matches!(b.prove(&pred_one), ProveOutcome::Proved) {
-        b.fire_contract("ones_content", output_vid, &HashMap::new());
-        return true;
-    }
-    false
+    relay_forall_eq_const_from_all_inputs(b, std::slice::from_ref(input), output)
 }
 
 /// Multi-input sibling of [`relay_forall_eq_const_from_input`]. Emits a
-/// content fact on `output_vid` only when *every* `input_vid` provably
-/// satisfies `forall_eq_const(in_i, k)` for the same `k ∈ {0, 1}`. Used by
+/// content fact on `output` only when *every* input provably satisfies
+/// `forall_eq_const(in_i, k)` for the same `k ∈ {0, 1}`. Used by
 /// element-union ops (`concatenate`, `stack`, `vstack`, `hstack`, `dstack`,
 /// `column_stack`) where the output's elements are exactly the union of the
 /// inputs' elements — so a uniform-constant output requires uniform-constant
 /// inputs at the same value.
 ///
-/// Returns `true` if a content fact was emitted. Empty `input_vids` returns
-/// `false` (no inputs, no derivation possible).
+/// Returns `true` if a content fact was emitted. No inputs, or an input or
+/// output without a value id, returns `false` (no derivation possible).
 pub fn relay_forall_eq_const_from_all_inputs(
     b: &mut crate::builder::IRBuilder,
-    input_vids: &[crate::types::ValueId],
-    output_vid: crate::types::ValueId,
+    inputs: &[crate::types::Value],
+    output: &crate::types::Value,
 ) -> bool {
     use crate::optim::predicates::formula::{ContractTerm, ContractVar};
     use crate::optim::prove::ProveOutcome;
 
-    if req_disabled() {
+    if req_disabled() || output.value_id().is_none() {
         return false;
     }
+    let Some(input_vids) = inputs.iter().map(|v| v.value_id()).collect::<Option<Vec<_>>>() else {
+        return false;
+    };
     if input_vids.is_empty() {
         return false;
     }
-    for k in &[0i64, 1i64] {
+    for (k, contract) in [(0i64, "zeros_content"), (1i64, "ones_content")] {
         let all_match = input_vids.iter().all(|&vid| {
             let term = ContractTerm::PredicateApp {
                 kind: "forall_eq_const".to_string(),
-                args: vec![
-                    ContractTerm::Var(ContractVar::Value(vid)),
-                    ContractTerm::LitInt(*k),
-                ],
+                args: vec![ContractTerm::Var(ContractVar::Value(vid)), ContractTerm::LitInt(k)],
             };
             matches!(b.prove(&term), ProveOutcome::Proved)
         });
         if all_match {
-            let contract = if *k == 0 {
-                "zeros_content"
-            } else {
-                "ones_content"
-            };
-            b.fire_contract(contract, output_vid, &HashMap::new());
+            b.state_array_fact(output, contract);
             return true;
         }
     }

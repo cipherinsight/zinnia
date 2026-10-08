@@ -2,8 +2,6 @@
 //! around it, and the shared dot-product helpers used by both
 //! `matmul` itself and by external 1-D dot-product callers.
 
-use std::collections::HashMap;
-
 use crate::builder::IRBuilder;
 use crate::types::{CompositeData, Value, ValueId};
 
@@ -229,9 +227,7 @@ fn build_zeros_of_shape(
     }
     let mut leaf = scalar_zero;
     let out = build_level(b, shape, &mut leaf);
-    if let Some(vid) = out.value_id() {
-        b.fire_contract("zeros_content", vid, &HashMap::new());
-    }
+    b.state_array_fact(&out, "zeros_content");
     out
 }
 
