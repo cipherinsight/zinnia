@@ -917,6 +917,12 @@ impl IRGenerator {
         let cond = self.ctx.get_condition_value(&mut self.builder);
         let merged =
             crate::helpers::value_ops::select_value(&mut self.builder, &cond, &updated, current);
+        // The name now holds a third array: the updated one where the write
+        // ran, the old one elsewhere. Writes through it must reach the arrays
+        // the old one shares memory with (review 4, R1: a mask write in a
+        // branch to a merge of a view and a copy lost a later write to the
+        // view's base where the branch did not run).
+        self.record_path_dependent_alias(&cond, &merged, [&updated, current]);
         self.ctx.set(var_name, merged);
     }
 

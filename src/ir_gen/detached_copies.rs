@@ -155,16 +155,21 @@ impl IRGenerator {
     /// one of them, so a later write through the name (or to `a` or `b`)
     /// detaches the others.
     pub(crate) fn record_path_dependent_alias(&mut self, condition: &Value, merged: &Value, sources: [&Value; 2]) {
+        // A merge under a compile-time condition is one of the sources itself.
+        if condition.bool_val().is_some() || condition.int_val().is_some() {
+            return;
+        }
         let [a, b] = sources.map(array_segments);
         let why = Link::PathDependentAlias.stale_reason();
         for merged_segment in array_segments(merged) {
-            // A merge under a compile-time condition is one of the sources
-            // itself (or, for a list, keeps some of their arrays).
-            if a.contains(&merged_segment) || b.contains(&merged_segment) {
+            // The same array on both paths (a list element both sides hold).
+            if a.contains(&merged_segment) && b.contains(&merged_segment) {
                 continue;
             }
+            // A merged array may reuse one side's storage; it still stands
+            // for the other side's array where the condition selects it.
             for (segments, taken) in [(&a, true), (&b, false)] {
-                for &source_segment in segments {
+                for &source_segment in segments.iter().filter(|&&s| s != merged_segment) {
                     self.builder.link_merged_storage(merged_segment, source_segment, why, condition, taken);
                 }
             }

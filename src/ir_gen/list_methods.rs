@@ -24,7 +24,11 @@ impl IRGenerator {
             };
             let merged = if self.ctx.has_nontrivial_condition() {
                 let cond = self.ctx.get_condition_value(&mut self.builder);
-                crate::helpers::value_ops::select_value(&mut self.builder, &cond, &updated, &old)
+                let merged = crate::helpers::value_ops::select_value(&mut self.builder, &cond, &updated, &old);
+                // Arrays the list holds keep their links (see
+                // `rebind_subscript_target`).
+                self.record_path_dependent_alias(&cond, &merged, [&updated, &old]);
+                merged
             } else { updated };
             self.ctx.set(var, merged);
         }
