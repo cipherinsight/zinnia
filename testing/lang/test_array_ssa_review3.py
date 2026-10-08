@@ -779,3 +779,14 @@ def test_fuzz_unbound_program_is_never_wrong(name, inputs):
 def test_fuzz_rebind_program_is_never_wrong(name):
     source, scalars = FUZZ_REBIND_PROGRAMS[name]
     assert_never_wrong(source, FUZZ_X0, FUZZ_M0, *scalars)
+
+
+def test_a_name_bound_to_an_empty_array_of_another_shape_is_rejected():
+    # Fuzz program (`fuzz_rebind` seed 338, #2605): `x[1:]` of a 1x6 array
+    # is empty. The stand-in for a merge is identified by its storage, which
+    # an empty array does not have to itself; this recursed forever.
+    source = ('def kernel(x: Integer[Array, "6"], m: Integer[Array, "3 4"], i: Integer, c: Boolean):\n'
+              '    if i > 1:\n        x = np.expand_dims(x, 0)\n        x = x[1:]\n    else:\n'
+              '        x[x > 1] = 3\n    return 0\n')
+    with pytest.raises(ZinniaException, match=SHAPES):
+        compile_kernel(source)

@@ -214,13 +214,25 @@ impl IRGenerator {
             (other, Value::StaticArray { .. }) if is_number(other) => b,
             _ => return None,
         };
+        // An empty array has no storage of its own to stand for the merge.
+        if matches!(array, Value::StaticArray { shape, .. } if shape.contains(&0)) {
+            panic!("Binding a name here is not supported: {DIFFERENT_SHAPES}");
+        }
         let stand_in = self.builder.with_stale_reads(|builder| {
             let cells = crate::helpers::static_array::base::deep_to_value_list(builder, array);
             crate::helpers::static_array::base::to_static_array(builder, &cells)
                 .expect("the cells of an array make an array")
         });
-        self.builder.mark_shape_unknown_in(&stand_in, DIFFERENT_SHAPES);
+        // The stand-in is identified by its storage, so it needs one of its
+        // own (an empty array's storage may be shared).
         let segment = array_segment(&stand_in).expect("a static array has a storage");
+        let shared = self.different_shape_merges.contains_key(&segment)
+            || array_segments(a).contains(&segment)
+            || array_segments(b).contains(&segment);
+        if shared {
+            panic!("Binding a name here is not supported: {DIFFERENT_SHAPES}");
+        }
+        self.builder.mark_shape_unknown_in(&stand_in, DIFFERENT_SHAPES);
         self.different_shape_merges.insert(segment, (condition.clone(), a.clone(), b.clone()));
         Some(stand_in)
     }

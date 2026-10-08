@@ -691,7 +691,8 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
     iteration of the loop that rebound the name, under the condition that the loop went
     on) reads the merged array that path selects. A function's result merged over its
     `return`s stays a compile error at the merge, since it reaches code that reads its
-    shape without a name lookup.
+    shape without a name lookup. An empty array has no storage of its own to identify a
+    stand-in, so a merge whose stand-in would be empty is a compile error.
   - FR3: `.shape`, `.ndim` and `.size` of a static array come from its layout, so the
     metadata of a stale array is available; its cells are still rejected. (`len()` of a
     stale name stays rejected: call arguments are converted to cells before dispatch.)
