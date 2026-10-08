@@ -1138,6 +1138,57 @@ fn key_comparison_matches_the_mock_and_rejects_false_assertions() {
     }
 }
 
+/// `IR::KeyLess` of values with known intervals (here bounded into `[0, 16)`
+/// by the program) compares at the width of the packed keys' gap, 5 value
+/// bits and 3 index bits: `qlt_bits::<8>`, and when asserted one 8-bit check
+/// of the gap. Equal to the mock on ties and index order; asserted, a false
+/// order fails, and so does a value outside the intervals.
+#[test]
+fn key_comparison_of_bounded_values_is_narrow() {
+    let build = |asserted: bool| {
+        let mut g = Graph::default();
+        let cells: Vec<u32> = ["v1", "i1", "v2", "i2"].iter().map(|n| g.read_int(n)).collect();
+        let sixteen = g.int(16);
+        let eight = g.int(8);
+        g.push(IR::AssertU128Lt, &[cells[0], sixteen]);
+        g.push(IR::AssertU128Lt, &[cells[2], sixteen]);
+        g.push(IR::AssertU128Lt, &[cells[1], eight]);
+        g.push(IR::AssertU128Lt, &[cells[3], eight]);
+        let less = g.push(IR::KeyLess { index_bits: 3 }, &cells);
+        if asserted {
+            g.push(IR::Assert, &[less]);
+            let one = g.int(1);
+            g.expose(one);
+        } else {
+            g.expose(less);
+        }
+        g.finish()
+    };
+    let (compared, asserted) = (build(false), build(true));
+    let w = |v1: i64, i1: i64, v2: i64, i2: i64| witness(&[("v1", v1), ("i1", i1), ("v2", v2), ("i2", i2)]);
+    let text = emit_circuit(&compared, &w(1, 0, 2, 1), &ProvingParams::default()).unwrap().main_nr;
+    assert!(text.contains("qlt_bits::<8>(") && !text.contains("qlt_bits::<70>("), "{text}");
+    let text = emit_circuit(&asserted, &w(1, 0, 2, 1), &ProvingParams::default()).unwrap().main_nr;
+    assert!(!text.contains("assert_max_bit_size::<70>"), "{text}");
+    if !toolchain_present(false) {
+        return;
+    }
+    let pairs = [(1, 5, 2, 0), (2, 0, 1, 5), (3, 4, 3, 5), (3, 5, 3, 4), (3, 5, 3, 5), (0, 7, 15, 0), (15, 0, 0, 7)];
+    for (v1, i1, v2, i2) in pairs {
+        let (ok, mock) = mock_outputs(&compared, &w(v1, i1, v2, i2));
+        assert!(ok);
+        assert_eq!(mock, vec![((v1, i1) < (v2, i2)) as i128]);
+        assert_eq!(execute(&compared, &w(v1, i1, v2, i2)).expect("nargo execute"), mock);
+        if (v1, i1) < (v2, i2) {
+            assert!(execute(&asserted, &w(v1, i1, v2, i2)).is_ok(), "({v1}, {i1}) < ({v2}, {i2})");
+        } else {
+            assert_rejected(execute(&asserted, &w(v1, i1, v2, i2)));
+        }
+    }
+    assert_rejected(execute(&compared, &w(16, 0, 2, 1)));
+    assert_rejected(execute(&asserted, &w(-1, 0, 2, 1)));
+}
+
 // ── Scatter family (lower::scatter) ────────────────────────────────────────
 
 /// `np.insert` at a runtime position emitted to Noir with its position
@@ -1398,7 +1449,7 @@ fn fact_construction_hints_are_pinned_in_noir() {
 #[test]
 fn range_check_widths_share_the_wide_table() {
     use super::emit::{settle_range_widths_for_tests as settle, DeferredWidthForTests as Deferred};
-    let deferred = [Deferred { bits: 11, cell: "v1".to_string(), top: 1999, exact_power: false }];
+    let deferred = [Deferred { bits: 11, cell: "v1".to_string(), top: 1999, exact_power: false, one_sided: false }];
     let narrow = "    let v1: Field = x;\n    v1.assert_max_bit_size::<__W0__>();\n    __TOP0__;\n";
     let wide = format!("    x.assert_max_bit_size::<64>();\n{narrow}");
     let settled = settle(narrow, &deferred);

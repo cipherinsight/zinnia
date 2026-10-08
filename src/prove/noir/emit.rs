@@ -704,6 +704,9 @@ pub struct NoirEmitter<'a> {
     /// table of its own, their width settled when the circuit is rendered
     /// (`settle_range_widths`).
     deferred_widths: Vec<DeferredWidth>,
+    /// Each packed key's value cell (`pack_key`), whose interval sizes the
+    /// keys' comparisons (`packed_gap_bits`).
+    packed_values: HashMap<String, String>,
     /// CSE cache: expression text -> existing SSA name that binds it.
     /// Common in unrolled patterns where the IR builder re-emits
     /// `v_const_a + v_const_b` for the same constants. CSE here saves
@@ -1040,6 +1043,21 @@ impl<'a> NoirEmitter<'a> {
         let less = self.bind_typed(&format!("qlt_bits::<{width}>({lf}, {rf})"), "bool");
         let flag = if negate { format!("(!{less}) as Field") } else { format!("{less} as Field") };
         self.bind_flag(&flag)
+    }
+
+    /// Bits `w` with `|K1 - K2| < 2^w` for two packed keys whose values have
+    /// known intervals (for example values read at hinted indices that the
+    /// sort bounded into its elements' range,
+    /// `lower::sort::emit::Elements::bound`): the values differ by at most
+    /// the span `s` of the intervals, the indices by less than `2^b`, so
+    /// `|K1 - K2| < (s + 1) 2^b`. The intervals only pick the width; a pair
+    /// outside them fails the check.
+    fn packed_gap_bits(&self, k1: &CellRef, k2: &CellRef, index_bits: u32) -> Option<u32> {
+        let (l1, h1) = self.ival(self.packed_values.get(k1)?)?;
+        let (l2, h2) = self.ival(self.packed_values.get(k2)?)?;
+        let span = (h1.max(h2) as i128) - (l1.min(l2) as i128);
+        let bits = 128 - ((span + 1) as u128).leading_zeros();
+        Some(bits + index_bits)
     }
 
     /// The gap width W for comparing `a` with `b`: 64 (any two values of the
@@ -1716,7 +1734,13 @@ impl<'a> NoirEmitter<'a> {
             let id = self.deferred_widths.len();
             let _ = writeln!(self.body, "    {t}.assert_max_bit_size::<__W{id}__>();");
             let _ = writeln!(self.body, "    __TOP{id}__;");
-            self.deferred_widths.push(DeferredWidth { bits, cell: t, top: hi - 1, exact_power: hi == 1i128 << bits });
+            self.deferred_widths.push(DeferredWidth {
+                bits,
+                cell: t,
+                top: hi - 1,
+                exact_power: hi == 1i128 << bits,
+                one_sided: false,
+            });
             return;
         }
         let _ = writeln!(self.body, "    {}.assert_max_bit_size::<{}>();", t, bits);
@@ -1835,6 +1859,7 @@ impl<'a> NoirEmitter<'a> {
             divmod_cache: HashMap::new(),
             emitted_u128_asserts: HashSet::new(),
             deferred_widths: Vec::new(),
+            packed_values: HashMap::new(),
             cse_cache: HashMap::new(),
             cell_bound: HashMap::new(),
             literal_vals: HashMap::new(),
@@ -3027,23 +3052,49 @@ impl Synthesizer for NoirEmitter<'_> {
     /// the window, as every Noir integer, and the index is a constant).
     fn pack_key(&mut self, v: &CellRef, i: &CellRef, index_bits: u32) -> Result<CellRef, ProvingError> {
         let scale = 1u128 << index_bits;
-        Ok(self.bind(&format!("{v} * {scale} + {i}")))
+        let key = self.bind(&format!("{v} * {scale} + {i}"));
+        self.packed_values.insert(key.clone(), v.clone());
+        Ok(key)
     }
 
     /// `[K1 < K2]` for packed keys: `|K1 - K2| < 2^(64 + index_bits)`, so
     /// `qlt_bits` at `64 + index_bits + 1` bits (rounded up to whole 14-bit
     /// limbs) decides it, or, when asserted, one range check of the gap.
+    /// Keys whose values have known intervals take the narrower width of
+    /// `packed_gap_bits`.
     fn packed_key_less(&mut self, k1: &CellRef, k2: &CellRef, index_bits: u32) -> Result<CellRef, ProvingError> {
-        let width = (64 + index_bits + 1).div_ceil(14) * 14;
+        let window = (64 + index_bits + 1).div_ceil(14) * 14;
+        let narrow = self.packed_gap_bits(k1, k2, index_bits).filter(|&w| w < 64 + index_bits + 1);
         let asserted = self
             .current_stmt
             .is_some_and(|id| self.asserted_comparisons.contains(&id));
         if asserted {
+            // `K2 - K1 - 1` in `[0, 2^w)` for any `w` at which the honest
+            // gap fits: a negative gap is a field element of about 254 bits.
             let t = self.fresh();
             let _ = writeln!(self.body, "    let {t}: Field = {k2} - {k1} - 1;");
-            let _ = writeln!(self.body, "    {t}.assert_max_bit_size::<{width}>();");
+            match narrow {
+                Some(bits) if needs_table_of_its_own(bits) => {
+                    let id = self.deferred_widths.len();
+                    let _ = writeln!(self.body, "    {t}.assert_max_bit_size::<__W{id}__>();");
+                    self.deferred_widths.push(DeferredWidth { bits, cell: t, top: 0, exact_power: true, one_sided: true });
+                }
+                Some(bits) => {
+                    let _ = writeln!(self.body, "    {t}.assert_max_bit_size::<{}>();", bits.max(8));
+                }
+                None => {
+                    let _ = writeln!(self.body, "    {t}.assert_max_bit_size::<{window}>();");
+                }
+            }
             return Ok(self.literal_int(1));
         }
+        // `qlt_bits::<W>` at the narrow widths whose tables bb shares (as
+        // `comparison_width` picks them).
+        let width = match narrow {
+            Some(bits) if bits <= 8 => 8,
+            Some(bits) if bits <= 28 => 28,
+            _ => window,
+        };
         self.use_lib("qlt_bits");
         let less = self.bind_typed(&format!("qlt_bits::<{width}>({k1}, {k2})"), "bool");
         Ok(self.bind_flag(&format!("{less} as Field")))
@@ -3156,6 +3207,9 @@ pub(super) struct DeferredWidth {
     pub(super) top: i128,
     /// `top + 1 == 2^bits`: one check of the exact width suffices.
     pub(super) exact_power: bool,
+    /// Only `0 <= x` matters (a gap check): any width at least `bits`
+    /// admits the honest value, so a rounded width needs no second check.
+    pub(super) one_sided: bool,
 }
 
 /// Whether a range check of `bits` bits needs a lookup table that no
@@ -3197,7 +3251,7 @@ pub(super) fn settle_range_widths(body: &str, deferred: &[DeferredWidth]) -> Str
         if let Some(id) = trimmed.strip_prefix("__TOP").and_then(|r| r.strip_suffix("__;")).and_then(|n| n.parse::<usize>().ok()) {
             let d = &deferred[id];
             let width = width(d);
-            if width != d.bits || !d.exact_power {
+            if !d.one_sided && (width != d.bits || !d.exact_power) {
                 let _ = writeln!(out, "    let {}_top: Field = {} - {};", d.cell, d.top, d.cell);
                 let _ = writeln!(out, "    {}_top.assert_max_bit_size::<{}>();", d.cell, width);
             }
