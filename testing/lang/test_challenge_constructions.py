@@ -75,10 +75,11 @@ def test_grand_product_sorts_match_numpy(monkeypatch, shape, n):
     # 0381's shape: hinted keys read from a table (11,958 cells) cost less
     # than the grand product (13,965) and the routed network (21,826).
     ("argsort", 100, False),
-    # A near tie the estimate decides for hinted keys read from a table:
-    # 7,638 cells at k = 9 against the grand product's 7,578 at k = 8
-    # (array-ssa step 3; reported to the authors).
-    ("sort", 64, False),
+    # The grand product: 7,578 cells at k = 8 (6,558 at lookup width 8)
+    # against 7,638 at k = 9 for hinted keys read from a table; committed
+    # polynomials times 2^k 19,456 against 25,088 as the circuits configure
+    # them (eval-redo/layer/cost-model-misses.md).
+    ("sort", 64, True),
     ("argsort", 16, False),   # saves less than the challenge's one-time cost
 ])
 def test_the_grand_product_is_chosen_where_it_pays(shape, n, chosen):
