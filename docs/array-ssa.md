@@ -756,7 +756,9 @@ Each step's cost table is compared with `costs_base.json`; any change is explain
     `else` block runs after the loop as `if not broken: ...` (`visit_branches`), so a
     `break` or `continue` in it is the enclosing loop's (found by the name-binding fuzzer:
     it applied to the loop itself), and its names stay bound where it ran.
-  - R5: comprehension targets are bound in a generator scope, local to the comprehension.
+  - R5: comprehension targets are bound in a generator scope, local to the comprehension;
+    another name assigned while evaluating it (a list of the function mutated by a method
+    call) is still the enclosing scope's (`IRContext::set`).
   - IR digests are unaffected: the merges and predicates these add are dead unless read
     and removed before export, and no evaluated program reads a name where it may be
     unbound.

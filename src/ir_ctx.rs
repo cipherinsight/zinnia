@@ -59,7 +59,17 @@ impl IRContext {
     pub fn set(&mut self, key: &str, val: Value) {
         self.unreachable_loop_bindings.remove(key);
         let store = ValueStore::new(val);
-        let n = self.scopes.len();
+        // A comprehension's scope holds its targets only: another name
+        // assigned while evaluating it (a list of the function mutated by a
+        // method call) is the enclosing scope's.
+        let mut n = self.scopes.len();
+        while n > 1
+            && matches!(self.scopes[n - 1], Scope::Generator(_))
+            && !self.scopes[n - 1].exists_local(key)
+            && self.exists_below(n - 1, key)
+        {
+            n -= 1;
+        }
 
         if matches!(&self.scopes[n - 1], Scope::Loop(_)) {
             // The innermost conditional scope between the loop and the scope
@@ -80,10 +90,21 @@ impl IRContext {
             }
         }
 
-        self.scopes
-            .last_mut()
-            .unwrap()
-            .set_local(key.to_string(), store);
+        self.scopes[n - 1].set_local(key.to_string(), store);
+    }
+
+    /// Whether `key` is bound in a scope below index `top` of the current
+    /// function.
+    fn exists_below(&self, top: usize, key: &str) -> bool {
+        for scope in self.scopes[..top].iter().rev() {
+            if scope.exists_local(key) {
+                return true;
+            }
+            if scope.is_boundary() {
+                break;
+            }
+        }
+        false
     }
 
     /// Get a variable value from the scope chain.

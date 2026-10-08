@@ -1204,6 +1204,8 @@ MORE = {
     # R5: comprehension variables.
     "R5 comprehension shadows a name": H + '    k = 10\n    z = [k for k in range(3)]\n    return k, z[2]\n',
     "R5 generator in sum": H + '    k = 10\n    z = sum(k for k in range(3))\n    return k, z\n',
+    "R5 a method call in a comprehension mutates the function's list": H + '    acc = []\n    [acc.append(v) for v in x]\n    return len(acc), acc[3]\n',
+    "R5 a comprehension target and a list of the function": H + '    k = 10\n    L = []\n    [L.append(k) for k in range(3)]\n    return k, L[2]\n',
     "R5 comprehension over a possibly unbound name": H + '    for q in range(3):\n        if x[q] > 0:\n            break\n    s = sum([q for q in range(2)])\n    return s\n',
     # FR4 and the general case of records through branches.
     "FR4 plain arm and a skippable loop": H + '    if c:\n        b = x[5]\n    else:\n        for k in range(3):\n            if x[k] > 0:\n                break\n            b = x[4]\n    return b\n',
