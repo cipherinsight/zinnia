@@ -83,6 +83,7 @@ pub fn constructions() -> Vec<&'static dyn Construction> {
         &RoutedPermutation,
         &GrandProductPermutation,
         &sorted_input::SortedInput,
+        &SortCountsByPosition,
     ];
     all.extend(search::constructions());
     all.extend(arg_extreme::constructions());
@@ -197,14 +198,88 @@ fn plans(group: &Group, cx: &Context, offer: impl Fn(&Demand, &UnitCosts) -> Vec
     }
     let demand = demand(group, cx);
     let range = narrow_range(group, cx);
+    // The count lanes, one comparison per element each in every plan
+    // (`counts::count_query`), priced so that a plan answering them by
+    // positions in its sorted values (`SortCountsByPosition`) compares.
+    let float = group.shared.iter().any(|&s| search::is_float_stmt(cx, s));
+    let counts = count_lanes(group) * group.shared.len() as u64 * search::count_cost_per_entry(cx.target, float);
     offer(&demand, &cost::unit_costs(cx.target))
         .into_iter()
         .map(|(plan, cost)| {
-            let mut candidate = plan_candidate(group, demand.clone(), plan, cost, range.map(|(lo, hi, _)| (lo, hi)));
+            let mut candidate = plan_candidate(group, demand.clone(), plan, cost + counts, range.map(|(lo, hi, _)| (lo, hi)));
             candidate.pre.extend(range.map(|(_, _, fact)| Requirement::Fact(fact)));
             candidate
         })
         .collect()
+}
+
+/// The number of count lanes of a sort (`COUNT_AT_MOST`, `COUNT_BELOW`).
+fn count_lanes(group: &Group) -> u64 {
+    group.lanes.iter().filter(|lane| lane.output == COUNT_AT_MOST || lane.output == COUNT_BELOW).count() as u64
+}
+
+/// The count lanes of a sort answered by a hinted position in its sorted
+/// values (`search::position_in_sorted`), the sort computing every rank's
+/// value by one of the plans (which it then also uses for the sort's other
+/// lanes).
+///
+/// * Preconditions: the plan's (the challenge for the grand product); the
+///   sorted values are non-decreasing by every plan's soundness, the
+///   position's precondition.
+/// * Postconditions: every lane of the sort.
+/// * Soundness: the count of elements `<= e` (`< e`) is the count of sorted
+///   values `<= e` (`< e`), the same multiset; `position_in_sorted` pins it.
+/// * Cost: the plan's for every rank's value, and per count lane a position
+///   in `n` values (`search::runtime_position_cost`), against `n`
+///   comparisons per count lane in the other plans: the plan for the sort
+///   (`(np.sort(a) > t).argmax()` with several `t`).
+pub struct SortCountsByPosition;
+
+impl Construction for SortCountsByPosition {
+    fn name(&self) -> &'static str {
+        "sort: counts by positions in the sorted values"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        let counts = count_lanes(group);
+        if group.kind != OpKind::Sort || counts == 0 {
+            return Vec::new();
+        }
+        let n = group.shared.len();
+        let mut demand = demand(group, cx);
+        demand.values = (0..n).collect();
+        let costs = cost::unit_costs(cx.target);
+        let positions = counts * search::runtime_position_cost(n, 1, cx.target);
+        let range = narrow_range(group, cx);
+        let mut offers: Vec<(Plan, u64, bool)> = cost::network_plans(&demand, &costs).into_iter().map(|(p, c)| (p, c, false)).collect();
+        offers.push({
+            let (p, c) = cost::rank_selector_plan(&demand, &costs);
+            (p, c, false)
+        });
+        offers.extend(cost::full_permutation(&demand, &costs).map(|(p, c)| (p, c, false)));
+        offers.extend(cost::selection_plans(&demand, &costs).into_iter().map(|(p, c)| (p, c, false)));
+        offers.extend(cost::routed_plan(&demand, &costs).map(|(p, c)| (p, c, false)));
+        if super::challenge::available(cx.target) {
+            offers.extend(cost::grand_product_plan(&demand, &costs).map(|(p, c)| (p, c, true)));
+        }
+        offers
+            .into_iter()
+            .map(|(plan, cost, challenged)| {
+                let range_bounds = range.map(|(lo, hi, _)| (lo, hi));
+                let mut candidate = Candidate {
+                    pre: Vec::new(),
+                    post: group.lanes.iter().map(|lane| Requirement::Lane(lane.stmt)).collect(),
+                    cost: cost + positions,
+                    emitter: Box::new(sort_emitter(group, demand.clone(), plan, range_bounds, true)),
+                };
+                candidate.pre.extend(range.map(|(_, _, fact)| Requirement::Fact(fact)));
+                if challenged {
+                    candidate.pre.push(super::challenge::CHALLENGE);
+                }
+                candidate
+            })
+            .collect()
+    }
 }
 
 /// The range of the sort's elements when the layer establishes one
@@ -222,14 +297,21 @@ fn plan_candidate(group: &Group, demand: Demand, plan: Plan, cost: u64, range: O
         pre: Vec::new(),
         post: group.lanes.iter().map(|lane| Requirement::Lane(lane.stmt)).collect(),
         cost,
-        emitter: Box::new(SortEmitter {
-            elements: group.shared.clone(),
-            payloads: payload_arrays(group),
-            demand,
-            plan,
-            range,
-            sort: None,
-        }),
+        emitter: Box::new(sort_emitter(group, demand, plan, range, false)),
+    }
+}
+
+/// The emitter of `group`'s plan, answering count lanes by positions in
+/// the sorted values when `counts_by_position` (`SortCountsByPosition`).
+fn sort_emitter(group: &Group, demand: Demand, plan: Plan, range: Option<(i64, i64)>, counts_by_position: bool) -> SortEmitter {
+    SortEmitter {
+        counts_by_position: counts_by_position.then_some(None),
+        elements: group.shared.clone(),
+        payloads: payload_arrays(group),
+        demand,
+        plan,
+        range,
+        sort: None,
     }
 }
 
@@ -302,6 +384,9 @@ fn demand(group: &Group, cx: &Context) -> Demand {
 /// runtime-rank outputs where they occur (their ranks may be computed
 /// later).
 struct SortEmitter {
+    /// Count lanes by positions in the sorted values (`SortCountsByPosition`)
+    /// in the segment of the extended values once built, else by comparisons.
+    counts_by_position: Option<Option<u32>>,
     elements: Vec<StmtId>,
     /// The payload arrays (`payload_arrays`), as statements.
     payloads: Vec<Vec<StmtId>>,
@@ -336,7 +421,17 @@ impl Emitter for SortEmitter {
         let sort = self.sort.as_mut().expect("started");
         if lane.output == COUNT_AT_MOST || lane.output == COUNT_BELOW {
             let e = cx.value(lane.own[0]);
-            return counts::count_query(b, &sort.as_elements(), &e, lane.output == COUNT_AT_MOST);
+            let at_most = lane.output == COUNT_AT_MOST;
+            if let Some(extended) = self.counts_by_position.as_mut() {
+                // The sorted values, non-decreasing: `#{a_j <= e}` is the
+                // position of `e` among them (right side), `#{a_j < e}` the
+                // left side.
+                let n = sort.elements.len();
+                let values: Vec<Value> = (0..n).map(|r| sort.output(r, false)).collect();
+                let segment = *extended.get_or_insert_with(|| search::extended_runtime_table(b, &values));
+                return search::position_in_sorted(b, &values, segment, &e, at_most);
+            }
+            return counts::count_query(b, &sort.as_elements(), &e, at_most);
         }
         if lane.output == PAYLOAD {
             let array = self.payloads.iter().position(|a| *a == lane.own).expect("listed");

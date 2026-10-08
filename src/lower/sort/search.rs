@@ -129,10 +129,9 @@ impl Construction for SearchByCount {
     fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
         let OpKind::SearchSorted { right } = group.kind else { return Vec::new() };
         let n = group.shared.len() as u64;
-        let per_entry = match cx.target {
-            Target::Halo2Base => 32,
-            Target::Noir => 7,
-        };
+        let float = group.shared.iter().any(|&s| matches!(cx.stmt(s).ir, IR::ReadFloat { .. } | IR::ConstantFloat { .. }))
+            || group.lanes.iter().any(|l| l.own.iter().any(|&s| is_float_stmt(cx, s)));
+        let per_entry = count_cost_per_entry(cx.target, float);
         let emitter = CountEmitter { right, table: group.shared.clone() };
         vec![sorted_table(group, cx, every_lane(group, n * per_entry * group.lanes.len() as u64, Box::new(emitter)))]
     }
@@ -153,6 +152,38 @@ pub(crate) fn runtime_position_cost(n: usize, lanes: u64, target: Target) -> u64
         Target::Noir => 30,
     };
     super::cost::unit_costs(target).reads(n + 2, 2 * lanes as usize) + fixed * lanes
+}
+
+/// A count's cost per entry (`SearchByCount`, `counts::count_query`): a
+/// comparison and an addition. Measured on `np.searchsorted` (integers,
+/// 32 cells, 7 gates) and on `(np.sort(a) > t).argmax()` (floats, 46 cells,
+/// 6 gates), tables and sorts of 8 to 128 entries
+/// (`benchmarking/fact_constructions`, rules `sorted_searchsorted`,
+/// `sort_counts`).
+pub(crate) fn count_cost_per_entry(target: Target, float: bool) -> u64 {
+    match (target, float) {
+        (Target::Halo2Base, false) => 32,
+        (Target::Halo2Base, true) => 46,
+        (Target::Noir, _) => 6,
+    }
+}
+
+/// Whether a statement's value is a float (by the statement that defines
+/// it: a float input, constant, arithmetic or cast).
+pub(crate) fn is_float_stmt(cx: &Context, s: StmtId) -> bool {
+    matches!(
+        cx.stmt(s).ir,
+        IR::ReadFloat { .. }
+            | IR::ConstantFloat { .. }
+            | IR::FloatCast
+            | IR::AddF
+            | IR::SubF
+            | IR::MulF
+            | IR::DivF
+            | IR::SumF { .. }
+            | IR::SelectF
+            | IR::AbsF
+    )
 }
 
 /// `candidate` with the operator's precondition, the table's order, unless

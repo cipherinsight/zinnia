@@ -111,6 +111,12 @@ rule(name="sort_of_sorted", description="np.max(np.sort(a)): a sort of the sorte
      signature='a: Float[Array, "{n}"]', body="s = np.sort(a)\nreturn np.max(s), np.median(s)", requires=[],
      inputs=lambda n, r: [r.uniform(-5, 5, n)])
 
+rule(name="sort_counts", description="(np.sort(a) > t[i]).argmax() for 5 queries: positions in the sorted values",
+     signature='a: Float[Array, "{n}"], t: Float[Array, "5"]', body="s = np.sort(a)\nreturn [(s > t[i]).argmax() for i in range(5)]",
+     requires=[], inputs=lambda n, r: [r.uniform(-5, 5, n), np.array([-6.0, -1.0, 0.0, 2.5, 6.0])],
+     configs={"with": {}, "without": {"ZINNIA_FORCE_CONSTRUCTION": "sort: network,sort: pinned selection"},
+              "position": {"ZINNIA_FORCE_CONSTRUCTION": "sort: counts by positions in the sorted values"}})
+
 # ── Permutations ────────────────────────────────────────────────────────
 rule(name="argsort_scatter", description="c[np.argsort(a)] = v: the argsort is a permutation, a scatter by hits",
      signature='a: Float[Array, "{n}"], v: Integer[Array, "{n}"]', body="c = np.zeros({n}, dtype=int)\nc[np.argsort(a)] = v\nreturn c",
