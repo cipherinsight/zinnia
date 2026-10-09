@@ -2,6 +2,6 @@
 // Shape metadata reads no array elements; constants are omitted from instances.
 // @outputs: const int[1] = [6]
 fn main(a: [Field; 48]) {
-    let _a = a;
+    let _a0: Field = a[0];
     let _result: u32 = 6;
 }
