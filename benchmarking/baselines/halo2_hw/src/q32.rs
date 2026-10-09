@@ -42,6 +42,7 @@ use crate::Builder;
 
 // `exp`, `log`, `tanh` (methods of `Q32`, in their own file).
 mod transcendental;
+mod canonical;
 
 /// A circuit cell.
 pub type Cell = AssignedValue<Fr>;

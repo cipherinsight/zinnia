@@ -1187,3 +1187,65 @@ fn test_index_too_negative() {
     let _ = index_pos::<8>(-6, 5);
 }
 
+
+// Strict-comparison primitive APIs: share the frozen compiler's arithmetic
+// schedules/coefficients rather than the historical tolerance-only minimax fits.
+pub use noir_fpc::{qexp as canonical_exp, qlog as canonical_log, qtanh as canonical_tanh,
+    qsin as canonical_sin, qcos as canonical_cos, qarctan2 as canonical_arctan2};
+pub fn canonical_exp_neg(gap: Field) -> Field { canonical_exp(-gap) }
+pub fn canonical_arctan2_nonneg(y: Field, x: Field) -> Field { canonical_arctan2(y, x) }
+
+#[test]
+fn canonical_frozen_vectors() {
+    assert(canonical_exp(-(171798691840 as Field)) == 0);
+    assert(canonical_exp(-(4294967296 as Field)) == 1580030168);
+    assert(canonical_exp(-(1 as Field)) == 4294967291);
+    assert(canonical_exp(0) == 4294967296);
+    assert(canonical_exp(1) == 4294967296);
+    assert(canonical_exp(429496729) == 4746672948);
+    assert(canonical_exp(4294967296) == 11674931554);
+    assert(canonical_exp(42949672960) == 94602950262784);
+    assert(canonical_exp(90194313216) == 5664270453422686208);
+    assert(canonical_log(1) == -(95265423098 as Field));
+    assert(canonical_log(2) == -(92288378626 as Field));
+    assert(canonical_log(2147483648) == -(2977044472 as Field));
+    assert(canonical_log(4294967296) == 0);
+    assert(canonical_log(4294967297) == 0);
+    assert(canonical_log(8589934591) == 2977044470);
+    assert(canonical_log(8589934592) == 2977044472);
+    assert(canonical_log(528280977408) == 20668174427);
+    assert(canonical_sin(-(85899345920 as Field)) == -(3921069985 as Field));
+    assert(canonical_sin(-(13493037705 as Field)) == 0);
+    assert(canonical_sin(-(6746518852 as Field)) == -(4294967285 as Field));
+    assert(canonical_sin(-(4294967296 as Field)) == -(3614090346 as Field));
+    assert(canonical_sin(0) == 0);
+    assert(canonical_sin(4294967296) == 3614090346);
+    assert(canonical_sin(6746518852) == 4294967285);
+    assert(canonical_sin(13493037705) == 0);
+    assert(canonical_sin(85899345920) == 3921069985);
+    assert(canonical_tanh(-(42949672960 as Field)) == -(4294967279 as Field));
+    assert(canonical_tanh(-(4294967296 as Field)) == -(3271021994 as Field));
+    assert(canonical_tanh(-(1 as Field)) == -(4 as Field));
+    assert(canonical_tanh(0) == 0);
+    assert(canonical_tanh(1) == 2);
+    assert(canonical_tanh(4294967296) == 3271021993);
+    assert(canonical_tanh(42949672960) == 4294967278);
+    assert(canonical_arctan2(0, 0) == 0);
+    assert(canonical_arctan2(4294967296, 0) == 6746518852);
+    assert(canonical_arctan2(0, -(4294967296 as Field)) == 13493037705);
+    assert(canonical_arctan2(-(4294967296 as Field), 0) == -(6746518852 as Field));
+    assert(canonical_arctan2(4294967296, 4294967296) == 3373259418);
+    assert(canonical_arctan2(4294967296, 12884901888) == 1381908105);
+    assert(canonical_arctan2(-(4294967296 as Field), 12884901888) == -(1381908105 as Field));
+    assert(canonical_arctan2(-(4294967296 as Field), -(12884901888 as Field)) == -(12111129600 as Field));
+    assert(canonical_arctan2(4294967296, -(12884901888 as Field)) == 12111129600);
+}
+
+#[test]
+fn canonical_cosine_boundary_vectors() {
+    assert(canonical_cos(0) == 4294967285);
+    assert(canonical_cos(-(4294967296 as Field)) == 2320580745);
+    assert(canonical_cos(4294967296) == 2320580746);
+    assert(canonical_cos(9223372036854775807) == 701407306);
+    assert(canonical_cos(-(9223372036854775808 as Field)) == 701407308);
+}
