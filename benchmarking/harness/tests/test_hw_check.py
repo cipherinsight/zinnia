@@ -6,6 +6,7 @@ import pytest
 
 from benchmarking.baselines.hw_check import check
 from benchmarking.baselines.hw_check.entries import Entry
+from benchmarking.baselines.hw_check.summarize import summarize
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf"), True])
@@ -39,3 +40,12 @@ def test_missing_requested_baseline_fails(tmp_path, monkeypatch):
     assert result["halo2"]["verdict"] == "pass"
     assert result["noir"]["verdict"] == "FAIL"
     assert "missing baseline" in result["noir"]["problems"][0]
+
+
+def test_size_summary_keeps_missing_entries_and_uses_geometric_mean():
+    rows = [{"halo2": {"ratio": r}} for r in (0.25, 1.0, 4.0, None)]
+    result = summarize(rows, "halo2")
+    assert result["entries"] == 4
+    assert result["compared"] == 3
+    assert result["geomean_zinnia_over_handwritten"] == pytest.approx(1.0)
+    assert result["zinnia_smaller"] == result["equal"] == result["zinnia_larger"] == 1
