@@ -11,21 +11,33 @@ global N: u32 = 8; // = X_1
 global OFF_DIAGONAL: u32 = M * (M - 1);
 
 fn main(X: [[Field; N]; M]) -> pub [Field; OFF_DIAGONAL] {
-    for i in 0..M { check_inputs(X[i]); }
+    for i in 0..M {
+        check_inputs(X[i]);
+    }
     let mut distances = [[0; M]; M];
-    for i in 0..M { for j in 0..M {
-        let mut d: Field = 0;
-        for k in 0..N {
-            let tmp = X[i][k] - X[j][k];
-            d += mul(tmp, tmp);
+    for i in 0..M {
+        for j in 0..M {
+            let mut d: Field = 0;
+            for k in 0..N {
+                let tmp = X[i][k] - X[j][k];
+                d += mul(tmp, tmp);
+            }
+            d.assert_max_bit_size::<64>();
+            distances[i][j] = sqrt(d);
         }
-        d.assert_max_bit_size::<64>();
-        distances[i][j] = sqrt(d);
-    } }
+    }
     let mut result = [0; OFF_DIAGONAL];
-    for i in 0..M { for j in 0..M { if i != j {
-        let pos = if j<i { i*(M-1)+j } else { i*(M-1)+j-1 };
-        result[pos] = distances[i][j];
-    } } }
+    for i in 0..M {
+        for j in 0..M {
+            if i != j {
+                let pos = if j < i {
+                    i * (M - 1) + j
+                } else {
+                    i * (M - 1) + j - 1
+                };
+                result[pos] = distances[i][j];
+            }
+        }
+    }
     result
 }

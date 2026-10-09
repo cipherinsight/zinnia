@@ -22,7 +22,7 @@
 use crate::prelude::*;
 
 // Sizes (hw_check.sizes): from fixture.json.
-const N: usize = 13; // = A_0 (C_0, C_1)
+const N: usize = 13; // = A_0
 const M: usize = 9; // = A_1
 
 pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
@@ -47,12 +47,24 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         }
         // for k in range(M): C[i, :i + 1] += ...
         for k in 0..M {
-            let aa: Vec<Cell> = (0..=i).map(|j| q.mul(ctx, a[j*M+k], alpha).cell).collect();
-            let first: Vec<Cell> = aa.iter().map(|v| q.mul(ctx, *v, b[i*M+k]).cell).collect();
-            let ba: Vec<Cell> = (0..=i).map(|j| q.mul(ctx, b[j*M+k], alpha).cell).collect();
-            let second: Vec<Cell> = ba.iter().map(|v| q.mul(ctx, *v, a[i*M+k]).cell).collect();
+            let aa: Vec<Cell> = (0..=i)
+                .map(|j| q.mul(ctx, a[j * M + k], alpha).cell)
+                .collect();
+            let first: Vec<Cell> = aa
+                .iter()
+                .map(|v| q.mul(ctx, *v, b[i * M + k]).cell)
+                .collect();
+            let ba: Vec<Cell> = (0..=i)
+                .map(|j| q.mul(ctx, b[j * M + k], alpha).cell)
+                .collect();
+            let second: Vec<Cell> = ba
+                .iter()
+                .map(|v| q.mul(ctx, *v, a[i * M + k]).cell)
+                .collect();
             let rhs: Vec<Cell> = (0..=i).map(|j| q.add(ctx, first[j], second[j])).collect();
-            for j in 0..=i { c[i*N+j] = q.add(ctx, c[i*N+j], rhs[j]); }
+            for j in 0..=i {
+                c[i * N + j] = q.add(ctx, c[i * N + j], rhs[j]);
+            }
         }
     }
     out.floats(&c);

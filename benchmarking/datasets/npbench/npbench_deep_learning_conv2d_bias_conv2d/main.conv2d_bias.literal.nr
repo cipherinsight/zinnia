@@ -39,27 +39,52 @@ fn main(
     check_inputs(bias);
     let convolution = conv2d(input, weights);
     let mut result = [[[[0; C_OUT]; W_OUT]; H_OUT]; NB];
-    for b in 0..NB { for i in 0..H_OUT { for j in 0..W_OUT { for co in 0..C_OUT {
-        result[b][i][j][co] = convolution[b][i][j][co] + bias[co];
-    } } } }
+    for b in 0..NB {
+        for i in 0..H_OUT {
+            for j in 0..W_OUT {
+                for co in 0..C_OUT {
+                    result[b][i][j][co] = convolution[b][i][j][co] + bias[co];
+                }
+            }
+        }
+    }
     result
 }
 
-fn conv2d(input: [[[[Field; C_IN]; WIDTH]; HEIGHT]; NB],
-    weights: [[[[Field; C_OUT]; C_IN]; K]; K]) -> [[[[Field; C_OUT]; W_OUT]; H_OUT]; NB] {
+fn conv2d(
+    input: [[[[Field; C_IN]; WIDTH]; HEIGHT]; NB],
+    weights: [[[[Field; C_OUT]; C_IN]; K]; K],
+) -> [[[[Field; C_OUT]; W_OUT]; H_OUT]; NB] {
     let mut output = [[[[0; C_OUT]; W_OUT]; H_OUT]; NB];
-    for i in 0..H_OUT { for j in 0..W_OUT {
-        let mut products = [[[[[0; C_OUT]; C_IN]; K]; K]; NB];
-        for b in 0..NB { for a in 0..K { for c in 0..K { for ci in 0..C_IN { for co in 0..C_OUT {
-            products[b][a][c][ci][co] = mul(input[b][i+a][j+c][ci], weights[a][c][ci][co]);
-        } } } } }
-        for b in 0..NB { for co in 0..C_OUT {
-            let mut acc: Field = 0;
-            for a in 0..K { for c in 0..K { for ci in 0..C_IN {
-                acc += products[b][a][c][ci][co];
-            } } }
-            output[b][i][j][co] = acc;
-        } }
-    } }
+    for i in 0..H_OUT {
+        for j in 0..W_OUT {
+            let mut products = [[[[[0; C_OUT]; C_IN]; K]; K]; NB];
+            for b in 0..NB {
+                for a in 0..K {
+                    for c in 0..K {
+                        for ci in 0..C_IN {
+                            for co in 0..C_OUT {
+                                products[b][a][c][ci][co] =
+                                    mul(input[b][i + a][j + c][ci], weights[a][c][ci][co]);
+                            }
+                        }
+                    }
+                }
+            }
+            for b in 0..NB {
+                for co in 0..C_OUT {
+                    let mut acc: Field = 0;
+                    for a in 0..K {
+                        for c in 0..K {
+                            for ci in 0..C_IN {
+                                acc += products[b][a][c][ci][co];
+                            }
+                        }
+                    }
+                    output[b][i][j][co] = acc;
+                }
+            }
+        }
+    }
     output
 }

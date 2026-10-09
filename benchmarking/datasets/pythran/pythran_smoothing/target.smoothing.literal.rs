@@ -18,7 +18,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     for i in 1..N {
         let fresh = q.mul(ctx, alpha, x[i]).cell;
         let keep = q.sub(ctx, Constant(fe(SCALE)), alpha);
-        let carried = q.mul(ctx, keep, s[i-1]).cell;
+        let carried = q.mul(ctx, keep, s[i - 1]).cell;
         s[i] = q.add(ctx, fresh, carried);
     }
     out.floats(&s);

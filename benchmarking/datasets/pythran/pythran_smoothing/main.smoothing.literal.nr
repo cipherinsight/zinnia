@@ -15,9 +15,9 @@ fn main(x: [Field; N], alpha: Field) -> pub [Field; N] {
     let mut s = x;
     for i in 1..N {
         let fresh = mul(alpha, x[i]);
-        let keep = SCALE-alpha;
-        let carried = mul(keep, s[i-1]);
-        s[i] = fresh+carried;
+        let keep = SCALE - alpha;
+        let carried = mul(keep, s[i - 1]);
+        s[i] = fresh + carried;
     }
     s
 }

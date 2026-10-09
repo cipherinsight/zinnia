@@ -23,7 +23,7 @@
 use noir_hw::{check_input, check_inputs, mul};
 
 // Sizes (hw_check.sizes): from fixture.json.
-global N: u32 = 13; // = A_0 (C_0, C_1)
+global N: u32 = 13; // = A_0
 global M: u32 = 9; // = A_1
 
 fn main(
@@ -50,16 +50,28 @@ fn main(
         // for k in range(M): C[i, :i + 1] += ...
         for k in 0..M {
             let mut aa = [0; N];
-            for j in 0..i + 1 { aa[j] = mul(A[j][k], alpha); }
+            for j in 0..i + 1 {
+                aa[j] = mul(A[j][k], alpha);
+            }
             let mut first = [0; N];
-            for j in 0..i + 1 { first[j] = mul(aa[j], B[i][k]); }
+            for j in 0..i + 1 {
+                first[j] = mul(aa[j], B[i][k]);
+            }
             let mut ba = [0; N];
-            for j in 0..i + 1 { ba[j] = mul(B[j][k], alpha); }
+            for j in 0..i + 1 {
+                ba[j] = mul(B[j][k], alpha);
+            }
             let mut second = [0; N];
-            for j in 0..i + 1 { second[j] = mul(ba[j], A[i][k]); }
+            for j in 0..i + 1 {
+                second[j] = mul(ba[j], A[i][k]);
+            }
             let mut rhs = [0; N];
-            for j in 0..i + 1 { rhs[j] = first[j] + second[j]; }
-            for j in 0..i + 1 { c[i][j] += rhs[j]; }
+            for j in 0..i + 1 {
+                rhs[j] = first[j] + second[j];
+            }
+            for j in 0..i + 1 {
+                c[i][j] += rhs[j];
+            }
         }
     }
     c

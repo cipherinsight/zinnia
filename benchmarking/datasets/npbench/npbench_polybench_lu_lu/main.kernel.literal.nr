@@ -21,7 +21,9 @@ fn main(A: [[Field; N]; N]) -> pub [[Field; N]; N] {
         for j in 0..i {
             // A[i, j] -= A[i, :j] @ A[:j, j]
             let mut acc: Field = 0;
-            for k in 0..j { acc += a[i][k] * a[k][j]; }
+            for k in 0..j {
+                acc += a[i][k] * a[k][j];
+            }
             let product = if j == 0 { 0 } else { rescale(acc) };
             let after_sub = a[i][j] - product;
             // A[i, j] /= A[j, j]
@@ -30,7 +32,9 @@ fn main(A: [[Field; N]; N]) -> pub [[Field; N]; N] {
         for j in i..N {
             // A[i, j] -= A[i, :i] @ A[:i, j]
             let mut acc: Field = 0;
-            for k in 0..i { acc += a[i][k] * a[k][j]; }
+            for k in 0..i {
+                acc += a[i][k] * a[k][j];
+            }
             let product = if i == 0 { 0 } else { rescale(acc) };
             a[i][j] -= product;
         }
