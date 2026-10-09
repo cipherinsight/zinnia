@@ -11,3 +11,5 @@ In progress. Checks always use `--no-prove`; no keys or proofs.
 Tool conflict: L5 explicitly requires `q.bound` on each comparison operand, L6 forbids bounded loaders/reuse, while `hw_check.check` still rejects `redundant_input_checks > 0`. Shared tools are not modified. This prevents a clean checker pass for comparisons of loaded inputs; it does not represent a failed constraint or output check.
 
 Arg scan group checked: 0309, 0310, 0311, 0312, 0320, 0321. All Noir checks pass; all Halo2 constraints/output/domain checks pass, with only the redundant-input policy conflict. Fresh bounds are intentional under L5.
+
+0314, 0322, 0335: all functional/domain checks pass and Noir verdicts pass; Halo2 verdicts have only the fresh-bound policy conflict. 0314 preserves separate passes and tuple scatter, 0322 equality-test compaction, 0335 pairwise maximum.
