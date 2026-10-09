@@ -1,5 +1,7 @@
 // pythran_ising__ising_step: literal translation of kernel.py (LITERAL_BASELINES.md).
+// L4: zero the inactive exponential argument before its range check.
 // Evaluate both branches and select per update; float32 remains Q32; clamp and update mirror the source helpers.
+// Comparison domain follows optimized canonical gaps, including values beyond signed64.
 // @outputs: int[N * M]
 
 use noir_hw::{check_input, check_inputs, canonical_exp, SCALE};
@@ -18,9 +20,9 @@ fn update(mut f: [[Field; M]; N], n: u32,m: u32,beta: Field) -> [[Field; M]; N] 
         if (i != 1) | (j != 1) { total += f[clamp(n+i,N)][clamp(m+j,M)]; }
     } }
     let de=2*f[n][m]*total;
-    let first=noir_hw::le(de,0);
+    let first=noir_hw::canonical_le(de,0);
     let first_value=f[n][m]*(-1);
-    let exponential=canonical_exp((-de)*beta);
+    let exponential=canonical_exp(if first { 0 } else { (-de)*beta });
     let second=noir_hw::gt(exponential,SCALE/2);
     let second_value=f[n][m]*(-1);
     let otherwise=if second { second_value } else { f[n][m] };

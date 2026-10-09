@@ -1,5 +1,5 @@
 // pythran_crotg__CROTG: literal translation of kernel.py (LITERAL_BASELINES.md).
-// Repeated abs calls remain separate. Complex primitives retain current Q32 rounding. Inactive zero divisions are totalized and nonzero assertions guarded; outputs select both branches.
+// Repeated abs calls remain separate. Complex primitives retain current Q32 rounding. L4 masks inactive CB before its magnitude can overflow. Inactive zero divisions are totalized and nonzero assertions guarded; outputs select both branches.
 
 use crate::prelude::*;
 
@@ -17,7 +17,8 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let active = q.gate.not(ctx, zero);
     // Else: each abs(CA) is a separate source occurrence.
     let a_abs = magnitude(&q, ctx, ca);
-    let b_abs = magnitude(&q, ctx, cb);
+    let safe_cb = [q.gate.mul(ctx, cb[0], active), q.gate.mul(ctx, cb[1], active)];
+    let b_abs = magnitude(&q, ctx, safe_cb);
     let scale = q.add(ctx, a_abs, b_abs);
     let a_ratio = complex_div(&q, ctx, ca, scale, active);
     let a_magnitude = magnitude(&q, ctx, a_ratio);

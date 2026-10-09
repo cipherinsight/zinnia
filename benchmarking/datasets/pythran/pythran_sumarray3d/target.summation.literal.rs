@@ -29,6 +29,7 @@ fn compute(
         let xy = q.add(ctx, xx, yy);
         let zz = q.mul(ctx, dz, dz).cell;
         let sum = q.add(ctx, xy, zz);
+        q.range.range_check(ctx, sum, 63); // Optimized radicand domain.
         let root = q.sqrt(ctx, sum).cell;
         let den = q.bound(ctx, root);
         let dr = q.div(ctx, Constant(fe(SCALE)), den).cell;

@@ -1,14 +1,17 @@
 // pythran_clip__clip: literal translation of kernel.py (LITERAL_BASELINES.md).
-// Each abs occurrence is recomputed; complex magnitude/division retain the optimized Q32 arithmetic family. Inactive zero division is totalized and validity gated.
+// Each abs occurrence is recomputed; complex magnitude/division retain the optimized Q32 arithmetic family. L4 masks the inactive limit1 input to prevent unused products overflowing. Inactive zero division is totalized and validity gated.
 use crate::prelude::*;
 const N: usize = 2; // = z_0
 fn magnitude(q: &Q32, ctx: &mut Ctx, x: &[Cell]) -> Cell {
     let rr = q.mul(ctx, x[0], x[0]).cell;
     let ii = q.mul(ctx, x[1], x[1]).cell;
     let sum = q.add(ctx, rr, ii);
+    let sum = q.bound(ctx, sum).cell; // Optimized signed64 radicand domain.
     q.sqrt(ctx, sum).cell
 }
 fn limit1(q: &Q32, ctx: &mut Ctx, x: &[Cell], outer: Cell) -> [Cell; 2] {
+    let guarded = [q.gate.mul(ctx, x[0], outer), q.gate.mul(ctx, x[1], outer)];
+    let x = &guarded;
     let mag = magnitude(q, ctx, x);
     let mb = q.bound(ctx, mag);
     let eps = q.bounded_const(ctx, quantize(1e-6));
