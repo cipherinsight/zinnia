@@ -2,7 +2,7 @@
 
 Branch `literal-ds1`; original fixture shapes; 2026-10-09.
 
-**All 25 literal cases completed functional/domain checks; optimized comparison measurements are in progress.**
+**All 25 literal cases completed functional/domain checks. All 25 optimized checks pass in both systems.**
 Fourteen have clean checker passes in both systems; eleven have only the Halo2 policy conflict described below.
 All 25 cases have both files. No keys or proofs were generated. Every checker invocation uses `--no-prove`.
 
@@ -11,6 +11,65 @@ All 25 cases have both files. No keys or proofs were generated. Every checker in
 Halo2 cells are `advice + lookup = total`, excluding fixed/instance cells, at the checker's automatic sizing. Noir counts are unpadded UltraHonk gates with the pinned toolchain. These are not proving-time measurements. `POLICY` means only the checker's redundant-input-check policy failed; constraints, NumPy output comparisons, and input-domain rejection passed. It is not reported as a clean checker pass.
 
 <!-- RESULTS -->
+Case labels below abbreviate `ds1000_caseNNNN`. `L<=O` flags every system where the literal count is not larger. Optimized verdicts are all pass/pass.
+
+| Case | Literal Halo2 A + L = total | Literal Noir | Optimized Halo2 A + L = total | Optimized Noir | Literal H / N verdict | L<=O | Notes |
+|---|---:|---:|---:|---:|---|---|---|
+| 0298 | 4889 + 360 = 5249 | 3370 | 1624 + 180 = 1804 | 3196 | POLICY / pass | - | Reused draft corrected: stable bubble sort, full unique values, inverse ranks, matrix scatter, output packing. |
+| 0300 | 22123 + 5023 = 27146 | 6895 | 3331 + 692 = 4023 | 3368 | POLICY / pass | - | Stable bubble sort and linear percentile with separate Q32 weight and product. |
+| 0301 | 800 + 240 = 1040 | 2941 | 800 + 240 = 1040 | 2941 | pass / pass | Halo2, Noir | Full reshape as wire aliases. |
+| 0309 | 6373 + 1559 = 7932 | 3645 | 4305 + 807 = 5112 | 3495 | POLICY / pass | - | First argmax, index-order scan. |
+| 0310 | 6373 + 1559 = 7932 | 3645 | 4305 + 807 = 5112 | 3495 | POLICY / pass | - | First argmin, index-order scan. |
+| 0311 | 6391 + 1563 = 7954 | 3666 | 4323 + 811 = 5134 | 3516 | POLICY / pass | - | First argmax then Fortran-order unravel. |
+| 0312 | 6391 + 1563 = 7954 | 3670 | 4323 + 811 = 5134 | 3520 | POLICY / pass | - | First argmax then C-order unravel. |
+| 0314 | 18290 + 3917 = 22207 | 5404 | 11308 + 1657 = 12965 | 4906 | POLICY / pass | - | Separate argmax, unravel, minimum, tuple scatter, argmax, unravel. |
+| 0317 | 27000 + 8000 = 35000 | 9066 | 27000 + 8000 = 35000 | 9066 | pass / pass | Halo2, Noir | Full array copy as wire aliases. |
+| 0318 | 10207 + 432 = 10639 | 3519 | 2898 + 432 = 3330 | 3466 | pass / pass | - | Permutation precondition; inverse scatter then column gather. |
+| 0319 | 92393 + 3136 = 95529 | 7867 | 21128 + 3136 = 24264 | 7786 | pass / pass | - | Permutation precondition; inverse scatter then plane gather. |
+| 0320 | 3961 + 969 = 4930 | 3351 | 3159 + 623 = 3782 | 3259 | POLICY / pass | - | First argmin then C-order unravel. |
+| 0321 | 3961 + 969 = 4930 | 3351 | 3159 + 623 = 3782 | 3259 | POLICY / pass | - | First argmax then C-order unravel. |
+| 0322 | 1430 + 156 = 1586 | 2935 | 521 + 108 = 629 | 2901 | POLICY / pass | - | Pairwise minimum, full equality mask, prefix count, equality-test compaction. |
+| 0323 | 1317 + 340 = 1657 | 2960 | 1317 + 340 = 1657 | 2960 | pass / pass | Halo2, Noir | Integer deg2rad then shared sin. |
+| 0324 | 1321 + 340 = 1661 | 2960 | 1321 + 340 = 1661 | 2960 | pass / pass | Halo2, Noir | Integer deg2rad then shared cos. |
+| 0325 | 1921 + 459 = 2380 | 3104 | 1921 + 459 = 2380 | 3104 | pass / pass | Halo2, Noir | Separate degree sine, radian sine, fresh comparison, boolean-to-int. |
+| 0326 | 1232 + 336 = 1568 | 2986 | 1228 + 336 = 1564 | 2974 | pass / pass | - | Local arcsin arithmetic wrapper; separate degrees conversion. Review interpretation below. |
+| 0327 | 467 + 140 = 607 | 2879 | 460 + 140 = 600 | 2879 | pass / pass | Noir | Full constant pad; omit constant public outputs. |
+| 0328 | 138 + 42 = 180 | 2835 | 138 + 42 = 180 | 2835 | pass / pass | Halo2, Noir | Constant shape branch; full alias copy then zero tail. |
+| 0329 | 7632 + 2112 = 9744 | 4131 | 7632 + 2112 = 9744 | 4131 | pass / pass | Halo2, Noir | Elementwise shared power operation; same square-and-multiply order in Noir. |
+| 0334 | 8000 + 2100 = 10100 | 4241 | 6250 + 1700 = 7950 | 4241 | pass / pass | Noir | Full stack, index-order sum, shared float division by 3. |
+| 0335 | 14850 + 3700 = 18550 | 4491 | 9700 + 2800 = 12500 | 4504 | POLICY / pass | Noir | Full stack and pairwise max with fresh bounds. |
+| 0336 | 320 + 96 = 416 | 2866 | 320 + 96 = 416 | 2866 | pass / pass | Halo2, Noir | Full flipped view, diagonal view. |
+| 0338 | 640 + 192 = 832 | 2916 | 640 + 192 = 832 | 2916 | pass / pass | Halo2, Noir | Separate diagonal, flipped view, second diagonal, vstack. |
+
+Automatic Halo2 settings (these differ for some literal/optimized pairs):
+
+| Case | Literal k / lookup bits | Optimized k / lookup bits |
+|---|---:|---:|
+| 0298 | 8 / 7 | 7 / 6 |
+| 0300 | 9 / 8 | 8 / 7 |
+| 0301 | 7 / 6 | 7 / 6 |
+| 0309 | 9 / 8 | 9 / 8 |
+| 0310 | 9 / 8 | 9 / 8 |
+| 0311 | 9 / 8 | 9 / 8 |
+| 0312 | 9 / 8 | 9 / 8 |
+| 0314 | 9 / 8 | 9 / 8 |
+| 0317 | 10 / 8 | 10 / 8 |
+| 0318 | 9 / 8 | 9 / 8 |
+| 0319 | 9 / 8 | 9 / 8 |
+| 0320 | 9 / 8 | 8 / 7 |
+| 0321 | 9 / 8 | 8 / 7 |
+| 0322 | 7 / 6 | 7 / 6 |
+| 0323 | 7 / 6 | 7 / 6 |
+| 0324 | 7 / 6 | 7 / 6 |
+| 0325 | 9 / 8 | 9 / 8 |
+| 0326 | 7 / 6 | 7 / 6 |
+| 0327 | 6 / 5 | 6 / 5 |
+| 0328 | 6 / 5 | 6 / 5 |
+| 0329 | 9 / 8 | 9 / 8 |
+| 0334 | 9 / 8 | 9 / 8 |
+| 0335 | 9 / 8 | 9 / 8 |
+| 0336 | 7 / 6 | 7 / 6 |
+| 0338 | 7 / 6 | 7 / 6 |
 <!-- END RESULTS -->
 
 ## Rule interpretations and source audit
@@ -29,20 +88,31 @@ Only 0298 was reused from the earlier `WIP (unverified draft)` commit. Its forbi
 ## Cases no larger than optimized
 
 <!-- COMPARISONS -->
-Optimized checks pending.
+| Cases | System(s) | Explanation |
+|---|---|---|
+| 0301, 0317, 0328, 0336, 0338 | Both, equal | Reshape/copy/slice/diagonal/view wiring is already direct. Explicit intermediate wire mappings do not add arithmetic gates; domain and output plumbing is identical. |
+| 0323, 0324, 0325 | Both, equal | The optimized scalar trigonometric kernels already use the direct shared arithmetic calls. Preserving source order changes no operation count. |
+| 0329 | Both, equal | One power operation per element in both variants; L5 requires the shared power gadget, whose repeated-squaring arithmetic is permitted inside that operation. |
+| 0327 | Noir equal (2,879); Halo2 larger | Noir eliminates the explicit constant padding array and output extraction. Halo2 retains seven explicit constant assignments (607 total cells versus 600). |
+| 0334 | Noir equal (4,241); Halo2 larger | Constant propagation/simplification compiles the shared float division by 3 to the same Noir circuit as the optimized raw constant division. Halo2 retains the direct float-divisor gadget construction (10,100 versus 7,950 cells). |
+| 0335 | Noir **smaller** (4,491 versus 4,504); Halo2 larger | Two standard pairwise maxima per column are the required L5 scan. The optimized Noir hint-based `max_of` checks a witnessed maximum via differences/product. It is 13 gates more expensive for this three-value reduction with this compiler, so the optimized alternative is not the cheapest here. The literal source still performs the full scan and no forbidden optimization. |
+
+Every other case is strictly larger in both systems. These flags were generated from the completed JSON measurements; no size was inferred from a previous run. No aggregate compiler-overhead claim is made, particularly where automatic lookup widths differ or a local arithmetic interpretation needs review.
 <!-- END COMPARISONS -->
 
 ## Reproduction and evidence
 
 Working directory: `benchmarking/baselines`; Python: `../../.venv/bin/python` (NumPy 2.2.2). Builds run from `halo2_hw` so its `.cargo/config.toml` supplies `RUSTC_BOOTSTRAP=1`. `CARGO_BUILD_JOBS=3`, profile `dev-fast`, `MEMRUN_MAX=8G`; literal `CARGO_TARGET_DIR=target-literal` and `HW_VARIANT=literal`; optimized `CARGO_TARGET_DIR=target` and `HW_VARIANT` unset. Builds restrict `HALO2_HW_CASES` to the active group. Checks use `HW_CHECK_LOCK=/home/zhantong/Projects/zinnia-project/eval-redo/literal-work/lock-a` and all work roots/TMPDIR under `/home/zhantong/Projects/zinnia-project/eval-redo/literal-work/ds1/`.
 
-The literal checks are `python -m hw_check.check <cases> --no-prove --halo2-bin halo2_hw/target-literal/dev-fast/halo2_hw --workroot <scratch>/check --out <scratch>/<result>.json`. Optimized checks use the analogous `target/dev-fast/halo2_hw` and `<scratch>/check-optimized`, once per case. JSON evidence files: `check0298.json`, `check-arg.json`, `check-reductions.json`, `check-views.json`, `check0300.json`, `check-perm.json`, `check-arithmetic.json`, `check-optimized.json`. Logs have corresponding names. `lint.log` records **0 errors** for `HW_VARIANT=literal python -m hw_check.lint` on all 25 cases. Headers/output layouts and forbidden APIs were separately scanned; `git diff --check` passed.
+The literal checks are `python -m hw_check.check <cases> --no-prove --halo2-bin halo2_hw/target-literal/dev-fast/halo2_hw --workroot <scratch>/check --out <scratch>/<result>.json`. Optimized checks use the analogous `target/dev-fast/halo2_hw` and `<scratch>/check-optimized`, once per case. Consolidated literal evidence is also saved as `literal-results.json`. JSON evidence files: `check0298.json`, `check-arg.json`, `check-reductions.json`, `check-views.json`, `check0300.json`, `check-perm.json`, `check-arithmetic.json`, `check-optimized.json`. Logs have corresponding names. `lint.log` records **0 errors** for `HW_VARIANT=literal python -m hw_check.lint` on all 25 cases. Headers/output layouts and forbidden APIs were separately scanned; `git diff --check` passed.
+
+No job in this batch hit the 8G memory cap. The sole unresolved completion issue is the eleven Halo2 POLICY verdicts, not missing files or failed arithmetic checks.
 
 Noir: Nargo 1.0.0-beta.20, noirc commit `b4236c1957d0c26cb65d82adc9e5447b6ff1d629`; bb 5.0.0-nightly.20260324, the driver's pinned UltraHonk settings. Halo2 settings (`k`, `lookup_bits`) are recorded with each measurement below/JSON. Auto-sized counts are not a controlled-common-lookup-width comparison.
 
 Verified scope: builds, Halo2 MockProver A/B, NumPy output comparisons on both inputs, Noir compilation/gate counting/witness solving A/B, and the checker's selected out-of-domain input rejection. No proofs, key generation, public-proof tamper tests, timing/scaling runs, Zinnia runs, IR inspection, or Zinnia size inspection. No claim that two fixture inputs establish correctness for all inputs; the source and soundness audit is separate from fixture checks.
 
-Tool issues: (a) the fresh-bound policy conflict above; (b) the first build was accidentally launched from the repository root and hit stable Rust E0554 in `poseidon-primitives`, resolved by rebuilding from the required `halo2_hw` directory; (c) the specified relative Python path emits harmless `sys.prefix/sys.exec_prefix` warnings; (d) final runs waited for the shared lock held by other heavy jobs. Shared tools, optimized sources, fixtures and case sets were not changed.
+Tool issues: (a) the fresh-bound policy conflict above; (b) the first build was accidentally launched from the repository root and hit stable Rust E0554 in `poseidon-primitives`, resolved by rebuilding from the required `halo2_hw` directory; (c) the specified relative Python path emits harmless `sys.prefix/sys.exec_prefix` warnings, and the checker's reference input probing emits the expected invalid-arcsin warning for 0326; (d) final runs waited for the shared lock held by other heavy jobs. Shared tools, optimized sources, fixtures and case sets were not changed.
 
 ## Source SHA-256
 
