@@ -2,15 +2,12 @@
 // Kernel: for each z[i] of z: Complex[N], limit1(z[i]) * _max when
 // abs(z[i]) > _max, else z[i], with limit1(x) = 0 when abs(x) < 1e-6 and
 // x / abs(x) otherwise; returns Complex[N].
-// abs of a complex value is the exact floor square root of re^2 + im^2
-// (`isqrt` of the raw sum, scale 2^64): one rounding, as np.abs rounds hypot
-// once. Both branches are computed and selected; in the unused one the
-// divisor is moved off zero (abs + [abs < 1e-6]), so every input has a
-// witness. x / abs(x) and * _max are componentwise, as NumPy divides and
-// multiplies a complex value by a real one.
+// Q32 component squares precede sqrt. Complex/real division keeps rounded
+// x*d and d*d before division, matching the frozen primitive schedule.
+// Inactive divisions use real denominator 1.
 // @outputs: float[2 * N]
 
-use noir_hw::{check_input, check_inputs, divmod_pos, isqrt, mul, window, SCALE};
+use noir_hw::{check_input, check_inputs, divmod_pos, sqrt, mul, window, SCALE};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global N: u32 = 2; // = z_0
@@ -26,14 +23,15 @@ fn main(z: [[Field; 2]; N], _max: Field) -> pub [[Field; 2]; N] {
     for i in 0..N {
         check_inputs(z[i]);
         let x = z[i];
-        let magnitude = isqrt(x[0] * x[0] + x[1] * x[1]);
-        // `isqrt` proved magnitude < 2^63, so its window is magnitude + 2^63.
+        let magnitude = sqrt(mul(x[0], x[0]) + mul(x[1], x[1]));
+        // `sqrt` proved magnitude < 2^63, so its window is magnitude + 2^63.
         let magnitude_w = window(magnitude);
         let over = magnitude_w > max_w;
         let tiny = magnitude_w < epsilon_w;
-        let divisor = magnitude + tiny as Field;
+        let divisor = if tiny { SCALE } else { magnitude };
+        let denominator = mul(divisor, divisor);
         for part in 0..2 {
-            let (unit, _) = divmod_pos(x[part] * SCALE, divisor);
+            let (unit, _) = divmod_pos(mul(x[part], divisor) * SCALE, denominator);
             let limited = if tiny { 0 } else { mul(unit, _max) };
             result[i][part] = if over { limited } else { x[part] };
         }

@@ -14,7 +14,8 @@ from .noir_driver import NARGO, compile_package, stage_package
 from .prover_toml import BN254_P, SCALE, quantize, render_prover_toml
 
 CASES = ['pythran_deuxd_convolution__conv', 'pythran_make_decision__md',
-         'npbench_weather_stencils_hdiff_hdiff__hdiff', 'pythran_tax__tax']
+         'npbench_weather_stencils_hdiff_hdiff__hdiff', 'pythran_tax__tax',
+         'pythran_clip__clip', 'pythran_crotg__CROTG']
 
 def mul(a,b): return int(a)*int(b)//SCALE
 
@@ -49,8 +50,7 @@ def reference(case, fixture, inp):
         fly=np.where(np.vectorize(mul,otypes=[object])(res,diff)>0,0,res)
         divergence=flx[1:]-flx[:-1]+fly[:,1:]-fly[:,:-1]
         out=x[2:I+2,2:J+2,:]-np.vectorize(mul,otypes=[object])(coeff,divergence)
-    else:
-        assert case==CASES[3]
+    elif case==CASES[3]:
         d=a['d'];seg1=d[d>quantize(256303)];seg2=d[(d>quantize(54057))&(d<=quantize(256303))]
         seg3=d[(d>quantize(13769))&(d<=quantize(54057))]-quantize(13769)
         seg4=d[(d>quantize(8820))&(d<=quantize(13769))]-quantize(8820)
@@ -59,6 +59,30 @@ def reference(case, fixture, inp):
         total+=sum(mul(x,mul(x,quantize(2.2376e-6))+quantize(.2397))+quantize(939.57) for x in seg3)
         total+=sum(mul(x,mul(x,quantize(1.00727e-5))+quantize(.14)) for x in seg4)
         return [int(total)*SCALE//int(sum(d))]
+    else:
+        def magnitude(z): return math.isqrt((mul(z[0],z[0])+mul(z[1],z[1]))*SCALE)
+        def cdiv(z,d):
+            denominator=mul(d,d)
+            return [mul(x,d)*SCALE//denominator for x in z]
+        if case==CASES[4]:
+            result=[]
+            for z in a['z']:
+                m=magnitude(z)
+                if m>a['_max']:
+                    v=[0,0] if m<quantize(1e-6) else cdiv(z,m)
+                    result.extend(mul(x,a['_max']) for x in v)
+                else:result.extend(z)
+            return [int(x) for x in result]
+        assert case==CASES[5]
+        ca,cb=a['CA'],a['CB']; ma=magnitude(ca)
+        if ma==0:return [int(x) for x in list(cb)+list(cb)+[0,SCALE,0]]
+        scale=ma+magnitude(cb)
+        aa,bb=magnitude(cdiv(ca,scale)),magnitude(cdiv(cb,scale))
+        norm=mul(scale,math.isqrt((mul(aa,aa)+mul(bb,bb))*SCALE))
+        alpha=cdiv(ca,ma)
+        product=[mul(alpha[0],cb[0])-mul(alpha[1],-cb[1]),
+                 mul(alpha[0],-cb[1])+mul(alpha[1],cb[0])]
+        return [int(x) for x in [mul(v,norm) for v in alpha]+list(cb)+[ma*SCALE//norm]+cdiv(product,norm)]
     return [int(v) for v in out.flat]
 
 def flatten(value):

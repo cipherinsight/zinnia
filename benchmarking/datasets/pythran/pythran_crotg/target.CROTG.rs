@@ -5,17 +5,10 @@
 //! `ALPHA = CA / |CA|`, `C = |CA| / NORM`, `S = ALPHA * conj(CB) / NORM`,
 //! `CA = ALPHA * NORM`. Returns `(CA, CB, C, S)`. The inputs C and S are
 //! overwritten before they are read, so they are not loaded.
-//! `abs` of a complex value is the exact floor square root of `re^2 + im^2`
-//! (`q.isqrt` of the raw sum: one rounding, as `abs` rounds `hypot` once).
-//! A complex value divided or multiplied by a real one is componentwise;
-//! `ALPHA * conj(CB)` is a complex product, each part one rescale. Both
-//! branches are computed and selected; the `else` branch runs on
-//! `CA + [CA == 0]` (that is, 1 when CA is 0), so its divisors are positive
-//! for every input. `CA == 0` is `re^2 + im^2 == 0`, the same test as
-//! `abs(CA) == 0`. The divisors `|CA|`, `SCALE`, `NORM` are positive and below
-//! `2^64`, their own magnitudes, so the divisions are
-//! `q.div_by_abs(v, d, d)` (no sign test). Where the rounded `NORM` is 0
-//! (both magnitudes a few units of 2^-32) there is no proof.
+//! Complex magnitude and division preserve the frozen Q32 primitive schedule.
+//! The branch tests rounded magnitude zero. Each complex product rounds all
+//! four signed real products individually; conjugation occurs before rounding.
+//! A neutral CA=1+0i is used only for evaluating the inactive else branch.
 
 use crate::prelude::*;
 
@@ -27,23 +20,30 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
 
     let ca = q.load_floats(ctx, &ca);
     let cb = q.load_floats(ctx, &cb);
-    let square = |ctx: &mut Ctx, x: &[Cell]| {
-        q.gate.inner_product(ctx, [Existing(x[0]), Existing(x[1])], [Existing(x[0]), Existing(x[1])])
+    let magnitude = |ctx: &mut Ctx, x: &[Cell]| {
+        let rr = q.mul(ctx, x[0], x[0]).cell;
+        let ii = q.mul(ctx, x[1], x[1]).cell;
+        let squared = q.add(ctx, rr, ii);
+        q.sqrt(ctx, squared).cell
     };
-    let ca_square = square(ctx, &ca);
-    let zero = q.gate.is_zero(ctx, ca_square);
-    // The `else` branch's CA: 1 when CA is 0 (re^2 + im^2 grows by 2^64).
-    let ca = [q.gate.mul_add(ctx, zero, Constant(fe(SCALE)), ca[0]), ca[1]];
-    let ca_square = q.gate.mul_add(ctx, zero, Constant(fe(SCALE * SCALE)), ca_square);
-    let ca_abs = q.isqrt(ctx, ca_square).cell;
-    let cb_square = square(ctx, &cb);
-    let cb_abs = q.isqrt(ctx, cb_square).cell;
-
+    let original_abs = magnitude(ctx, &ca);
+    let zero = q.gate.is_zero(ctx, original_abs);
+    let ca = [q.gate.select(ctx, Constant(fe(SCALE)), ca[0], zero),
+              q.gate.select(ctx, Constant(Fr::ZERO), ca[1], zero)];
+    let ca_abs = q.gate.select(ctx, Constant(fe(SCALE)), original_abs, zero);
+    let cb_abs = magnitude(ctx, &cb);
+    // Complex/real division: rounded x*d / rounded d*d. No cancellation.
+    let complex_div = |ctx: &mut Ctx, x: &[Cell], d: Cell| {
+        let denominator = q.mul(ctx, d, d).cell;
+        x.iter().map(|v| {
+            let numerator = q.mul(ctx, *v, d).cell;
+            q.div_by_abs(ctx, numerator, denominator, denominator).cell
+        }).collect::<Vec<_>>()
+    };
     let scale = q.add(ctx, ca_abs, cb_abs);
     let scaled_abs_squared = |ctx: &mut Ctx, x: &[Cell]| {
-        let ratio: Vec<Cell> = x.iter().map(|v| q.div_by_abs(ctx, *v, scale, scale).cell).collect();
-        let ratio_square = square(ctx, &ratio);
-        let ratio_abs = q.isqrt(ctx, ratio_square);
+        let ratio = complex_div(ctx, x, scale);
+        let ratio_abs = magnitude(ctx, &ratio);
         q.mul(ctx, ratio_abs, ratio_abs).cell
     };
     let a2 = scaled_abs_squared(ctx, &ca);
@@ -51,14 +51,17 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let sum = q.add(ctx, a2, b2);
     let root = q.sqrt(ctx, sum);
     let norm = q.mul(ctx, scale, root).cell;
-    let alpha: Vec<Cell> = ca.iter().map(|v| q.div_by_abs(ctx, *v, ca_abs, ca_abs).cell).collect();
+    let alpha = complex_div(ctx, &ca, ca_abs);
     let c = q.div_by_abs(ctx, ca_abs, norm, norm).cell;
     // alpha * conj(cb) = (ar br + ai bi) + (ai br - ar bi) i
-    let s_re = q.dot(ctx, &alpha, &cb).cell;
-    let ai_br = q.gate.mul(ctx, alpha[1], cb[0]);
-    let s_im = q.gate.sub_mul(ctx, ai_br, alpha[0], cb[1]);
-    let s_im = q.rescale(ctx, s_im).cell;
-    let s = [s_re, s_im].map(|v| q.div_by_abs(ctx, v, norm, norm).cell);
+    let neg_bi = q.gate.neg(ctx, cb[1]);
+    let ar_br = q.mul(ctx, alpha[0], cb[0]).cell;
+    let ai_nbi = q.mul(ctx, alpha[1], neg_bi).cell;
+    let ar_nbi = q.mul(ctx, alpha[0], neg_bi).cell;
+    let ai_br = q.mul(ctx, alpha[1], cb[0]).cell;
+    let s_re = q.sub(ctx, ar_br, ai_nbi);
+    let s_im = q.add(ctx, ar_nbi, ai_br);
+    let s = complex_div(ctx, &[s_re, s_im], norm);
     let ca_out = alpha.iter().map(|v| q.mul(ctx, *v, norm).cell).collect::<Vec<_>>();
 
     // The `if` branch: CA = CB, C = 0, S = 1.
