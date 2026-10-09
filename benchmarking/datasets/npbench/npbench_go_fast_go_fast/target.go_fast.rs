@@ -1,6 +1,8 @@
 //! npbench_go_fast_go_fast__go_fast (NPBench go_fast), halo2-base baseline.
+//! Strict comparison: transcendental calls use the frozen compiler arithmetic,
+//! including its coefficients and each Q32 rounding point (canonical APIs).
 //! Kernel: on a: Float[N, COLS], `trace = sum_i np.tanh(a[i, i])` (from
-//! 0.0, over the diagonal), then `a + trace`. `q.tanh` is the shared gadget
+//! 0.0, over the diagonal), then `a + trace`. `q.canonical_tanh` is the shared gadget
 //! (NPB_BASELINES.md section 5, rule 5); the sums are exact.
 
 use crate::prelude::*;
@@ -19,7 +21,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     if N > COLS {
         return Err(Error::new("a[i, i] is out of bounds: NumPy raises IndexError"));
     }
-    let tanhs: Vec<Cell> = (0..N).map(|i| q.tanh(ctx, a[i * COLS + i]).cell).collect();
+    let tanhs: Vec<Cell> = (0..N).map(|i| q.canonical_tanh(ctx, a[i * COLS + i]).cell).collect();
     let trace = q.sum(ctx, tanhs);
     let result: Vec<Cell> = a.iter().map(|x| q.add(ctx, x.cell, trace)).collect();
     out.floats(&result);

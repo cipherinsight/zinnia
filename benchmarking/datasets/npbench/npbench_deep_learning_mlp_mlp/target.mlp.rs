@@ -1,4 +1,6 @@
 //! npbench_deep_learning_mlp_mlp__mlp (NPBench deep_learning/mlp), halo2-base baseline.
+//! Strict comparison: transcendental calls use the frozen compiler arithmetic,
+//! including its coefficients and each Q32 rounding point (canonical APIs).
 //! Kernel: a three-layer perceptron on input: Float[N, C_IN]:
 //! `x = relu(input @ w1 + b1)`, `x = relu(x @ w2 + b2)`,
 //! `softmax(x @ w3 + b3)` over the last axis, with `relu(x) = np.maximum(x, 0)`
@@ -8,7 +10,7 @@
 //! (`floor((sum + b 2^32) / 2^32) = floor(sum / 2^32) + b`), whose quotient is
 //! window-checked by the rescale and feeds relu's sign test directly.
 //! Softmax: each row's maximum is `q.max_of`, whose gap checks are the
-//! precondition of `q.exp_neg` (the shared gadget, NPB_BASELINES.md section 5,
+//! precondition of `q.canonical_exp_neg` (the shared gadget, NPB_BASELINES.md section 5,
 //! rule 5); the sum is exact and each quotient divides by it, a positive
 //! integer below 2^(33 + bits(S2)) and its own magnitude (`div_by_abs`).
 
@@ -52,7 +54,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
             .iter()
             .map(|v| {
                 let gap = q.sub(ctx, largest, *v);
-                q.exp_neg(ctx, gap).cell
+                q.canonical_exp_neg(ctx, gap).cell
             })
             .collect();
         let total = q.sum(ctx, exps.iter().copied());

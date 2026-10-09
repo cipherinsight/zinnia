@@ -1,4 +1,6 @@
 // npbench_deep_learning_softmax_softmax__softmax (NPBench deep_learning/softmax), Noir baseline.
+// Strict comparison: transcendental calls use the frozen compiler arithmetic,
+// including its coefficients and each Q32 rounding point (canonical APIs).
 // Kernel: softmax over the last axis of x: Float[N, H, SN, SM]:
 // tmp_max = np.max(x, axis=-1, keepdims=True), tmp_out = np.exp(x - tmp_max),
 // tmp_sum = np.sum(tmp_out, axis=-1, keepdims=True), tmp_out / tmp_sum.
@@ -11,7 +13,7 @@
 // contributes exp(0)), so `divmod_pos` needs no sign test.
 // @outputs: float[N * H * SN * SM]
 
-use noir_hw::{check_inputs, divmod_pos, exp_neg, max_of, SCALE};
+use noir_hw::{check_inputs, divmod_pos, canonical_exp_neg as exp_neg, max_of, SCALE};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global N: u32 = 2; // = x_0

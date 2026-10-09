@@ -1,9 +1,11 @@
 //! pythran_vibr_energy__calculate_vibr_energy (Pythran vibr_energy), halo2-base baseline.
+//! Strict comparison: transcendental calls use the frozen compiler arithmetic,
+//! including its coefficients and each Q32 rounding point (canonical APIs).
 //! Kernel: `numpy.exp(-harmonic * i - anharmonic * i ** 2)` on harmonic,
 //! anharmonic, i: Float[N]. In NumPy's order: `(-harmonic) * i` (the negation
 //! is exact, so the product rounds `-(harmonic * i)` down), `i ** 2` and
 //! `anharmonic * i ** 2` are rounded products, the difference is exact, and
-//! `q.exp` (the shared gadget, NPB_BASELINES.md section 5, rule 5) takes the
+//! `q.canonical_exp` (the shared gadget, NPB_BASELINES.md section 5, rule 5) takes the
 //! window-checked difference.
 
 use crate::prelude::*;
@@ -29,7 +31,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
             let quadratic = q.mul(ctx, anharmonic[k], square.cell);
             let exponent = q.sub(ctx, linear.cell, quadratic.cell);
             let exponent = q.bound(ctx, exponent);
-            q.exp(ctx, exponent).cell
+            q.canonical_exp(ctx, exponent).cell
         })
         .collect();
     out.floats(&energies);

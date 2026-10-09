@@ -1,11 +1,13 @@
 //! npbench_deep_learning_softmax_softmax__softmax (NPBench deep_learning/softmax), halo2-base baseline.
+//! Strict comparison: transcendental calls use the frozen compiler arithmetic,
+//! including its coefficients and each Q32 rounding point (canonical APIs).
 //! Kernel: softmax over the last axis of x: Float[N, H, SM, SM]:
 //! `tmp_max = np.max(x, axis=-1, keepdims=True)`,
 //! `tmp_out = np.exp(x - tmp_max)`, `tmp_sum = np.sum(tmp_out, axis=-1,
 //! keepdims=True)`, `tmp_out / tmp_sum`.
 //! Each row's maximum is `q.max_of` (a hinted maximum, every gap `max - x`
 //! range-checked to `[0, 2^64)`; 542,528 cells against 564,032 for a chain of
-//! comparisons), and those checks are the precondition of `q.exp_neg` (the
+//! comparisons), and those checks are the precondition of `q.canonical_exp_neg` (the
 //! shared gadget, NPB_BASELINES.md section 5, rule 5), so `exp(x - max)` is
 //! `exp_neg(max - x)`. The sum is exact; each quotient is a float division by
 //! the sum, a positive integer below 2^(33 + bits(SM)) (each term is in
@@ -29,7 +31,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     for row in x.chunks(SM) {
         let largest = q.max_of(ctx, row);
         let gaps: Vec<Cell> = row.iter().map(|v| q.sub(ctx, largest, *v)).collect();
-        let exps: Vec<Cell> = gaps.iter().map(|g| q.exp_neg(ctx, *g).cell).collect();
+        let exps: Vec<Cell> = gaps.iter().map(|g| q.canonical_exp_neg(ctx, *g).cell).collect();
         let total = q.sum(ctx, exps.iter().copied());
         let quotients: Vec<Cell> = exps.iter().map(|e| q.div_by_abs(ctx, *e, total, total).cell).collect();
         out.floats(&quotients);

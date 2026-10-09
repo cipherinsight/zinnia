@@ -1,4 +1,6 @@
 // npbench_deep_learning_mlp_mlp__mlp (NPBench deep_learning/mlp), Noir baseline.
+// Strict comparison: transcendental calls use the frozen compiler arithmetic,
+// including its coefficients and each Q32 rounding point (canonical APIs).
 // Kernel: a three-layer perceptron on input: Float[N, C_IN]:
 // x = relu(input @ w1 + b1), x = relu(x @ w2 + b2), softmax(x @ w3 + b3) over
 // the last axis, with relu(x) = np.maximum(x, 0) and softmax as in the
@@ -13,7 +15,7 @@
 // row's maximum contributes exp(0)), so `divmod_pos` needs no sign test.
 // @outputs: float[N * S2]
 
-use noir_hw::{check_inputs, divmod_pos, exp_neg, is_neg, max_of, rescale, SCALE};
+use noir_hw::{check_inputs, divmod_pos, canonical_exp_neg as exp_neg, is_neg, max_of, rescale, SCALE};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global N: u32 = 2; // = input_0

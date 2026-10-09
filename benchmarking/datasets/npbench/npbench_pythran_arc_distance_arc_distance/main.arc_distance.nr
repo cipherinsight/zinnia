@@ -1,4 +1,6 @@
 // npbench_pythran_arc_distance_arc_distance__arc_distance (NPBench pythran/arc_distance), Noir baseline.
+// Strict comparison: transcendental calls use the frozen compiler arithmetic,
+// including its coefficients and each Q32 rounding point (canonical APIs).
 // Kernel: the haversine distance of points (theta_1, phi_1) and
 // (theta_2, phi_2), each Float[N]:
 // temp = sin((theta_2 - theta_1) / 2) ** 2
@@ -12,7 +14,7 @@
 // makes NumPy's result NaN) a square root has no witness.
 // @outputs: float[N]
 
-use noir_hw::{arctan2_nonneg, check_inputs, cos, floor_div_pow2, mul, sin, sqrt, SCALE};
+use noir_hw::{canonical_arctan2_nonneg as arctan2_nonneg, check_inputs, canonical_cos as cos, floor_div_pow2, mul, canonical_sin as sin, sqrt, SCALE};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global N: u32 = 16; // = theta_1_0

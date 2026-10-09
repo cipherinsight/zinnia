@@ -1,4 +1,6 @@
 // pythran_vibr_energy__calculate_vibr_energy (Pythran vibr_energy), Noir baseline.
+// Strict comparison: transcendental calls use the frozen compiler arithmetic,
+// including its coefficients and each Q32 rounding point (canonical APIs).
 // Kernel: `numpy.exp(-harmonic * i - anharmonic * i ** 2)` on harmonic,
 // anharmonic, i: Float[N]. In NumPy's order: (-harmonic) * i (the negation is
 // exact, so the product rounds -(harmonic * i) down), i ** 2 and
@@ -7,7 +9,7 @@
 // the window.
 // @outputs: float[N]
 
-use noir_hw::{check_inputs, exp, mul};
+use noir_hw::{check_inputs, canonical_exp as exp, mul};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global N: u32 = 16; // = harmonic_0
