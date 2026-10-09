@@ -1,6 +1,6 @@
 // DS-1000 case 0300: literal translation of kernel.py (LITERAL_BASELINES.md).
 // Percentile: stable bubble sort (190 swaps), exact integer rank split,
-// Q32 fractional weight, then s_lo + weight * (s_hi-s_lo).
+// Interpolation rounds once: s_lo + floor(rem * (s_hi-s_lo) / 100), as optimized.
 // p is checked in [0,100]; endpoint hi is clamped to the last index.
 // @outputs: float[1]
 fn main(a: [Field; 20], p: Field) -> pub Field {
@@ -21,6 +21,5 @@ fn main(a: [Field; 20], p: Field) -> pub Field {
     let hi = noir_hw::min(lo + 1, 19);
     let s_lo = s[noir_hw::index_pos::<8>(lo, 20)];
     let s_hi = s[noir_hw::index_pos::<8>(hi, 20)];
-    let weight = noir_hw::div(noir_hw::from_int(rem), 100 * noir_hw::SCALE);
-    s_lo + noir_hw::mul(weight, s_hi - s_lo)
+    s_lo + noir_hw::divmod_pos(rem * (s_hi - s_lo), 100).0
 }

@@ -2,7 +2,7 @@
 //! No shared arcsin entry exists: local half-angle arcsin(v)=2 atan(v/(1+sqrt(1-v*v))).
 //! Use the baseline's degree-9 atan approximation coefficients and exact raw integer root
 //! as the arithmetic contract for this library operation, through shared gadgets only.
-//! Materialize arcsin in radians, then separately multiply by Q32 180/pi for degrees.
+//! Materialize radians, then convert using Q(360/pi) / 2 with one final rounding.
 use crate::prelude::*;
 const ATAN_COEFS: [f64; 10] = [
     -0.001804437510348226, 0.010962195309438757, -0.0312640164156834,
@@ -33,7 +33,8 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let ctx = builder.main(0);
     let value = q.load_float(ctx, input);
     let radians = arcsin(&q, ctx, value);
-    let result = q.mul(ctx, radians, Constant(fe(quantize(180.0 / std::f64::consts::PI)))).cell;
+    let raw = q.gate.mul(ctx, radians, Constant(fe(quantize(360.0 / std::f64::consts::PI))));
+    let result = q.floor_div_const(ctx, raw, 2 * SCALE as u64).0.cell;
     out.float(result);
     Ok(())
 }

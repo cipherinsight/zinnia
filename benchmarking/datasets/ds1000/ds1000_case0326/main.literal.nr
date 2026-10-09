@@ -2,7 +2,7 @@
 // No shared arcsin entry exists: local half-angle arcsin(v)=2 atan(v/(1+sqrt(1-v*v))).
 // Use the baseline's degree-9 atan coefficients and exact raw integer root as the
 // arithmetic contract inside arcsin, through shared gadgets only.
-// Materialize radians before the separate degrees conversion by Q32 180/pi.
+// Materialize radians, then convert using Q(360/pi) / 2 with one final rounding.
 // @outputs: float[1]
 global ATAN_COEFS: [Field; 10] = [
     -7750000, 47082270, -134277928, 249279572, -361114211,
@@ -23,5 +23,5 @@ fn arcsin(value: Field) -> Field {
 fn main(value: Field) -> pub Field {
     noir_hw::check_input(value);
     let radians = arcsin(value);
-    noir_hw::mul(radians, 246083499208)
+    noir_hw::floor_div_pow2::<33>(radians * 492166998415)
 }
