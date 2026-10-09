@@ -47,17 +47,12 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         }
         // for k in range(M): C[i, :i + 1] += ...
         for k in 0..M {
-            for j in 0..=i {
-                // A[j, k] * alpha * B[i, k]
-                let a_alpha = q.mul(ctx, a[j * M + k], alpha).cell;
-                let term1 = q.mul(ctx, a_alpha, b[i * M + k]).cell;
-                // B[j, k] * alpha * A[i, k]
-                let b_alpha = q.mul(ctx, b[j * M + k], alpha).cell;
-                let term2 = q.mul(ctx, b_alpha, a[i * M + k]).cell;
-                // C[i, j] += term1 + term2
-                let sum_terms = q.add(ctx, term1, term2);
-                c[i * N + j] = q.add(ctx, c[i * N + j], sum_terms);
-            }
+            let aa: Vec<Cell> = (0..=i).map(|j| q.mul(ctx, a[j*M+k], alpha).cell).collect();
+            let first: Vec<Cell> = aa.iter().map(|v| q.mul(ctx, *v, b[i*M+k]).cell).collect();
+            let ba: Vec<Cell> = (0..=i).map(|j| q.mul(ctx, b[j*M+k], alpha).cell).collect();
+            let second: Vec<Cell> = ba.iter().map(|v| q.mul(ctx, *v, a[i*M+k]).cell).collect();
+            let rhs: Vec<Cell> = (0..=i).map(|j| q.add(ctx, first[j], second[j])).collect();
+            for j in 0..=i { c[i*N+j] = q.add(ctx, c[i*N+j], rhs[j]); }
         }
     }
     out.floats(&c);

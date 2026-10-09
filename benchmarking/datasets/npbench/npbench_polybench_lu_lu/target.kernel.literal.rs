@@ -1,24 +1,8 @@
 //! npbench_polybench_lu_lu__kernel, halo2-base baseline.
 //! Literal translation of kernel.py (LITERAL_BASELINES.md).
-//! LU decomposition without pivoting of `A: Float[N, N]` in place (Doolittle,
-//! row by row); the output is `A` after the call (`mutated_outputs`). Source:
-//!   for i in range(N):
-//!       for j in range(i):
-//!           A[i, j] -= A[i, :j] @ A[:j, j]
-//!           A[i, j] /= A[j, j]
-//!       for j in range(i, N):
-//!           A[i, j] -= A[i, :i] @ A[:i, j]
-//! Both `@` calls are single NumPy reductions (one rescale each, L5); an
-//! empty slice (`j == 0` or `i == 0`) makes the dot product's defining sum
-//! empty, i.e. 0, so the preceding subtraction is skipped rather than
-//! computed as "minus zero" (the same value either way, no extra gate). The
-//! two assignments to `A[i, j]` in the `j < i` branch are two source
-//! statements executed in order: the second reads the value the first just
-//! wrote, as the source does; this is not common-subexpression elimination,
-//! there is nothing recomputed. `/` uses the division gadget the arithmetic
-//! contract shares across baselines (`canonical_div_nonzero`): the dividend
-//! after subtraction is not bounded to signed64 by this point in the
-//! recurrence, which only this gadget's domain covers.
+//! Each @ is a dot with one rescale; empty dots are constant zero.
+//! Subtraction remains explicit even for an empty dot. Division uses the
+//! shared canonical_nonzero domain, as in the optimized statement.
 
 use crate::prelude::*;
 
@@ -51,7 +35,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
 /// `A[i, j] - A[i, :len] @ A[:len, j]` (`A[i, :0] @ A[:0, j]` is 0).
 fn minus_dot(q: &Q32, ctx: &mut Ctx, a: &[Cell], i: usize, j: usize, len: usize) -> Cell {
     if len == 0 {
-        return a[i * N + j];
+        return q.sub(ctx, a[i * N + j], Constant(Fr::ZERO));
     }
     let row = &a[i * N..i * N + len];
     let column: Vec<Cell> = (0..len).map(|k| a[k * N + j]).collect();

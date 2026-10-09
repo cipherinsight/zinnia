@@ -19,25 +19,16 @@ fn main(alpha: Field, beta: Field, A: [[Field; N]; M], B: [[Field; N]; M], x: [F
     check_input(alpha);
     check_input(beta);
     check_inputs(x);
-    let mut result: [Field; M] = [0; M];
-    for i in 0..M {
-        check_inputs(A[i]);
-        check_inputs(B[i]);
-        // alpha * A[i, :]
-        let mut scaled_a: [Field; N] = [0; N];
-        for j in 0..N {
-            scaled_a[j] = mul(alpha, A[i][j]);
-        }
-        // (alpha * A[i, :]) @ x
-        let first = dot(scaled_a, x);
-        // beta * B[i, :]
-        let mut scaled_b: [Field; N] = [0; N];
-        for j in 0..N {
-            scaled_b[j] = mul(beta, B[i][j]);
-        }
-        // (beta * B[i, :]) @ x
-        let second = dot(scaled_b, x);
-        result[i] = first + second;
-    }
+    for i in 0..M { check_inputs(A[i]); check_inputs(B[i]); }
+    let mut scaled_a = [[0; N]; M];
+    for i in 0..M { for j in 0..N { scaled_a[i][j] = mul(alpha, A[i][j]); } }
+    let mut first = [0; M];
+    for i in 0..M { first[i] = dot(scaled_a[i], x); }
+    let mut scaled_b = [[0; N]; M];
+    for i in 0..M { for j in 0..N { scaled_b[i][j] = mul(beta, B[i][j]); } }
+    let mut second = [0; M];
+    for i in 0..M { second[i] = dot(scaled_b[i], x); }
+    let mut result = [0; M];
+    for i in 0..M { result[i] = first[i] + second[i]; }
     result
 }

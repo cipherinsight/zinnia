@@ -28,21 +28,12 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let b = q.load_floats(ctx, &b);
     let x = q.load_floats(ctx, &x);
 
-    let result: Vec<Cell> = (0..M)
-        .map(|i| {
-            // alpha * A[i, :]
-            let scaled_a: Vec<Cell> =
-                a[i * N..(i + 1) * N].iter().map(|v| q.mul(ctx, alpha, *v).cell).collect();
-            // (alpha * A[i, :]) @ x
-            let first = q.dot(ctx, &scaled_a, &x).cell;
-            // beta * B[i, :]
-            let scaled_b: Vec<Cell> =
-                b[i * N..(i + 1) * N].iter().map(|v| q.mul(ctx, beta, *v).cell).collect();
-            // (beta * B[i, :]) @ x
-            let second = q.dot(ctx, &scaled_b, &x).cell;
-            q.add(ctx, first, second)
-        })
-        .collect();
+    // Complete each array expression before evaluating the next one.
+    let scaled_a: Vec<Cell> = a.iter().map(|v| q.mul(ctx, alpha, *v).cell).collect();
+    let first: Vec<Cell> = scaled_a.chunks(N).map(|row| q.dot(ctx, row, &x).cell).collect();
+    let scaled_b: Vec<Cell> = b.iter().map(|v| q.mul(ctx, beta, *v).cell).collect();
+    let second: Vec<Cell> = scaled_b.chunks(N).map(|row| q.dot(ctx, row, &x).cell).collect();
+    let result: Vec<Cell> = (0..M).map(|i| q.add(ctx, first[i], second[i])).collect();
     out.floats(&result);
     Ok(())
 }
