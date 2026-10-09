@@ -55,25 +55,17 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     Ok(())
 }
 
-/// The hit vector of a NumPy row index `idx` over `len` rows, for a
-/// private-index write (no shared gadget writes by a private index): row `i`
-/// is hit when `idx` is `i` or `i - len` (the wrapped negative index), i.e.
-/// when `(idx - i) * (idx - i + len)` is zero (a field has no zero divisors),
-/// one zero test per row; asserting exactly one hit pins `idx` to a valid
-/// NumPy index (any other value has no witness, as NumPy raises
-/// `IndexError`). Shared across the `COLS` columns the write touches, since
-/// the source statement applies the one row index to every column.
+/// A position matches its nonnegative index or its wrapped negative index.
+/// Exactly one match is required, rejecting all out-of-range indices.
 fn row_hits(q: &Q32, ctx: &mut Ctx, idx: Cell, len: usize) -> Vec<Cell> {
-    let n = len as i128;
-    let hits: Vec<Cell> = (0..n)
-        .map(|i| {
-            let at = q.gate.sub(ctx, idx, Constant(fe(i)));
-            let wrapped = q.gate.add(ctx, at, Constant(fe(n)));
-            let both = q.gate.mul(ctx, at, wrapped);
-            q.gate.is_zero(ctx, both)
+    let hits: Vec<Cell> = (0..len)
+        .map(|k| {
+            let positive = q.eq(ctx, idx, Constant(fe(k as i128)));
+            let negative = q.eq(ctx, idx, Constant(fe(k as i128 - len as i128)));
+            q.gate.or(ctx, positive, negative)
         })
         .collect();
-    let total = q.gate.sum(ctx, hits.iter().map(|h| Existing(*h)));
+    let total = q.sum(ctx, hits.iter().copied());
     q.gate.assert_is_const(ctx, &total, &Fr::ONE);
     hits
 }
