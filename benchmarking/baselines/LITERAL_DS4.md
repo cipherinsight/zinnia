@@ -126,8 +126,8 @@ These are the original automatic-sizing checker measurements.
 | ds1000_case0453 | 4,596 + 1,105 = 5,701 | 3,511 | 3,220 + 845 = 4,065 | 3,378 | pass/pass | Full integer squares, row sums, sqrt, division. |
 | ds1000_case0454 | 6,260 + 1,535 = 7,795 | 3,844 | 3,825 + 1,040 = 4,865 | 3,422 | pass/pass | Full abs then pairwise max scans. |
 | ds1000_case0462 | 11,126 + 200 = 11,326 | 5,096 | 3,589 + 200 = 3,789 | 3,650 | pass/pass | Equality compaction. |
-| ds1000_case0471 | 61,236 + 18,144 = 79,380 | 16,991 | 61,236 + 18,144 = 79,380 | 16,991 | pass/pass | **H=N ties**: static slice already direct. |
-| ds1000_case0472 | 40,824 + 12,096 = 52,920 | 12,266 | 40,824 + 12,096 = 52,920 | 12,266 | pass/pass | **H=N ties**: static slice already direct. |
+| ds1000_case0471 | 61,236 + 18,144 = 79,380 | 16,991 | 61,236 + 18,144 = 79,380 | 16,991 | pass/pass | **H and N ties**: static slice already direct. |
+| ds1000_case0472 | 40,824 + 12,096 = 52,920 | 12,266 | 40,824 + 12,096 = 52,920 | 12,266 | pass/pass | **H and N ties**: static slice already direct. |
 | ds1000_case0478 | 185 + 56 = 241 | 2,841 | 184 + 56 = 240 | 2,841 | pass/pass | **N tie**: diagonal view and constant output plumbing. |
 | ds1000_case0480 | 2,291 + 397 = 2,688 | 3,134 | 1,009 + 216 = 1,225 | 2,963 | pass/pass | Linear argmax and both indexed rechecks. |
 | ds1000_case0481 | 2,973 + 200 = 3,173 | 3,274 | 1,534 + 240 = 1,774 | 3,103 | pass/pass | Equality compaction; auto lookup widths differ. |
@@ -136,8 +136,8 @@ These are the original automatic-sizing checker measurements.
 | ds1000_case0491 | 2,095 + 510 = 2,605 | 3,077 | 1,846 + 450 = 2,296 | 3,115 | pass/pass | **N smaller**: shared abs_int64 for the difference. |
 | ds1000_case0495 | 14,392 + 4,264 = 18,656 | 6,147 | 14,391 + 4,264 = 18,655 | 6,147 | pass/pass | **N tie**: pad is wiring plus constants. |
 | ds1000_case0496 | 11,341 + 3,360 = 14,701 | 5,441 | 11,340 + 3,360 = 14,700 | 5,441 | pass/pass | **N tie**: pad is wiring plus constants. |
-| ds1000_case0497 | 11,371 + 3,368 = 14,739 | 7,023 | 11,371 + 3,368 = 14,739 | 7,023 | pass/pass | **H=N ties**: scalar fill conversion and wiring. |
-| ds1000_case0500 | 1,458 + 432 = 1,890 | 3,154 | 1,458 + 432 = 1,890 | 3,154 | pass/pass | **H=N ties**: reshape is metadata. |
+| ds1000_case0497 | 11,371 + 3,368 = 14,739 | 7,023 | 11,371 + 3,368 = 14,739 | 7,023 | pass/pass | **H and N ties**: scalar fill conversion and wiring. |
+| ds1000_case0500 | 1,458 + 432 = 1,890 | 3,154 | 1,458 + 432 = 1,890 | 3,154 | pass/pass | **H and N ties**: reshape is metadata. |
 | ds1000_case0501 | 22,308 + 4,056 = 26,364 | 7,759 | 22,308 + 4,056 = 26,364 | 6,661 | pass/pass | **H tie**: optimized Halo2 already uses q.index. |
 | ds1000_case0503 | 49,179 + 8,112 = 57,291 | 10,931 | 49,179 + 8,112 = 57,291 | 11,013 | pass/pass | **H tie; N smaller**: required native Noir indexing. |
 | ds1000_case0504 | 49,856 + 8,112 = 57,968 | 10,651 | 49,684 + 8,112 = 57,796 | 10,845 | pass/pass | **N smaller**: native Noir indexing and compiler lowering. |
