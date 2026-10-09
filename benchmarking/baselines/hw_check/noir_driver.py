@@ -33,6 +33,13 @@ The decoding of the public values follows the `// @outputs:` line every
                                      values of which the first L*U are the output
     dynamic2 <kind>[RxC]             public (rows, cols), then R*C public values of
                                      which the first rows*cols (row-major) are the output
+    repeat[k < N](SEG | SEG ...)     the segments SEG, in order, for k = 0, ..., N - 1;
+                                     their counts may use k (constant columns or
+                                     triangles between public cells: create_grid's
+                                     zero column, a matrix's zero lower triangle)
+
+A `const` segment lists its values (`= [0, 1.5]`) or gives one value for all of
+them (`const float[k] = 0`).
 
 A count (N, I, U, R, C) is a number or an integer expression over the file's
 integer `global`s (`float[N * M]`), so a baseline whose sizes are named
@@ -72,7 +79,7 @@ class DriverError(Exception):
 
 _COUNT = r"[^\]x]+"
 _SEGMENT = re.compile(
-    rf"^(?:(?P<const>const)\s+(?P<ckind>float|int|bool)\[(?P<cn>{_COUNT})\]\s*=\s*(?P<values>\[.*\])"
+    rf"^(?:(?P<const>const)\s+(?P<ckind>float|int|bool)\[(?P<cn>{_COUNT})\]\s*=\s*(?P<values>\[.*\]|[-+0-9.eE]+)"
     rf"|(?P<dyn>dynamic)\s+(?P<dkind>float|int|bool)\[(?P<items>{_COUNT})x(?P<unit>{_COUNT})\]"
     rf"|(?P<dyn2>dynamic2)\s+(?P<d2kind>float|int|bool)\[(?P<rows>{_COUNT})x(?P<cols>{_COUNT})\]"
     rf"|(?P<kind>float|int|bool)\[(?P<n>{_COUNT})\])$"
@@ -118,15 +125,41 @@ def parse_outputs(main_nr: str) -> list[dict]:
     if len(lines) != 1:
         raise DriverError("main.nr must carry exactly one `// @outputs:` line")
     spec = lines[0].split(":", 1)[1].strip()
-    names = integer_globals(main_nr)
+    return _parse_segments(spec, ";", integer_globals(main_nr))
+
+
+#: `repeat[k < N](...)`: a group of segments repeated with its index `k`.
+_REPEAT = re.compile(r"^repeat\[\s*(?P<var>[A-Za-z_]\w*)\s*<(?P<count>[^\]]+)\]\s*\((?P<body>.*)\)$")
+
+
+def _split_top(spec: str, sep: str) -> list[str]:
+    """`spec` split at the occurrences of `sep` outside brackets and parentheses."""
+    parts, depth, start = [], 0, 0
+    for i, c in enumerate(spec):
+        depth += c in "(["
+        depth -= c in ")]"
+        if c == sep and depth == 0:
+            parts.append(spec[start:i])
+            start = i + 1
+    return parts + [spec[start:]]
+
+
+def _parse_segments(spec: str, sep: str, names: dict[str, int]) -> list[dict]:
     count = lambda expr: _integer(expr, names)  # noqa: E731
     segments = []
-    for part in spec.split(";"):
+    for part in _split_top(spec, sep):
+        repeat = _REPEAT.match(part.strip())
+        if repeat:
+            for k in range(count(repeat["count"])):
+                segments += _parse_segments(repeat["body"], "|", {**names, repeat["var"]: k})
+            continue
         m = _SEGMENT.match(part.strip())
         if not m:
             raise DriverError(f"bad output segment {part.strip()!r}")
         if m["const"]:
             values = json.loads(m["values"])
+            if not isinstance(values, list):
+                values = [values] * count(m["cn"])
             if len(values) != count(m["cn"]):
                 raise DriverError(f"const segment lists {len(values)} values, declares {m['cn']}")
             segments.append({"segment": "constants", "kind": m["ckind"], "values": values})
