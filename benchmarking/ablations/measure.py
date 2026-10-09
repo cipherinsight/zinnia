@@ -10,7 +10,7 @@ and for a named fixed configuration the groups that kept the layer's choice
 (fallbacks).
 
     python benchmarking/ablations/measure.py --config abl_joint --out abl_joint.json \\
-        [--case-sets ds1000,npbench_pythran] [--cases 0345,pythran_lu__factorMatrix0] \\
+        [--case-sets ds1000,npbench_pythran|PATH] [--cases 0345,pythran_lu__factorMatrix0] \\
         [--targets halo2,noir] [--gates] [--jobs 8] [--timeout 1200] \\
         [--wrap "python benchmarking/ablations/capped.py 8G 1100"]
 
@@ -44,7 +44,8 @@ def main() -> int:
     ap.add_argument("--config", required=True, help=f"one of {', '.join(common.CONFIGS)}, or a "
                     "label for --env")
     ap.add_argument("--env", action="append", default=[], help="NAME=VALUE (with a custom label)")
-    ap.add_argument("--case-sets", default=",".join(common.CASE_SETS))
+    ap.add_argument("--case-sets", default=",".join(common.CASE_SETS),
+                    help="names from common.CASE_SETS or paths of case-set files")
     ap.add_argument("--cases", help="comma-separated case names (default: every perf case)")
     ap.add_argument("--targets", default=",".join(common.TARGETS))
     ap.add_argument("--gates", action="store_true", help="also measure Noir bb gates")
@@ -62,7 +63,7 @@ def main() -> int:
     wanted = set(args.cases.split(",")) if args.cases else None
     jobs = []
     for set_name in args.case_sets.split(","):
-        entries = common.perf_entries(common.CASE_SETS[set_name])
+        entries = common.perf_entries(common.case_set_file(set_name))
         for case in sorted(entries):
             short = case.removeprefix("ds1000_case")
             if wanted is None or case in wanted or short in wanted:
