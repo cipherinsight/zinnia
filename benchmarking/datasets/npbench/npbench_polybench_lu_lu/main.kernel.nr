@@ -4,13 +4,11 @@
 // (`mutated_outputs`). Row i: for j < i,
 // A[i, j] = (A[i, j] - A[i, :j] @ A[:j, j]) / A[j, j]; for j >= i,
 // A[i, j] -= A[i, :i] @ A[:i, j].
-// Each @ is one reduction, rescaled once (an empty one is 0). The divisor
-// A[j, j] can have either sign; its magnitude is proven once (`abs_int64`)
-// when row j is done, and every quotient by it reuses it (`div_by_abs`). The
-// last diagonal element divides nothing, so it gets no such proof.
+// Each explicit dot is rounded once. Nonzero division preserves the frozen
+// backend domain of derived pivots, which may leave signed64 after subtraction.
 // @outputs: float[N * N]
 
-use noir_hw::{abs_int64, check_inputs, div_by_abs, rescale};
+use noir_hw::{canonical_div_nonzero, check_inputs, rescale};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global N: u32 = 15; // = A_0
@@ -21,7 +19,6 @@ fn main(A: [[Field; N]; N]) -> pub [[Field; N]; N] {
         check_inputs(A[i]);
     }
     let mut a = A;
-    let mut diagonal_abs: [Field; N] = [0; N];
     for i in 0..N {
         for j in 0..i {
             // A[i, j] = (A[i, j] - A[i, :j] @ A[:j, j]) / A[j, j]
@@ -33,7 +30,7 @@ fn main(A: [[Field; N]; N]) -> pub [[Field; N]; N] {
                 }
                 numerator -= rescale(acc);
             }
-            a[i][j] = div_by_abs(numerator, a[j][j], diagonal_abs[j]);
+            a[i][j] = canonical_div_nonzero(numerator, a[j][j]);
         }
         for j in i..N {
             // A[i, j] -= A[i, :i] @ A[:i, j]
@@ -44,9 +41,6 @@ fn main(A: [[Field; N]; N]) -> pub [[Field; N]; N] {
                 }
                 a[i][j] -= rescale(acc);
             }
-        }
-        if i + 1 < N {
-            diagonal_abs[i] = abs_int64(a[i][i]);
         }
     }
     a

@@ -131,7 +131,7 @@ Source-level algorithm alignment and A/B equality do not settle those risks.
 
 ## Typed-input acceptance-domain follow-up (2026-10-09)
 
-The 51 inventory entries now record static domain evidence and source hashes.
+The 53 inventory entries now record static domain evidence and source hashes.
 `static_review_no_known_mismatch` is not formal equivalence or witness validation.
 The compiler remains frozen; no witnesses, MockProver, keys, or proofs were run.
 
@@ -165,3 +165,15 @@ export are in `eval-redo/npb-hw/diagnosis/reduction-ir`. The seven affected Noir
 compile results are in `eval-redo/npb-hw/domain-numerical/compile.json`. Local
 compilations use an 8 GiB cap and two jobs/threads. Historical counts and witness
 results do not validate changed sources; counts must be refreshed.
+
+
+Follow-up coverage: NPBench **lu** and **ludcmp** are included in this numerical
+inventory. Both previously imposed source-abs bounds on pivots even though
+source algorithms only divide by them. For example, a first diagonal raw code
+-2^63 and otherwise diagonal nonsingular matrix is excluded by abs_int64 but
+is a valid frozen divisor. Later diagonal values subtract a signed64 rounded
+dot from a signed64 input, so an imposed signed64 window is also too narrow.
+Both backends now use canonical nonzero division without those extra pivot
+bounds. Nonpivoted factorization and triangular solve ordering are unchanged.
+Both entries passed Halo2 and Noir compile checks, with no witness execution;
+Noir records are in `eval-redo/npb-hw/domain-numerical/lu-compile.json`.

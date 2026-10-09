@@ -663,6 +663,32 @@
         "halo2": "27e5652f4e9233b8430ddc6c136a5ef9bdf80ab83ffe5f5d03c8795c20f5e63b",
         "noir": "d4996c144524f15154b2283af1345a418fadc614621e2f666a867bbf5d3dda08"
       }
+    },
+    {
+      "case": "npbench_polybench_lu_lu__kernel",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Preserves ordered nonpivoted LU with one rounding per explicit source dot; input-minus-dot subtraction remains exact. Returns mutated matrix A.",
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Corrected both backends: removed abs_int64 restrictions on pivots. Input signed64 minimum is a valid divisor; later pivots=input-minus-rounded-dot can span nearly signed65. Canonical nonzero division preserves backend magnitude/remainder domains and unconditional frontend nonzero assertions. Numerators remain unbounded before division, as in frozen backend.",
+      "validation": "Both backend compile checks passed; no witness execution or proving.",
+      "source_sha256": {
+        "kernel": "979c48fdd48fcc0871a4212492ff784b59f328ed8581fbbf98df9342241ff50b",
+        "halo2": "7171de3dbc76c113175390129757143dafc495f7f094f834a715f6a89d0ea737",
+        "noir": "f8080ff732a33738aaf62322448de36fdea0342da221456d7ef875519ce75afd"
+      }
+    },
+    {
+      "case": "npbench_polybench_ludcmp_ludcmp__kernel",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Preserves ordered nonpivoted LU with one rounding per explicit source dot; input-minus-dot subtraction remains exact. Forward and reverse triangular solves preserve source order and return x,y.",
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Corrected both backends: removed abs_int64 restrictions on pivots. Input signed64 minimum is a valid divisor; later pivots=input-minus-rounded-dot can span nearly signed65. Canonical nonzero division preserves backend magnitude/remainder domains and unconditional frontend nonzero assertions. Numerators remain unbounded before division, as in frozen backend.",
+      "validation": "Both backend compile checks passed; no witness execution or proving.",
+      "source_sha256": {
+        "kernel": "c30c2fbd6dc055c805f95f9243a141d575a24bea04d064b7d4c4a9d9787bb150",
+        "halo2": "d60c2893eb0418c86f9d75e4fb66910dac368907278d6bf0b7ffcb165808b4dd",
+        "noir": "b50d92b9e1b5d95e45480063ff897146595824a4fe6ab71e819dd7aa925791cb"
+      }
     }
   ],
   "other_owner_entries": [
@@ -671,8 +697,6 @@
     "npbench_deep_learning_softmax_softmax__softmax",
     "npbench_go_fast_go_fast__go_fast",
     "npbench_polybench_deriche_deriche__kernel",
-    "npbench_polybench_lu_lu__kernel",
-    "npbench_polybench_ludcmp_ludcmp__kernel",
     "npbench_pythran_arc_distance_arc_distance__arc_distance",
     "npbench_weather_stencils_hdiff_hdiff__hdiff",
     "pythran_arc_distance__arc_distance",

@@ -4,12 +4,11 @@
 // (y[i] = b[i] - A[i, :i] @ y[:i]) and U x = y by back substitution
 // (x[i] = (y[i] - A[i, i + 1:] @ x[i + 1:]) / A[i, i]); returns (x, y).
 // A is written but not returned, so it is no output.
-// Each @ is one reduction, rescaled once (an empty one is 0). Every diagonal
-// element divides, with either sign: its magnitude is proven once
-// (`abs_int64`) and every quotient by it reuses it (`div_by_abs`).
+// Each explicit dot is rounded once. Nonzero division preserves the frozen
+// backend domain of derived pivots, which may leave signed64 after subtraction.
 // @outputs: float[N]; float[N]
 
-use noir_hw::{abs_int64, check_inputs, div_by_abs, rescale};
+use noir_hw::{canonical_div_nonzero, check_inputs, rescale};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global N: u32 = 15; // = A_0
@@ -21,7 +20,6 @@ fn main(A: [[Field; N]; N], b: [Field; N]) -> pub ([Field; N], [Field; N]) {
     }
     check_inputs(b);
     let mut a = A;
-    let mut diagonal_abs: [Field; N] = [0; N];
     for i in 0..N {
         for j in 0..i {
             // A[i, j] = (A[i, j] - A[i, :j] @ A[:j, j]) / A[j, j]
@@ -33,7 +31,7 @@ fn main(A: [[Field; N]; N], b: [Field; N]) -> pub ([Field; N], [Field; N]) {
                 }
                 numerator -= rescale(acc);
             }
-            a[i][j] = div_by_abs(numerator, a[j][j], diagonal_abs[j]);
+            a[i][j] = canonical_div_nonzero(numerator, a[j][j]);
         }
         for j in i..N {
             // A[i, j] -= A[i, :i] @ A[:i, j]
@@ -45,7 +43,6 @@ fn main(A: [[Field; N]; N], b: [Field; N]) -> pub ([Field; N], [Field; N]) {
                 a[i][j] -= rescale(acc);
             }
         }
-        diagonal_abs[i] = abs_int64(a[i][i]);
     }
     // y[i] = b[i] - A[i, :i] @ y[:i]
     let mut y: [Field; N] = [0; N];
@@ -71,7 +68,7 @@ fn main(A: [[Field; N]; N], b: [Field; N]) -> pub ([Field; N], [Field; N]) {
             }
             numerator -= rescale(acc);
         }
-        x[i] = div_by_abs(numerator, a[i][i], diagonal_abs[i]);
+        x[i] = canonical_div_nonzero(numerator, a[i][i]);
     }
     (x, y)
 }

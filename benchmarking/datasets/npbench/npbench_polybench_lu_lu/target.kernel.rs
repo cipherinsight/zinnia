@@ -4,11 +4,8 @@
 //! (`mutated_outputs`). Row `i`: for `j < i`,
 //! `A[i, j] = (A[i, j] - A[i, :j] @ A[:j, j]) / A[j, j]`; for `j >= i`,
 //! `A[i, j] -= A[i, :i] @ A[:i, j]`.
-//! Each `@` is one reduction, rescaled once (`q.dot`; an empty one is 0 and
-//! costs nothing). The divisor `A[j, j]` can have either sign; its magnitude
-//! is proven once (`abs_int64`, a sign bit and a 63-bit check) when row `j`
-//! is done, and every quotient by it reuses it (`div_by_abs`). The last
-//! diagonal element divides nothing, so it gets no such proof.
+//! Each explicit dot is rounded once. Nonzero division preserves the frozen
+//! backend domain of derived pivots, which may leave signed64 after subtraction.
 
 use crate::prelude::*;
 
@@ -22,17 +19,13 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
 
     let mut a = q.load_floats(ctx, &a);
     let at = |i: usize, j: usize| i * N + j;
-    let mut diagonal_abs: Vec<Cell> = Vec::with_capacity(N);
     for i in 0..N {
         for j in 0..i {
             let numerator = minus_dot(&q, ctx, &a, i, j, j);
-            a[at(i, j)] = q.div_by_abs(ctx, numerator, a[at(j, j)], diagonal_abs[j]).cell;
+            a[at(i, j)] = q.canonical_div_nonzero(ctx, numerator, a[at(j, j)]).cell;
         }
         for j in i..N {
             a[at(i, j)] = minus_dot(&q, ctx, &a, i, j, i);
-        }
-        if i + 1 < N {
-            diagonal_abs.push(q.abs_int64(ctx, a[at(i, i)]));
         }
     }
     out.floats(&a);
