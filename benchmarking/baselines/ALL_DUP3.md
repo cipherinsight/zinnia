@@ -19,6 +19,7 @@ Fixture values are unchanged. No repository fixtures or tools are modified.
 | 0418 | all pass | 2928 + 744 = 3672 | 3048 + 744 = 3792 | 3218 | 3218 |
 | 0419 | all pass | 2928 + 744 = 3672 | 3048 + 744 = 3792 | 3218 | 3218 |
 | 0430 | all pass | 1804 + 443 = 2247 | 2956 + 462 = 3418 | 3086 | 3086 |
+| 0448 | all pass | 960 + 288 = 1248 | 960 + 288 = 1248 | 2966 | 2966 |
 
 0417: adapted all four 0414 twins by wiring the reversed input before binning.
 Literal means scan each bin in source order. Noir counts are equal because the
@@ -34,3 +35,5 @@ No proofs, keys, tampered-public verification, timing or scaling runs.
 0419: Adapted 0416: reverse input columns, compute all pairwise means, then reverse the three output bins per row.
 
 0430: Adapted 0428 (identical kernel). Literal independently computes both mean/std occurrences, with full deviations and raw squares; one rescale per squared-deviation reduction preserves twin arithmetic (literal section 3). Optimized Noir now uses the shared constant-divisor gadget for 30 instead of divmod_pos. Noir compiler CSE leaves equal counts.
+
+0448: Reused 0361 copy-only loading/output plumbing for 24 cells. Changed to two 3x4 parameters and interleaved x/y output of shape 3x4x2. Literal explicitly wires both transposes, vstack and final transpose. Both kinds have equal counts in both backends.
