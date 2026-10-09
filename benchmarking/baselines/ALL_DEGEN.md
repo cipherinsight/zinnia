@@ -35,6 +35,8 @@ sizing, advice + lookup (total), and unpadded Noir gates, respectively.
 
 | ds1000_case0413 | 1732 + 240 (1972) | 4161 + 200 (4361) | 3149 | 3480 | PASS all four, including domain rejection |
 
+| ds1000_case0467 | 640 + 192 (832) | 640 + 192 (832) | 3084 | 3084 | PASS all four, including domain rejection |
+
 ## Interpretations and per-case review
 
 - 0291: signature shape is [2,5,5,2]. Reads array metadata, not values;
@@ -83,3 +85,13 @@ sizing, advice + lookup (total), and unpadded Noir gates, respectively.
   Evidence: 0413-{opt,lit,edge-opt,edge-lit}.json and
   0413-imaginary-domain.json. Historical case-set zinnia_rejects status is
   retained by the checker; no compiler was run to reassess it.
+
+- 0467: 16 clipped windows, outer row then column; each window is flattened
+  row-major, giving 100 integer output cells in list order. Every one of the
+  16 private integers is checked once, and repeated copies alias those wires.
+  Literal retains window(arr, size), all bound assignments in their source
+  positions and the slice append. Bounds, floor and integer casts depend only
+  on shape (positive 3/2 floors to 1) and are folded at compile time.
+  Optimized Rust aliases static slices; optimized Noir uses the static index
+  list. Literal and optimized counts are equal because data movement adds no
+  arithmetic. No twin reused; 0467 was completed before adapting 0468.
