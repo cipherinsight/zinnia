@@ -1,6 +1,6 @@
 """Serial, resumable circuit counts for source-audited scaled baselines.
 
-Halo2 uses stats, Noir uses setup (compilation, verification key and gate count).
+Halo2 uses stats, Noir uses stats (compilation and gate count, without verification keys).
 Neither runs proving or a timing benchmark. A memory-limiting runner is required.
 """
 from __future__ import annotations
@@ -115,7 +115,7 @@ def main(args) -> int:
             if point['system'] == 'halo2_hw':
                 cmd = [str(args.halo2_bin.resolve()), 'stats']
             else:
-                cmd = [sys.executable, '-m', 'hw_check.noir_driver', 'setup']
+                cmd = [sys.executable, '-m', 'hw_check.noir_driver', 'stats']
             cmd += ['--case', str(folder), '--function', function, '--fixture', str(fixture),
                     '--input', 'B', '--workdir', str(work.resolve()), '--out', str(output.resolve())]
             # timeout runs INSIDE the systemd scope: killing systemd-run alone

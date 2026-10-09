@@ -68,12 +68,12 @@ source text against each audited SHA-256, rejecting wrong-cap or stale builds.
 
 Counting runs serially under the supplied memory limiter and shares the
 original-size checker's `/tmp/hw_check_heavy.lock`. Halo2 runs `stats`; Noir
-runs `setup`, which compiles and obtains gates without proving. Results append
+runs `stats`, which compiles and obtains gates without keys or proofs. Results append
 to JSONL. Re-running resumes successful records only when fixture, source,
 compiled binary (Halo2), gadgets/driver/tools (Noir), and memory settings match.
 Timeouts and failures remain records with log paths and are retried on resume.
 Tool duration fields are diagnostic metadata, not timing-benchmark measurements.
-Noir setup does not validate outputs; execute the witness before reporting an
+Noir stats does not validate outputs; execute the witness before reporting an
 unchecked circuit as correct.
 
 The CAP32 atax smoke compiled from the scaled source and passed Halo2 MockProver
