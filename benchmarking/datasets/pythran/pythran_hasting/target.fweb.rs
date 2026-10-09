@@ -51,6 +51,5 @@ fn predation(q: &Q32, ctx: &mut Ctx, a: Cell, u: Cell, v: Cell, b: Cell) -> Cell
     let auv = q.mul(ctx, au.cell, v);
     let bu = q.mul(ctx, b, u);
     let divisor = q.add(ctx, Constant(fe(SCALE)), bu.cell);
-    let divisor = q.bound(ctx, divisor);
-    q.div(ctx, auv.cell, divisor).cell
+    q.canonical_div_nonzero(ctx, auv.cell, divisor).cell
 }

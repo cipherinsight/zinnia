@@ -35,6 +35,8 @@ fn main(A: [[Field; MM]; K], B: [[Field; NN]; K], W: [[Field; MM]; K]) -> pub [[
                 let wdiff = div_by_abs(A[k][ii] - B[k][jj], W[k][ii], w_abs[k][ii]);
                 acc += mul(wdiff, wdiff);
             }
+            // Frozen Noir sqrt guard proves the radicand is an unsigned64 code.
+            acc.assert_max_bit_size::<64>();
             d[ii][jj] = sqrt(acc);
         }
     }

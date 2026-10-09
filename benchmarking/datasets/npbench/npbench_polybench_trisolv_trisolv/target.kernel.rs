@@ -5,9 +5,8 @@
 //! Each `L[i, :i] @ x[:i]` is one reduction, rescaled once (`q.dot`; the
 //! empty one for `i = 0` is 0). The input `x` is overwritten before it is
 //! read and the strict upper triangle of `L` is never read, so neither is
-//! loaded. Each division takes the diagonal element's magnitude from
-//! `q.abs_int64` (`q.div_by_abs`: 7,171 advice cells, against 7,379 for
-//! `q.div`'s sign test on the input's window proof).
+//! loaded. Each division uses the input's signed64 sign/magnitude, retaining
+//! the valid divisor -2^63 (source abs() would reject that endpoint).
 
 use crate::prelude::*;
 
@@ -24,8 +23,10 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let mut x: Vec<Cell> = Vec::with_capacity(N);
     for i in 0..N {
         let row = q.load_floats(ctx, &l[i * N..i * N + i]);
-        let diagonal = q.load_float(ctx, l[i * N + i]);
-        let magnitude = q.abs_int64(ctx, diagonal);
+        let diagonal_bounded = q.load_float_bounded(ctx, l[i * N + i]);
+        let diagonal = diagonal_bounded.cell;
+        // A divisor permits i64::MIN: its magnitude is 2^63, unlike source abs().
+        let magnitude = q.abs(ctx, diagonal_bounded);
         let rest = if i == 0 {
             b[0]
         } else {

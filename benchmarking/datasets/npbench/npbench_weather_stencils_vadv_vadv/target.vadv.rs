@@ -157,18 +157,8 @@ fn split(q: &Q32, ctx: &mut Ctx, s: Cell) -> Coefs {
     Coefs { half: h, minus_half, half_ceil }
 }
 
-/// `1.0 / x` (`floor(2^64 / x)`), dividing by `|x|` from a hinted sign `t`:
-/// `m = x (1 - 2t)` in `[0, 2^64)` pins `t` for `x != 0` (the wrong sign
-/// gives `p - |x|`), and with `|x| < 2^64` the decomposition of
-/// [`Q32::div_by_abs`] stays unique (`|q x + r| < 2^128`); `x = 0` has no
-/// witness. Cheaper than [`Q32::div`]'s window check of `x` and comparison.
+/// Frozen nonzero variable-divisor domain; remainder checks bound magnitude.
 fn reciprocal(q: &Q32, ctx: &mut Ctx, x: Cell) -> Cell {
-    let negative = crate::q32::signed(x.value()) < 0;
-    // Hint, pinned by the range check below.
-    let t = ctx.load_witness(Fr::from(negative as u64));
-    q.gate.assert_bit(ctx, t);
-    let sign = q.gate.mul_add(ctx, t, Constant(-Fr::from(2)), Constant(Fr::ONE));
-    let magnitude = q.gate.mul(ctx, x, sign);
-    q.range.range_check(ctx, magnitude, 64);
-    q.div_by_abs(ctx, Constant(fe(SCALE)), x, magnitude).cell
+    let one = ctx.load_constant(fe(SCALE));
+    q.canonical_div_nonzero(ctx, one, x).cell
 }

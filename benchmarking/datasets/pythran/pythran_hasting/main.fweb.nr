@@ -9,14 +9,14 @@
 // The divisors can have either sign (`div`).
 // @outputs: float[3]
 
-use noir_hw::{check_input, checked, div, mul, SCALE};
+use noir_hw::{check_input, checked, canonical_div_nonzero, mul, SCALE};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global Y_LEN: u32 = 3; // = y_0
 
 // a * u * v / (1.0 + b * u)
 fn predation(a: Field, u: Field, v: Field, b: Field) -> Field {
-    div(mul(mul(a, u), v), SCALE + mul(b, u))
+    canonical_div_nonzero(mul(mul(a, u), v), SCALE + mul(b, u))
 }
 
 fn main(y: [Field; Y_LEN], a1: Field, a2: Field, b1: Field, b2: Field, d1: Field, d2: Field) -> pub [Field; 3] {

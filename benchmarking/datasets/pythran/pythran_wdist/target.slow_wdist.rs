@@ -36,6 +36,8 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
                 .collect();
             let squares: Vec<Cell> = wdiff.iter().map(|x| q.mul(ctx, *x, *x).cell).collect();
             let total = q.sum(ctx, squares);
+            // Frozen Halo2 sqrt/guard requires a nonnegative signed64 radicand.
+            q.range.range_check(ctx, total, 63);
             d.push(q.sqrt(ctx, total).cell);
         }
     }

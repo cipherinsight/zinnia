@@ -13,13 +13,11 @@
 // gav = -0.25 * s (the next level's), and their products with
 // BET_M = BET_P = 0.5, which are equal (cs = ccol, as_ = acol). All four are
 // floors of s / 4 and s / 8, so they come from one decomposition s = 8 h + r
-// with the bits of r (`split`) instead of four rounded products. A reciprocal
-// divides by the magnitude of the divisor from a hinted sign and one 64-bit
-// range check (`reciprocal`), with no window check of the divisor (295,114
-// gates against 306,926 with noir_hw::div).
+// with the bits of r (`split`) instead of four rounded products. Reciprocal
+// uses the frozen nonzero division domain, including its signed endpoint.
 // @outputs: float[NI * NJ * NK]
 
-use noir_hw::{check_input, check_inputs, divmod_pos, mul, window, SCALE};
+use noir_hw::{canonical_div_nonzero, check_input, check_inputs, mul, window, SCALE};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global NI: u32 = 15; // = utens_stage_0
@@ -59,22 +57,8 @@ fn split(s: Field) -> Coefs {
     Coefs { half: h, half_ceil: h + nonzero }
 }
 
-unconstrained fn is_negative_hint(x: Field) -> bool {
-    // x < 0 for |x| below 2^200: its canonical representative is large.
-    !x.lt(2.pow_32(200))
-}
-
-// 1.0 / x = floor(2^64 / x) with remainder in [0, |x|) (noir_hw::div's
-// rounding), dividing by |x| from a hinted sign t: m = (t ? -x : x) in
-// [0, 2^64) pins t for x != 0 (the wrong sign gives p - |x|), and divmod_pos
-// stays unique for a divisor below 2^64; x = 0 has no witness.
 fn reciprocal(x: Field) -> Field {
-    // Safety: pinned by the range check below.
-    let negative = unsafe { is_negative_hint(x) };
-    let magnitude = if negative { -x } else { x };
-    magnitude.assert_max_bit_size::<64>();
-    let (quotient, _) = divmod_pos(SCALE * SCALE, magnitude);
-    if negative { -quotient } else { quotient }
+    canonical_div_nonzero(SCALE, x)
 }
 
 fn main(

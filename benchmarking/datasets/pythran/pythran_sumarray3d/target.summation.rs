@@ -35,6 +35,8 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
             let d: Vec<Cell> = (0..AXES).map(|a| q.sub(ctx, point[a], pos[j * AXES + a])).collect();
             let squares: Vec<Cell> = d.iter().map(|v| q.mul(ctx, *v, *v).cell).collect();
             let distance = q.sum(ctx, squares);
+            // Frozen Halo2 sqrt/guard requires a nonnegative signed64 radicand.
+            q.range.range_check(ctx, distance, 63);
             let root = q.sqrt(ctx, distance);
             dr.push(q.div_pos(ctx, one, root).cell);
             for (a, delta) in d.into_iter().enumerate() {

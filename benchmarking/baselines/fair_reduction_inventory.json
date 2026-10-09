@@ -1,311 +1,668 @@
 {
-  "scope": "Original1x only. Arithmetic/source review, not acceptance-domain certification. Explicit source np.dot/@ and supported array-mul sum remain fused; scalar products and **2 must retain original rounding.",
+  "scope": "Original1x only. Static source/arithmetic and typed-input acceptance-domain review against frozen backend semantics; not formal equivalence or witness/proof validation.",
   "entries": [
     {
       "case": "npbench_compute_compute__compute",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Integer clip and exact integer arithmetic; no floating rescale.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "e7c7373541a17875d7fafa2e8a614cf49dfbc631e3c43c08bab346fcddf9c45d",
+        "halo2": "6cc4f9027b33260124ac949c05e95deffb92c93b5b488426ee30baf232ea3527",
+        "noir": "1b15fdce3802d23c5b133f27f403726d433566c4550d47e4bc1e79a917327f11"
+      }
     },
     {
       "case": "npbench_deep_learning_conv2d_bias_conv2d__conv2d_bias",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Source array multiply followed by sum retains product provenance and one fused reduction. Bias add is exact. float32 is still modeled as Q32, a shared policy/domain caveat.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "8965ee68182fbf18a9897dc9cc473f432120583e642dd3fdaa20becec82b80cd",
+        "halo2": "0d548fe78076f07726844c8d3872b063bb34b67549c9c35b21c314069a000d45",
+        "noir": "6ca7474ae9887e8d2394e2604ed215c5e7e5920c433a2650441b05630ad939e7"
+      }
     },
     {
       "case": "npbench_polybench_atax_atax__kernel",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Preserves (A @ x) @ A, with a separate rounded dot at each stage.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "54d9e32d7a34e22390de9d50e367b99f3ca4199ceb5809c7f94142e491dece9e",
+        "halo2": "71dfae7935dfedfea1e3f838297e308d6a711984551a13a27b37add00e31beb5",
+        "noir": "f8834e45f0084de3a3bd50e746f1dc8eaede7cb66a7051c464f6b8fdcff58f66"
+      }
     },
     {
       "case": "npbench_polybench_bicg_bicg__kernel",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Preserves two source matrix-vector products.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "9c9b73ef2c7f0b889b1feadfd6f6adf175d81ef26fba3dc58cefa255d1af0750",
+        "halo2": "d3ddce5c7e475fae5b74a8361361165878424fb9fccba9344fd0bb3115242a35",
+        "noir": "3e77db61dbe90d2f4e22fd43d9a057a910f6391deb8468536b37ca00f2676514"
+      }
     },
     {
       "case": "npbench_polybench_cholesky_cholesky__kernel",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Preserves sequential row factorization; each explicit np.dot, subtraction, division, sqrt remains.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Each dot is a nonnegative sum of squares with signed64 quotient; nonnegative radicand a_ii-dot cannot exceed original signed64 a_ii. sqrt rejects negative radicands; positive-divisor remainder checks reject zero, matching unconditional frontend division preconditions.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "990f34d6889e7b95880a077db42ca244cce7f09ed19b0d0899b1920bf0527622",
+        "halo2": "a7ff3a8b5bcf09b01db51721400b9ae8c70645f35a4762c364cd91fd2d2e11be",
+        "noir": "dd05eeba01efe2bfb3579f79f06d21e5538ddf1f702c3971cd79d812d4538118"
+      }
     },
     {
       "case": "npbench_polybench_covariance2_covariance2__kernel",
       "arithmetic_status": "corrected",
       "evidence": "Direct quotient by NO-1, not multiplication by quantized reciprocal; exact symmetric product CSE retained.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "caf29f2d151e2be5682bc8d8204bf822899b3c2e40a4a47d6371c457092bf459",
+        "halo2": "569b5238cb751063b991369f97cdd2f10b1318cf2c7a1d2254a6f6e1d87f2186",
+        "noir": "015e3a61709e1517e5cf2e091a4ba171af9228be34eb6b4b051b06cbf6440971"
+      }
     },
     {
       "case": "npbench_polybench_durbin_durbin__kernel",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Preserves alpha/beta recurrence, dot, and old-y snapshot before reversed-vector update.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Initial beta=1-alpha\u00b2 lies within signed64 because the rounded square lies in [0,2^63); later beta values are rounded products in signed64. Existing divisor bound therefore adds no restriction. Zero beta is excluded by frontend div_f preconditions.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "001d7b597471dc96a45f803cd4768cdc38d9185fd1b58e823d5fd8f6bfc8319f",
+        "halo2": "91b12468f38bd504969f66c7067c4a1e5d08fd189f9d68f2524fc4dac68fe0a5",
+        "noir": "f585da33b2b177a9d8ea66fbab96413558b55b0d98c7459a8f1876fce0611a6f"
+      }
     },
     {
       "case": "npbench_polybench_gemm_gemm__kernel",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Rounds alpha*A before @B; beta*C separately rounded.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "a5defa765cc5cf63e6a1cd1e5f53f9a182fc1561802b93139ee7663304824fa3",
+        "halo2": "cc4c699cf62195cd087a12bc33625b6d502f62569ffd64d23249c6aa1ab2f8ed",
+        "noir": "4fa401ec8053d66a32e2affafaea1455ddce5e57a74f4ab7df0a08b4a97e7f26"
+      }
     },
     {
       "case": "npbench_polybench_gemver_gemver__kernel",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Rounds outer products, then beta*y before @A and alpha*A before @x; mutation order preserved.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "cb623d7461a02759cb98780e34a1469f7d74d7d4716aa7c98fe50c08bd33c643",
+        "halo2": "14c305fde883eff103dec9d67d9bfb0a1b9c3bbf023033f75cca05de26e9dbcb",
+        "noir": "ed60d451a25a5bbf62fe20090784738e2d59c1e227e1d610256bbafc38e84707"
+      }
     },
     {
       "case": "npbench_polybench_gesummv_gesummv__kernel",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Preserves source matrix-vector reductions and scalar products around them.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "5051367dcc388833a7a353836c23018f090c2619a633f0e12341780ef6af97a8",
+        "halo2": "46b595430640ab70e771e7087246a2c1517c11b2ebc917d66b973670e34cffb6",
+        "noir": "dbffdeb2db0e0e7d0a36f20f428a379e7a6f887adee5ac3021a7ca3acd46c8ee"
+      }
     },
     {
       "case": "npbench_polybench_gramschmidt_gramschmidt__kernel",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Explicit source dots stay fused; per-element projection updates rounded separately; ordered mutation maintained.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Norm squared is one rounded dot with signed64 quotient, so root cannot accept a wider radicand than compiler. Projection divisions reject zero norm, matching unconditional frontend nonzero assertions; remaining products/explicit dots retain signed64 quotient checks.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "c44a3b8bf2d6145f766117747f6c4947b4fce56595f402871a0118e44058836d",
+        "halo2": "dd71948175336d17a412ad59a03e31a424c6d1903fbe52e740ee5f0601f8304b",
+        "noir": "a601ca6caf3747d33000816f3f882838177472e4780323b873bd406125341236"
+      }
     },
     {
       "case": "npbench_polybench_k2mm_k2mm__kernel",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Preserves ((alpha*A)@B)@C and beta*D rounding stages.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "23e359847c80eb7f87d3e4df04fc53d9c2b96d462d2031598101e4f691f0712d",
+        "halo2": "ca303846c0447b5a1e4be832ea115393ce8ddafbbe1f84711e7940c1d5ae0398",
+        "noir": "eeb24db0054f25b89a08fe6c4e3262ba081335afc2ca040597d473daf5ecde1f"
+      }
     },
     {
       "case": "npbench_polybench_k3mm_k3mm__kernel",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Preserves three matrix products and intermediate rounding.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "f37646cee2b51f22ee00c95f7175de2a3fb97b86df1d6e573f4a2119c0e7cc1a",
+        "halo2": "1b60ea30a1c91b5d5533e3d72a1b9a62e36f4c38769622cbbf0a63921666a77f",
+        "noir": "099c70c523a46c68aeac331cc44859b84920e1f5b0054b028cf9be26357d403e"
+      }
     },
     {
       "case": "npbench_polybench_mvt_mvt__kernel",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Preserves two matrix-vector products and additions to original vectors.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "666deeead9cd985526e88c036e4465e6cd824e9920f72c5923ab25283a73a787",
+        "halo2": "d7be87adc26128b75df3795f42880a3138ec1a1e2e135853a4ea43a7cf200f2d",
+        "noir": "23263afb35361914fe3dd94ae59f7adf922f70033f9aee06720471d9a2f5c3f7"
+      }
     },
     {
       "case": "npbench_polybench_symm_symm__kernel",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Rounds alpha*B before further product; temp2 uses explicit source dot; mutation order preserved.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "0ca8cf5ac38f31445960514b7560f63465fa612fb2c16c0408c2727f22ddf916",
+        "halo2": "d753b8e63c50fdac3058c10331e1f6ef708ab42ea0c640c216423c13941de92c",
+        "noir": "8a1d053529cb3b8cad94a060f167e52a2181ad6c466fabeee064799fc40fed27"
+      }
     },
     {
       "case": "npbench_polybench_syr2k_syr2k__kernel",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Rounds A[j,k]*alpha and B[j,k]*alpha before second products. Reuses identical first products only.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "419e1e263ff20aa18d7f205a52b93baf0acf35bace647e4d0424128ae75af1b6",
+        "halo2": "c8df23c83e3ce8929d1c0f8b8a78f365ea8b7b0ce401bf2bd5670ab1f2dded69",
+        "noir": "ab98c975266b401f791ededf510d743a94a3a87922ba14cdbe2739a7dee7cf38"
+      }
     },
     {
       "case": "npbench_polybench_syrk_syrk__kernel",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Rounds alpha*A[i,k] then its product with A[j,k]; beta*C separate.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "b34e9bc73e18f659b0b5231a8e4924a8945d8916d30cf14aef8dd7e260513580",
+        "halo2": "2d3d86dde602cdc770d886221c096fbf9064dea14b542d7350e6875ba310e8a2",
+        "noir": "9587e7b3c8a5230c323d5c262df2333245cd5e6fdfe38fc02520f10ae82044f7"
+      }
     },
     {
       "case": "npbench_polybench_trisolv_trisolv__kernel",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Preserves forward solve: source dot, subtraction, quotient in sequence.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Corrected Halo2 divisor magnitude to include signed64 minimum -2^63. Noir div already permits that input. div_f frontend nonzero precondition matches remainder checks rejecting zero; dot quotients retain signed64 bounds.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "95f294391ca7474879aa93f72ff4c7beb9ecbeac157357eb8a554d0827e57ebd",
+        "halo2": "528c67249b52d204a0abc491fb72d1e02e8a70dd095eafe89b226cdef9691a4a",
+        "noir": "8f1d9ac165cc7c7de2a0ee569d4428558361d6cae0d37a02ca0bb836f136abd0"
+      }
     },
     {
       "case": "npbench_polybench_trmm_trmm__kernel",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Explicit source dots feed in-place B, followed by rounded alpha multiplication.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "f3838d91ff378dec8a5a6d7a885708fecc95bce903d8c060d95403a6a55fc5d0",
+        "halo2": "97fd5bff434e4848e255d84e40c048ed1508571bf5e44a822c65b35340098389",
+        "noir": "381162d025568dcf3721b63ac669886c783930caa4194294325649def89a1233"
+      }
     },
     {
       "case": "npbench_scattering_self_energies_scattering_self_energies__scattering_self_energies",
       "arithmetic_status": "corrected",
       "evidence": "Four rounded real products per complex product; exact factor/gather CSE retained.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "2a0b055128830fa48050a33f9795dd6fbe10d45104fa2d7ba65f448181d82433",
+        "halo2": "768e7f5a728df7b972c5a4bf264982d28db7008bda36ac7e927c763b721e636b",
+        "noir": "cca9ea1d9f1e79fbc94595b791586acde68ad73f5b5a135f9bdd0915ccd0e31f"
+      }
     },
     {
       "case": "npbench_weather_stencils_vadv_vadv__vadv",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Forward/back sweeps preserved; dyadic constant products represented by quotient/remainder decomposition. Specialized reciprocal divisor bounds need acceptance-domain audit.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Corrected reciprocal magnitude restriction: canonical nonzero division uses Halo2 remainder/gap64 domain and Noir frozen sign_abs domain. Dyadic split quotient is within signed64 because it divides a sum of two signed64 inputs by8. All reciprocal nonzero preconditions unconditional.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "3d27a2809da5a5015821194da5a2c2fb581f73b0ef8ab605a6a18cbdaa343ce9",
+        "halo2": "5df26033370ef77cc2945795dc13b793abaf06a7229a3050b9a65d98b305a16a",
+        "noir": "6ce1254a0d2727431c5231712fab2d113f615c253a581825c056a1fe6d96af19"
+      }
     },
     {
       "case": "pythran_allpairs__sqr_dists",
       "arithmetic_status": "corrected",
       "evidence": "Direct coordinate differences, separately rounded squares; original output ordering.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "78889de220b830d09eef43dc38435480f8602be61ed8adc550f880ddbee650f4",
+        "halo2": "efb68ecda396723780464266044f60192d04ad0fe3268c1f52694ec3f2670336",
+        "noir": "c53b13e3e078e85bc233b0d03691c37734eea6b3c62f6bab649f0b0237931098"
+      }
     },
     {
       "case": "pythran_allpairs__sqr_dists_loops",
       "arithmetic_status": "corrected",
       "evidence": "Direct coordinate differences, separately rounded squares; original output ordering.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "78889de220b830d09eef43dc38435480f8602be61ed8adc550f880ddbee650f4",
+        "halo2": "afa0915bff5404cca98aab15592b2af39639b8e080bfd4e24e9a40c6ae62e406",
+        "noir": "2115c7d9b151cda9bee7aa00536a3d19440b0280395409fd77b17e3353dc9285"
+      }
     },
     {
       "case": "pythran_create_grid__create_grid",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Input copies and literal zero column; no numerical arithmetic.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Only source data movement/constant index selection; live input checks retained, overwritten inputs excluded per output contract. No intermediate numerical domain restrictions.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "aaef3e73e25deb15960cc39e0472035508f0a4a3f2a627477040674f32003f2c",
+        "halo2": "13d147fa47454cceeed7fb307712928fd53700159bdf39c9390a27aef5dc20ee",
+        "noir": "02a4809f99c243e4fe99553097c844d7dd365e7e4adfd875ea9b1b6c6fe1d1d8"
+      }
     },
     {
       "case": "pythran_cronbach__cronbach",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Variance primitive is centered dot followed by quotient; source variance path already uses fused ir_dot_f. Final constant ratio multiplied separately.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Rounded centered-dot variance is nonnegative and signed64; division by positive integer N-1 remains bounded. Final positive-divisor division rejects zero total variance, matching unconditional frontend div_f nonzero assertion.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "61ed01556473fddf06bb2ce3a4452320ef8a1049e847c2b9fd186b03c1d87308",
+        "halo2": "f99ce8a7cf14dffbec4838bb6a20b4b91ddfdae6fccaab3bce549e05504a96e8",
+        "noir": "7f779217f73aea59bfca424f58f44a6c861a62a4952f932200436e86846f3279"
+      }
     },
     {
       "case": "pythran_d2q9_nxnyns__one_time_step",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Source streamed moments/relaxation/reconstruction retained. Exact integer combinations and dyadic divisions preserve product rounding; live input subsets reviewed.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "917879783e36527f1b0e95b78dc645b33748413dc1ddd6c81cc8142233cdec5e",
+        "halo2": "a3f940ebaab4fcf51f77a2fbc9f911346d97b58ad05c160c851566cdb8fd02c1",
+        "noir": "4de216c8957c3891ba8396e5b3d4e189158cf3da67c37da7cfcf7f4c8afbf004"
+      }
     },
     {
       "case": "pythran_euclidean_distance_square__euclidean_distance_square",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Source explicitly uses norm/dot identity. np.square is array mul, retaining product provenance for fused row sum; unlike **2 spelling.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "fab1d977003452ea2231e3a56a92df40b6a59866c776bec09a51fc46f9977893",
+        "halo2": "28514ba0effba0975240832e466b8769b41807dc22675b07fe4c0e4e9a5972ae",
+        "noir": "092de1f41ce3ef41c272f948c7c2500f8fadd34a4c0845c6b50f814545de06e1"
+      }
     },
     {
       "case": "pythran_fbcorr__fbcorr",
       "arithmetic_status": "corrected",
       "evidence": "Round each tap product before accumulating into the existing output.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "c44057b3b83a1199eb53489a35dc6a130cf1dafbdbc560ca7e613f885605e1cd",
+        "halo2": "427f525db3c328ec772b8dcdcc5b38e9fe089aab616838e4f27e5a3e4d6aa0e3",
+        "noir": "93d199cdb330d7837b7b162d923da2c6a4aa705492f401ed2f54bce3b4d1b21c"
+      }
     },
     {
       "case": "pythran_harris__harris",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Preserves A,B,C, determinant, and (k*tr)*tr rounded intermediates; no algebraic determinant cancellation.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "fbcfdf31a17d17b22581a444c9f102bc055506058d8fcbfb9a43f5b16f522f45",
+        "halo2": "25177b3915b357792a3a482bc0b0d669f1f4e52faf3619da2d0da7f009ec12f8",
+        "noir": "b5aa41adf16f1c0d7eadf67a0405b61a9776f32ff850d7ab66d5a12a5269ffd9"
+      }
     },
     {
       "case": "pythran_hasting__fweb",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Preserves left-to-right products/divisions; identical predation expressions reused locally.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Corrected extra signed64 divisor window on 1+b*y; canonical nonzero division preserves frozen backend-specific magnitude domain. All divisions unconditional, so frontend rhs!=0 assertion matches rejection of zero.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "443fc64f0ca5291b81e9c3763327f549b8a5f7b905d2d19bdfcad9bbda8f75fc",
+        "halo2": "8bdfa760cc7636c490e6a15dc47b15e258deb900e6a8006ae6b0808ac86490a1",
+        "noir": "58db6aeca8382d1b4bd9fbf14f2bcb4f70a1dc7bf1d6f3f674ee03041847502a"
+      }
     },
     {
       "case": "pythran_l2norm__l2_norm",
       "arithmetic_status": "corrected",
       "evidence": "Round each square before row reduction and sqrt.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Corrected overly wide root domain: Halo2 radicand explicitly unsigned63 (fallback sign_and_abs or asserted relation requires signed64); Noir unsigned64 (asserted nonnegative comparison then sqrt fastpath). Every square retains signed64 quotient check. Nonzero divisors match unconditional frontend div_f preconditions where present.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "4c916cb84c27f09ec85cb361f996a6202e10a5587a3af9d1a0f00feb2a1c5bdf",
+        "halo2": "ba4dda9426443ed9e0454c43b1ad27ff2ebeff81aeb89bb80f1ae539e07ab3f0",
+        "noir": "2ab106e955806255de63f6b5a4a4711e2179e90690cd17c292d9f5e3ac3ff229"
+      }
     },
     {
       "case": "pythran_lap__laplacian",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Preserves nine updates including source index-0 quirk; each coefficient product rounded; exact repeated product CSE.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Explicit dh2!=0 source precondition retained by division remainder checks; bounded input dh2 permits magnitude2^63 through abs (not source abs_int64). Fractional stencil constants retain required rescale boundaries.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "93f5a1f606decc96070fbaff571da0afeb4129fe5dcc323f064cd7c2801bdf4e",
+        "halo2": "fd4607abb5cd62d1342a599f4fd12441ed3d631b91017c077d5ec22a9cff9833",
+        "noir": "809ff6bd8b3e53740956c313f7aeba5f8e5abfdfe88e0d1805ed6daefa94bd29"
+      }
     },
     {
       "case": "pythran_lapl3d__laplacien",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Integer-weight stencil exact; absolute value, max, epsilon, division preserved. Reduced-width fraction quotient needs acceptance-domain audit.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Stencil abs requires |x|<2^63, matching frozen magnitude on both backends. max candidates stay in [0,2^63), so gap64 comparisons add no bound. Divisor=max(1,m)+4 is positive and exceeds every m; ratio quotient<2^32 is implied, not an extra input assumption.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "e1e4a26852b3855ce8ac5a86a765044975b235891c8847cbde3a06b4760cb028",
+        "halo2": "0421ac2c32e62c67077e213f0fb01bd412a8940cbe5ab01e1cede7bd10b63a33",
+        "noir": "a07c815fe56909621fdc43fe9fc41271b001877aab0d2eebfdc2d270b0b54519"
+      }
     },
     {
       "case": "pythran_ln__ln",
       "arithmetic_status": "corrected",
       "evidence": "MSB-first power schedule: d6=d3*d3; d7=d6*d, each product rounded.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "f70d2b5e275e13a4d19c78b81cffd886950d762e235d79c1cbccc6c86a7a11da",
+        "halo2": "ce56015593c1e0b0f1411f33d1f1db61c65508d713af82b9170be7c1ae31bf74",
+        "noir": "4d7b8979b4a41a7c54270a311c959d9d1944927a97de63841a850ab033087b0d"
+      }
     },
     {
       "case": "pythran_matmul__matrix_multiply",
       "arithmetic_status": "corrected",
       "evidence": "Round each scalar product in the original triple loop.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "fd459805ca536f5bf16e12398d4661e846e74b1c12dbbfcc8f22fa9387bd479b",
+        "halo2": "46513ee11b4a8e994a996c9215904f69b749091d1d01304248ce9bb59de06dca",
+        "noir": "bbe459c3eab5e9cc0d28479cf5a9e89ec9917090951507d1b0f05dea6ccbac43"
+      }
     },
     {
       "case": "pythran_multi_export__a",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Identity output/data movement.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Only source data movement/constant index selection; live input checks retained, overwritten inputs excluded per output contract. No intermediate numerical domain restrictions.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "3faf8ebe0a74b54f3a544d7033f06bd4f72036fe1065719a94dc80b1a6419ab8",
+        "halo2": "bd95912456c2e031c8ae4fde395e110a565fb67acf4b4a022676df78e8525fae",
+        "noir": "eccb8f96bb47f3016d329883634b4a05fa970ed03be0f742ff525471ac6fff6d"
+      }
     },
     {
       "case": "pythran_multitype__check",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Source integer truthiness selects x or x+x; returns y unchanged.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Integer truthiness uses nonzero, not sign or positivity; selection x or2*x is exact and output y unchanged. Signed64 input checks preserved.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "5297e050850ff982cf1a5da58aeaf3c28f42bbefe58e4f082490eb91f9cb20a3",
+        "halo2": "101e388f9c732d272bd4dbde375214533a484283729d36341d7fe5dbe4135336",
+        "noir": "bafb584cd2bdcb45f9b575910b8cf0f33fa5b78258ba8591f8443fc59cd97fe9"
+      }
     },
     {
       "case": "pythran_multitype__check2",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "One-element bool truthiness selects x or x+x; bool checked.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Boolean input is constrained to0/1; selected x or2*x uses exact integer arithmetic and original signed64 input checks.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "5297e050850ff982cf1a5da58aeaf3c28f42bbefe58e4f082490eb91f9cb20a3",
+        "halo2": "72d97372e980c37bb65f002a73909d10e805a7ed90dc728b8b3a9a25ca531449",
+        "noir": "a02d48cf0ca79c01165625447147007a1870450f1422dc82b109d26504c577e4"
+      }
     },
     {
       "case": "pythran_multitype__times",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Exact integer multiplication under same explicit 0..1024 preconditions.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Both backends retain explicit integer 0..1024 source preconditions; product <=2^20 stays exact with no additional overflow restriction.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "5297e050850ff982cf1a5da58aeaf3c28f42bbefe58e4f082490eb91f9cb20a3",
+        "halo2": "b49bd700209dc515ba4748f29dbc89298821f1eb4d13db779570c2161c6c2e18",
+        "noir": "7c381d1a1a078b8232391e1e1e5cfb19bf31334f28514ed3bdb7e6b5f143b775"
+      }
     },
     {
       "case": "pythran_pairwise__pairwise",
       "arithmetic_status": "corrected",
       "evidence": "Every ordered pair; rounded squares; no triangular algorithm.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Corrected overly wide root domain: Halo2 radicand explicitly unsigned63 (fallback sign_and_abs or asserted relation requires signed64); Noir unsigned64 (asserted nonnegative comparison then sqrt fastpath). Every square retains signed64 quotient check. Nonzero divisors match unconditional frontend div_f preconditions where present.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "1b379e3aa379245b9e2149c5648450c3f78da3e6697014e27154df6cf91cbdb6",
+        "halo2": "870eb7855618931c9376a818eac97b59463ee79d83933a806bd2c519f9537b40",
+        "noir": "9c234c249af47f4c75083a13038073ab9b53acc1cfc02f0d7f147847dc32ac0e"
+      }
     },
     {
       "case": "pythran_periodic_bc__periodic_bc",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Preserves copy from plane -2 to plane0; overwritten input plane is dead.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Only source data movement/constant index selection; live input checks retained, overwritten inputs excluded per output contract. No intermediate numerical domain restrictions.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "d96c7675ec36e5dc9fe7b7437fcd364efd4540c02cf29fe3eec9048b79b0f66a",
+        "halo2": "044f95f076e9bc8c6d7a19fb8f16c0440cc5dc88c6a65f0837059465ba2a85d2",
+        "noir": "65a8ba2cd0c5571759c7b8c4095934b449de5feb6209151702b8220eaaaed927"
+      }
     },
     {
       "case": "pythran_perm__permutations",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Enumerates constant index permutations; no data-dependent ordering replacement.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Only source data movement/constant index selection; live input checks retained, overwritten inputs excluded per output contract. No intermediate numerical domain restrictions.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "633e8e48057c3a69cfaf20a8aa3c01cbde3c1434c075e6ff468babc46544e944",
+        "halo2": "42d08aab09b8684378a592aea3eeeea4fe1e02d8d9b527388b519ab3c2e50873",
+        "noir": "b7b1934e307577b09c75a3341fe5a78d3e67dca7ed858e334c334d2efc6aeaf6"
+      }
     },
     {
       "case": "pythran_pythagorean_triples__next_pythagorean_triples",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Exact same constant integer matrix and reshape ordering.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "8b02e649dce84b590be3826da1966e219b60a87b77768095184bf954ef584783",
+        "halo2": "b7e2325a6a3f0cdbf5960c88761029dfaae462cc8acc202e9fcc18400b4cacdc",
+        "noir": "924973e85bdadc566235185f7659fb3f0cb46251c8c659a32ac9736ae76a5a20"
+      }
     },
     {
       "case": "pythran_reverse_cumsum__reverse_cumsum",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Reverse cumulative exact sums in source order.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "da05c73218136e41e518a4f38c74134c449421c56d1a16eadbd0b7b43befbe84",
+        "halo2": "d804eda394fb00440ba82ce3d8deb3be22236ed62b27fd5aae55fb687a6105ea",
+        "noir": "3409af05269287a0dd93a14514771f318e467e35b0a8d6615226684e86038961"
+      }
     },
     {
       "case": "pythran_rosen__rosen",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Every elementwise square rounded; factor100 exact; no norm-style fusion.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "8ab3f35f18d4fc01bc0fe2a43abcd13cfaf2ee46699ff04444cc30350d0be184",
+        "halo2": "f2ca216a10ff3a03bb815b1bf729fb8eb001aede20cdfa8b0f7a3c3b363aeb7d",
+        "noir": "dcb687a9693ecb84d75a5f5bf0be934b7024feabb988a5ab33e4cc018739bfd0"
+      }
     },
     {
       "case": "pythran_smoothing__smoothing",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Each of two scalar recurrence products rounded; only 1-alpha hoisted.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "2350df59c613b4ed5b00cb58bf5ec7abf35bedf7b10039bed2d416b2937b167a",
+        "halo2": "a573a6bf9765489a92f4db01c4e1c7f47e828dc10d4dd87efd492f8a818f5add",
+        "noir": "9f1a4480bd82b68d1fbbc1bf359c343c7b4fa19a494fdb2fa2df14ee9cda0dda"
+      }
     },
     {
       "case": "pythran_specialconvolve__specialconvolve",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Retains shared three-row sums then three-column sums and center subtraction; integer arithmetic.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "99fe08f7cf3b265bc760c816be2269faf183231d74c0552341fae35eae613892",
+        "halo2": "9ec22b333de575f2de8eaeb5d8b64c5accc5213d6009378883287577fddfab9b",
+        "noir": "9e3014e046aa8c5a89d46e12478fdd9247b6889f6ac503a593780199cd262010"
+      }
     },
     {
       "case": "pythran_spectraldns__add_pressure_diffusion",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Each live complex-times-real product rounded before sum; final unreturned dU write eliminated according to output contract.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "7468c037b11510552b893e731f9cbde5edeb3221482db2c6152f04dc3e423768",
+        "halo2": "81c16d6a6b300b6c608ae38be37165ca9806d1ef8e72f61059b7c2c2345f14c2",
+        "noir": "419e5dc217037df689da4462eb0baaf5b06b9646575f002a6f0a262d5a7ff98e"
+      }
     },
     {
       "case": "pythran_spectraldns__cross2",
       "arithmetic_status": "source_review_no_mismatch_found",
       "evidence": "Each complex-times-real component rounded before subtraction; multiply by1j is exact sign/swap.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Live inputs retain signed64/Q32 or explicit bool checks; dead reads follow the source output contract. Exact field additions/subtractions remain unbounded. Rounded products/reductions retain signed64 quotient and 32-bit remainder checks. No additional source-domain precondition identified.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "7468c037b11510552b893e731f9cbde5edeb3221482db2c6152f04dc3e423768",
+        "halo2": "4b43dab48e0a86076477accdd4445b08ca5ddf778a31fc3b470c6ed07df2a508",
+        "noir": "552843c33f7cd1b3d48db359fcd5028560ab3218fe484daf0b50d14d817e4c99"
+      }
     },
     {
       "case": "pythran_sumarray3d__summation",
       "arithmetic_status": "corrected",
       "evidence": "Round scalar squares and every weighted product before accumulation.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Corrected overly wide root domain: Halo2 radicand explicitly unsigned63 (fallback sign_and_abs or asserted relation requires signed64); Noir unsigned64 (asserted nonnegative comparison then sqrt fastpath). Every square retains signed64 quotient check. Nonzero divisors match unconditional frontend div_f preconditions where present.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "f483d00396239bb44e3df0e095022f14b57d905d6a3f010020564f44f1da8748",
+        "halo2": "3c8a22c98015b65dc09ed318152d5f5c152d02a458f7fecfa425364bc817f46f",
+        "noir": "5bebc4017a8d7efd628e1c62db292cee7570869145a1e66c51f4cacf7da43da0"
+      }
     },
     {
       "case": "pythran_wdist__slow_wdist",
       "arithmetic_status": "corrected",
       "evidence": "Round each squared quotient before sum and sqrt.",
-      "acceptance_domain": "not_certified"
+      "acceptance_domain": "static_review_no_known_mismatch",
+      "domain_evidence": "Corrected overly wide root domain: Halo2 radicand explicitly unsigned63 (fallback sign_and_abs or asserted relation requires signed64); Noir unsigned64 (asserted nonnegative comparison then sqrt fastpath). Every square retains signed64 quotient check. Nonzero divisors match unconditional frontend div_f preconditions where present.",
+      "validation": "Static inspection only for domain claims; no witness execution or proving in this audit.",
+      "source_sha256": {
+        "kernel": "bd4bf903855cd6f5f6976e02cefcc5c7f340dbec0a1a9a87398e628ac9e8cf49",
+        "halo2": "27e5652f4e9233b8430ddc6c136a5ef9bdf80ab83ffe5f5d03c8795c20f5e63b",
+        "noir": "d4996c144524f15154b2283af1345a418fadc614621e2f666a867bbf5d3dda08"
+      }
     }
   ],
   "other_owner_entries": [

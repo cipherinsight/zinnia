@@ -38,6 +38,8 @@ fn main(pos: [[Field; AXES]; NW], weights: [Field; NW], points: [[Field; AXES]; 
                 sums[a] += mul(weights[j], d);
             }
             // 1.0 / root: a quotient floor(2^64 / root), root > 0 (divmod_pos).
+            // Frozen Noir sqrt guard proves the radicand is an unsigned64 code.
+            squares.assert_max_bit_size::<64>();
             let (dr, _) = divmod_pos(SCALE * SCALE, sqrt(squares));
             total += mul(weights[j], dr);
         }

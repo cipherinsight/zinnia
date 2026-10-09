@@ -28,6 +28,8 @@ fn main(X: [[Field; N]; M]) -> pub [Field; OFF_DIAGONAL] {
                 }
                 // Both indices are loop constants; skip preceding diagonal.
                 let pos = if j < i { i * (M - 1) + j } else { i * (M - 1) + j - 1 };
+                // Frozen Noir sqrt guard proves the radicand is an unsigned64 code.
+                acc.assert_max_bit_size::<64>();
                 d[pos] = sqrt(acc);
             }
         }

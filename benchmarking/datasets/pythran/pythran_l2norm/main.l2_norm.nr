@@ -17,6 +17,8 @@ fn main(x: [[Field; COLS]; N]) -> pub [Field; N] {
         check_inputs(x[i]);
         let mut total: Field = 0;
         for k in 0..COLS { total += mul(x[i][k], x[i][k]); }
+        // Frozen Noir sqrt guard proves the radicand is an unsigned64 code.
+        total.assert_max_bit_size::<64>();
         norms[i] = sqrt(total);
     }
     norms

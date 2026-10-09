@@ -128,3 +128,40 @@ All entries remain marked `acceptance_domain: not_certified`, including the
 domain, lapl3d's restricted quotient construction, overflow checks after exact
 linear combinations, float32-as-Q32 policy, and inactive-branch divisions.
 Source-level algorithm alignment and A/B equality do not settle those risks.
+
+## Typed-input acceptance-domain follow-up (2026-10-09)
+
+The 51 inventory entries now record static domain evidence and source hashes.
+`static_review_no_known_mismatch` is not formal equivalence or witness validation.
+The compiler remains frozen; no witnesses, MockProver, keys, or proofs were run.
+
+Seven entries required corrections:
+
+- **trisolv:** a signed64-minimum input diagonal is a valid divisor. Halo2
+  source `abs_int64` excluded that endpoint; reuse the input's signed64 window
+  proof and divisor `abs` instead.
+- **hasting:** `1+b*y` can leave signed64 after a valid rounded product.
+  Remove its extra window; use canonical nonzero division.
+- **vadv:** replace the reciprocal's extra magnitude64 restriction with frozen
+  Halo2 remainder/gap bounds and Noir's own `sign_abs` domain.
+- **l2norm, pairwise, sumarray3d, wdist:** handwritten sqrt admitted overly wide
+  radicands. Require nonnegative 63-bit Q32 codes in Halo2 and 64-bit in Noir.
+  Generic square-product intervals exceed Halo2's 120-bit range bookkeeping
+  limit; sqrt's fallback then requires signed64. Wdist's explicit nonnegative
+  guard also checks signed64 operands through `assert_relation`. Noir retains
+  nonnegative guards whose gap checks permit unsigned64, then sqrt's fast path.
+  These are frozen backend-specific domains, not a new numerical convention.
+
+The frontend `div_f` contract requires nonzero divisors. All audited numerical
+quotients are unconditional, so rejection of zero is correct; no zero masks
+were added. Cholesky's nonnegative radicands cannot exceed their original
+signed64 diagonals; Gramschmidt radicands are already signed64 rounded dots.
+Durbin's first beta=1-alpha² is inherently signed64 after valid square rounding.
+Lapl3d's abs domain matches source abs; its narrower fraction quotient follows
+from its positive divisor exceeding every nonnegative numerator.
+
+Compile-only frozen IR exports for l2norm/wdist/sumarray3d and the prior pairwise
+export are in `eval-redo/npb-hw/diagnosis/reduction-ir`. The seven affected Noir
+compile results are in `eval-redo/npb-hw/domain-numerical/compile.json`. Local
+compilations use an 8 GiB cap and two jobs/threads. Historical counts and witness
+results do not validate changed sources; counts must be refreshed.
