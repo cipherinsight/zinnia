@@ -727,6 +727,100 @@ impl Q32 {
         self.sin(ctx, shifted)
     }
 
+    // ---------------------------------------------------------------- arctan2
+
+    /// `np.arctan2(y, x)` in `[-pi, pi]`, NumPy's quadrant rules on Q32 values
+    /// (`arctan2(0, x) = pi` for `x < 0`, `arctan2(0, 0) = 0`), within 1e-8
+    /// of the real value for every pair of Q32 inputs (the polynomial's
+    /// 3.6e-9, the Q32-quantized constants and a few floors of 2^-32).
+    ///
+    /// The signs come from the window proofs; [`Q32::arctan2_nonneg`] gives
+    /// the angle of the magnitudes in `[0, pi/2]`, which `x < 0` reflects to
+    /// `pi - angle` and `y < 0` negates.
+    pub fn arctan2(&self, ctx: &mut Ctx, y: I64, x: I64) -> Cell {
+        let y_neg = self.is_neg(ctx, y);
+        let x_neg = self.is_neg(ctx, x);
+        let minus_y = self.gate.neg(ctx, y.cell);
+        let minus_x = self.gate.neg(ctx, x.cell);
+        let ay = self.gate.select(ctx, minus_y, y.cell, y_neg);
+        let ax = self.gate.select(ctx, minus_x, x.cell, x_neg);
+        // |y|, |x| <= 2^63 (|-2^63| = 2^63), below the 64-bit comparisons' bound.
+        let angle = self.arctan2_magnitudes(ctx, ay, ax);
+        let reflected = self.gate.sub(ctx, Constant(fe(quantize(std::f64::consts::PI))), angle);
+        let angle = self.gate.select(ctx, reflected, angle, x_neg);
+        let minus_angle = self.gate.neg(ctx, angle);
+        self.gate.select(ctx, minus_angle, angle, y_neg)
+    }
+
+    /// `np.arctan2(y, x)` for `y`, `x` the circuit has already proven to lie
+    /// in `[0, 2^63)` (outputs of [`Q32::sqrt`] or [`Q32::abs_int64`]): the
+    /// angle in `[0, pi/2]`, with the error bound of [`Q32::arctan2`].
+    ///
+    /// Reduction: the octant bit `swapped = (x < y)` orders the pair into
+    /// `num <= den`, so `atan(num / den)` lies in `[0, pi/4]` and the angle is
+    /// that or `pi/2` minus it. The bit `over = (29 den < 70 num)` (the ratio
+    /// above `29/70`, just above `tan(pi/8)`) selects
+    /// `t = (num - den) / (num + den)` and adds `pi/4`
+    /// (`atan(r) = pi/4 + atan((r - 1) / (r + 1))`); otherwise `t = num / den`.
+    /// Either way `|t| <= 29/70`, where the degree-9 odd minimax polynomial
+    /// [`ATAN_COEFS`] is within 3.6e-9 of `atan`. Both bits are halo2-base
+    /// comparisons (inputs below `2^64` and `2^70`). `den = 0` (both inputs 0)
+    /// divides by 1 instead and gives 0. The quotient `t` is
+    /// [`Q32::div`]'s floor with its check narrowed to `|t| < 1/2` (see
+    /// `div_half_ratio`).
+    pub fn arctan2_nonneg(&self, ctx: &mut Ctx, y: Cell, x: Cell) -> Cell {
+        self.arctan2_magnitudes(ctx, y, x)
+    }
+
+    /// [`Q32::arctan2_nonneg`] for magnitudes `ay`, `ax` in `[0, 2^63]`.
+    fn arctan2_magnitudes(&self, ctx: &mut Ctx, ay: Cell, ax: Cell) -> Cell {
+        let swapped = self.range.is_less_than(ctx, ax, ay, 64);
+        let num = self.gate.select(ctx, ax, ay, swapped);
+        let den = self.gate.select(ctx, ay, ax, swapped);
+        let low = self.gate.mul(ctx, den, Constant(Fr::from(29)));
+        let high = self.gate.mul(ctx, num, Constant(Fr::from(70)));
+        let over = self.range.is_less_than(ctx, low, high, 70);
+        let numerator = self.gate.sub_mul(ctx, num, over, den);
+        let denominator = self.gate.mul_add(ctx, over, num, den);
+        let empty = self.gate.is_zero(ctx, den);
+        let denominator = self.gate.add(ctx, denominator, empty);
+        let t = self.div_half_ratio(ctx, numerator, denominator);
+        let t_sq = self.mul(ctx, t, t);
+        let p = self.polynomial(ctx, t_sq.cell, &ATAN_COEFS);
+        let base = self.mul(ctx, p, t);
+        let quarter_pi = Constant(fe(quantize(std::f64::consts::FRAC_PI_4)));
+        let base = self.gate.mul_add(ctx, over, quarter_pi, base.cell);
+        let flipped = self.gate.sub(ctx, Constant(fe(quantize(std::f64::consts::FRAC_PI_2))), base);
+        self.gate.select(ctx, flipped, base, swapped)
+    }
+
+    /// `floor(a * 2^32 / b)` for a ratio `|a / b| < 1/2` and `b` in
+    /// `[1, 2^64]`: `a * 2^32 = q * b + r` with `r` and `b - r - 1` in
+    /// `[0, 2^64)` and `q + 2^31` in `[0, 2^32)`, which the precondition
+    /// guarantees and which replaces the window check of `q`. The terms are
+    /// below `2^97`, so `(q, r)` is the unique floor decomposition.
+    fn div_half_ratio(&self, ctx: &mut Ctx, a: Cell, b: Cell) -> Cell {
+        let num = signed(a.value()) * SCALE;
+        let bv = signed(b.value());
+        let (q, r) = if bv <= 0 { (0, 0) } else { (num.div_euclid(bv), num.rem_euclid(bv)) };
+        self.div_half_ratio_with(ctx, a, b, fe(q), fe(r))
+    }
+
+    fn div_half_ratio_with(&self, ctx: &mut Ctx, a: Cell, b: Cell, q: Fr, r: Fr) -> Cell {
+        let scaled = self.gate.mul(ctx, a, Constant(fe(SCALE)));
+        let q_cell = ctx.load_witness(q);
+        let r_cell = ctx.load_witness(r);
+        let recomposed = self.gate.mul_add(ctx, q_cell, b, r_cell);
+        ctx.constrain_equal(&recomposed, &scaled);
+        self.range.range_check(ctx, r_cell, 64);
+        let gap = self.gate.sub(ctx, b, r_cell);
+        let gap = self.gate.sub(ctx, gap, Constant(Fr::ONE));
+        self.range.range_check(ctx, gap, 64);
+        let shifted = self.gate.add(ctx, q_cell, Constant(fe(SCALE / 2)));
+        self.range.range_check(ctx, shifted, FRAC_BITS as usize);
+        q_cell
+    }
+
     // -------------------------------------------------------------- clipping
 
     /// `np.clip(x, lo, hi)` for constants `lo <= hi` with `hi - lo < 2^32`
@@ -1033,6 +1127,13 @@ pub const SIN_COEFS: [f64; 15] = [
     1.0000000000003146,
     -1.9323057584419828e-15,
 ];
+
+/// Degree-9 odd minimax polynomial for `atan(t)` on `|t| <= 29/70`, as
+/// `t * P(t^2)` with `P`'s coefficients highest degree first (Remez exchange
+/// on the absolute error, 3.52e-9; 3.53e-9 with the coefficients quantized to
+/// Q32). Written for these baselines, independently of Zinnia's `arctan2`.
+pub const ATAN_COEFS: [f64; 5] =
+    [0.07733643576497275, -0.13754500283289214, 0.1996193095114648, -0.3333220269576044, 0.9999999054387445];
 
 /// Integer square root (floor).
 fn isqrt(n: u128) -> u128 {
@@ -1384,6 +1485,82 @@ mod tests {
                 assert!((k - v.cos()).abs() < 1e-6, "cos({v}) = {k}");
             }));
         }
+    }
+
+    #[test]
+    fn arctan2_matches_f64() {
+        // Axes, diagonals, both zero, the octant and reduction boundaries
+        // (ratios near 29/70 and 1), signs, and the window's extremes.
+        let mut pairs: Vec<(f64, f64)> = vec![
+            (0.0, 0.0),
+            (0.0, 1.0),
+            (0.0, -1.0),
+            (1.0, 0.0),
+            (-1.0, 0.0),
+            (1.0, 1.0),
+            (-1.0, -1.0),
+            (29.0, 70.0),
+            (29.0001, 70.0),
+            (28.9999, 70.0),
+            (70.0, 29.0),
+            (0.999999, 1.0),
+            (1.0, 0.999999),
+            (-2147483648.0, -2147483648.0),
+            (2147483647.0, -2147483648.0),
+            (1e-9, 3.0),
+            (-3.0, 1e-9),
+        ];
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        for _ in 0..200 {
+            let mut next = || {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                let unit = (state >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0;
+                unit * 10f64.powf(((state >> 3) % 7) as f64 - 3.0)
+            };
+            pairs.push((next(), next()));
+        }
+        let mut worst = 0f64;
+        assert!(accepts(|c, ctx| {
+            for (y, x) in &pairs {
+                let (yq, xq) = (quantize(*y), quantize(*x));
+                let yb = c.bounded_const(ctx, yq);
+                let xb = c.bounded_const(ctx, xq);
+                let got = dequantize(c.arctan2(ctx, yb, xb).value());
+                let want = (yq as f64).atan2(xq as f64);
+                worst = worst.max((got - want).abs());
+                if yq >= 0 && xq >= 0 {
+                    let ys = ctx.load_witness(fe(yq));
+                    let xs = ctx.load_witness(fe(xq));
+                    let nonneg = dequantize(c.arctan2_nonneg(ctx, ys, xs).value());
+                    assert_eq!(nonneg, got);
+                }
+            }
+        }));
+        println!("arctan2: worst error {worst:.2e} over {} pairs", pairs.len());
+        assert!(worst < 1e-8, "worst error {worst}");
+    }
+
+    #[test]
+    fn div_half_ratio_pins_the_quotient() {
+        let (a, b) = (-(3i128 << 30), 5i128 << 31); // -0.75 / 2.5
+        let num = a * SCALE;
+        let (q, r) = (num.div_euclid(b), num.rem_euclid(b));
+        let run = |av: i128, bv: i128, qh: Fr, rh: Fr| {
+            accepts(move |c, ctx| {
+                let a = ctx.load_witness(fe(av));
+                let b = ctx.load_witness(fe(bv));
+                c.div_half_ratio_with(ctx, a, b, qh, rh);
+            })
+        };
+        assert!(run(a, b, fe(q), fe(r)));
+        assert!(!run(a, b, fe(q + 1), fe(r - b)));
+        assert!(!run(a, b, fe(q - 1), fe(r + b)));
+        assert!(!run(a, b, field_quotient(num, r + 1, b), fe(r + 1)));
+        // A ratio of 1/2 or more has no witness.
+        assert!(!run(b / 2, b, fe(SCALE / 2), fe(0)));
+        assert!(!run(0, 0, fe(0), fe(0)));
     }
 
     #[test]

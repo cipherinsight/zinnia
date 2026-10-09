@@ -426,6 +426,100 @@ pub fn cos(x: Field) -> Field {
     sin(x + HALF_PI_Q)
 }
 
+// ----------------------------------------------------------------- arctan2
+
+global QUARTER_PI_Q: Field = 3373259426; // round(pi / 4 * 2^32)
+// round(c * 2^32) of the degree-9 odd minimax polynomial for atan(t) on
+// |t| <= 29/70, as t * P(t^2), P's coefficients highest degree first (Remez
+// exchange on the absolute error, 3.52e-9; 3.53e-9 quantized). The same
+// polynomial as the halo2 baselines' `q32::ATAN_COEFS`, written for these
+// baselines independently of Zinnia's arctan2.
+pub global ATAN_COEFS_Q: [Field; 5] = [332157462, -590751289, 857358406, -1431607205, 4294966890];
+
+// np.arctan2(y, x) in [-pi, pi] with NumPy's quadrant rules on Q32 values
+// (arctan2(0, x) = pi for x < 0, arctan2(0, 0) = 0), within 1e-8 of the real
+// value for every pair of Q32 inputs. The signs come from the windows;
+// `arctan2_nonneg` gives the angle of the magnitudes in [0, pi/2], which
+// x < 0 reflects to pi - angle and y < 0 negates.
+pub fn arctan2(y: Field, x: Field) -> Field {
+    let y_neg = is_neg(y);
+    let x_neg = is_neg(x);
+    // |y|, |x| <= 2^63 (|-2^63| = 2^63).
+    let ay = if y_neg { -y } else { y };
+    let ax = if x_neg { -x } else { x };
+    let angle = arctan2_magnitudes(ay, ax);
+    let angle = if x_neg { PI_Q - angle } else { angle };
+    if y_neg { -angle } else { angle }
+}
+
+// np.arctan2(y, x) for y, x already proven to lie in [0, 2^63) (outputs of
+// `sqrt` or `abs_int64`): the angle in [0, pi/2], with the error bound of
+// `arctan2`.
+//
+// Reduction: the octant bit `swapped` (x < y) orders the pair into
+// num <= den, so atan(num / den) lies in [0, pi/4] and the angle is that or
+// pi/2 minus it. The bit `over` (29 den < 70 num: the ratio above 29/70, just
+// above tan(pi/8)) selects t = (num - den) / (num + den) and adds pi/4
+// (atan(r) = pi/4 + atan((r - 1) / (r + 1))); otherwise t = num / den. Either
+// way |t| <= 29/70, where the polynomial is within 3.6e-9 of atan. den = 0
+// (both inputs 0) divides by 1 instead and gives 0.
+pub fn arctan2_nonneg(y: Field, x: Field) -> Field {
+    arctan2_magnitudes(y, x)
+}
+
+unconstrained fn atan_regions_hint(ay: Field, ax: Field) -> (Field, Field) {
+    let swapped = ax.lt(ay);
+    let (num, den) = if swapped { (ax, ay) } else { (ay, ax) };
+    (swapped as Field, (29 * den).lt(70 * num) as Field)
+}
+
+// The angle of magnitudes ay, ax in [0, 2^63]. The two region bits are hints
+// pinned by one range check each: with s = swapped, s (ay - ax - 1) +
+// (1 - s) (ax - ay) in [0, 2^64), and with o = over, o (70 num - 29 den - 1) +
+// (1 - o) (29 den - 70 num) in [0, 2^70) (five 14-bit limbs). The honest bit
+// makes the checked value a non-negative integer below the bound; the other
+// one makes it negative, p minus a small integer, far above it.
+fn arctan2_magnitudes(ay: Field, ax: Field) -> Field {
+    // Safety: the bits are pinned by `check_atan_regions`.
+    let (swapped, over) = unsafe { atan_regions_hint(ay, ax) };
+    let (num, den) = check_atan_regions(ay, ax, swapped, over);
+    let numerator = num - over * den;
+    let denominator = den + over * num + (den == 0) as Field;
+    let t = div_half_ratio(numerator, denominator);
+    let base = mul(poly(mul(t, t), ATAN_COEFS_Q), t) + over * QUARTER_PI_Q;
+    base + swapped * (HALF_PI_Q - 2 * base)
+}
+
+// (num, den) = (min, max) of the magnitudes, after checking the region bits.
+fn check_atan_regions(ay: Field, ax: Field, swapped: Field, over: Field) -> (Field, Field) {
+    assert(swapped * (swapped - 1) == 0, "arctan2: region bit");
+    assert(over * (over - 1) == 0, "arctan2: region bit");
+    (swapped * (ay - ax - 1) + (1 - swapped) * (ax - ay)).assert_max_bit_size::<64>();
+    let num = ay + swapped * (ax - ay);
+    let den = ax + swapped * (ay - ax);
+    (over * (70 * num - 29 * den - 1) + (1 - over) * (29 * den - 70 * num)).assert_max_bit_size::<70>();
+    (num, den)
+}
+
+// floor(a * 2^32 / b) for a ratio |a / b| < 1/2 and b in [1, 2^64]:
+// a * 2^32 = q * b + r with r and b - r - 1 in [0, 2^64) and q + 2^31 in
+// [0, 2^32), which the precondition guarantees and which replaces the window
+// check of q. The terms are below 2^97, so (q, r) is the unique floor
+// decomposition.
+fn div_half_ratio(a: Field, b: Field) -> Field {
+    // Safety: q and r are pinned by `check_div_half_ratio`.
+    let (q, r) = unsafe { divmod_hint(a * SCALE, b) };
+    check_div_half_ratio(a, b, q, r);
+    q
+}
+
+fn check_div_half_ratio(a: Field, b: Field, q: Field, r: Field) {
+    assert(q * b + r == a * SCALE, "div_half_ratio: recomposition");
+    r.assert_max_bit_size::<64>();
+    (b - r - 1).assert_max_bit_size::<64>();
+    (q + SCALE / 2).assert_max_bit_size::<32>();
+}
+
 // ---------------------------------------------------------------- clipping
 
 // np.clip(x, lo, hi) for constants lo <= hi with hi - lo < 2^32 (integers, or
@@ -867,6 +961,82 @@ fn test_abs_int64_of_int64_min() {
 #[test(should_fail)]
 fn test_abs_int64_above_window() {
     let _ = abs_int64(OFFSET);
+}
+
+#[test]
+fn test_arctan2() {
+    // round(atan2(y, x) * 2^32) from f64, compared within 1e-8 (43 units).
+    let cases: [(Field, Field, Field); 12] = [
+        (0, 0, 0),
+        (0, SCALE, 0),
+        (0, -SCALE, 13493037705),
+        (SCALE, 0, 6746518852),
+        (-SCALE, 0, -6746518852),
+        (SCALE, SCALE, 3373259426),
+        (-SCALE, -SCALE, -10119778278),
+        (29 * SCALE, 70 * SCALE, 1686894214),
+        (70 * SCALE, 29 * SCALE, 5059624638),
+        (3 * SCALE, -4 * SCALE, 10729221487),
+        (-OFFSET, -OFFSET, -10119778278),
+        (OFFSET - 1, -OFFSET, 10119778278),
+    ];
+    for i in 0..12 {
+        let (y, x, want) = cases[i];
+        assert(lt(abs(arctan2(y, x) - want), 43));
+    }
+    assert(arctan2_nonneg(3 * SCALE, 4 * SCALE) == arctan2(3 * SCALE, 4 * SCALE));
+}
+
+// Wrong region bits and quotients are rejected.
+
+#[test(should_fail)]
+fn test_atan_wrong_octant() {
+    let _ = check_atan_regions(3, 4, 1, 0);
+}
+
+#[test(should_fail)]
+fn test_atan_wrong_octant_swapped() {
+    let _ = check_atan_regions(4, 3, 0, 1);
+}
+
+#[test(should_fail)]
+fn test_atan_wrong_reduction() {
+    // 1 / 4 is below 29/70.
+    let _ = check_atan_regions(1, 4, 0, 1);
+}
+
+#[test(should_fail)]
+fn test_atan_wrong_reduction_over() {
+    // 3 / 4 is above 29/70.
+    let _ = check_atan_regions(3, 4, 0, 0);
+}
+
+#[test]
+fn test_atan_regions_honest() {
+    let _ = check_atan_regions(3, 4, 0, 1);
+    let _ = check_atan_regions(4, 1, 1, 0);
+    let _ = check_atan_regions(5, 5, 0, 1);
+}
+
+#[test(should_fail)]
+fn test_div_half_ratio_next_quotient() {
+    // -1 / 3: q = -1431655766, r = 2
+    check_div_half_ratio(-1, 3, -1431655765, -1);
+}
+
+#[test(should_fail)]
+fn test_div_half_ratio_field_quotient() {
+    check_div_half_ratio(-1, 3, (-SCALE - 1) / 3, 1);
+}
+
+#[test(should_fail)]
+fn test_div_half_ratio_half() {
+    let _ = div_half_ratio(1, 2);
+}
+
+#[test]
+fn test_div_half_ratio_honest() {
+    check_div_half_ratio(-1, 3, -1431655766, 2);
 }
 
 #[test]
