@@ -103,7 +103,13 @@ a ternary, a conditional `break`/`continue`) whose condition depends on input va
 computes both branches and selects, per assigned variable. A loop whose trip count or
 exit depends on input values (`while`, `break`, `range(n)` with private `n`) runs to
 the bound fixed by the shapes, with an "active" flag that gates every effect of each
-iteration. Conditions are evaluated each time the source evaluates them.
+iteration. Conditions are evaluated each time the source evaluates them. A branch
+that is computed but not selected must never make a valid input unprovable: where its
+operation would fail for the selected input (a division by zero, the square root of a
+negative number, a value leaving the window), select a harmless operand (1, 0) into that
+operation when the branch is inactive. This guard is part of the statement (section 3),
+not an optimization; use it only where the inactive branch can actually fail, and say so
+in the file header.
 
 **L5. NumPy calls use the textbook in-circuit algorithm.** A library call has no source
 code to copy, so it is computed by the straightforward algorithm a developer would write
