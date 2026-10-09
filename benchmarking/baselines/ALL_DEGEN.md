@@ -29,6 +29,8 @@ sizing, advice + lookup (total), and unpadded Noir gates, respectively.
 
 | ds1000_case0401 | 0 + 0 (0) | 0 + 0 (0) | 34 | 34 | All A/B outputs, mocks/executes, counts pass; TOOL-BLOCKED domain-target discovery |
 
+| ds1000_case0451 | 0 + 0 (0) | 0 + 0 (0) | 34 | 34 | All A/B outputs, mocks/executes, counts pass; TOOL-BLOCKED domain-target discovery |
+
 ## Interpretations and per-case review
 
 - 0291: signature shape is [2,5,5,2]. Reads array metadata, not values;
@@ -45,3 +47,7 @@ sizing, advice + lookup (total), and unpadded Noir gates, respectively.
 
 - 0401: shape (3,0), flattened empty output; no inputs or public cells.
   Adapted 0400 construction comment and shape semantics; equal counts expected.
+
+- 0451: all 4000 zeros of shape (20,10,10,2) are declared, with no public
+  instances. Literal materializes the constant array; equal counts expected.
+  No twin reused.
