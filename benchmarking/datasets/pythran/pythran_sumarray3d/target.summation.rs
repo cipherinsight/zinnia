@@ -4,13 +4,8 @@
 //! `dr = 1.0 / sqrt(dx * dx + dy * dy + dz * dz)`, `total += weights[j] * dr`
 //! and `sum_array3d[i] += weights[j] * (dx, dy, dz)`; the output is
 //! `(sum_array, sum_array3d)`, `sum_array[i]` the total of point `i`.
-//! `dx * dx + dy * dy + dz * dz` is a sum of squares, one reduction rescaled
-//! once (NPB_BASELINES.md section 5, rule 3: like the loops that accumulate
-//! `tmp * tmp`, here written out); its root is the exact floor square root
-//! and `1.0 / root` a float division by a positive divisor (a zero distance
-//! has no proof: NumPy gives inf). `total` and each coordinate of
-//! `sum_array3d[i]` accumulate products into one variable from 0, one
-//! reduction each, rescaled once (rule 3).
+//! Each square and weighted product rounds before addition, in the source
+//! recurrence. No sum-of-products reassociation is used.
 
 use crate::prelude::*;
 
@@ -38,16 +33,19 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         let mut deltas: Vec<Vec<Cell>> = vec![Vec::with_capacity(NW); AXES];
         for j in 0..NW {
             let d: Vec<Cell> = (0..AXES).map(|a| q.sub(ctx, point[a], pos[j * AXES + a])).collect();
-            let squares = q.dot(ctx, &d, &d);
-            let root = q.sqrt(ctx, squares.cell);
+            let squares: Vec<Cell> = d.iter().map(|v| q.mul(ctx, *v, *v).cell).collect();
+            let distance = q.sum(ctx, squares);
+            let root = q.sqrt(ctx, distance);
             dr.push(q.div_pos(ctx, one, root).cell);
             for (a, delta) in d.into_iter().enumerate() {
                 deltas[a].push(delta);
             }
         }
-        sum_array.push(q.dot(ctx, &weights, &dr).cell);
+        let products: Vec<Cell> = weights.iter().zip(&dr).map(|(w, d)| q.mul(ctx, *w, *d).cell).collect();
+        sum_array.push(q.sum(ctx, products));
         for delta in &deltas {
-            sum_array3d.push(q.dot(ctx, &weights, delta).cell);
+            let products: Vec<Cell> = weights.iter().zip(delta).map(|(w, d)| q.mul(ctx, *w, *d).cell).collect();
+            sum_array3d.push(q.sum(ctx, products));
         }
     }
     out.floats(&sum_array);

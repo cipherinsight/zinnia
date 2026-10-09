@@ -5,10 +5,8 @@
 //! `imgs: Float[NI, ROWS, COLS, C]`, `filters: Float[NF, H, W, C]`, in place
 //! into `output: Float[NI, NF, OUT_ROWS, OUT_COLS]`; the output is `output`
 //! after the call (`mutated_outputs`).
-//! Each output element accumulates its products in one variable, one
-//! reduction rescaled once (`q.dot`; NPB_BASELINES.md section 5.3, as
-//! `matrix_multiply`'s `r += m0[i][k] * m1[k][j]`); adding it to the input
-//! element is exact.
+//! Match the source's scalar multiply-then-add recurrence: round every
+//! product to Q32 before adding it. No dot-product reassociation.
 
 use crate::prelude::*;
 
@@ -48,9 +46,11 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
                 }
                 for ff in 0..NF {
                     let filter: Vec<Cell> = (0..H * W * C).map(|t| filters[tap(ff, 0, 0, 0) + t]).collect();
-                    let sum = q.dot(ctx, &window, &filter);
+                    let products: Vec<Cell> = window.iter().zip(&filter)
+                        .map(|(a, b)| q.mul(ctx, *a, *b).cell).collect();
+                    let sum = q.sum(ctx, products);
                     let o = at(ii, ff, rr, cc);
-                    output[o] = q.add(ctx, output[o], sum.cell);
+                    output[o] = q.add(ctx, output[o], sum);
                 }
             }
         }

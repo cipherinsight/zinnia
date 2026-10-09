@@ -1,11 +1,7 @@
 //! pythran_pairwise__pairwise (Pythran pairwise), halo2-base baseline.
 //! Kernel: `D[i, j] = sqrt(sum_k (X[i, k] - X[j, k])^2)` on `X: Float[M, N]`.
-//! Each sum of squares is one reduction, rescaled once (`q.dot`,
-//! NPB_BASELINES.md section 5, rule 3), and its root the exact floor square
-//! root. `D[i, j]` and `D[j, i]` are the same computation (`(a - b)^2` and
-//! `(b - a)^2` are equal), so each pair is computed once and output twice;
-//! the diagonal is `sqrt(0) = 0` for every input, a constant output (not
-//! public, CONVENTIONS 1.3).
+//! Match every ordered pair in the source; each squared difference rounds
+//! before accumulation and sqrt. Only the identically-zero diagonal folds.
 
 use crate::prelude::*;
 
@@ -21,12 +17,13 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let x = q.load_floats(ctx, &x);
     let mut d: Vec<Option<Cell>> = vec![None; M * M];
     for i in 0..M {
-        for j in i + 1..M {
+        for j in 0..M {
+            if i == j { continue; }
             let diffs: Vec<Cell> = (0..N).map(|k| q.sub(ctx, x[i * N + k], x[j * N + k])).collect();
-            let squares = q.dot(ctx, &diffs, &diffs);
-            let root = q.sqrt(ctx, squares.cell).cell;
+            let squares: Vec<Cell> = diffs.iter().map(|x| q.mul(ctx, *x, *x).cell).collect();
+            let squared_distance = q.sum(ctx, squares);
+            let root = q.sqrt(ctx, squared_distance).cell;
             d[i * M + j] = Some(root);
-            d[j * M + i] = Some(root);
         }
     }
     for value in d {

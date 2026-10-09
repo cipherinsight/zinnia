@@ -2,10 +2,8 @@
 //! Kernel: `np.array([[np.sum((x - y) ** 2) for x in X] for y in Y])` on
 //! X: Float[M, N], Y: Float[P, N]; the output is `P x M`, row `j` holding the
 //! squared distances from `Y[j]` to every row of `X`.
-//! Each sum of squares is one reduction, rescaled once (NPB_BASELINES.md 5.3).
-//! Its raw value is computed as `|x|^2 + |y|^2 - 2 x . y`, which is the same
-//! integer as `sum((x - y)^2)`: the squared norms are computed once per row,
-//! so each pair costs one inner product.
+//! Preserve (x - y) ** 2 followed by sum: each square is rounded before
+//! reduction. Compute the source's pairwise differences directly.
 
 use crate::prelude::*;
 
@@ -24,18 +22,14 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let y = q.load_floats(ctx, &y);
     let x_rows: Vec<&[Cell]> = x.chunks(N).collect();
     let y_rows: Vec<&[Cell]> = y.chunks(N).collect();
-    let raw_dot = |ctx: &mut Ctx, a: &[Cell], b: &[Cell]| {
-        q.gate.inner_product(ctx, a.iter().map(|v| Existing(*v)), b.iter().map(|v| Existing(*v)))
-    };
-    let x_norms: Vec<Cell> = x_rows.iter().map(|r| raw_dot(ctx, r, r)).collect();
-    let y_norms: Vec<Cell> = y_rows.iter().map(|r| raw_dot(ctx, r, r)).collect();
     let mut result = Vec::with_capacity(P * M);
     for j in 0..P {
         for i in 0..M {
-            let cross = raw_dot(ctx, x_rows[i], y_rows[j]);
-            let norms = q.add(ctx, x_norms[i], y_norms[j]);
-            let raw = q.gate.mul_add(ctx, cross, Constant(-Fr::from(2)), norms);
-            result.push(q.rescale(ctx, raw).cell);
+            let squares: Vec<Cell> = x_rows[i].iter().zip(y_rows[j]).map(|(a, b)| {
+                let diff = q.sub(ctx, *a, *b);
+                q.mul(ctx, diff, diff).cell
+            }).collect();
+            result.push(q.sum(ctx, squares));
         }
     }
     out.floats(&result);

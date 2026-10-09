@@ -3,8 +3,8 @@
 //! m1: Float[K, P], returning the `N x P` products as nested lists.
 //! (`zero(n, m)` builds `m` rows of `n`, so the kernel runs only for
 //! `N == P`, as at the fixture's shape.)
-//! Each output accumulates its products into one variable, so it is one
-//! reduction rescaled once (`q.dot`, NPB_BASELINES.md section 5.3).
+//! Match the source's scalar multiply-then-add recurrence: round every
+//! product to Q32 before adding it. No dot-product reassociation.
 
 use crate::prelude::*;
 
@@ -24,7 +24,11 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let columns: Vec<Vec<Cell>> = (0..P).map(|j| (0..K).map(|k| m1[k * P + j]).collect()).collect();
     let result: Vec<Cell> = m0
         .chunks(K)
-        .flat_map(|row| columns.iter().map(|column| q.dot(ctx, row, column).cell).collect::<Vec<_>>())
+        .flat_map(|row| columns.iter().map(|column| {
+            let products: Vec<Cell> = row.iter().zip(column)
+                .map(|(a, b)| q.mul(ctx, *a, *b).cell).collect();
+            q.sum(ctx, products)
+        }).collect::<Vec<_>>())
         .collect();
     out.floats(&result);
     Ok(())

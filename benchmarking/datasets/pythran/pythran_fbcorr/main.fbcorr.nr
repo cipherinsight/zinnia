@@ -5,12 +5,11 @@
 // filters: Float[NF, H, W, C], in place into
 // output: Float[NI, NF, OUT_ROWS, OUT_COLS]; the output is `output` after the
 // call (`mutated_outputs`).
-// Each output element accumulates its products in one variable, one reduction
-// rescaled once (NPB_BASELINES.md section 5.3, as matrix_multiply's
-// r += m0[i][k] * m1[k][j]); adding it to the input element is exact.
+// Match the source recurrence: round each product before accumulation.
+// No dot-product reassociation.
 // @outputs: float[NI * NF * OUT_ROWS * OUT_COLS]
 
-use noir_hw::{check_inputs, rescale};
+use noir_hw::{check_inputs, mul};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global NI: u32 = 4; // = imgs_0
@@ -57,11 +56,11 @@ fn main(
                     for hh in 0..H {
                         for ww in 0..W {
                             for jj in 0..C {
-                                acc += imgs[ii][rr + hh][cc + ww][jj] * filters[ff][hh][ww][jj];
+                                acc += mul(imgs[ii][rr + hh][cc + ww][jj], filters[ff][hh][ww][jj]);
                             }
                         }
                     }
-                    result[ii][ff][rr][cc] += rescale(acc);
+                    result[ii][ff][rr][cc] += acc;
                 }
             }
         }

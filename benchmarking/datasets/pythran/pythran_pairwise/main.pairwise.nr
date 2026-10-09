@@ -1,14 +1,11 @@
 // pythran_pairwise__pairwise (Pythran pairwise), Noir baseline.
 // Kernel: D[i, j] = sqrt(sum_k (X[i, k] - X[j, k])^2) on X: Float[M, N].
-// Each sum of squares is one reduction, rescaled once (NPB_BASELINES.md
-// section 5, rule 3), and its root the exact floor square root. D[i, j] and
-// D[j, i] are the same computation, so each pair is computed once and output
-// twice; the diagonal is sqrt(0) = 0 for every input, a constant output (not
-// public, CONVENTIONS 1.3). The public outputs are the off-diagonal elements
-// in row-major order.
+// Match every ordered pair, rounding each square before accumulation.
+// Only the identically-zero diagonal folds; public cells are off-diagonal
+// values in row-major order.
 // @outputs: const float[1] = [0]; repeat[r < M - 1](float[M] | const float[1] = [0])
 
-use noir_hw::{check_inputs, rescale, sqrt};
+use noir_hw::{check_inputs, mul, sqrt};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global M: u32 = 16; // = X_0
@@ -22,17 +19,17 @@ fn main(X: [[Field; N]; M]) -> pub [Field; OFF_DIAGONAL] {
     }
     let mut d: [Field; OFF_DIAGONAL] = [0; OFF_DIAGONAL];
     for i in 0..M {
-        for j in i + 1..M {
-            let mut acc: Field = 0;
-            for k in 0..N {
-                let diff = X[i][k] - X[j][k];
-                acc += diff * diff;
+        for j in 0..M {
+            if i != j {
+                let mut acc: Field = 0;
+                for k in 0..N {
+                    let diff = X[i][k] - X[j][k];
+                    acc += mul(diff, diff);
+                }
+                // Both indices are loop constants; skip preceding diagonal.
+                let pos = if j < i { i * (M - 1) + j } else { i * (M - 1) + j - 1 };
+                d[pos] = sqrt(acc);
             }
-            let root = sqrt(rescale(acc));
-            // Row-major position among the off-diagonal elements: (i, j)
-            // follows i + 1 diagonal elements, (j, i) follows j.
-            d[i * M + j - i - 1] = root;
-            d[j * M + i - j] = root;
         }
     }
     d

@@ -7,10 +7,9 @@
 //! The two factors depend on fewer indices than the loop nest runs over, so
 //! each is computed once: the gathered blocks per `(k, E', a, b)`, the left
 //! factor per `(k, E', a, b, i)`, the right one per `(q, w, a, b, i, j)`.
-//! Every element of a complex `@` is one reduction per part, rescaled once
-//! (NPB_BASELINES.md 5.3), and so is every complex product of
-//! `dH[a, b, j] * D[...]`; the products of the nest are rounded one by one,
-//! as NumPy materializes each before adding it to Sigma (the adds are exact).
+//! Complex multiplication uses four individually rounded real products,
+//! then a real subtraction and imaginary addition. Matrix products sum
+//! these rounded complex products in source order, without fused rescaling.
 //! The gather is a one-hot over the `-GA..GA` valid NumPy indices
 //! (`q.index_hits`), computed once per `(a, b)`; it pins `neigh_idx[a, b]` to
 //! a valid index, which implies its domain (an int64), so `neigh_idx` gets no
@@ -72,8 +71,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
                         .collect();
                     for i in 0..N3D {
                         let factor = dh_block(a, b, i);
-                        let minus_im = negated_imaginary(&q, ctx, factor);
-                        left[left_at(k, e, a, b, i)] = complex_matmul(&q, ctx, &gathered, factor, &minus_im);
+                        left[left_at(k, e, a, b, i)] = complex_matmul(&q, ctx, &gathered, factor);
                     }
                 }
             }
@@ -81,8 +79,8 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     }
 
     // dH[a, b, j] * D[q, w, a, b, i, j], per (q, w, a, b, i, j), with the
-    // negated imaginary parts the products with it use.
-    let mut right = vec![(Vec::new(), Vec::new()); NQZ * NW * NA * NB * N3D * N3D];
+    // same elementwise products reused by the enclosing loop.
+    let mut right = vec![Vec::new(); NQZ * NW * NA * NB * N3D * N3D];
     let right_at = |qz: usize, w: usize, a: usize, b: usize, i: usize, j: usize| {
         ((((qz * NW + w) * NA + a) * NB + b) * N3D + i) * N3D + j
     };
@@ -93,13 +91,11 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
                     for i in 0..N3D {
                         for j in 0..N3D {
                             let factor = d[right_at(qz, w, a, b, i, j)];
-                            let minus_im = q.gate.neg(ctx, factor[1]);
                             let block: Vec<Complex> = dh_block(a, b, j)
                                 .iter()
-                                .map(|h| complex_dot(&q, ctx, &[*h], &[factor], &[minus_im]))
+                                .map(|h| complex_product(&q, ctx, *h, factor))
                                 .collect();
-                            let block_minus_im = negated_imaginary(&q, ctx, &block);
-                            right[right_at(qz, w, a, b, i, j)] = (block, block_minus_im);
+                            right[right_at(qz, w, a, b, i, j)] = block;
                         }
                     }
                 }
@@ -118,9 +114,9 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
                         for j in 0..N3D {
                             for a in 0..NA {
                                 for b in 0..NB {
-                                    let (factor, minus_im) = &right[right_at(qz, w, a, b, i, j)];
+                                    let factor = &right[right_at(qz, w, a, b, i, j)];
                                     let product =
-                                        complex_matmul(&q, ctx, &left[left_at(k, e - w, a, b, i)], factor, minus_im);
+                                        complex_matmul(&q, ctx, &left[left_at(k, e - w, a, b, i)], factor);
                                     for (t, value) in product.iter().enumerate() {
                                         for part in 0..2 {
                                             terms[sigma_at(k, e, a) + t][part].push(value[part]);
@@ -139,33 +135,24 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     Ok(())
 }
 
-/// `-Im v` for every element of a block.
-fn negated_imaginary(q: &Q32, ctx: &mut Ctx, block: &[Complex]) -> Vec<Cell> {
-    block.iter().map(|v| q.gate.neg(ctx, v[1])).collect()
+/// Four rounded products, then the source complex addition/subtraction.
+fn complex_product(q: &Q32, ctx: &mut Ctx, x: Complex, y: Complex) -> Complex {
+    let ac = q.mul(ctx, x[0], y[0]);
+    let bd = q.mul(ctx, x[1], y[1]);
+    let ad = q.mul(ctx, x[0], y[1]);
+    let bc = q.mul(ctx, x[1], y[0]);
+    [q.sub(ctx, ac.cell, bd.cell), q.add(ctx, ad.cell, bc.cell)]
 }
 
-/// `x @ y` for complex `NORB x NORB` blocks, row-major, given `-Im y`: each
-/// part of each element one rescale.
-fn complex_matmul(q: &Q32, ctx: &mut Ctx, x: &[Complex], y: &[Complex], minus_im: &[Cell]) -> Vec<Complex> {
+/// Complex matrix product: round each scalar product before summing.
+fn complex_matmul(q: &Q32, ctx: &mut Ctx, x: &[Complex], y: &[Complex]) -> Vec<Complex> {
     let mut out = Vec::with_capacity(BLOCK);
     for r in 0..NORB {
         for c in 0..NORB {
-            let row: Vec<Complex> = (0..NORB).map(|t| x[r * NORB + t]).collect();
-            let column: Vec<Complex> = (0..NORB).map(|t| y[t * NORB + c]).collect();
-            let column_minus_im: Vec<Cell> = (0..NORB).map(|t| minus_im[t * NORB + c]).collect();
-            out.push(complex_dot(q, ctx, &row, &column, &column_minus_im));
+            let terms: Vec<Complex> = (0..NORB)
+                .map(|t| complex_product(q, ctx, x[r * NORB + t], y[t * NORB + c])).collect();
+            out.push([q.sum(ctx, terms.iter().map(|v| v[0])), q.sum(ctx, terms.iter().map(|v| v[1]))]);
         }
     }
     out
-}
-
-/// `sum_t x_t y_t` for complex values, given `-Im y_t`: real part
-/// `sum Re x Re y - Im x Im y`, imaginary part `sum Re x Im y + Im x Re y`,
-/// each rescaled once.
-fn complex_dot(q: &Q32, ctx: &mut Ctx, x: &[Complex], y: &[Complex], y_minus_im: &[Cell]) -> Complex {
-    let xs = || x.iter().flat_map(|v| [Existing(v[0]), Existing(v[1])]);
-    let re =
-        q.gate.inner_product(ctx, xs(), y.iter().zip(y_minus_im).flat_map(|(v, m)| [Existing(v[0]), Existing(*m)]));
-    let im = q.gate.inner_product(ctx, xs(), y.iter().flat_map(|v| [Existing(v[1]), Existing(v[0])]));
-    [q.rescale(ctx, re).cell, q.rescale(ctx, im).cell]
 }

@@ -3,11 +3,11 @@
 // m1: Float[K, P], returning the N x P products as nested lists.
 // (zero(n, m) builds m rows of n, so the kernel runs only for N == P, as at
 // the fixture's shape.)
-// Each output accumulates its products into one variable, so it is one
-// reduction rescaled once (NPB_BASELINES.md section 5.3).
+// Match the source recurrence: round each product before accumulation.
+// No dot-product reassociation.
 // @outputs: float[N * P]
 
-use noir_hw::{check_inputs, rescale};
+use noir_hw::{check_inputs, mul};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global N: u32 = 16; // = m0_0
@@ -27,9 +27,9 @@ fn main(m0: [[Field; K]; N], m1: [[Field; P]; K]) -> pub [[Field; P]; N] {
         for j in 0..P {
             let mut acc: Field = 0;
             for k in 0..K {
-                acc += m0[i][k] * m1[k][j];
+                acc += mul(m0[i][k], m1[k][j]);
             }
-            result[i][j] = rescale(acc);
+            result[i][j] = acc;
         }
     }
     result

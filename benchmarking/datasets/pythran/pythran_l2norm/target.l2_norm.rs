@@ -1,8 +1,7 @@
 //! pythran_l2norm__l2_norm (Pythran l2norm), halo2-base baseline.
 //! Kernel: `np.sqrt(np.sum(np.abs(x) ** 2, 1))` on `x: Float[N, COLS]`.
 //! `np.abs(x) ** 2` is `x ** 2`, so the absolute value is skipped; each row's
-//! sum of squares is one reduction, rescaled once (`q.dot`, NPB_BASELINES.md
-//! section 5, rule 3), and its square root is the exact floor square root.
+//! squares are rounded individually before the sum and square root.
 
 use crate::prelude::*;
 
@@ -19,8 +18,9 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let norms: Vec<Cell> = x
         .chunks(COLS)
         .map(|row| {
-            let squares = q.dot(ctx, row, row);
-            q.sqrt(ctx, squares.cell).cell
+            let squares: Vec<Cell> = row.iter().map(|x| q.mul(ctx, *x, *x).cell).collect();
+            let total = q.sum(ctx, squares);
+            q.sqrt(ctx, total).cell
         })
         .collect();
     out.floats(&norms);
