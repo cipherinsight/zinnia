@@ -29,6 +29,7 @@ no shared tools or repository fixtures are modified. Checks use `--fixture-root`
 | 0382 | 66135 + 12570 = 78705 | 616600 + 124550 = 741150 | 5366 | 125038 | pass/pass/pass/pass |
 | 0365 | 5194 + 824 = 6018 | 15117 + 3376 = 18493 | 3891 | 4804 | pass/pass/pass/pass |
 | 0387 | 540000 + 160000 = 700000 | 540000 + 160000 = 700000 | 127816 | 127816 | pass/pass/pass/pass |
+| 0392 | 1200 + 360 = 1560 | 1200 + 360 = 1560 | 3004 | 3004 | pass/pass/pass/pass |
 
 ## Case notes
 
@@ -49,3 +50,5 @@ no shared tools or repository fixtures are modified. Checks use `--fixture-root`
 - **0365 (twin 0363):** Same insertion kernel. Reused thermometer-hint optimized construction and direct prefix/element/suffix literal construction. Optimized Halo2 keeps the twin fused multiply-add/subtract gates; Noir keeps its shared adjacent-output products. Added a Q32 window check after integer-to-float conversion in all four files: the twin omitted this output-overflow guard. Both variants accept insertion endpoints and wrap negative positions in [-100,100]. The literal local sign test and per-output comparisons retain fresh bounds. Lint cast warnings are inside the constrained-and-checked optimized Noir hint only. Additional non-proving checks in both variants/backends accepted pos=-100/100 with inserted values -2^31/2^31-1, and rejected pos=101 and inserted value 2^31.
 
 - **0387 (twin 0385):** Removed transpose(1,0,2,3); patches are in row-block-first order i*100+j. Literal code materializes reshape and swapaxes wire arrays, then the final reshape. Optimized code directly traverses blocks in that order. Equal sizes are expected because reshapes/permutations need no arithmetic beyond the same 20000 input checks.
+
+- **0392 (twin 0340):** Reused the 30-cell copy plumbing but changed X integer[5,6] to a float[20,10], selected rows 4:7 (30 floats), and changed both output declarations to float[30]. Only read rows are loaded/range-checked. Literal source constants and nested slice traversal remain explicit. Equal sizes are expected: both forms expose the same 30 checked wires.
