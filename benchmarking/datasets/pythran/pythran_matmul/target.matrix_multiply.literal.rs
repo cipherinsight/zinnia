@@ -1,22 +1,5 @@
-//! pythran_matmul__matrix_multiply, halo2-base literal baseline.
-//! Literal translation of kernel.py (LITERAL_BASELINES.md).
-//! Source:
-//!   new_matrix = zero(len(m0), len(m1[0]))
-//!   for i in range(len(m0)):
-//!       for j in range(len(m1[0])):
-//!           r = 0
-//!           for k in range(len(m1)):
-//!               r += m0[i][k] * m1[k][j]
-//!           new_matrix[i][j] = r
-//! for m0: Float[N, K], m1: Float[K, P].
-//! Translation choices:
-//! - `zero(n, m)` only fixes the output's shape (a compile-time constant,
-//!   `N` rows by `P` columns at this fixture, since `N == P`); it computes no
-//!   values of its own.
-//! - This is an explicit Python loop accumulating products, not a single
-//!   `np.dot`/`@` call, so L5 rescales each product separately before adding
-//!   it to `r` (no dot-product reassociation, no fused one-rescale sum).
-
+// pythran_matmul__matrix_multiply: literal translation of kernel.py (LITERAL_BASELINES.md).
+// zero(n,m) preserves the source shape (m rows, n columns); scalar products round before each addition.
 use crate::prelude::*;
 
 // Sizes (hw_check.sizes): from fixture.json.
@@ -32,17 +15,22 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
 
     let m0 = q.load_floats(ctx, &m0);
     let m1 = q.load_floats(ctx, &m1);
-    let mut result: Vec<Cell> = Vec::with_capacity(N * P);
+    let mut result = zero(&q, ctx, N, P);
     for i in 0..N {
         for j in 0..P {
-            // r = 0; for k in range(K): r += m0[i][k] * m1[k][j]
-            let products: Vec<Cell> = (0..K)
-                .map(|k| q.mul(ctx, m0[i * K + k], m1[k * P + j]).cell)
-                .collect();
-            let r = q.sum(ctx, products);
-            result.push(r);
+            let mut r = q.float_const(ctx, 0.0);
+            for k in 0..K {
+                let product = q.mul(ctx, m0[i * K + k], m1[k * P + j]).cell;
+                r = q.add(ctx, r, product);
+            }
+            result[i][j] = r;
         }
     }
-    out.floats(&result);
+    out.floats(&result.into_iter().flatten().collect::<Vec<_>>());
     Ok(())
+}
+fn zero(q: &Q32, ctx: &mut Ctx, n: usize, m: usize) -> Vec<Vec<Cell>> {
+    (0..m)
+        .map(|_| (0..n).map(|_| q.float_const(ctx, 0.0)).collect())
+        .collect()
 }
