@@ -22,6 +22,7 @@ Fixture values are unchanged. No repository fixtures or tools are modified.
 | 0448 | all pass | 960 + 288 = 1248 | 960 + 288 = 1248 | 2966 | 2966 |
 | 0449 | all pass | 960 + 288 = 1248 | 960 + 288 = 1248 | 2966 | 2966 |
 | 0463 | all pass | 3589 + 200 = 3789 | 11126 + 200 = 11326 | 3650 | 5096 |
+| 0502 | all pass | 22308 + 4056 = 26364 | 22308 + 4056 = 26364 | 6661 | 7759 |
 
 0417: adapted all four 0414 twins by wiring the reversed input before binning.
 Literal means scan each bin in source order. Noir counts are equal because the
@@ -43,3 +44,5 @@ No proofs, keys, tampered-public verification, timing or scaling runs.
 0449: Same adaptation of 0361 as 0448, with its own standalone files and its own fixture. Both kinds have equal counts in both backends.
 
 0463: Adapted 0462: Halo2 input shape is 20x1; Noir flat ABI holds the same 20 cells. Final reshape(-1,1) is wiring. Public dynamic count denotes rows of unit width one, followed by up to 20 values padded with zeros. Literal retains complete masks and equality-per-pair compaction.
+
+0502: Adapted 0501 (identical kernel): NumPy negative-index wrap and bounds through standard gadgets. Literal Halo2 q.index is the same implementation as optimized (equal counts); literal Noir uses index_pos/native indexing, while optimized uses pick for the length-two axis.
