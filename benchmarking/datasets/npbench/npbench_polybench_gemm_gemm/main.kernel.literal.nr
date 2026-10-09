@@ -42,13 +42,6 @@ fn main(
             alpha_a[i][k] = mul(alpha, A[i][k]);
         }
     }
-    // beta * C (fresh array, one rounded product per element)
-    let mut beta_c: [[Field; NJ]; NI] = [[0; NJ]; NI];
-    for i in 0..NI {
-        for j in 0..NJ {
-            beta_c[i][j] = mul(beta, C[i][j]);
-        }
-    }
     let mut result: [[Field; NJ]; NI] = [[0; NJ]; NI];
     for i in 0..NI {
         for j in 0..NJ {
@@ -58,8 +51,16 @@ fn main(
                 acc += alpha_a[i][k] * B[k][j];
             }
             // + beta * C
-            result[i][j] = rescale(acc) + beta_c[i][j];
+            result[i][j] = rescale(acc);
         }
     }
+    // beta * C (fresh array, one rounded product per element)
+    let mut beta_c: [[Field; NJ]; NI] = [[0; NJ]; NI];
+    for i in 0..NI {
+        for j in 0..NJ {
+            beta_c[i][j] = mul(beta, C[i][j]);
+        }
+    }
+    for i in 0..NI { for j in 0..NJ { result[i][j] = result[i][j] + beta_c[i][j]; } }
     result
 }

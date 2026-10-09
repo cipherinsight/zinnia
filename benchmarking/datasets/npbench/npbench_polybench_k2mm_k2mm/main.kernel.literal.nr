@@ -69,11 +69,13 @@ fn main(
             abc[i][l] = rescale(acc);
         }
     }
-    // beta * D (fresh array, one rounded product per element) and final +
+    // beta * D, then final addition in separate full passes.
+    let mut beta_d = [[0; NL]; NI];
+    for i in 0..NI { for l in 0..NL { beta_d[i][l] = mul(beta, D[i][l]); } }
     let mut result: [[Field; NL]; NI] = [[0; NL]; NI];
     for i in 0..NI {
         for l in 0..NL {
-            result[i][l] = abc[i][l] + mul(beta, D[i][l]);
+            result[i][l] = abc[i][l] + beta_d[i][l];
         }
     }
     result

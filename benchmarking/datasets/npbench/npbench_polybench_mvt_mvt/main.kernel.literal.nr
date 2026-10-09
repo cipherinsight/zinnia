@@ -35,18 +35,22 @@ fn main(
         check_inputs(A[i]);
     }
     // x1 += A @ y_1
+    let mut product1 = [0; N0];
     let mut new_x1 = x1;
     for i in 0..N0 {
-        new_x1[i] += dot(A[i], y_1);
+        product1[i] = dot(A[i], y_1);
     }
+    for i in 0..N0 { new_x1[i] += product1[i]; }
     // x2 += y_2 @ A
+    let mut product2 = [0; N1];
     let mut new_x2 = x2;
     for j in 0..N1 {
         let mut acc: Field = 0;
         for i in 0..N0 {
             acc += y_2[i] * A[i][j];
         }
-        new_x2[j] += rescale(acc);
+        product2[j] = rescale(acc);
     }
+    for j in 0..N1 { new_x2[j] += product2[j]; }
     (new_x1, new_x2)
 }

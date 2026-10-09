@@ -1,27 +1,8 @@
-// npbench_polybench_cholesky_cholesky__kernel, Noir literal baseline.
-// Literal translation of kernel.py (LITERAL_BASELINES.md).
-// Source:
-//   A[0, 0] = np.sqrt(A[0, 0])
-//   for i in range(1, N):
-//       for j in range(i):
-//           A[i, j] -= np.dot(A[i, :j], A[j, :j])
-//           A[i, j] /= A[j, j]
-//       A[i, i] -= np.dot(A[i, :i], A[i, :i])
-//       A[i, i] = np.sqrt(A[i, i])
-// Translation choices:
-// - Each np.dot is one library call, so L5 gives it one rescale (accumulate
-//   the unscaled products, then `rescale` once); an empty slice (j == 0) is
-//   the empty sum 0, matching NumPy.
-// - `/=` by A[j, j]: by the time this statement runs, A[j, j] already holds
-//   sqrt(...) from its own earlier iteration of this same loop, non-negative
-//   whenever NumPy's radicand is (NumPy has no witness otherwise), so
-//   `divmod_pos` applies; this is the division's own domain.
-// - In-place mutation of A over the (i, j) loop nest is a sequence of scalar
-//   assignments in source order; the output is all of A after the call
-//   (`mutated_outputs`), including the untouched upper triangle.
+// cholesky: literal translation of kernel.py (LITERAL_BASELINES.md).
+// Dots rescale once; ordinary division at each source division.
 // @outputs: float[N * N]
 
-use noir_hw::{check_inputs, divmod_pos, rescale, sqrt, SCALE};
+use noir_hw::{check_inputs, div, rescale, sqrt};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global N: u32 = 15; // = A_0
@@ -48,8 +29,8 @@ fn main(A: [[Field; N]; N]) -> pub [[Field; N]; N] {
                 value -= rescale(acc);
             }
             // A[i, j] /= A[j, j]
-            let (quotient, _) = divmod_pos(value * SCALE, a[j][j]);
-            a[i][j] = quotient;
+            a[i][j] = value;
+            a[i][j] = div(a[i][j], a[j][j]);
         }
         // A[i, i] -= np.dot(A[i, :i], A[i, :i])
         let mut radicand = a[i][i];

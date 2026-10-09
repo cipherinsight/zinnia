@@ -35,20 +35,22 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let a = q.load_floats(ctx, &a);
 
     // x1 += A @ y_1
-    let x1: Vec<Cell> = (0..N0)
+    let product1: Vec<Cell> = (0..N0)
         .map(|i| {
             let product = q.dot(ctx, &a[i * N1..(i + 1) * N1], &y_1);
-            q.add(ctx, x1[i], product.cell)
+            product.cell
         })
         .collect();
+    let x1: Vec<Cell> = x1.iter().zip(&product1).map(|(x,p)| q.add(ctx, *x, *p)).collect();
     // x2 += y_2 @ A
-    let x2: Vec<Cell> = (0..N1)
+    let product2: Vec<Cell> = (0..N1)
         .map(|j| {
             let column: Vec<Cell> = (0..N0).map(|i| a[i * N1 + j]).collect();
             let product = q.dot(ctx, &y_2, &column);
-            q.add(ctx, x2[j], product.cell)
+            product.cell
         })
         .collect();
+    let x2: Vec<Cell> = x2.iter().zip(&product2).map(|(x,p)| q.add(ctx, *x, *p)).collect();
     out.floats(&x1);
     out.floats(&x2);
     Ok(())
