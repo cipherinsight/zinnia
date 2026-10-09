@@ -67,6 +67,11 @@ fn main() {
         writeln!(src, "    {name:?},").unwrap();
     }
     src.push_str("];\n");
+    src.push_str("\n/// Source text embedded at build time for provenance checks.\npub const SOURCES: &[(&str, &str)] = &[\n");
+    for (name, path) in &cases {
+        writeln!(src, "    ({name:?}, include_str!({:?})),", path.display().to_string()).unwrap();
+    }
+    src.push_str("];\n");
     fs::write(PathBuf::from(env::var("OUT_DIR").unwrap()).join("cases.rs"), src).unwrap();
 }
 

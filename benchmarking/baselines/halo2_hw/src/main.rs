@@ -91,6 +91,10 @@ fn resolve_case(spec: &str, function: Option<&str>) -> CaseSpec {
 fn run(args: &Args, report: &mut serde_json::Map<String, Value>) -> Result<bool, Error> {
     if args.mode == "list" {
         report.insert("cases".into(), json!(cases::ALL));
+        if args.get("sources") == Some("true") {
+            report.insert("sources".into(), json!(cases::SOURCES.iter().copied()
+                .collect::<std::collections::BTreeMap<_, _>>()));
+        }
         return Ok(true);
     }
     let CaseSpec { name: case, fixture: folder_fixture } = resolve_case(args.require("case")?, args.get("function"));
