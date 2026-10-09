@@ -12,3 +12,5 @@ In progress. All checks use `--no-prove`; no keys or proofs are generated.
 | 0360 | 552 + 168 = 720 | 2891 | not run | not run | halo2 pass; Noir pass. Reused and audited.  |
 | 0361 | 960 + 288 = 1248 | 2966 | not run | not run | halo2 pass; Noir pass. Reused; closure capture repaired.  |
 | 0362 | 1600 + 480 = 2080 | 3066 | not run | not run | halo2 pass; Noir pass. Reused; closure capture repaired. Added missing Noir file.  |
+| 0368 | 2768 + 675 = 3443 | 3024 | not run | not run | Both pass. Full broadcast isclose array, including self comparisons, then all reduction. |
+| 0369 | 2768 + 675 = 3443 | 3024 | not run | not run | Both pass. Column-broadcast variant; tolerance recomputed per element. |
