@@ -1,5 +1,6 @@
 //! DS-1000 case 0453: literal translation of kernel.py (LITERAL_BASELINES.md).
 //! Full elementwise intermediate, then index-order row reduction, then broadcast division; integer division directly yields Q32.
+//! Match the optimized signed-32 operand guards before the squared norm.
 use crate::prelude::*;
 pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
     let raw = inputs.ints("X", &[5, 4])?;
@@ -7,6 +8,10 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let ctx = builder.main(0);
     let x = q.load_ints(ctx, &raw);
     // X*X: exact integer products, materialized before sum.
+    for v in &x {
+        let shifted = q.add(ctx, *v, Constant(fe(1 << 31)));
+        q.range.range_check(ctx, shifted, 32);
+    }
     let squares: Vec<Cell> = x.iter().map(|v| q.gate.mul(ctx, *v, *v)).collect();
     let mut norms = Vec::new();
     for i in 0..5 {
