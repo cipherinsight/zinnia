@@ -994,6 +994,27 @@ impl Q32 {
         self.gate.inner_product(ctx, hits.iter().map(|h| Existing(*h)), arr.iter().map(|c| Existing(*c)))
     }
 
+    /// The one-hot vector of the position a NumPy index `idx` selects in an
+    /// axis of `len` elements, by [`Q32::index_onehot`]'s construction (one
+    /// zero test of `(idx - p) (idx - p + len)` per position, exactly one hit
+    /// asserted), for gathers that read many values through the same index:
+    /// each value is then one inner product with the hits. Any `idx` outside
+    /// `[-len, len)` has no witness.
+    pub fn index_hits(&self, ctx: &mut Ctx, idx: Cell, len: usize) -> Vec<Cell> {
+        let len = len as i128;
+        let hits: Vec<Cell> = (0..len)
+            .map(|p| {
+                let at = self.gate.sub(ctx, idx, Constant(fe(p)));
+                let wrapped = self.gate.add(ctx, at, Constant(fe(len)));
+                let both = self.gate.mul(ctx, at, wrapped);
+                self.gate.is_zero(ctx, both)
+            })
+            .collect();
+        let total = self.gate.sum(ctx, hits.iter().map(|h| Existing(*h)));
+        self.gate.assert_is_const(ctx, &total, &Fr::ONE);
+        hits
+    }
+
     /// Maps a NumPy index in `[-len, len)` to its position in `[0, len)`,
     /// proving it lies in that range.
     pub fn wrap_index(&self, ctx: &mut Ctx, idx: I64, len: usize) -> Cell {
@@ -1649,6 +1670,23 @@ mod tests {
         assert!(run(0) && run(4) && run(-1) && run(-5));
         assert!(!run(5));
         assert!(!run(-6));
+    }
+
+    #[test]
+    fn index_hits_follow_numpy() {
+        let run = |idx: i128| {
+            accepts(move |c, ctx| {
+                let i = ctx.load_witness(fe(idx));
+                let hits = c.index_hits(ctx, i, 5);
+                if (-5..5).contains(&idx) {
+                    let hot: Vec<bool> = hits.iter().map(|h| *h.value() == Fr::ONE).collect();
+                    let want = idx.rem_euclid(5) as usize;
+                    assert!(hot.iter().enumerate().all(|(p, h)| *h == (p == want)));
+                }
+            })
+        };
+        assert!(run(0) && run(4) && run(-1) && run(-5));
+        assert!(!run(5) && !run(-6) && !run(1 << 64));
     }
 
     /// Prints the cell counts of the two indexing forms (run with
