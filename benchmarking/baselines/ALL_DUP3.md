@@ -1,0 +1,27 @@
+# Batch dup3
+
+In progress. Each completed case has four standalone files under
+`benchmarking/datasets/ds1000/ds1000_caseNNNN/`: optimized `target.rs` and
+`main.nr`, literal `target.literal.rs` and `main.literal.nr`.
+
+Checks use `hw_check.check --no-prove`, dev-fast builds under memrun's 8 GiB
+cap, three Cargo jobs, and `HW_CHECK_LOCK=eval-redo/all-work/lock-b`.
+Evidence and staged fixtures: `eval-redo/all-work/dup3/`.
+The duplicate folders lack fixtures; checks use the corresponding committed
+acceptance fixtures from `datasets/ds1000_numpy/generated/caseNNNN/fixture.json`
+via `--fixture-root`. For 0417/0418/0419 only, `bin_size` is moved from the
+parameter/input lists to constants (4/2/2), matching these performance kernels.
+Fixture values are unchanged. No repository fixtures or tools are modified.
+
+| Case | Four-file check status | Opt Halo2 advice + lookup = total | Literal Halo2 advice + lookup = total | Opt Noir gates | Literal Noir gates |
+|---|---|---:|---:|---:|---:|
+| 0417 | all pass | 494 + 144 = 638 | 508 + 144 = 652 | 2875 | 2875 |
+
+0417: adapted all four 0414 twins by wiring the reversed input before binning.
+Literal means scan each bin in source order. Noir counts are equal because the
+compiler removes the literal accumulator's zero initialization; the arithmetic
+is already direct. No added arithmetic rounding points or domain guards.
+
+Verified for completed rows: Halo2 MockProver A/B, Noir compilation/count and
+witness solving A/B, decoded outputs against NumPy, out-of-domain input rejection.
+No proofs, keys, tampered-public verification, timing or scaling runs.
