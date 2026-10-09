@@ -1,21 +1,5 @@
-// DS-1000 case 0450, Noir literal-translation baseline (LITERAL_BASELINES.md).
-// Kernel: `result = a[:, np.array(second).reshape(-1, 1), third]` on
-// Float[7, 8, 9] with second, third Integer[2]: NumPy broadcasts second
-// (reshaped to (2, 1)) against third ((2,)) over axes 1 and 2, so
-// result[i, j, k] = a[i, second[j], third[k]], shape (7, 2, 2). Negative
-// indices wrap (NumPy rule); any other out-of-range index raises
-// IndexError (no satisfying witness).
-//
-// Translation choices:
-// - The one statement reads two private indices at once, one per axis.
-//   Translated axis by axis in the order written, `a[..., second[j],
-//   ...]` then `[..., third[k]]`: for each i, j, gather the row
-//   `a[i, second[j], :]` (index_pos on axis 1, 9 native reads), then read
-//   third[k] out of that row (index_pos on axis 2). Nothing is cached
-//   across i or j: each index_pos call is fresh, as the source has no
-//   caching across the broadcast (the optimized baseline resolves each
-//   index once and reuses it for every i, which its own header names as
-//   the optimization this baseline does not take).
+// DS-1000 case 0450: literal translation of kernel.py (LITERAL_BASELINES.md).
+// Broadcast gather is evaluated axis by axis, using native checked indexing.
 // @outputs: float[28]
 
 use noir_hw::index_pos;
