@@ -1,27 +1,8 @@
-//! npbench_polybench_deriche_deriche__kernel (NPBench polybench/deriche), halo2-base baseline.
-//! Kernel: Deriche's recursive edge filter of `imgIn: Float[R, C]` with a
-//! private smoothing scalar `alpha`: coefficients from `exp(-alpha)`,
-//! `exp(2 alpha)`, `exp(-2 alpha)` and `2.0 ** -alpha`, then along each row a
-//! causal recurrence `y1` and an anti-causal one `y2` (from `y2 = 0` at the
-//! end), summed, and the same along each column of that sum.
-//! Every elementwise product is rounded (NumPy materializes them); the sums
-//! are exact; products with the known zero `y2[-1]` are left out. `exp` is
-//! the shared gadget (NPB_BASELINES.md section 5.5). `exp(-2 alpha)` is
-//! `exp(-alpha)^2` (one rounded product, relative error below 2e-7 where the
-//! gadget's is below 1e-7; both are within the tolerance, and the square
-//! fits Q32 exactly where `exp(-2 alpha)` does), and `2.0 ** -alpha` is
-//! `exp(-alpha * ln 2)` (the product rounded once). `c1 = c2 = 1` multiply
-//! exactly, so they cost nothing. The divisor of `k` can have either sign
-//! (`q.div`). At `alpha = 0` NumPy's `k` is `0 / 0` (NaN, no Q32 value), but
-//! the gadget's `exp(0)` is `1 + 6e-8`, not 1, so the circuit itself proves
-//! `alpha != 0` (an inverse); no other Q32 value of `alpha` makes the
-//! float64 divisor zero.
-//! For `alpha < 0` the recurrences grow (`b1 = 2^-alpha > 1`) and amplify
-//! the coefficients' errors: with the gadget's (below 1e-7) the outputs
-//! leave the 1e-6 tolerance from about `alpha = -0.25`, and even correctly
-//! rounded Q32 coefficients do from about `alpha = -1` (a property of Q32,
-//! not of this circuit; the fixtures have `alpha > 0`).
-
+//! Source Deriche recurrences and coefficient evaluation, canonical Q32.
+//! exp(-2*alpha) is evaluated directly, not the square of exp(-alpha).
+//! 2**(-alpha) follows canonical exp((-alpha)*log(2)), where the canonical
+//! Q32 log(2) constant is 2977044472. Repeated identical scalar expressions
+//! and zero products are reused; all nontrivial product rounding remains.
 use crate::prelude::*;
 
 // Sizes (hw_check.sizes): from fixture.json.
@@ -49,18 +30,15 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let alpha = q.load_float(ctx, alpha);
     let img = q.load_floats(ctx, &img);
     let one = Constant(fe(SCALE));
-    // alpha != 0: an inverse exists (any inverse will do; it is unique anyway).
-    let inverse = ctx.load_witness(Option::from(alpha.value().invert()).unwrap_or(Fr::ZERO));
-    let unit = q.gate.mul(ctx, alpha, inverse);
-    q.gate.assert_is_const(ctx, &unit, &Fr::ONE);
-
     let minus_alpha = q.neg(ctx, alpha);
     let minus_alpha = q.bound(ctx, minus_alpha);
-    let e1 = q.exp(ctx, minus_alpha).cell; // np.exp(-alpha)
+    let e1 = q.canonical_exp(ctx, minus_alpha).cell; // np.exp(-alpha)
     let two_alpha = q.add(ctx, alpha, alpha);
     let two_alpha = q.bound(ctx, two_alpha);
-    let e_two = q.exp(ctx, two_alpha).cell; // np.exp(2.0 * alpha)
-    let e2 = q.mul(ctx, e1, e1).cell; // np.exp(-2.0 * alpha)
+    let e_two = q.canonical_exp(ctx, two_alpha).cell; // np.exp(2.0 * alpha)
+    let minus_two_alpha = q.neg(ctx, two_alpha.cell);
+    let minus_two_alpha = q.bound(ctx, minus_two_alpha);
+    let e2 = q.canonical_exp(ctx, minus_two_alpha).cell; // np.exp(-2.0 * alpha)
     // k = (1.0 - e1) * (1.0 - e1) / (1.0 + alpha * e1 - e_two)
     let one_minus_e1 = q.sub(ctx, one, e1);
     let numerator = q.mul(ctx, one_minus_e1, one_minus_e1);
@@ -81,7 +59,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         a2: q.mul(ctx, k_e1, alpha_minus_one).cell,
         a3: q.mul(ctx, k_e1, alpha_plus_one).cell,
         a4: q.mul(ctx, minus_k, e2).cell,
-        b1: q.exp(ctx, exponent).cell,
+        b1: q.canonical_exp(ctx, exponent).cell,
         b2: q.neg(ctx, e2),
     };
 

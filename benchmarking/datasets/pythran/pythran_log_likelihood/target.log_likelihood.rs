@@ -24,9 +24,9 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         let s = q.div(ctx, square.cell, twice);
         let neg_s = q.neg(ctx, s.cell);
         let neg_s = q.bound(ctx, neg_s);
-        let density = q.exp(ctx, neg_s);
+        let density = q.canonical_exp(ctx, neg_s);
         let normalized = q.div(ctx, density.cell, scale);
-        terms.push(q.log(ctx, normalized).cell);
+        terms.push(q.canonical_log(ctx, normalized).cell);
     }
     let result = q.sum(ctx, terms);
     out.float(result);

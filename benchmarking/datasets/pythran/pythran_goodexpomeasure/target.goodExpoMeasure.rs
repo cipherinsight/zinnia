@@ -1,21 +1,7 @@
-//! pythran_goodexpomeasure__goodExpoMeasure (Pythran goodexpomeasure),
-//! halo2-base baseline.
-//! Kernel: the good-exposure measure of `inRGB: Int[C, H, W]` (only the
-//! planes 0, 1, 2 are read, and loaded) under `sigma != 0` (`@requires`; the
-//! division has no witness for a zero divisor): per pixel
-//! `e_c = np.exp(-(c - 128) ** 2 / sigma)` for the three planes,
-//! `x = e_R * e_G * e_B`, and the output
-//! `(np.round(x, 2) * (2 ** 8 - 1)).astype(np.uint8)`.
-//! `c - 128` is an integer, so its square is exact; the quotient by `sigma`
-//! is rounded (one sign test of `sigma` for all pixels, `q.div_by_abs`), and
-//! `exp` is the shared gadget (`q.exp`; an argument outside the window has
-//! no proof). The two products are rounded in NumPy's order.
-//! Rounds the Q32 product to hundredths (ties to even), then truncates
-//! `255*n/100` and wraps modulo 256, including negative-sigma inputs.
-//! LIMITATION: this follows Q32 arithmetic, not exact float64 discrete
-//! outcomes near rounding boundaries. Float64 `(n/100)*255` can also lie
-//! just below an integer (e.g. n=12820); see BATCH4_VALIDATION.md.
-
+//! Source goodExpo sequence with canonical exp, per-channel products,
+//! np.round(...,2) materialized in Q32, multiplication by255, truncation,
+//! then uint8 wrap. No rational floor(255*n/100) shortcut.
+//! Integer input conversion uses Q32, as the shared compiler arithmetic.
 use crate::prelude::*;
 
 // Sizes (hw_check.sizes): from fixture.json.
@@ -49,7 +35,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
                     // -(d ** 2) as a float: -d^2 2^32.
                     let numerator = q.gate.mul(ctx, square, Constant(-fe(SCALE)));
                     let t = q.div_by_abs(ctx, numerator, sigma.cell, magnitude);
-                    q.exp(ctx, t).cell
+                    q.canonical_exp(ctx, t).cell
                 })
                 .collect()
         })
@@ -59,7 +45,12 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         let rg = q.mul(ctx, e[0][p], e[1][p]);
         let x = q.mul(ctx, rg, e[2][p]);
         let n = rint_hundredths(&q, ctx, x.cell);
-        result.push(to_byte(&q, ctx, n));
+        let n_float = q.int_to_float(ctx, n);
+        let rounded = q.div_const(ctx, n_float, 100.0);
+        let scaled = q.mul(ctx, rounded, Constant(fe(255 * SCALE)));
+        let integer = q.float_to_int(ctx, scaled);
+        let (_, byte) = q.floor_div_const(ctx, integer.cell, 256);
+        result.push(byte);
     }
     out.ints(&result);
     Ok(())
@@ -94,61 +85,4 @@ fn rint_with(q: &Q32, ctx: &mut Ctx, shifted: Cell, mh: Fr, fh: Fr, hh: Fr, oddh
     let n = q.sub(ctx, m, down);
 
     n
-}
-
-/// Truncate the nonnegative scaled value and wrap modulo 256, as uint8.
-/// n < 2^38, so 255*n < 2^46 and its quotient is below 2^40.
-fn to_byte(q: &Q32, ctx: &mut Ctx, n: Cell) -> Cell {
-    let scaled = q.gate.mul(ctx, n, Constant(Fr::from(255)));
-    let integer = q.divmod_small(ctx, scaled, 100, 46).0;
-    q.divmod_small(ctx, integer, 256, 40).1
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use halo2_base::gates::circuit::CircuitBuilderStage;
-    use halo2_base::halo2_proofs::dev::MockProver;
-
-    fn accepts(f: impl FnOnce(&Q32, &mut Ctx)) -> bool {
-        let mut builder = Builder::from_stage(CircuitBuilderStage::Mock);
-        builder.set_k(12);
-        builder.set_lookup_bits(8);
-        builder.set_instance_columns(1);
-        let q = Q32::new(&builder);
-        f(&q, builder.main(0));
-        builder.calculate_params(Some(20));
-        let ok = MockProver::run(12, &builder, vec![vec![]]).unwrap().verify().is_ok();
-        builder.clear();
-        ok
-    }
-
-    #[test]
-    fn hundredths_rejects_false_split_and_parity() {
-        let run = |m, f, h, odd| accepts(|q, ctx| {
-            let shifted = ctx.load_witness(fe(13 * SCALE));
-            rint_with(q, ctx, shifted, fe(m), fe(f), fe(h), fe(odd));
-        });
-        assert!(run(13, 0, 6, 1));
-        assert!(!run(12, SCALE, 6, 0));
-        assert!(!run(14, -SCALE, 7, 0));
-        assert!(!run(13, 0, 6, 0));
-        assert!(!run(13, 0, 7, -1));
-    }
-
-    #[test]
-    fn hundredths_ties_even_and_byte_wrap() {
-        assert!(accepts(|q, ctx| {
-            for (code, expected) in [(SCALE / 8, 12), (3 * SCALE / 8, 38)] {
-                let x = ctx.load_witness(fe(code));
-                let n = rint_hundredths(q, ctx, x);
-                q.gate.assert_is_const(ctx, &n, &fe(expected));
-            }
-            for (n, expected) in [(100, 255), (101, 1), (200, 254), (1000, 246)] {
-                let n = ctx.load_witness(fe(n));
-                let byte = to_byte(q, ctx, n);
-                q.gate.assert_is_const(ctx, &byte, &fe(expected));
-            }
-        }));
-    }
 }

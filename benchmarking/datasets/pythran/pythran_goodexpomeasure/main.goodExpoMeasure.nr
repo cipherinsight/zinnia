@@ -1,23 +1,9 @@
-// pythran_goodexpomeasure__goodExpoMeasure (Pythran goodexpomeasure), Noir
-// baseline.
-// Kernel: the good-exposure measure of inRGB: Int[C, H, W] (only the planes
-// 0, 1, 2 are read, and get a domain check) under sigma != 0 (`@requires`; the
-// division has no witness for a zero divisor): per pixel
-// e_c = np.exp(-(c - 128) ** 2 / sigma) for the three planes,
-// x = e_R * e_G * e_B, and the output
-// (np.round(x, 2) * (2 ** 8 - 1)).astype(np.uint8).
-// c - 128 is an integer, so its square is exact; the quotient by sigma is
-// rounded (one sign test of sigma for all pixels), and exp is the shared
-// gadget (noir_hw::exp; an argument outside the window has no proof). The two
-// products are rounded in NumPy's order.
-// Rounds the Q32 product to hundredths (ties to even), truncates 255*n/100,
-// and wraps modulo 256, including negative-sigma inputs.
-// LIMITATION: Q32 and float64 can disagree at discrete rounding boundaries;
-// float64 (n/100)*255 is also just below an integer for e.g. n=12820.
-// See BATCH4_VALIDATION.md for the unresolved full-domain limitation.
+// Source goodExpo operation order with canonical Q32 exp and rounding.
+// Materialize rounded hundredths, multiply255, truncate, then uint8 wrap.
+// No rational floor(255*n/100) shortcut.
 // @outputs: int[H * W]
 
-use noir_hw::{check_input, check_inputs, divmod_pos, exp, is_neg, mul, SCALE};
+use noir_hw::{check_input, check_inputs, divmod_pos, canonical_exp, is_neg, mul, to_int, SCALE};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global C: u32 = 16; // = inRGB_0
@@ -36,10 +22,6 @@ unconstrained fn split_hint(v: Field) -> (Field, Field) {
 
 unconstrained fn half_hint(m: Field) -> Field {
     ((m as u128) >> 1) as Field
-}
-
-unconstrained fn byte_hint(scaled: Field) -> Field {
-    ((scaled as u128) / 100) as Field
 }
 
 // rint(100 x) for a Q32 x, for a nonnegative Q32 product:
@@ -63,28 +45,6 @@ fn rint_hundredths(x: Field) -> Field {
     n
 }
 
-unconstrained fn upper_byte_hint(o: Field) -> Field {
-    ((o as u128) >> 8) as Field
-}
-
-// Truncate 255*n/100, then wrap modulo 256. Each quotient is unique from
-// the bounded remainder and recomposition, with all integers below 2^96.
-fn to_byte(n: Field) -> Field {
-    let scaled = 255 * n;
-    // Safety: pinned by the range checks and the recomposition.
-    let o = unsafe { byte_hint(scaled) };
-    let s = scaled - 100 * o;
-    o.assert_max_bit_size::<64>();
-    s.assert_max_bit_size::<8>();
-    (99 - s).assert_max_bit_size::<8>();
-    // Safety: o = 256*upper + byte with bounded upper and byte is unique.
-    let upper = unsafe { upper_byte_hint(o) };
-    upper.assert_max_bit_size::<64>();
-    let byte = o - 256 * upper;
-    byte.assert_max_bit_size::<8>();
-    byte
-}
-
 fn main(inRGB: [[[Field; W]; H]; C], sigma: Field) -> pub [[Field; W]; H] {
     assert(C >= PLANES, "IndexError");
     // Input domain: the planes read hold int64s, sigma a Q32 code.
@@ -105,21 +65,15 @@ fn main(inRGB: [[[Field; W]; H]; C], sigma: Field) -> pub [[Field; W]; H] {
             for c in 0..PLANES {
                 let d = inRGB[c][i][j] - CENTRE;
                 let (quotient, _) = divmod_pos(-(d * d) * SCALE * SCALE, magnitude);
-                e[c] = exp(if negative { -quotient } else { quotient });
+                e[c] = canonical_exp(if negative { -quotient } else { quotient });
             }
             let x = mul(mul(e[0], e[1]), e[2]);
-            result[i][j] = to_byte(rint_hundredths(x));
+            let n = rint_hundredths(x);
+            let (rounded, _) = divmod_pos(n * SCALE, 100);
+            let integer = to_int(mul(rounded, 255 * SCALE));
+            let (_, byte) = divmod_pos(integer, 256);
+            result[i][j] = byte;
         }
     }
     result
-}
-
-#[test]
-fn rounding_ties_even_and_byte_wrap() {
-    assert(rint_hundredths(SCALE / 8) == 12);
-    assert(rint_hundredths(3 * SCALE / 8) == 38);
-    assert(to_byte(100) == 255);
-    assert(to_byte(101) == 1);
-    assert(to_byte(200) == 254);
-    assert(to_byte(1000) == 246);
 }

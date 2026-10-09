@@ -1,7 +1,8 @@
 // Sequential Fibonacci recurrence, preserving kernel.py's private n loop.
-// No matrix powering or derived n<=90 shortcut; selected states fit int64.
+// No matrix powering, derived n<=90 shortcut, or extra state range guards.
+// The intended int64-result comparison covers n<=90; larger n is field arithmetic.
 // @outputs: int[1]
-use noir_hw::{check_input, window};
+use noir_hw::window;
 global MAX_STEPS: u32 = 1024;
 fn main(n: Field) -> pub [Field; 1] {
     let nw = window(n);
@@ -15,7 +16,6 @@ fn main(n: Field) -> pub [Field; 1] {
         let next_a = if active { next } else { a };
         b = if active { a } else { b };
         a = next_a;
-        check_input(a);
     }
     [a]
 }

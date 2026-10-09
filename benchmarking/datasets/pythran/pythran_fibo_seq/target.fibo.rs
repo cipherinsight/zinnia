@@ -1,6 +1,7 @@
 //! Sequential Fibonacci recurrence with a private trip count, as kernel.py.
 //! The source bound is 1024; no matrix powering or derived n<=90 shortcut.
-//! Each live state must fit int64, so overflowing source results have no proof.
+//! State arithmetic is exact field addition, matching the frozen compiler.
+//! The intended int64-result comparison covers n<=90; no extra range guards.
 use crate::prelude::*;
 const MAX_STEPS: usize = 1024;
 
@@ -20,7 +21,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         let next = q.add(ctx, a, b);
         let next_a = q.gate.select(ctx, next, a, active);
         b = q.gate.select(ctx, a, b, active);
-        a = q.bound(ctx, next_a).cell;
+        a = next_a;
     }
     out.int(a);
     Ok(())

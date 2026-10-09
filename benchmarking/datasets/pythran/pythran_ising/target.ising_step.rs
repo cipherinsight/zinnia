@@ -55,7 +55,7 @@ fn update(q: &Q32, ctx: &mut Ctx, field: &mut [Cell], beta: Cell, n: usize, m: u
     let argument = q.gate.mul(ctx, negative_de, beta);
     let argument = q.gate.select(ctx, Constant(Fr::ZERO), argument, non_positive);
     let argument = q.bound(ctx, argument);
-    let exponential = q.exp(ctx, argument);
+    let exponential = q.canonical_exp(ctx, argument);
     let exp_test = q.gt_const(ctx, exponential, SCALE / 2);
     let flip = q.gate.or(ctx, non_positive, exp_test);
     // field[n, m] *= -1 when flipping: site - 2 * flip * site.

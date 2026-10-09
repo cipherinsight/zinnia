@@ -1,28 +1,9 @@
-// npbench_polybench_deriche_deriche__kernel (NPBench polybench/deriche), Noir baseline.
-// Kernel: Deriche's recursive edge filter of `imgIn: Float[R, C]` with a
-// private smoothing scalar alpha: coefficients from exp(-alpha), exp(2 alpha),
-// exp(-2 alpha) and 2.0 ** -alpha, then along each row a causal recurrence y1
-// and an anti-causal one y2 (from y2 = 0 at the end), summed, and the same
-// along each column of that sum.
-// Every elementwise product is rounded (NumPy materializes them); the sums
-// are exact; products with the known zero y2[-1] are left out. `exp` is the
-// shared gadget (NPB_BASELINES.md section 5.5). exp(-2 alpha) is
-// exp(-alpha)^2 (one rounded product, relative error below 2e-7 where the
-// gadget's is below 1e-7; both are within the tolerance, and the square fits
-// Q32 exactly where exp(-2 alpha) does), and 2.0 ** -alpha is
-// exp(-alpha * ln 2) (the product rounded once). c1 = c2 = 1 multiply
-// exactly, so they cost nothing. The divisor of k can have either sign
-// (`div`). At alpha = 0 NumPy's k is 0 / 0 (NaN, no Q32 value), but the
-// gadget's exp(0) is 1 + 6e-8, not 1, so the circuit itself asserts
-// alpha != 0; no other Q32 value of alpha makes the float64 divisor zero.
-// For alpha < 0 the recurrences grow (b1 = 2^-alpha > 1) and amplify the
-// coefficients' errors: with the gadget's (below 1e-7) the outputs leave the
-// 1e-6 tolerance from about alpha = -0.25, and even correctly rounded Q32
-// coefficients do from about alpha = -1 (a property of Q32, not of this
-// circuit; the fixtures have alpha > 0).
+// Source Deriche coefficients and recurrences with canonical Q32 arithmetic.
+// canonical_exp(-2*alpha) is independent, not squared canonical_exp(-alpha). log(2) is the
+// canonical constant 2977044472 in the canonical_exp((-alpha)*log(2)) power lowering.
 // @outputs: float[R * C]
 
-use noir_hw::{check_input, check_inputs, div, exp, mul, SCALE};
+use noir_hw::{check_input, check_inputs, div, canonical_exp, mul, SCALE};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global R: u32 = 16; // = imgIn_0
@@ -83,10 +64,9 @@ fn main(alpha: Field, imgIn: [[Field; C]; R]) -> pub [[Field; C]; R] {
     for i in 0..R {
         check_inputs(imgIn[i]);
     }
-    assert(alpha != 0, "alpha = 0: k is 0 / 0 (NaN)");
-    let e1 = exp(-alpha); // np.exp(-alpha)
-    let e_two = exp(2 * alpha); // np.exp(2.0 * alpha)
-    let e2 = mul(e1, e1); // np.exp(-2.0 * alpha)
+    let e1 = canonical_exp(-alpha); // np.exp(-alpha)
+    let e_two = canonical_exp(2 * alpha); // np.exp(2.0 * alpha)
+    let e2 = canonical_exp(-2 * alpha); // np.exp(-2.0 * alpha)
     let k = div(mul(SCALE - e1, SCALE - e1), SCALE + mul(alpha, e1) - e_two);
     let k_e1 = mul(k, e1);
     let c = Coefficients {
@@ -94,7 +74,7 @@ fn main(alpha: Field, imgIn: [[Field; C]; R]) -> pub [[Field; C]; R] {
         a2: mul(k_e1, alpha - SCALE),
         a3: mul(k_e1, alpha + SCALE),
         a4: mul(-k, e2),
-        b1: exp(mul(-alpha, LN2_Q)), // 2.0 ** (-alpha)
+        b1: canonical_exp(mul(-alpha, LN2_Q)), // 2.0 ** (-alpha)
         b2: -e2,
     };
     // Along the rows, then along the columns of the result.
