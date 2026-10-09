@@ -68,12 +68,12 @@ source text against each audited SHA-256, rejecting wrong-cap or stale builds.
 
 Counting runs serially under the supplied memory limiter and shares the
 original-size checker's `/tmp/hw_check_heavy.lock`. Halo2 runs `stats`; Noir
-runs `setup`, which compiles and obtains gates without proving. Results append
+runs `stats`, which compiles and obtains gates without keys or proofs. Results append
 to JSONL. Re-running resumes successful records only when fixture, source,
 compiled binary (Halo2), gadgets/driver/tools (Noir), and memory settings match.
 Timeouts and failures remain records with log paths and are retried on resume.
 Tool duration fields are diagnostic metadata, not timing-benchmark measurements.
-Noir setup does not validate outputs; execute the witness before reporting an
+Noir stats does not validate outputs; execute the witness before reporting an
 unchecked circuit as correct.
 
 The CAP32 atax smoke compiled from the scaled source and passed Halo2 MockProver
@@ -96,3 +96,34 @@ Validation: `python -m pytest -q benchmarking/scaling_npb/tests` (22 tests),
 including tampered body literals, operations, comments, whitespace, formula
 text, original values, overflow, factorial, per-function fixture filenames,
 dry runs, write conflicts, missing sources, and warning exclusions.
+
+## Full integrated source audit
+
+After all 79 original-size baselines were merged (612b1f36), every materialized
+scaled source passed: CAP32 98/98, CAP64 92/92, CAP128 78/78 point-targets.
+The full manifest also retains 188 unchanged and 18 fixed-size point-targets.
+There are no missing sources, source-diff errors, or pending literal reviews.
+Additional explicit reviews cover covariance's fixed range widths, sumarray3d's
+three coordinates (guarded at three), CRC16's fixed output width, stencil halo
+and arithmetic constants, and goodExpoMeasure's byte conversion and test data.
+All source files were materialized under the existing cap folders.
+
+To compare completed count records with existing Zinnia circuit-size records:
+
+```sh
+python -m benchmarking.scaling_npb handwritten-summary \
+  --audit /path/to/handwritten-source-audit.json \
+  --counts /path/to/cap32.jsonl /path/to/cap64.jsonl /path/to/cap128.jsonl \
+  --zinnia /path/to/measure_final_cap32.json /path/to/heavy_halo2_cap32.json \
+    /path/to/changed_final_cap32.json \
+  --out /path/to/handwritten-comparison.json
+```
+
+Supply the corresponding Zinnia files for all caps of interest, with corrected
+`changed_final` files last. The JSON and Markdown report retains uncounted points,
+timeouts and failures, and labels ratios provisional until scaled-output checks
+are completed. OOM is diagnosed only from a matching systemd scope's journal
+record, saved beside the count log; an unexplained signal is kept as such.
+
+Regression validation now includes 23 Python tests plus the standalone Rust
+build-discovery test (`rustc --edition 2021 --test build.rs`).

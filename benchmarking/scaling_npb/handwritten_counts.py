@@ -1,6 +1,6 @@
 """Serial, resumable circuit counts for source-audited scaled baselines.
 
-Halo2 uses stats, Noir uses setup (compilation, verification key and gate count).
+Halo2 uses stats, Noir uses stats (compilation and gate count, without verification keys).
 Neither runs proving or a timing benchmark. A memory-limiting runner is required.
 """
 from __future__ import annotations
@@ -12,6 +12,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -20,6 +21,7 @@ def digest(path: Path) -> str:
 
 
 def invoke(command: list[str], cwd: Path, env: dict, timeout: float, log: Path) -> dict:
+    started = time.time()
     with log.open('w') as stream:
         proc = subprocess.Popen(command, cwd=cwd, env=env, stdout=stream,
                                 stderr=subprocess.STDOUT, start_new_session=True)
@@ -29,7 +31,27 @@ def invoke(command: list[str], cwd: Path, env: dict, timeout: float, log: Path) 
             os.killpg(proc.pid, signal.SIGKILL)
             proc.wait()
             return {'status': 'timeout', 'reason': f'exceeded {timeout} seconds'}
-    return {'status': 'ok' if code == 0 else ('timeout' if code in (124, 137) else 'failed'), 'returncode': code}
+    result = {'status': 'ok' if code == 0 else ('timeout' if code == 124 else 'failed'), 'returncode': code}
+    if code != 0 and '--out' in command:
+        # systemd-run may itself receive SIGTERM when the scope OOM-kills its
+        # workload. Establish OOM from the matching scope journal, not a signal.
+        output = command[command.index('--out') + 1]
+        try:
+            journal = subprocess.run(['journalctl', '--user', '--since', f'@{started:.0f}',
+                                      '-o', 'json', '--no-pager'], capture_output=True, text=True, timeout=10)
+            entries = [json.loads(line) for line in journal.stdout.splitlines()]
+            units = {e.get('USER_UNIT') for e in entries
+                     if f'--out {output}' in e.get('MESSAGE', '') and e.get('USER_UNIT')}
+            evidence = [e for e in entries if e.get('USER_UNIT') in units]
+            if any("result 'oom-kill'" in e.get('MESSAGE', '') for e in evidence):
+                result.update(status='out_of_memory', reason='memory-limited scope reports oom-kill',
+                              scope=sorted(units))
+                log.with_suffix('.resource.json').write_text(json.dumps(evidence, indent=1) + '\n')
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass  # unavailable journal does not justify guessing an OOM
+    if code < 0 and result['status'] == 'failed':
+        result.update(status='signal_terminated', reason=f'terminated by signal {-code}; cause unconfirmed')
+    return result
 
 
 def main(args) -> int:
@@ -93,7 +115,7 @@ def main(args) -> int:
             if point['system'] == 'halo2_hw':
                 cmd = [str(args.halo2_bin.resolve()), 'stats']
             else:
-                cmd = [sys.executable, '-m', 'hw_check.noir_driver', 'setup']
+                cmd = [sys.executable, '-m', 'hw_check.noir_driver', 'stats']
             cmd += ['--case', str(folder), '--function', function, '--fixture', str(fixture),
                     '--input', 'B', '--workdir', str(work.resolve()), '--out', str(output.resolve())]
             # timeout runs INSIDE the systemd scope: killing systemd-run alone
