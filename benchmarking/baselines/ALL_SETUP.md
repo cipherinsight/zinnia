@@ -48,7 +48,7 @@ literal binaries use separate `target` and `target-literal` directories.
 | 0386 | pending | pending | pending | pending | pending |
 | 0456 | 5,045 + 1,228 = 6,273 | 11,656 + 2,560 = 14,216 | 3,727 | 4,392 | pass / pass / pass / pass |
 | 0457 | 6,281 + 1,420 = 7,701 | 14,608 + 2,752 = 17,360 | 3,997 | 4,830 | pass / pass / pass / pass |
-| 0458 | pending | pending | pending | pending | pending |
+| 0458 | 6,281 + 1,420 = 7,701 | 14,609 + 2,752 = 17,361 | 3,941 | 4,774 | pass / pass / pass / pass |
 | 0477 | pending | pending | pending | pending | pending |
 
 The four files for each row are
@@ -74,3 +74,9 @@ computed in literal code but declared constant in both output layouts.
 
 0457 adapts the new 0456 baselines from width 3 to width 6, preserving its
 input/output order and arithmetic. Its full literal difference array has 384 cells.
+
+0458 adapts 0457, emitting only the 28 strict-upper-triangle values as public
+cells. Literal code computes the complete difference and norm arrays and then
+forms the full `triu` matrix. Optimized skips the discarded lower triangle.
+Their domains still agree: reversed pairs have identical squared norms, and
+diagonal differences are zero. No guard on discarded work adds a restriction.
