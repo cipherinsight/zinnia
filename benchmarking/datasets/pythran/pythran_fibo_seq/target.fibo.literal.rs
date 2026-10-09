@@ -1,5 +1,5 @@
 // pythran_fibo_seq__fibo: literal translation of kernel.py (LITERAL_BASELINES.md).
-// Private range(n) is bounded by the explicit 1024 precondition with selected state. Result is int64 checked.
+// Private range(n) is bounded by the explicit 1024 precondition with selected state. Output uses field arithmetic without an int64 guard, matching the optimized statement.
 use crate::prelude::*;
 
 pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
@@ -26,8 +26,6 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         b = q.gate.select(ctx, a, b, active);
         a = na;
     }
-    // Python integer output must fit the statement's int64 window.
-    q.bound(ctx, a);
     out.int(a);
     Ok(())
 }
