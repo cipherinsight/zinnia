@@ -168,6 +168,15 @@ def parser() -> argparse.ArgumentParser:
     from benchmarking.scaling_npb.handwritten_counts import main as handwritten_counts_main
     hc.set_defaults(func=handwritten_counts_main)
 
+    hs = sub.add_parser("handwritten-summary", help="provisional local circuit-size comparison")
+    hs.add_argument("--audit", type=Path, required=True)
+    hs.add_argument("--counts", type=Path, nargs="+", required=True)
+    hs.add_argument("--zinnia", type=Path, nargs="+", required=True,
+                    help="count JSON files; corrected counts last")
+    hs.add_argument("--out", type=Path, required=True, help="JSON report (also writes Markdown)")
+    from benchmarking.scaling_npb.handwritten_summary import main as handwritten_summary_main
+    hs.set_defaults(func=handwritten_summary_main)
+
     rel = sub.add_parser("relocate", help="point the case sets at DATA's current location")
     rel.add_argument("--data", type=Path, required=True)
     rel.set_defaults(func=cmd_relocate)

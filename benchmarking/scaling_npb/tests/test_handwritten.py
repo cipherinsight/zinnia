@@ -166,3 +166,25 @@ def test_count_failures_resume_only_matching_artifacts(tmp_path, monkeypatch):
     source.write_text('tampered source')
     assert counts.main(args) == 1
     assert json.loads(args.out.read_text().splitlines()[-1])['status'] == 'source_mismatch'
+
+
+def test_summary_overrides_per_target_preserves_failures(tmp_path):
+    from benchmarking.scaling_npb.handwritten_summary import summarize
+    original, corrected, counts = [tmp_path / x for x in ['old.json', 'new.json', 'hw.jsonl']]
+    original.write_text(json.dumps({'cap32': {'x_cap32': {'halo2': {'cells': 60}, 'noir': {'gates': 20}}}}))
+    corrected.write_text(json.dumps({'cap32': {'x_cap32': {'halo2': {'cells': 30}}}}))
+    counts.write_text('\n'.join(json.dumps(x) for x in [
+        {'case': 'x_cap32', 'system': 'halo2_hw', 'status': 'ok', 'output_sha256': 'a',
+         'result': {'cells': {'advice': 20, 'lookup': 10}}},
+        {'case': 'x_cap32', 'system': 'noir_hw', 'status': 'timeout', 'output_sha256': 'b'}]))
+    audit = {'points': [
+        {'case': 'x_cap32', 'cap': 32, 'system': 'halo2_hw', 'status': 'rewritten', 'output_sha256': 'a'},
+        {'case': 'x_cap32', 'cap': 32, 'system': 'noir_hw', 'status': 'rewritten', 'output_sha256': 'b'},
+        {'case': 'y_cap32', 'cap': 32, 'system': 'halo2_hw', 'status': 'rewritten', 'output_sha256': 'c'}]}
+    report = summarize(audit, [counts], [original, corrected])
+    assert report['points'][0]['ratio'] == 1
+    assert report['points'][1]['status'] == 'timeout'
+    assert report['points'][2]['status'] == 'not_run'
+    assert report['groups'][0]['comparable'] == 1
+    audit['points'][0]['output_sha256'] = 'changed'
+    assert summarize(audit, [counts], [original])['points'][0]['status'] == 'stale_source'
