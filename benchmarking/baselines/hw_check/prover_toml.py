@@ -7,12 +7,16 @@ as a boolean; the row-major order of the fixture is kept.
 
 Encoding of each leaf:
 - a `float` fixture value becomes its Q32 integer `round(v * 2^32)`, Zinnia's
-  quantizer (`src/prove/field.rs::quantize`);
+  quantizer (`src/prove/field.rs::quantize`); a `complex` value `[re, im]` is
+  two such leaves, real part first;
 - an `int` value is written as is, a `bool` as `true`/`false` (boolean ABI
   type) or `1`/`0` (field or integer ABI type).
 
-Usage (writes `<case>/Prover.toml` for input B, the input every timed proof uses):
-    python -m hw_check.prover_toml <case_dir> [--fixture F] [--input B] [--out PATH]
+Usage (writes the case's `Prover.toml` for input B, the input every timed proof
+uses: `<case>/Prover.toml`, or `<program>/Prover.<function>.toml` for an
+NPBench/Pythran entry):
+    python -m hw_check.prover_toml <case> ... [--fixture F] [--input B] [--out PATH]
+where <case> is a case id, a DS-1000 number or a DS-1000 case folder.
 """
 from __future__ import annotations
 
@@ -55,7 +59,7 @@ def _toml_int(n: int) -> str:
 
 
 def _encode_leaf(value, dtype: str, abi_type: dict) -> str:
-    if dtype == "float":
+    if dtype in ("float", "complex"):
         n = quantize(float(value))
     elif dtype == "bool":
         n = int(bool(value))
@@ -120,20 +124,22 @@ def main() -> None:
     import argparse
     import tempfile
 
+    from .entries import resolve
     from .noir_driver import compile_package, stage_package
 
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("case_dirs", type=Path, nargs="+")
-    ap.add_argument("--fixture", type=Path, help="defaults to <case>/fixture.json")
+    ap.add_argument("cases", nargs="+")
+    ap.add_argument("--fixture", type=Path, help="defaults to the case's fixture")
     ap.add_argument("--input", default="B")
-    ap.add_argument("--out", type=Path, help="defaults to <case>/Prover.toml")
+    ap.add_argument("--out", type=Path, help="defaults to the case's Prover.toml")
     a = ap.parse_args()
-    for case_dir in a.case_dirs:
-        fixture = json.loads((a.fixture or case_dir / "fixture.json").read_text())
+    for spec in a.cases:
+        entry = resolve(Path(spec).name)
+        fixture = json.loads((a.fixture or entry.fixture).read_text())
         with tempfile.TemporaryDirectory() as tmp:
-            pkg = stage_package(case_dir, Path(tmp))
+            pkg = stage_package(entry.directory, Path(tmp), entry.function)
             abi = compile_package(pkg)["abi"]
-        out = a.out or case_dir / "Prover.toml"
+        out = a.out or entry.prover_toml
         out.write_text(render_prover_toml(abi, fixture, a.input))
         print(f"wrote {out}")
 

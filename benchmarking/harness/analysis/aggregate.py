@@ -6,8 +6,10 @@ Writes `summary/` inside the epoch (or the directory given for shards):
 - `per_case.csv`: one row per (system, case): status, sample count, median and
   IQR of each clock, proof size;
 - `summary.json` and `summary.md`:
-  - coverage: for every system, how many cases it completed and why the others
-    failed (performance is reported separately from expressiveness);
+  - coverage: for every system, how many cases it completed, which have no
+    program for it (`no_program`: no baseline written yet, listed apart), and
+    why the others failed (performance is reported separately from
+    expressiveness);
   - the all-supported subset: the cases every system of the epoch completed,
     and on it, for every (Zinnia system, baseline) pair and every clock, the
     geometric mean of per-case median ratios (Zinnia / baseline; below 1 means
@@ -169,15 +171,23 @@ def per_case_rows(data: EpochData) -> list[dict]:
     return rows
 
 
+#: The status of a case a system has no program for: not a failure of the system.
+NO_PROGRAM = "no_program"
+
+
 def coverage(data: EpochData) -> dict:
     out = {}
     for system in data.systems:
-        statuses = Counter(r["status"] for r in data.records[system].values())
+        records = sorted(data.records[system].items())
+        statuses = Counter(r["status"] for _, r in records)
         failures = [{"case": case, "class": r["failure"]["class"], "step": r["failure"]["step"],
                      "detail": r["failure"]["detail"][:300]}
-                    for case, r in sorted(data.records[system].items()) if r["failure"]]
-        out[system] = {"cases": len(data.records[system]), "ok": statuses.get(OK, 0),
-                       "by_status": dict(statuses), "failures": failures}
+                    for case, r in records if r["failure"] and r["status"] != NO_PROGRAM]
+        without = [{"case": case, "detail": r["failure"]["detail"][:300]}
+                   for case, r in records if r["status"] == NO_PROGRAM]
+        out[system] = {"cases": len(records), "ok": statuses.get(OK, 0),
+                       "by_status": dict(statuses), "failures": failures,
+                       "without_program": without}
     return out
 
 
@@ -378,6 +388,13 @@ def render_markdown(summary: dict, data: EpochData) -> str:
     lines += ["", "## Excluded cases", ""]
     excluded = summary["excluded_cases"]
     lines += [f"- {e['case']}: {e['reason']}" for e in excluded] or ["(none)"]
+    lines += ["", "## Cases without a program", "",
+              "No program for the case on that system (e.g. no handwritten baseline yet); "
+              "not a failure.", ""]
+    without = [f"- {system} {w['case']}: {w['detail'][:160]}"
+               for system, cov in summary["coverage"].items()
+               for w in cov.get("without_program", [])]
+    lines += without or ["(none)"]
     lines += ["", "## Failures by system", ""]
     for system, cov in summary["coverage"].items():
         for f in cov["failures"]:

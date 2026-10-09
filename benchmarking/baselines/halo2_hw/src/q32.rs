@@ -449,6 +449,16 @@ impl Q32 {
         self.div_by_magnitude(ctx, a, b.cell, b.cell)
     }
 
+    /// [`Q32::div`] by a divisor whose magnitude the circuit already holds:
+    /// `abs_b` must be `|b|`, proven to be an integer below `2^63` (as
+    /// [`Q32::abs_int64`] returns it, or selected together with `b` from such
+    /// pairs). That is all the uniqueness argument of [`Q32::div`] needs, so
+    /// this saves its sign test and the window check of `b`. (A pivot chosen
+    /// by `argmax(abs(..))`: the maximum magnitude is the pivot's.)
+    pub fn div_by_abs(&self, ctx: &mut Ctx, a: impl Into<QuantumCell<Fr>>, b: Cell, abs_b: Cell) -> I64 {
+        self.div_by_magnitude(ctx, a, b, abs_b)
+    }
+
     fn div_by_magnitude(&self, ctx: &mut Ctx, a: impl Into<QuantumCell<Fr>>, b: Cell, abs_b: Cell) -> I64 {
         let a = a.into();
         let num = signed(a.value()) * SCALE;
@@ -745,6 +755,28 @@ impl Q32 {
         next
     }
 
+    // ----------------------------------------------------------------- sorting
+
+    /// `np.sort(xs)`: the values in ascending order, by Batcher's merge
+    /// exchange network ([`merge_exchange`]). Each compare-exchange is one
+    /// 64-bit comparison of the window offsets and a conditional swap
+    /// (`lo + s (hi - lo)`, `hi - s (hi - lo)` with the comparison bit `s`),
+    /// so its outputs are its inputs, in order, and keep their window proofs.
+    pub fn sort(&self, ctx: &mut Ctx, xs: &[I64]) -> Vec<I64> {
+        let mut offsets: Vec<Cell> = xs.iter().map(|x| x.offset).collect();
+        for (i, j) in merge_exchange(xs.len()) {
+            let (lo, hi) = (offsets[i], offsets[j]);
+            let swap = self.range.is_less_than(ctx, hi, lo, 64);
+            let diff = self.gate.sub(ctx, hi, lo);
+            offsets[i] = self.gate.mul_add(ctx, swap, diff, lo);
+            offsets[j] = self.gate.sub_mul(ctx, hi, swap, diff);
+        }
+        offsets
+            .into_iter()
+            .map(|offset| I64 { cell: self.gate.sub(ctx, offset, Constant(Fr::from_u128(OFFSET))), offset })
+            .collect()
+    }
+
     // ---------------------------------------------------------------- indexing
 
     /// `arr[idx]` for a private index, NumPy semantics: `-len <= idx < len`
@@ -801,6 +833,33 @@ impl Q32 {
     pub fn index_unchecked(&self, ctx: &mut Ctx, arr: &[Cell], pos: Cell) -> Cell {
         self.gate.select_from_idx(ctx, arr.iter().map(|c| Existing(*c)), pos)
     }
+}
+
+/// Batcher's merge exchange sorting network for `n` keys (Knuth, TAOCP 5.2.2,
+/// Algorithm M): the compare-exchange pairs `(i, j)`, `i < j`, in execution
+/// order; after them, position `i` holds the `i`-th smallest key. About
+/// `n log^2 n / 4` pairs (31 for 10 keys, 1,077 for 100).
+pub fn merge_exchange(n: usize) -> Vec<(usize, usize)> {
+    if n < 2 {
+        return Vec::new();
+    }
+    let t = usize::BITS - (n - 1).leading_zeros(); // ceil(log2 n)
+    let mut pairs = Vec::new();
+    let mut p = 1usize << (t - 1);
+    while p > 0 {
+        let (mut q, mut r, mut d) = (1usize << (t - 1), 0, p);
+        loop {
+            pairs.extend((0..n - d).filter(|i| i & p == r).map(|i| (i, i + d)));
+            if q == p {
+                break;
+            }
+            d = q - p;
+            q >>= 1;
+            r = p;
+        }
+        p >>= 1;
+    }
+    pairs
 }
 
 /// Diagnostic: counts window checks of cells that were already checked when
@@ -981,6 +1040,56 @@ mod tests {
         });
         input_tamper::arm(false);
         assert!(!ok);
+    }
+
+    #[test]
+    fn merge_exchange_sorts_every_zero_one_input() {
+        // The 0-1 principle: a network that sorts every 0/1 sequence sorts everything.
+        for n in 0..=12usize {
+            let pairs = merge_exchange(n);
+            for bits in 0u32..(1 << n) {
+                let mut v: Vec<u32> = (0..n).map(|i| (bits >> i) & 1).collect();
+                for &(i, j) in &pairs {
+                    if v[i] > v[j] {
+                        v.swap(i, j);
+                    }
+                }
+                assert!(v.windows(2).all(|w| w[0] <= w[1]), "n = {n}, input {bits:b}");
+            }
+        }
+        assert_eq!(merge_exchange(10).len(), 31);
+    }
+
+    #[test]
+    fn sort_orders_signed_values() {
+        let vals = [7i128 << 32, -1, 3, -(5 << 32), 0, 3, i64::MIN as i128, i64::MAX as i128, -2];
+        assert!(accepts(|q, ctx| {
+            let xs: Vec<I64> = vals.iter().map(|v| q.load_int_bounded(ctx, *v as i64)).collect();
+            let sorted: Vec<i128> = q.sort(ctx, &xs).iter().map(|x| signed(x.cell.value())).collect();
+            let mut want = vals.to_vec();
+            want.sort();
+            assert_eq!(sorted, want);
+        }));
+    }
+
+    #[test]
+    fn div_by_abs_matches_div() {
+        for (a, b) in [(3i128 << 32, -(2i128 << 32)), (-(7i128 << 30), 3i128 << 31), (1, -1)] {
+            assert!(accepts(|q, ctx| {
+                let a = ctx.load_witness(fe(a));
+                let b = q.load_int_bounded(ctx, b as i64);
+                let abs_b = q.abs_int64(ctx, b.cell);
+                let want = q.div(ctx, a, b);
+                let got = q.div_by_abs(ctx, a, b.cell, abs_b);
+                assert_eq!(got.cell.value(), want.cell.value());
+            }));
+        }
+        // A zero divisor has no witness.
+        assert!(!accepts(|q, ctx| {
+            let a = ctx.load_witness(fe(1 << 32));
+            let zero = ctx.load_witness(fe(0));
+            q.div_by_abs(ctx, a, zero, zero);
+        }));
     }
 
     #[test]

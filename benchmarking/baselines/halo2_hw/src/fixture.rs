@@ -9,9 +9,10 @@
 //!   "inputs": { "A": {"a": [...], "p": 25}, "B": {"a": [...], "p": 37} } }
 //! ```
 //!
-//! Arrays are nested lists in row-major order. A circuit asks for each
-//! parameter by name together with the shape it was written for; a mismatch is
-//! an error, never a silently different circuit.
+//! Arrays are nested lists in row-major order. A complex number (dtype
+//! `complex`, NPBench/Pythran) is the pair `[real, imag]`. A circuit asks for
+//! each parameter by name together with the shape it was written for; a
+//! mismatch is an error, never a silently different circuit.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -27,6 +28,8 @@ pub enum Dtype {
     Float,
     Int,
     Bool,
+    /// Two floats per element, real part first.
+    Complex,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -82,7 +85,8 @@ pub struct ParamValue {
     pub dtype: Dtype,
     /// Empty for scalars.
     pub shape: Vec<usize>,
-    /// Leaf JSON values (numbers or booleans).
+    /// Leaf JSON values (numbers or booleans); a complex element is two
+    /// leaves, real part first.
     pub data: Vec<Value>,
 }
 
@@ -96,6 +100,13 @@ impl ParamValue {
             ParamKind::Scalar => &[],
             ParamKind::Array => &param.shape,
         };
+        // A complex value's `[real, imag]` pair is one more axis of the JSON value.
+        if param.dtype == Dtype::Complex && shape.pop() != Some(2) {
+            return Err(Error::new(format!(
+                "parameter {:?}: complex values must be [real, imag] pairs",
+                param.name
+            )));
+        }
         if shape != declared {
             return Err(Error::new(format!(
                 "parameter {:?}: value has shape {shape:?}, fixture declares {declared:?}",
@@ -139,9 +150,10 @@ pub struct Inputs {
 }
 
 impl Inputs {
-    /// Replaces element `index` (row-major) of parameter `name` by a value
-    /// outside its dtype's domain, for the input-domain tamper test: a float
-    /// becomes 2^31 (Q32 code 2^63, one past the window); an integer becomes
+    /// Replaces leaf `index` (row-major; a complex element is two leaves) of
+    /// parameter `name` by a value outside its dtype's domain, for the
+    /// input-domain tamper test: a float (or a complex part) becomes 2^31
+    /// (Q32 code 2^63, one past the window); an integer becomes
     /// [`crate::q32::input_tamper::SENTINEL`], which the armed loader turns
     /// into `SENTINEL + 2^64`.
     pub fn tamper(&mut self, name: &str, index: usize) -> Result<(), Error> {
@@ -154,7 +166,7 @@ impl Inputs {
             .get_mut(index)
             .ok_or_else(|| Error::new(format!("parameter {name:?} has no element {index}")))?;
         *slot = match value.dtype {
-            Dtype::Float => serde_json::json!(2147483648.0),
+            Dtype::Float | Dtype::Complex => serde_json::json!(2147483648.0),
             Dtype::Int => {
                 crate::q32::input_tamper::arm(true);
                 serde_json::json!(crate::q32::input_tamper::SENTINEL)
@@ -197,6 +209,18 @@ impl Inputs {
     /// A boolean array of exactly `shape`, flattened row-major.
     pub fn bools(&self, name: &str, shape: &[usize]) -> Result<Vec<bool>, Error> {
         self.get(name, Dtype::Bool, shape)?.data.iter().map(|v| to_bool(name, v)).collect()
+    }
+
+    /// A complex array of exactly `shape`, flattened row-major, each element
+    /// as `(real, imag)` next to each other: `[re_0, im_0, re_1, im_1, ...]`.
+    pub fn complexes(&self, name: &str, shape: &[usize]) -> Result<Vec<f64>, Error> {
+        self.get(name, Dtype::Complex, shape)?.data.iter().map(|v| to_f64(name, v)).collect()
+    }
+
+    /// A complex scalar as `[real, imag]`.
+    pub fn complex(&self, name: &str) -> Result<[f64; 2], Error> {
+        let parts = self.complexes(name, &[])?;
+        Ok([parts[0], parts[1]])
     }
 
     pub fn float(&self, name: &str) -> Result<f64, Error> {

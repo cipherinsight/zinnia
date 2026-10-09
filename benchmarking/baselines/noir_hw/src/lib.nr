@@ -270,6 +270,16 @@ pub fn div(a: Field, b: Field) -> Field {
     if neg { -q } else { q }
 }
 
+// div(a, b) when the circuit already holds |b|: abs_b must be |b| proven
+// below 2^63 (`abs_int64`, or selected together with b from such pairs), which
+// is all `divmod_pos` needs; b is then abs_b or -abs_b, and b == abs_b tells
+// the sign. Saves `div`'s window check of b. (A pivot chosen by
+// argmax(abs(..)): the maximum magnitude is the pivot's.)
+pub fn div_by_abs(a: Field, b: Field, abs_b: Field) -> Field {
+    let (q, _r) = divmod_pos(a * SCALE, abs_b);
+    if b == abs_b { q } else { -q }
+}
+
 // int(x) for a float x: truncation toward zero.
 pub fn to_int(x: Field) -> Field {
     let (q, r) = divmod_pos(x, SCALE);
@@ -534,6 +544,18 @@ fn test_div_and_int() {
     assert(to_int(SCALE + 1) == 1);
     assert(to_int(-(2 * SCALE)) == -2);
     assert(floor(-(SCALE / 2)) == -SCALE);
+}
+
+#[test]
+fn test_div_by_abs() {
+    assert(div_by_abs(SCALE, -4 * SCALE, 4 * SCALE) == div(SCALE, -4 * SCALE));
+    assert(div_by_abs(-3 * SCALE, 2 * SCALE, 2 * SCALE) == div(-3 * SCALE, 2 * SCALE));
+    assert(div_by_abs(7, -3, 3) == div(7, -3));
+}
+
+#[test(should_fail)]
+fn test_div_by_abs_zero() {
+    let _ = div_by_abs(SCALE, 0, 0);
 }
 
 #[test]

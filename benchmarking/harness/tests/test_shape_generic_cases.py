@@ -78,6 +78,34 @@ def test_a_fixed_shape_case_gets_no_function_argument(tmp_path, fake_baselines):
     assert record["setup"]["result"]["details"]["function"] is None
 
 
+def test_handwritten_circuits_are_per_entry_function(tmp_path, fake_baselines):
+    install_fake(fake_baselines, "halo2_hw", "honest")
+    case = in_place_case(tmp_path)
+    assert case.baseline_file("target.rs") == case.directory / "target.scale.rs"
+    assert case.baseline_file("main.nr") == case.directory / "main.scale.nr"
+    assert replace(case, shape_generic=False).baseline_file("main.nr") == case.directory / "main.nr"
+
+    # No circuit for this entry yet: reported as such, nothing runs.
+    records = run_case(tmp_path / "epoch-1", case, ["halo2_hw", "noir_hw"])
+    assert {name: r["status"] for name, r in records.items()} == {"halo2_hw": "no_program",
+                                                                  "noir_hw": "no_program"}
+    assert records["halo2_hw"]["failure"]["detail"] == "no target.scale.rs in the case folder"
+    assert records["noir_hw"]["failure"]["detail"] == "no main.scale.nr"
+    (tmp_path / "epoch-1" / "manifest.json").write_text(json.dumps({"epoch": "epoch-1"}))
+    (tmp_path / "epoch-1" / "case_set.json").write_text(json.dumps({"cases": [case.to_json()]}))
+    coverage = summarize(tmp_path / "epoch-1", tmp_path / "summary")["coverage"]["halo2_hw"]
+    assert coverage["failures"] == []
+    assert coverage["without_program"] == [{"case": case.case,
+                                            "detail": "no target.scale.rs in the case folder"}]
+
+    # With one, halo2_hw is told which entry function of the folder to run.
+    case.baseline_file("target.rs").write_text("// fake circuit\n")
+    record = run_case(tmp_path / "epoch-2", case, ["halo2_hw"])["halo2_hw"]
+    assert record["status"] == "ok"
+    assert record["setup"]["result"]["details"]["function"] == "scale"
+    assert any(path.endswith("target.scale.rs") for path in record["files"])
+
+
 def test_case_set_entries_with_a_path_and_entry_function(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "BENCHMARKING", tmp_path)
     case_set = tmp_path / "set.json"

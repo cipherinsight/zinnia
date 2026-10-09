@@ -36,8 +36,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-from .check import BENCH, DATASET, HALO2_BIN, case_name, case_set, compare, run_json, tolerance
-from .reference import reference_outputs
+from .check import HALO2_BIN, compare, run_json
+from .entries import BENCH, Entry, case_name, resolve
+from .reference import entry_outputs
 
 EDGES = Path(__file__).with_name("domain_edges.json")
 BASELINES = BENCH / "baselines"
@@ -47,8 +48,11 @@ RISC0_BIN = BASELINES / "risc0" / "target" / "release" / "risc0-baseline"
 CAIRO_DRIVER = BASELINES / "cairo" / "cairo_baseline.py"
 ALL_SYSTEMS = ("halo2", "noir", "native", "sp1", "risc0", "cairo", "zinnia")
 DEFAULT_SYSTEMS = "halo2,noir,native,cairo"
+#: Each system's program file; `target.rs` and `main.nr` are per entry
+#: function in an NPBench/Pythran program folder (`Entry.file`).
 BASELINE_FILE = {"halo2": "target.rs", "noir": "main.nr", "native": "zkvm.rs", "sp1": "zkvm.rs",
                  "risc0": "zkvm.rs", "cairo": "main.cairo", "zinnia": "kernel.py"}
+PER_FUNCTION = ("halo2", "noir")
 
 
 def edge_values(fixture: dict, edge: dict) -> dict:
@@ -117,27 +121,31 @@ def run_zinnia(case_dir: Path, fixture_path: Path, names: list[str]) -> dict[str
 _NOIR_SET_UP: set[str] = set()  # cases compiled in this run (setup is input-independent)
 
 
-def run_system(system: str, case_dir: Path, fixture_path: Path, name: str, workdir: Path) -> dict:
+def run_system(system: str, entry: Entry, fixture_path: Path, name: str, workdir: Path) -> dict:
+    case_dir, case = entry.directory, entry.case
     common = ["--fixture", str(fixture_path), "--input", name]
     if system == "halo2":
-        step = run_json([str(HALO2_BIN), "mock", "--case", str(case_dir), *common])
+        step = run_json([str(HALO2_BIN), "mock", *entry.program_args(), *common])
         return {**step, "ok": bool(step.get("ok") and step.get("satisfied"))}
     if system == "noir":
         driver = [sys.executable, "-m", "hw_check.noir_driver"]
-        wd = ["--workdir", str(workdir / "noir" / case_dir.name)]
-        if case_dir.name not in _NOIR_SET_UP:
-            setup = run_json([*driver, "setup", "--case", str(case_dir), *wd], BASELINES)
+        wd = ["--workdir", str(workdir / "noir" / case)]
+        if case not in _NOIR_SET_UP:
+            setup = run_json([*driver, "setup", *entry.program_args(), *wd], BASELINES)
             if not setup.get("gates"):
                 return {"ok": False, "error": f"setup failed: {setup.get('error')}"}
-            _NOIR_SET_UP.add(case_dir.name)
-        return run_json([*driver, "prove", "--case", str(case_dir), *wd, *common], BASELINES)
+            _NOIR_SET_UP.add(case)
+        return run_json([*driver, "prove", *entry.program_args(), *wd, *common], BASELINES)
+    # The zkVM hosts take a shape-generic program's entry function as `--function`.
+    function = ["--function", entry.function] if entry.function else []
     zkvm = {"native": NATIVE_BIN, "sp1": SP1_BIN, "risc0": RISC0_BIN}
     if system in zkvm:
-        extra = ["--work-dir", str(workdir / system / case_dir.name)] if system != "native" else []
-        return run_json([str(zkvm[system]), "--case-dir", str(case_dir), *common, "--mode", "execute", *extra])
+        extra = ["--work-dir", str(workdir / system / case)] if system != "native" else []
+        return run_json([str(zkvm[system]), "--case-dir", str(case_dir), *function, *common,
+                         "--mode", "execute", *extra])
     if system == "cairo":
         return run_json([sys.executable, str(CAIRO_DRIVER), "--case-dir", str(case_dir), *common,
-                         "--mode", "execute", "--work-dir", str(workdir / "cairo" / case_dir.name)])
+                         "--mode", "execute", "--work-dir", str(workdir / "cairo" / case)])
     raise ValueError(f"unknown system {system}")
 
 
@@ -151,28 +159,29 @@ def outcome(step: dict, expected_outputs, atol: float, rtol: float) -> str:
     return "numpy" if not problems else "wrong: " + "; ".join(problems[:3])
 
 
-def check_case(case: str, edges: list[dict], systems: list[str], workdir: Path) -> list[dict]:
-    case_dir = DATASET / case
-    fixture = json.loads((case_dir / "fixture.json").read_text())
+def check_case(entry: Entry, edges: list[dict], systems: list[str], workdir: Path) -> list[dict]:
+    case, case_dir = entry.case, entry.directory
+    fixture = json.loads(entry.fixture.read_text())
     names = [f"edge_{edge['name']}" for edge in edges]
     for name, edge in zip(names, edges):
         fixture["inputs"][name] = edge_values(fixture, edge)
     fixture_path = workdir / f"{case}.fixture.json"
     fixture_path.write_text(json.dumps(fixture))
-    atol, rtol = tolerance(case_set().get(case))
+    atol, rtol = entry.atol, entry.rtol
     expected_outputs = {}
     for name in names:
         try:
-            expected_outputs[name] = reference_outputs(case_dir, fixture, name)
+            expected_outputs[name] = entry_outputs(entry, fixture, name)
         except Exception as exc:  # noqa: BLE001 - NumPy raising is an outcome
             expected_outputs[name] = f"{type(exc).__name__}: {exc}"
-    present = [s for s in systems if (case_dir / BASELINE_FILE[s]).exists()]
+    present = [s for s in systems
+               if (entry.file(BASELINE_FILE[s]) if s in PER_FUNCTION else case_dir / BASELINE_FILE[s]).exists()]
     zinnia = run_zinnia(case_dir, fixture_path, names) if "zinnia" in present else {}
     rows = []
     for name, edge in zip(names, edges):
         row = {"case": case, "edge": edge["name"], "expect": edge["expect"], "systems": {}}
         for system in present:
-            step = zinnia[name] if system == "zinnia" else run_system(system, case_dir, fixture_path, name, workdir)
+            step = zinnia[name] if system == "zinnia" else run_system(system, entry, fixture_path, name, workdir)
             got = outcome(step, expected_outputs[name], atol, rtol)
             want = edge.get("expect_by_system", {}).get(system, edge["expect"])
             row["systems"][system] = {"got": got, "want": want, "pass": got == want,
@@ -197,7 +206,7 @@ def main() -> int:
     a.workdir.mkdir(parents=True, exist_ok=True)
     rows, failures = [], 0
     for case in cases:
-        for row in check_case(case, table[case], systems, a.workdir):
+        for row in check_case(resolve(case), table[case], systems, a.workdir):
             rows.append(row)
             cells = []
             for system, result in row["systems"].items():

@@ -1,4 +1,5 @@
-"""The handwritten Noir baselines (`<case>/main.nr`), proved like Zinnia -> Noir.
+"""The handwritten Noir baselines (`<case>/main.nr`; `<program>/main.<function>.nr`
+for an NPBench/Pythran entry), proved like Zinnia -> Noir.
 
 The harness drives nargo and bb itself (`noir_toolchain`), so both Noir sides
 run the same commands with the same flags. What is specific to the handwritten
@@ -94,10 +95,11 @@ class NoirHandwrittenAdapter(Adapter):
     )
 
     def missing_program(self, case: PerfCase) -> str | None:
-        return None if (case.directory / "main.nr").exists() else "no main.nr"
+        main_nr = case.baseline_file("main.nr")
+        return None if main_nr.exists() else f"no {main_nr.name}"
 
     def program_files(self, case: PerfCase) -> list[Path]:
-        files = [case.directory / "main.nr"]
+        files = [case.baseline_file("main.nr")]
         if NOIR_HW_LIBRARY.exists():
             files += sorted(NOIR_HW_LIBRARY.rglob("*.nr"))
         if HW_CHECK.exists():
@@ -121,7 +123,7 @@ class NoirHandwrittenAdapter(Adapter):
             raise StepFailure("setup_failed", f"Prover.toml: {exc}") from None
 
     def setup(self, ctx: StepContext) -> SetupResult:
-        main_nr = (ctx.case.directory / "main.nr").read_text()
+        main_nr = ctx.case.baseline_file("main.nr").read_text()
         libraries = {"noir_fpc": paths.NOIR_FPC}
         if NOIR_HW_LIBRARY.exists():
             libraries = {"noir_hw": NOIR_HW_LIBRARY, **libraries}

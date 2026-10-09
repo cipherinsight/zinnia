@@ -1,5 +1,10 @@
 """Checks the handwritten baselines against the NumPy reference.
 
+Cases are DS-1000 cases and NPBench/Pythran entries (`hw_check.entries`: an
+entry's files are `target.<function>.rs` and `main.<function>.nr` in its
+program folder, its fixture and tolerance are the case set's, and a function
+returning `None` outputs the arguments the case set lists as written).
+
 For every requested case and system with a baseline:
 
 * halo2 (`target.rs`, through the `halo2_hw` binary): `mock` with input A and
@@ -24,13 +29,15 @@ must be 0 (each input checked once).
 Outputs are compared position by position against the kernel body run as
 plain NumPy (`hw_check.reference`): integers and booleans exactly, floats
 within `atol + rtol * |reference|` with the case's `float_tolerance` from
-`datasets/case_sets/ds1000_perf.json` (1e-6 each when the case set gives none;
+its case set (`datasets/case_sets/ds1000_perf.json`,
+`npbench_pythran_perf.json`; 1e-6 each when the case set gives none;
 `--tol CASE=ATOL` overrides the absolute part).
 
 Usage:
-    python -m hw_check.check 0309 0310 ... [--systems halo2,noir]
+    python -m hw_check.check 0309 0310 pythran_lu__factorMatrix0 ... [--systems halo2,noir]
         [--fixture-root DIR] [--halo2-bin PATH] [--workroot DIR] [--out results.json]
-    python -m hw_check.check --all
+    python -m hw_check.check --all [--npb]     every DS-1000 case (NPBench/Pythran entry) with a baseline
+    python -m hw_check.check --perf [--npb]    every case of the performance set
 
 Heavy steps run one at a time across concurrent checkers (a file lock) and,
 when `eval-redo/tools/memrun.sh` exists, under its 8 GB memory cap.
@@ -38,6 +45,7 @@ when `eval-redo/tools/memrun.sh` exists, under its 8 GB memory cap.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import fcntl
 import json
 import math
@@ -50,16 +58,12 @@ from pathlib import Path
 
 import numpy as np
 
-from .reference import fixture_arguments, flatten_output, load_kernel, reference_outputs
+from .entries import BENCH, Entry, case_name, ds1000_entries, npb_entries, resolve, with_baselines
+from .reference import call_outputs, entry_outputs, fixture_arguments, flatten_output, load_kernel
 
-BENCH = Path(__file__).resolve().parents[2]
-DATASET = BENCH / "datasets" / "ds1000"
-CASE_SET = BENCH / "datasets" / "case_sets" / "ds1000_perf.json"
 HALO2_BIN = BENCH / "baselines" / "halo2_hw" / "target" / "release" / "halo2_hw"
 MEMRUN = Path("/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh")
 LOCK = Path(os.environ.get("HW_CHECK_LOCK", Path(tempfile.gettempdir()) / "hw_check_heavy.lock"))
-DEFAULT_ATOL = 1e-6
-DEFAULT_RTOL = 1e-6
 
 
 @contextmanager
@@ -104,15 +108,16 @@ def compare(got: list, expected: list[tuple[str, object]], atol: float, rtol: fl
 
 
 class CaseCheck:
-    def __init__(self, case: str, fixture_path: Path, workroot: Path, halo2_bin: Path, atol: float, rtol: float):
-        self.case = case
-        self.dir = DATASET / case
-        self.fixture_path = fixture_path
-        self.fixture = json.loads(fixture_path.read_text())
-        self.work = workroot / case
+    def __init__(self, entry: Entry, workroot: Path, halo2_bin: Path, atol: float, rtol: float):
+        self.entry = entry
+        self.case = entry.case
+        self.dir = entry.directory
+        self.fixture_path = entry.fixture
+        self.fixture = json.loads(entry.fixture.read_text())
+        self.work = workroot / entry.case
         self.halo2_bin = halo2_bin
         self.atol, self.rtol = atol, rtol
-        self.expected = {name: reference_outputs(self.dir, self.fixture, name) for name in ("A", "B")}
+        self.expected = {name: entry_outputs(entry, self.fixture, name) for name in ("A", "B")}
 
     def _outputs_ok(self, step: dict, input_name: str, problems: list[str], label: str) -> None:
         if not step.get("ok"):
@@ -135,8 +140,10 @@ class CaseCheck:
         each parameter's first, last and middle element before the others)
         whose change changes NumPy's output, on input B, else on input A.
         Boolean parameters are skipped (their out-of-domain value has no
-        fixture encoding)."""
-        kernel = load_kernel(self.dir / "kernel.py")
+        fixture encoding). The index is a leaf index of the fixture value: a
+        complex element is two leaves, and its real part is the one moved."""
+        kernel = load_kernel(self.entry.kernel, self.entry.kernel_function)
+        mutated = self.entry.mutated_outputs
         params = self.fixture["parameters"]
         sizes = [math.prod(p["shape"]) if p["kind"] == "array" else 1 for p in params]
         order = [(k, i) for k, n in enumerate(sizes) for i in dict.fromkeys([0, n - 1, n // 2])]
@@ -144,7 +151,7 @@ class CaseCheck:
         for input_name in ("B", "A"):
             args = fixture_arguments(self.fixture, input_name)
             fresh = lambda: [a.copy() if isinstance(a, np.ndarray) else a for a in args]
-            base = flatten_output(kernel(*fresh()))
+            base = flatten_output(call_outputs(kernel, fresh(), mutated))
             for k, index in order:
                 if params[k]["dtype"] == "bool":
                     continue
@@ -155,11 +162,12 @@ class CaseCheck:
                     else:
                         trial[k].reshape(-1)[index] += delta
                     try:
-                        out = flatten_output(kernel(*trial))
+                        out = flatten_output(call_outputs(kernel, trial, mutated))
                     except Exception:
                         continue
                     if out != base:
-                        return params[k]["name"], index, input_name
+                        leaf = 2 * index if params[k]["dtype"] == "complex" else index
+                        return params[k]["name"], leaf, input_name
         return None
 
     def tamper_target(self) -> tuple[str, int, str] | None:
@@ -169,7 +177,8 @@ class CaseCheck:
 
     def halo2(self) -> dict:
         b = str(self.halo2_bin)
-        common = ["--case", str(self.dir), "--fixture", str(self.fixture_path)]
+        case = self.entry.program_args()
+        common = [*case, "--fixture", str(self.fixture_path)]
         wd = ["--workdir", str(self.work / "halo2")]
         problems: list[str] = []
         steps = {
@@ -185,12 +194,12 @@ class CaseCheck:
             steps["prove_B"] = run_json([b, "prove", *common, "--input", "B", *wd])
             self._outputs_ok(steps["prove_B"], "B", problems, "prove B")
             if steps["prove_B"].get("ok"):
-                steps["verify"] = run_json([b, "verify", "--case", str(self.dir), *wd])
+                steps["verify"] = run_json([b, "verify", *case, *wd])
                 if steps["verify"].get("verified") is not True:
                     problems.append("honest proof rejected")
                 n = steps["setup_A"].get("cells", {}).get("instances", 0)
                 steps["verify_tampered"] = self._tamper(
-                    lambda i: run_json([b, "verify", "--case", str(self.dir), *wd, "--tamper-index", str(i)]),
+                    lambda i: run_json([b, "verify", *case, *wd, "--tamper-index", str(i)]),
                     n, problems)
         if steps["mock_B"].get("redundant_input_checks"):
             problems.append(f"{steps['mock_B']['redundant_input_checks']} inputs checked twice")
@@ -215,7 +224,7 @@ class CaseCheck:
     def noir(self) -> dict:
         py = sys.executable
         drv = [py, "-m", "hw_check.noir_driver"]
-        common = ["--case", str(self.dir), "--workdir", str(self.work / "noir")]
+        common = [*self.entry.program_args(), "--workdir", str(self.work / "noir")]
         cwd = BENCH / "baselines"
         problems: list[str] = []
         steps = {"setup": run_json([*drv, "setup", *common], cwd)}
@@ -252,74 +261,63 @@ class CaseCheck:
         }
 
 
-def case_set() -> dict[str, dict]:
-    if not CASE_SET.exists():
-        return {}
-    return {c["case"]: c for c in json.loads(CASE_SET.read_text())["cases"]}
-
-
-def tolerance(entry: dict | None) -> tuple[float, float]:
-    tol = (entry or {}).get("float_tolerance") or {}
-    return tol.get("atol", DEFAULT_ATOL), tol.get("rtol", DEFAULT_RTOL)
-
-
-def case_name(spec: str) -> str:
-    return spec if spec.startswith("ds1000_case") else f"ds1000_case{spec}"
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("cases", nargs="*")
     ap.add_argument("--all", action="store_true", help="every case with a target.rs or main.nr")
     ap.add_argument("--perf", action="store_true", help="every case whose case-set status is perf")
+    ap.add_argument("--npb", action="store_true",
+                    help="--all / --perf over the NPBench/Pythran entries instead of DS-1000")
     ap.add_argument("--systems", default="halo2,noir")
-    ap.add_argument("--fixture-root", type=Path, help="<root>/<case>/fixture.json instead of the case folder")
+    ap.add_argument("--fixture-root", type=Path,
+                    help="<root>/<case>/<fixture file name> instead of the case's fixture")
     ap.add_argument("--halo2-bin", type=Path, default=HALO2_BIN)
     ap.add_argument("--workroot", type=Path, default=Path(tempfile.gettempdir()) / "hw_check_work")
     ap.add_argument("--tol", action="append", default=[], help="CASE=ATOL (rtol stays 1e-6)")
     ap.add_argument("--out", type=Path)
     a = ap.parse_args()
 
-    statuses = case_set()
+    universe = npb_entries() if a.npb else ds1000_entries()
     if a.all:
-        cases = sorted(d.name for d in DATASET.iterdir() if (d / "target.rs").exists() or (d / "main.nr").exists())
+        entries = with_baselines(universe)
     elif a.perf:
-        cases = sorted(c for c, e in statuses.items() if e["status"] == "perf")
+        entries = [e for _, e in sorted(universe.items()) if e.status == "perf"]
     else:
-        cases = [case_name(c) for c in a.cases]
+        entries = [resolve(c) for c in a.cases]
     atol_override = {case_name(k): float(v) for k, v in (t.split("=") for t in a.tol)}
     systems = a.systems.split(",")
 
     results, failed = {}, 0
-    for case in cases:
-        fixture = (a.fixture_root / case / "fixture.json") if a.fixture_root else (DATASET / case / "fixture.json")
-        entry: dict = {}
-        if not fixture.exists():
-            entry["error"] = f"no fixture at {fixture}"
+    for entry in entries:
+        case = entry.case
+        if a.fixture_root:
+            entry = dataclasses.replace(entry, fixture=a.fixture_root / case / entry.fixture.name)
+        result: dict = {}
+        if not entry.fixture.exists():
+            result["error"] = f"no fixture at {entry.fixture}"
         else:
             try:
-                atol, rtol = tolerance(statuses.get(case))
-                cc = CaseCheck(case, fixture, a.workroot, a.halo2_bin, atol_override.get(case, atol), rtol)
-                if "halo2" in systems and (cc.dir / "target.rs").exists():
-                    entry["halo2"] = cc.halo2()
-                if "noir" in systems and (cc.dir / "main.nr").exists():
-                    entry["noir"] = cc.noir()
+                cc = CaseCheck(entry, a.workroot, a.halo2_bin, atol_override.get(case, entry.atol), entry.rtol)
+                if "halo2" in systems and entry.target_rs.exists():
+                    result["halo2"] = cc.halo2()
+                if "noir" in systems and entry.main_nr.exists():
+                    result["noir"] = cc.noir()
             except Exception as e:  # a crashing reference is a finding, not a checker crash
-                entry["error"] = f"{type(e).__name__}: {e}"
-        if statuses.get(case, {}).get("status") not in (None, "perf"):
-            entry["status"] = statuses[case]["status"]
-        results[case] = entry
-        line = [case] + ([f"[{entry['status']}]"] if "status" in entry else [])
+                result["error"] = f"{type(e).__name__}: {e}"
+        if entry.status not in (None, "perf"):
+            result["status"] = entry.status
+        results[case] = result
+        line = [case] + ([f"[{result['status']}]"] if "status" in result else [])
         for s in ("halo2", "noir"):
-            if s in entry:
-                size = entry[s].get("cells") if s == "halo2" else entry[s].get("gates")
-                line.append(f"{s}={entry[s]['verdict']} ({size})")
-                if entry[s]["verdict"] != "pass":
+            if s in result:
+                size = result[s].get("cells") if s == "halo2" else result[s].get("gates")
+                line.append(f"{s}={result[s]['verdict']} ({size})")
+                if result[s]["verdict"] != "pass":
                     failed += 1
-                    line.append("; ".join(entry[s]["problems"][:3]))
-        if "error" in entry:
+                    line.append("; ".join(result[s]["problems"][:3]))
+        if "error" in result:
             failed += 1
-            line.append(f"ERROR {entry['error']}")
+            line.append(f"ERROR {result['error']}")
         print("  ".join(str(x) for x in line), flush=True)
     if a.out:
         a.out.write_text(json.dumps(results, indent=1))

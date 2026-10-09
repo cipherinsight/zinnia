@@ -21,7 +21,9 @@ written by `datasets/tools/npbench_pythran_perf.py`):
 - `path`: the case folder relative to `benchmarking/` (default
   `datasets/ds1000/<case>`); `function`: the kernel function (default `kernel`).
 - `shape_generic: true`: the folder holds a program with named entry functions
-  (one case per function); the zkVM hosts get `--function <function>`.
+  (one case per function); the zkVM hosts and `halo2_hw` get `--function
+  <function>`, and the handwritten circuits are per function
+  (`PerfCase.baseline_file`: `target.<function>.rs`, `main.<function>.nr`).
 - `mutated_outputs: [names]`: for a function that returns `None`, the array
   arguments it writes, in parameter order: they are its outputs.
 - `group`: a label (e.g. the corpus); the analysis also compares per group.
@@ -99,6 +101,16 @@ class PerfCase:
     @property
     def kernel_path(self) -> Path:
         return self.directory / "kernel.py"
+
+    def baseline_file(self, name: str) -> Path:
+        """A handwritten circuit of this case: `target.rs` / `main.nr` in a
+        DS-1000 folder, `target.<function>.rs` / `main.<function>.nr` in a
+        shape-generic program folder (the names `baselines/hw_check/entries.py`
+        uses)."""
+        if not self.shape_generic:
+            return self.directory / name
+        stem, suffix = name.split(".", 1)
+        return self.directory / f"{stem}.{self.function}.{suffix}"
 
     def to_json(self) -> dict:
         return {"case": self.case, "directory": str(self.directory),

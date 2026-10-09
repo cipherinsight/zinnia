@@ -44,9 +44,12 @@ sorted by id and dealt out in turn, so the N shards are disjoint and cover the s
 Case sets: `ds1000_perf.json` (DS-1000, the default) and `npbench_pythran_perf.json` (the
 NPBench/Pythran entry functions Zinnia accepts that have an audited SP1/RISC Zero port; written
 by `datasets/tools/npbench_pythran_perf.py <acceptance results.json>`). An NPBench/Pythran case
-is one entry function of a program folder (`shape_generic`: the zkVM hosts get `--function`); a
-function that returns `None` outputs the arguments it writes (`mutated_outputs`); its `group`
-(the corpus) gets its own comparison in the summary. `case_sets.py` documents the fields. Tests: `.venv/bin/python -m pytest -q
+is one entry function of a program folder (`shape_generic`: the zkVM hosts and `halo2_hw` get
+`--function`, and the handwritten circuits are per entry function, `target.<function>.rs` and
+`main.<function>.nr`, see `baselines/NPB_BASELINES.md`); a function that returns `None` outputs
+the arguments it writes (`mutated_outputs`); its `group` (the corpus) gets its own comparison in
+the summary. A system with no program for a case (no handwritten circuit yet) records it as
+`no_program`, listed in the summary apart from the failures. `case_sets.py` documents the fields. Tests: `.venv/bin/python -m pytest -q
 benchmarking/harness/tests`.
 
 `build` runs `scripts/develop.sh --release --features halo2-base-backend,noir-backend` with

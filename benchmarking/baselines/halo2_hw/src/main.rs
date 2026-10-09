@@ -1,7 +1,7 @@
 //! Command-line driver of the handwritten halo2-base baselines.
 //!
 //! ```text
-//! halo2_hw <mode> --case <case dir or name> --input <A|B> --workdir <dir>
+//! halo2_hw <mode> --case <case dir or name> [--function <f>] --input <A|B> --workdir <dir>
 //!          [--fixture <path>] [--out <json>] [--k <k>] [--lookup-bits <bits>]
 //!          [--instance <json>] [--tamper-index <i>] [--repeats <n>]
 //!          [--tamper-input <name>:<index>]   (mock: one input out of its domain)
@@ -15,6 +15,13 @@
 //! `{"ok", "case", "mode", "input", "publics", "proof_path", "timings_s", ...}`.
 //! The exit status is non-zero whenever `ok` is false; `verify` reports
 //! `ok: false` when the proof is rejected.
+//!
+//! A DS-1000 case is its folder (`--case .../ds1000/ds1000_case0309`, fixture
+//! `fixture.json`) or its name (`0309`, `ds1000_case0309`). An NPBench/Pythran
+//! entry is its program folder and entry function (`--case .../pythran/pythran_lu
+//! --function factorMatrix0`: case `pythran_lu__factorMatrix0`, fixture
+//! `fixture.factorMatrix0.json` if the folder has one, else `fixture.json`) or
+//! its case id (`pythran_lu__factorMatrix0`, with `--fixture`).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -56,17 +63,29 @@ impl Args {
     }
 }
 
-/// Resolves `--case` (a case folder or a bare name) to `(name, folder)`.
-fn resolve_case(spec: &str) -> (String, Option<PathBuf>) {
+/// A case to run: its id and, when given as a folder, the folder's fixture.
+struct CaseSpec {
+    name: String,
+    fixture: Option<PathBuf>,
+}
+
+/// Resolves `--case` (a folder or a case id) and `--function` (the entry
+/// function of a program folder) to the case id and its default fixture.
+fn resolve_case(spec: &str, function: Option<&str>) -> CaseSpec {
     let path = Path::new(spec);
     if path.is_dir() {
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or(spec).to_string();
-        (name, Some(path.to_path_buf()))
-    } else if spec.starts_with("ds1000_case") {
-        (spec.to_string(), None)
-    } else {
-        (format!("ds1000_case{spec}"), None)
+        let folder = path.file_name().and_then(|n| n.to_str()).unwrap_or(spec);
+        return match function {
+            None => CaseSpec { name: folder.to_string(), fixture: Some(path.join("fixture.json")) },
+            Some(f) => {
+                let own = path.join(format!("fixture.{f}.json"));
+                let fixture = if own.is_file() { own } else { path.join("fixture.json") };
+                CaseSpec { name: format!("{folder}__{f}"), fixture: Some(fixture) }
+            }
+        };
     }
+    let name = if spec.bytes().all(|b| b.is_ascii_digit()) { format!("ds1000_case{spec}") } else { spec.to_string() };
+    CaseSpec { name, fixture: None }
 }
 
 fn run(args: &Args, report: &mut serde_json::Map<String, Value>) -> Result<bool, Error> {
@@ -74,7 +93,7 @@ fn run(args: &Args, report: &mut serde_json::Map<String, Value>) -> Result<bool,
         report.insert("cases".into(), json!(cases::ALL));
         return Ok(true);
     }
-    let (case, folder) = resolve_case(args.require("case")?);
+    let CaseSpec { name: case, fixture: folder_fixture } = resolve_case(args.require("case")?, args.get("function"));
     report.insert("case".into(), json!(case));
     let circuit: CircuitFn =
         cases::lookup(&case).ok_or_else(|| Error::new(format!("{case} is not compiled into this build")))?;
@@ -82,9 +101,9 @@ fn run(args: &Args, report: &mut serde_json::Map<String, Value>) -> Result<bool,
 
     let load_inputs = |t: &mut Timings| -> Result<_, Error> {
         let input = args.require("input")?;
-        let fixture_path = match (args.get("fixture"), &folder) {
+        let fixture_path = match (args.get("fixture"), &folder_fixture) {
             (Some(p), _) => PathBuf::from(p),
-            (None, Some(dir)) => dir.join("fixture.json"),
+            (None, Some(f)) => f.clone(),
             (None, None) => return Err(Error::new("--fixture is required when --case is not a folder")),
         };
         t.time("load_input_s", || Fixture::load(&fixture_path)?.inputs(input))

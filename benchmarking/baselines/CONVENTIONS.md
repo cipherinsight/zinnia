@@ -3,7 +3,9 @@
 This file is the rulebook for the handwritten circuit baselines of the DS-1000
 performance set: the halo2-base circuits (`datasets/ds1000/<case>/target.rs`,
 built by `baselines/halo2_hw`) and the Noir circuits (`datasets/ds1000/<case>/main.nr`,
-run by `baselines/hw_check/noir_driver.py`). The zkVM and Cairo baselines have their
+run by `baselines/hw_check/noir_driver.py`). The handwritten baselines of the
+NPBench/Pythran performance set follow the same rules; `NPB_BASELINES.md` gives their
+file layout and what is specific to that set. The zkVM and Cairo baselines have their
 own documentation in `baselines/{sp1,risc0,cairo}`; they share the statement rules of
 section 1.
 
@@ -158,7 +160,7 @@ halo2-base (`q32::Q32`, built on `GateChip`/`RangeChip` of halo2-base 0.4.1):
 | float `*` | `q.mul` (rescaled, returns `I64`) |
 | float dot / tensordot / correlate | `q.dot` (one rescale) |
 | int `*`, float `*` int | `q.gate.mul`, `q.mul_int` (exact) |
-| float `/` | `q.div` (any sign), `q.div_pos` (positive divisor), `q.div_const` |
+| float `/` | `q.div` (any sign), `q.div_pos` (positive divisor), `q.div_const`; `q.div_by_abs` when the circuit already holds the divisor's magnitude from `q.abs_int64` (a pivot chosen by `argmax(abs(..))`) |
 | int `//`, `%` | `q.floor_div_const`, `q.floor_div_pos` |
 | `astype(float)` | `q.int_to_float` |
 | `int(x)`, `astype(int)` | `q.float_to_int` |
@@ -172,6 +174,7 @@ halo2-base (`q32::Q32`, built on `GateChip`/`RangeChip` of halo2-base 0.4.1):
 | `where`, `if` on data | `q.gate.select`, `q.select_i64` |
 | `a[i]` (private `i`) | `q.index` (NumPy wrap and bounds; one-hot or range-checked form by length), `q.index_i64` if `i` already has a window proof |
 | `x[mask]`, `nonzero`, `argwhere` | `q.select_kept` (values) or `q.compact` (other payloads): a running one-hot of the next free slot, then `out.dynamic` |
+| `np.sort` (values only) | `q.sort` (Batcher's merge exchange on the window offsets; `merge_exchange(n)` gives the network) |
 | `k // d`, `k % d` for a small known-non-negative `k` (an index built from loop constants) | `q.divmod_small` (halo2-base `div_mod`) |
 | `&`, `|`, `~` on bools | `q.gate.and`, `q.gate.or`, `q.gate.not` |
 
@@ -182,7 +185,7 @@ Noir (`noir_hw`, on top of the Noir standard library):
 | `+`, `-`, int `*` | `Field` arithmetic |
 | float `*` | `noir_hw::mul` |
 | float dot | `noir_hw::dot`, or accumulate products and `noir_hw::rescale` once |
-| float `/` | `noir_hw::div` |
+| float `/` | `noir_hw::div`; `div_by_abs` when `abs_int64` already gave the divisor's magnitude |
 | int `//`, `%` | `noir_hw::divmod_pos` |
 | `astype(float)`, `int(x)`, `np.floor` | `from_int`, `to_int`, `floor` |
 | `np.sqrt`, `np.sin`, `np.cos` | `sqrt` (`isqrt` for a raw integer), `sin`, `cos` |

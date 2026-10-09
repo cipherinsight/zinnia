@@ -12,7 +12,9 @@ any failure. Two command-line styles exist:
              --input A|B --out J [--proof-mode M] [--tamper]     (SP1, RISC Zero, Cairo)
 
 `--function` names the entry function of a shape-generic case (NPBench,
-Pythran: one folder, one program per entry function).
+Pythran: one folder, one program per entry function); `halo2_hw` takes it in
+both styles' spelling, `--case DIR --function F`, and its circuit file is per
+entry function (`target.<function>.rs`).
 
 Every program keeps keys and the proof in its work directory and overwrites the
 proof on each prove. So the harness gives setup its own directory and every
@@ -67,6 +69,14 @@ class Program:
     end_to_end: tuple[str, ...]
     verify: tuple[str, ...]
     windows: dict = field(default_factory=dict)
+    #: In a shape-generic folder, `case_file` is per entry function
+    #: (`target.rs` -> `target.<function>.rs`) rather than one for the program.
+    file_per_function: bool = False
+
+    def case_file_path(self, case: PerfCase) -> Path:
+        if self.file_per_function:
+            return case.baseline_file(self.case_file)
+        return case.directory / self.case_file
 
     def argv(self) -> list[str]:
         if self.command[0] == "python":
@@ -88,7 +98,8 @@ PROGRAMS: dict[str, Program] = {p.name: p for p in (
             prove_core=("prove_s",), end_to_end=("witness_s", "prove_s"), verify=("verify_s",),
             windows={"prove_core": "create_proof (prove_s)",
                      "end_to_end": "witness synthesis (witness_s) + create_proof (prove_s)",
-                     "verify": "verify_proof with the stored verifying key (verify_s)"}),
+                     "verify": "verify_proof with the stored verifying key (verify_s)"},
+            file_per_function=True),
     Program("sp1", "SP1 6.8.1, core (STARK) proof, Q32 guest", "zkvm.rs",
             ("sp1/target/release/sp1-baseline",), HOST_STYLE, ("--proof-mode", "core"),
             prove_core=("prove",), end_to_end=("prove",), verify=("verify",),
@@ -150,12 +161,13 @@ class ContractProgramAdapter(Adapter):
         entry = Path(self.program.argv()[-1])
         if not entry.exists():
             return f"no program {paths.relative_to_repo(entry)} (not built?)"
-        if not (case.directory / self.program.case_file).exists():
-            return f"no {self.program.case_file} in the case folder"
+        case_file = self.program.case_file_path(case)
+        if not case_file.exists():
+            return f"no {case_file.name} in the case folder"
         return None
 
     def program_files(self, case: PerfCase) -> list[Path]:
-        return [case.directory / self.program.case_file, Path(self.program.argv()[-1])]
+        return [self.program.case_file_path(case), Path(self.program.argv()[-1])]
 
     # -- invoking the program -------------------------------------------------
 
@@ -163,11 +175,11 @@ class ContractProgramAdapter(Adapter):
               extra: list[str]) -> list[str]:
         common = ["--fixture", str(ctx.case.fixture_path), "--input", input_name,
                   "--out", str(out)]
-        if self.program.style == HALO2_HW_STYLE:
-            return [*self.program.argv(), mode, "--case", str(ctx.case.directory),
-                    "--workdir", str(work), *common, *self.program.extra_args, *extra]
         # A shape-generic folder (NPBench, Pythran) holds one program per entry function.
         function = ["--function", ctx.case.function] if ctx.case.shape_generic else []
+        if self.program.style == HALO2_HW_STYLE:
+            return [*self.program.argv(), mode, "--case", str(ctx.case.directory), *function,
+                    "--workdir", str(work), *common, *self.program.extra_args, *extra]
         return [*self.program.argv(), "--case-dir", str(ctx.case.directory), *function,
                 "--mode", mode, "--work-dir", str(work), *common, *self.program.extra_args,
                 *extra]
