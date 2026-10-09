@@ -60,3 +60,14 @@ periodic masks in sequence, and squares every directed value independently.
 The four owned transcendental callers (log-likelihood, Ising, Deriche,
 goodExpo) explicitly call canonical shared APIs. Compilation/witness results
 before those APIs arrive do not validate this follow-up revision.
+
+## Canonical dependency validation update
+
+With shared canonical API commit6132baee integrated (local cherry-pick
+f931831a), all nine final Rust circuits compile together. All nine Noir
+circuits compile and execute witnesses A/B; all18 decoded outputs match the
+existing NumPy tolerance. Lint reports zero errors. Raw witness-only evidence:
+`eval-redo/npb-hw/fairness/algorithms-witness-canonical-gadgets.json`.
+No setup, proof, verification, MockProver, or scaling was run. These fixture
+checks are not full-domain equivalence certification; the source inventory
+continues to mark accepted-domain/primitive audits pending.
