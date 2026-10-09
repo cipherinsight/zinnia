@@ -128,6 +128,7 @@ def test_warnings_require_review(tmp_path, monkeypatch, sizes):
 
 def test_count_failures_resume_only_matching_artifacts(tmp_path, monkeypatch):
     from benchmarking.scaling_npb import handwritten_counts as counts
+    monkeypatch.setenv('HW_CHECK_LOCK', str(tmp_path / 'test-heavy.lock'))
     root = tmp_path / 'root'
     folder = root / 'data/demo'
     folder.mkdir(parents=True)

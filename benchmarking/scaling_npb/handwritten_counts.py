@@ -29,7 +29,7 @@ def invoke(command: list[str], cwd: Path, env: dict, timeout: float, log: Path) 
             os.killpg(proc.pid, signal.SIGKILL)
             proc.wait()
             return {'status': 'timeout', 'reason': f'exceeded {timeout} seconds'}
-    return {'status': 'ok' if code == 0 else 'failed', 'returncode': code}
+    return {'status': 'ok' if code == 0 else ('timeout' if code in (124, 137) else 'failed'), 'returncode': code}
 
 
 def main(args) -> int:
@@ -96,14 +96,17 @@ def main(args) -> int:
                 cmd = [sys.executable, '-m', 'hw_check.noir_driver', 'setup']
             cmd += ['--case', str(folder), '--function', function, '--fixture', str(fixture),
                     '--input', 'B', '--workdir', str(work.resolve()), '--out', str(output.resolve())]
-            cmd = [str(args.memory_runner.resolve()), *cmd]
+            # timeout runs INSIDE the systemd scope: killing systemd-run alone
+            # would otherwise leave its workload in the separate cgroup.
+            cmd = [str(args.memory_runner.resolve()), 'timeout', '--signal=TERM',
+                   '--kill-after=5s', f'{args.timeout}s', *cmd]
             print(f"count {key[0]} {key[1]}", flush=True)
             # Share the original-size checker's heavy-step lock, so counts do
             # not overlap a proof/build check even across independent sessions.
             lock = Path(env.get('HW_CHECK_LOCK', '/tmp/hw_check_heavy.lock'))
             with lock.open('w') as stream:
                 fcntl.flock(stream, fcntl.LOCK_EX)
-                row.update(invoke(cmd, root, env, args.timeout, log))
+                row.update(invoke(cmd, root, env, args.timeout + 15, log))
             row['log'] = str(log.resolve())
             if output.exists():
                 row['result'] = json.loads(output.read_text())
