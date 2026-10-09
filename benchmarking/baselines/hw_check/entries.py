@@ -12,12 +12,19 @@ Two case sets:
   functions, else `fixture.json`), and the baseline files carry the function
   name: `target.<function>.rs`, `main.<function>.nr`, `Prover.<function>.toml`.
 
+The environment variable `HW_VARIANT` selects which baseline of each case
+the tools read. Unset or empty, the best-effort optimized baselines above;
+`literal`, the literal translations (`LITERAL_BASELINES.md`), whose files
+carry the tag before the suffix: `target.literal.rs`,
+`main.<function>.literal.nr`, `Prover.<function>.literal.toml`.
+
 A case is named on the command line by its id (`ds1000_case0309`,
 `pythran_lu__factorMatrix0`) or, for DS-1000, by its number (`0309`).
 """
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -29,15 +36,20 @@ DS1000_CASE_SET = DATASETS / "case_sets" / "ds1000_perf.json"
 NPB_CASE_SET = DATASETS / "case_sets" / "npbench_pythran_perf.json"
 DEFAULT_ATOL = 1e-6
 DEFAULT_RTOL = 1e-6
+#: The baseline variants besides the optimized one (`halo2_hw/build.rs` has the same list).
+VARIANTS = ("literal",)
+VARIANT = os.environ.get("HW_VARIANT", "")
+if VARIANT and VARIANT not in VARIANTS:
+    raise SystemExit(f"HW_VARIANT={VARIANT!r} is not one of {VARIANTS}")
 
 
-def baseline_file_name(name: str, function: str | None) -> str:
+def baseline_file_name(name: str, function: str | None, variant: str = VARIANT) -> str:
     """`target.rs` -> `target.<function>.rs` for an entry of a shape-generic
-    program (the harness's `PerfCase.baseline_file` gives the same names)."""
-    if function is None:
-        return name
+    program (the harness's `PerfCase.baseline_file` gives the same names), and
+    `target[.<function>].<variant>.rs` for a variant."""
     stem, suffix = name.split(".", 1)
-    return f"{stem}.{function}.{suffix}"
+    tags = [t for t in (function, variant) if t]
+    return ".".join([stem, *tags, suffix])
 
 
 @dataclass(frozen=True)

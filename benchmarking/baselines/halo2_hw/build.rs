@@ -13,6 +13,13 @@
 //! (`0300` is `ds1000_case0300`), anything else is a case id as is. Unset,
 //! every circuit is built.
 //!
+//! `HW_VARIANT` selects which baseline of each case is built. Unset or empty,
+//! the best-effort optimized circuits above; `literal`, the literal
+//! translations `target.literal.rs` and `target.<function>.literal.rs`
+//! (see `LITERAL_BASELINES.md`). Module names and case ids are the same for
+//! every variant, so build each variant into its own target directory
+//! (`CARGO_TARGET_DIR=target-literal`).
+//!
 //! `HALO2_HW_NPB_SOURCE_ROOT` replaces NPBench/Pythran source discovery with
 //! program folders under a materialized scaling cap (e.g. DATA/cap32). IDs
 //! remain `<program>__<function>`; use a separate target directory per cap.
@@ -25,11 +32,29 @@ use std::path::{Path, PathBuf};
 /// The dataset folders whose programs have one circuit per entry function.
 const SHAPE_GENERIC_DATASETS: &[&str] = &["npbench", "pythran"];
 
+/// The baseline variants besides the optimized one; each is a file-name tag.
+const VARIANTS: &[&str] = &["literal"];
+
+/// The `HW_VARIANT` tag: `""` for the optimized circuits, else one of `VARIANTS`.
+fn variant() -> String {
+    let v = env::var("HW_VARIANT").unwrap_or_default();
+    assert!(v.is_empty() || VARIANTS.contains(&v.as_str()), "HW_VARIANT={v} is not one of {VARIANTS:?}");
+    v
+}
+
+/// The `.rs` file of a circuit for the variant: `target.rs` stays as is for the
+/// optimized circuits, else `target.<variant>.rs`.
+fn variant_file(stem: &str, variant: &str) -> String {
+    if variant.is_empty() { format!("{stem}.rs") } else { format!("{stem}.{variant}.rs") }
+}
+
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let datasets = manifest.join("../../datasets").canonicalize().expect("datasets folder");
     println!("cargo:rerun-if-env-changed=HALO2_HW_CASES");
     println!("cargo:rerun-if-env-changed=HALO2_HW_NPB_SOURCE_ROOT");
+    println!("cargo:rerun-if-env-changed=HW_VARIANT");
+    let variant = variant();
 
     let wanted: Option<Vec<String>> = env::var("HALO2_HW_CASES").ok().map(|s| {
         s.split(',')
@@ -39,15 +64,15 @@ fn main() {
             .collect()
     });
 
-    let mut cases = ds1000_cases(&datasets.join("ds1000"));
+    let mut cases = ds1000_cases(&datasets.join("ds1000"), &variant);
     let source_root = env::var_os("HALO2_HW_NPB_SOURCE_ROOT").map(PathBuf::from);
-    cases.extend(npb_cases(&datasets, source_root.as_deref()));
+    cases.extend(npb_cases(&datasets, source_root.as_deref(), &variant));
     cases.retain(|(name, _)| wanted.as_ref().map_or(true, |w| w.contains(name)));
     cases.sort();
     if let Some(w) = &wanted {
         for name in w {
             if !cases.iter().any(|(n, _)| n == name) {
-                panic!("HALO2_HW_CASES names {name}, which has no target.rs");
+                panic!("HALO2_HW_CASES names {name}, which has no {}", variant_file("target", &variant));
             }
         }
     }
@@ -87,21 +112,22 @@ fn subfolders(dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// `(case, target.rs)` for every DS-1000 case folder with a `target.rs`.
-fn ds1000_cases(dataset: &Path) -> Vec<(String, PathBuf)> {
+/// `(case, target.rs)` for every DS-1000 case folder with a `target.rs`
+/// (`target.<variant>.rs` for a variant).
+fn ds1000_cases(dataset: &Path, variant: &str) -> Vec<(String, PathBuf)> {
     subfolders(dataset)
         .into_iter()
         .filter_map(|dir| {
             let name = dir.file_name()?.to_str()?.to_string();
-            let target = dir.join("target.rs");
+            let target = dir.join(variant_file("target", variant));
             target.is_file().then_some((name, target))
         })
         .collect()
 }
 
 /// `(<program>__<function>, target.<function>.rs)` for every circuit of every
-/// program folder.
-fn shape_generic_cases(dataset: &Path) -> Vec<(String, PathBuf)> {
+/// program folder (`target.<function>.<variant>.rs` for a variant).
+fn shape_generic_cases(dataset: &Path, variant: &str) -> Vec<(String, PathBuf)> {
     let mut cases = Vec::new();
     for dir in subfolders(dataset) {
         let program = dir.file_name().and_then(|n| n.to_str()).expect("folder name").to_string();
@@ -114,6 +140,14 @@ fn shape_generic_cases(dataset: &Path) -> Vec<(String, PathBuf)> {
             else {
                 continue;
             };
+            // `<function>` or `<function>.<tag>`; keep the files of this variant only.
+            let (function, tag) = match function.rsplit_once('.') {
+                Some((f, t)) if VARIANTS.contains(&t) => (f, t),
+                _ => (function, ""),
+            };
+            if tag != variant {
+                continue;
+            }
             cases.push((format!("{program}__{function}"), file.path()));
         }
     }
@@ -122,13 +156,13 @@ fn shape_generic_cases(dataset: &Path) -> Vec<(String, PathBuf)> {
 
 /// External scaled sources replace original NPBench/Pythran cases, never union
 /// with them: otherwise the same case ID could select CAP-16 constants.
-fn npb_cases(datasets: &Path, source_root: Option<&Path>) -> Vec<(String, PathBuf)> {
+fn npb_cases(datasets: &Path, source_root: Option<&Path>, variant: &str) -> Vec<(String, PathBuf)> {
     if let Some(root) = source_root {
         let root = root.canonicalize().expect("HALO2_HW_NPB_SOURCE_ROOT folder");
-        return shape_generic_cases(&root);
+        return shape_generic_cases(&root, variant);
     }
     SHAPE_GENERIC_DATASETS.iter()
-        .flat_map(|dataset| shape_generic_cases(&datasets.join(dataset)))
+        .flat_map(|dataset| shape_generic_cases(&datasets.join(dataset), variant))
         .collect()
 }
 
@@ -148,10 +182,15 @@ mod tests {
         fs::write(scaled.join("demo/target.first.rs"), "scaled first").unwrap();
         fs::write(scaled.join("demo/target.second.rs"), "scaled second").unwrap();
         fs::write(scaled.join("demo/main.first.nr"), "ignored").unwrap();
-        let base = npb_cases(&original, None);
+        fs::write(original.join("npbench/demo/target.first.literal.rs"), "literal").unwrap();
+        let base = npb_cases(&original, None, "");
         assert_eq!(base.len(), 1);
         assert_eq!(base[0].0, "demo__first");
-        let mut candidates = npb_cases(&original, Some(&scaled));
+        let literal = npb_cases(&original, None, "literal");
+        assert_eq!(literal.len(), 1);
+        assert_eq!(literal[0].0, "demo__first");
+        assert_eq!(fs::read_to_string(&literal[0].1).unwrap(), "literal");
+        let mut candidates = npb_cases(&original, Some(&scaled), "");
         candidates.sort();
         assert_eq!(candidates.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(),
                    ["demo__first", "demo__second"]);

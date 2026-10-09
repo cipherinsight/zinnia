@@ -14,6 +14,12 @@ For every requested case and system with a baseline:
 * noir (`main.nr`, through `hw_check.noir_driver`): `setup`, `prove` with A and
   with B (outputs equal to NumPy), `verify`, tampered `verify` (rejected).
 
+With `--no-prove` nothing generates keys or proofs: halo2 runs the two mock
+runs and `stats` (cells at the size Zinnia's rule chooses), Noir runs `stats`
+(gates) and `execute` with A and with B (witness solving, outputs equal to
+NumPy). The out-of-domain step below runs as a mock (halo2) or an `execute`
+(Noir) in both forms; the tampered-public step needs a proof and is skipped.
+
 Keys always come from input A and proofs from input B, so a circuit whose
 structure depends on the input values fails (H-11).
 
@@ -38,6 +44,7 @@ Usage:
         [--fixture-root DIR] [--halo2-bin PATH] [--workroot DIR] [--out results.json]
     python -m hw_check.check --all [--npb]     every DS-1000 case (NPBench/Pythran entry) with a baseline
     python -m hw_check.check --perf [--npb]    every case of the performance set
+    python -m hw_check.check ... --no-prove     mock / execute and counts only
 
 Heavy steps run one at a time across concurrent checkers (a file lock) and,
 when `eval-redo/tools/memrun.sh` exists, under its 8 GB memory cap.
@@ -58,10 +65,12 @@ from pathlib import Path
 
 import numpy as np
 
-from .entries import BENCH, Entry, case_name, ds1000_entries, npb_entries, resolve, with_baselines
+from .entries import BENCH, VARIANT, Entry, case_name, ds1000_entries, npb_entries, resolve, with_baselines
 from .reference import call_outputs, entry_outputs, fixture_arguments, flatten_output, load_kernel
 
-HALO2_BIN = BENCH / "baselines" / "halo2_hw" / "target" / "release" / "halo2_hw"
+# Each variant is built into its own target directory (`halo2_hw/build.rs`).
+HALO2_BIN = (BENCH / "baselines" / "halo2_hw" / ("target-" + VARIANT if VARIANT else "target")
+             / "release" / "halo2_hw")
 MEMRUN = Path("/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh")
 LOCK = Path(os.environ.get("HW_CHECK_LOCK", Path(tempfile.gettempdir()) / "hw_check_heavy.lock"))
 
@@ -108,7 +117,8 @@ def compare(got: list, expected: list[tuple[str, object]], atol: float, rtol: fl
 
 
 class CaseCheck:
-    def __init__(self, entry: Entry, workroot: Path, halo2_bin: Path, atol: float, rtol: float):
+    def __init__(self, entry: Entry, workroot: Path, halo2_bin: Path, atol: float, rtol: float,
+                 prove: bool = True):
         self.entry = entry
         self.case = entry.case
         self.dir = entry.directory
@@ -117,6 +127,7 @@ class CaseCheck:
         self.work = workroot / entry.case
         self.halo2_bin = halo2_bin
         self.atol, self.rtol = atol, rtol
+        self.prove = prove
         self.expected = {name: entry_outputs(entry, self.fixture, name) for name in ("A", "B")}
 
     def _outputs_ok(self, step: dict, input_name: str, problems: list[str], label: str) -> None:
@@ -187,20 +198,25 @@ class CaseCheck:
         }
         self._outputs_ok(steps["mock_A"], "A", problems, "mock A")
         self._outputs_ok(steps["mock_B"], "B", problems, "mock B")
-        steps["setup_A"] = run_json([b, "setup", *common, "--input", "A", *wd])
-        if not steps["setup_A"].get("ok"):
-            problems.append(f"setup A: {steps['setup_A'].get('error')}")
+        if not self.prove:
+            steps["stats_A"] = run_json([b, "stats", *common, "--input", "A"])
+            if not steps["stats_A"].get("ok"):
+                problems.append(f"stats A: {steps['stats_A'].get('error')}")
         else:
-            steps["prove_B"] = run_json([b, "prove", *common, "--input", "B", *wd])
-            self._outputs_ok(steps["prove_B"], "B", problems, "prove B")
-            if steps["prove_B"].get("ok"):
-                steps["verify"] = run_json([b, "verify", *case, *wd])
-                if steps["verify"].get("verified") is not True:
-                    problems.append("honest proof rejected")
-                n = steps["setup_A"].get("cells", {}).get("instances", 0)
-                steps["verify_tampered"] = self._tamper(
-                    lambda i: run_json([b, "verify", *case, *wd, "--tamper-index", str(i)]),
-                    n, problems)
+            steps["setup_A"] = run_json([b, "setup", *common, "--input", "A", *wd])
+            if not steps["setup_A"].get("ok"):
+                problems.append(f"setup A: {steps['setup_A'].get('error')}")
+            else:
+                steps["prove_B"] = run_json([b, "prove", *common, "--input", "B", *wd])
+                self._outputs_ok(steps["prove_B"], "B", problems, "prove B")
+                if steps["prove_B"].get("ok"):
+                    steps["verify"] = run_json([b, "verify", *case, *wd])
+                    if steps["verify"].get("verified") is not True:
+                        problems.append("honest proof rejected")
+                    n = steps["setup_A"].get("cells", {}).get("instances", 0)
+                    steps["verify_tampered"] = self._tamper(
+                        lambda i: run_json([b, "verify", *case, *wd, "--tamper-index", str(i)]),
+                        n, problems)
         if steps["mock_B"].get("redundant_input_checks"):
             problems.append(f"{steps['mock_B']['redundant_input_checks']} inputs checked twice")
         target = self.tamper_target()
@@ -213,11 +229,12 @@ class CaseCheck:
                 [b, "mock", *common, "--input", input_name, "--tamper-input", spec])
             if steps["mock_out_of_domain"].get("satisfied") is not False:
                 problems.append(f"out-of-domain input {spec} accepted")
+        sized = steps.get("setup_A") or steps.get("stats_A") or {}
         return {
             "verdict": "pass" if not problems else "FAIL",
             "problems": problems,
-            "k": steps.get("setup_A", {}).get("k"),
-            "cells": steps.get("setup_A", {}).get("cells"),
+            "k": sized.get("k"),
+            "cells": sized.get("cells"),
             "steps": steps,
         }
 
@@ -227,15 +244,16 @@ class CaseCheck:
         common = [*self.entry.program_args(), "--workdir", str(self.work / "noir")]
         cwd = BENCH / "baselines"
         problems: list[str] = []
-        steps = {"setup": run_json([*drv, "setup", *common], cwd)}
-        if not steps["setup"].get("ok"):
-            problems.append(f"setup: {steps['setup'].get('error')}")
+        sizing, solving = ("setup", "prove") if self.prove else ("stats", "execute")
+        steps = {sizing: run_json([*drv, sizing, *common], cwd)}
+        if not steps[sizing].get("ok"):
+            problems.append(f"{sizing}: {steps[sizing].get('error')}")
         else:
             for name in ("A", "B"):
-                steps[f"prove_{name}"] = run_json(
-                    [*drv, "prove", *common, "--fixture", str(self.fixture_path), "--input", name], cwd)
-                self._outputs_ok(steps[f"prove_{name}"], name, problems, f"prove {name}")
-            if steps["prove_B"].get("ok"):
+                steps[f"{solving}_{name}"] = run_json(
+                    [*drv, solving, *common, "--fixture", str(self.fixture_path), "--input", name], cwd)
+                self._outputs_ok(steps[f"{solving}_{name}"], name, problems, f"{solving} {name}")
+            if self.prove and steps["prove_B"].get("ok"):
                 steps["verify"] = run_json([*drv, "verify", *common], cwd)
                 if steps["verify"].get("verified") is not True:
                     problems.append("honest proof rejected")
@@ -248,15 +266,15 @@ class CaseCheck:
             else:
                 name, index, input_name = target
                 spec = f"{name}:{index}"
-                steps["prove_out_of_domain"] = run_json(
-                    [*drv, "prove", *common, "--fixture", str(self.fixture_path), "--input", input_name,
+                steps[f"{solving}_out_of_domain"] = run_json(
+                    [*drv, solving, *common, "--fixture", str(self.fixture_path), "--input", input_name,
                      "--tamper-input", spec], cwd)
-                if steps["prove_out_of_domain"].get("ok") is not False:
+                if steps[f"{solving}_out_of_domain"].get("ok") is not False:
                     problems.append(f"out-of-domain input {spec} accepted")
         return {
             "verdict": "pass" if not problems else "FAIL",
             "problems": problems,
-            "gates": steps["setup"].get("gates"),
+            "gates": steps[sizing].get("gates"),
             "steps": steps,
         }
 
@@ -275,6 +293,7 @@ def main() -> int:
     ap.add_argument("--workroot", type=Path, default=Path(tempfile.gettempdir()) / "hw_check_work")
     ap.add_argument("--tol", action="append", default=[], help="CASE=ATOL (rtol stays 1e-6)")
     ap.add_argument("--out", type=Path)
+    ap.add_argument("--no-prove", action="store_true", help="mock / execute and counts only: no keys, no proofs")
     a = ap.parse_args()
 
     universe = npb_entries() if a.npb else ds1000_entries()
@@ -302,7 +321,8 @@ def main() -> int:
             result["error"] = f"no fixture at {entry.fixture}"
         else:
             try:
-                cc = CaseCheck(entry, a.workroot, a.halo2_bin, atol_override.get(case, entry.atol), entry.rtol)
+                cc = CaseCheck(entry, a.workroot, a.halo2_bin, atol_override.get(case, entry.atol), entry.rtol,
+                               prove=not a.no_prove)
                 if "halo2" in systems and entry.target_rs.exists():
                     result["halo2"] = cc.halo2()
                 if "noir" in systems and entry.main_nr.exists():

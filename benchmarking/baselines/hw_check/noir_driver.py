@@ -19,6 +19,10 @@ id `<folder>__<f>`).
   the witness (`nargo execute`) and proves (`bb prove`); decodes the public
   outputs from bb's `public_inputs` file.
 * `verify`: `bb verify`, optionally after adding 1 to public value `i`.
+* `execute`: compiles a separate package and solves the witness for the
+  input (`nargo execute`), decoding the public outputs from the returned
+  value. No keys and no proof: the non-proving check of
+  `hw_check.check --no-prove`.
 
 Proofs are UltraHonk with `--verifier_target noir-recursive` (zero-knowledge,
 Poseidon2 transcript) unless `--target` says otherwise.
@@ -60,8 +64,10 @@ import shutil
 import subprocess
 import sys
 import time
+import tomllib
 from pathlib import Path
 
+from .entries import baseline_file_name
 from .prover_toml import BN254_P, SCALE, render_prover_toml
 
 NARGO = os.environ.get("NARGO", str(Path.home() / ".nargo/bin/nargo"))
@@ -246,7 +252,7 @@ def stage_package(case_dir: Path, workdir: Path, function: str | None = None) ->
     """A Nargo package for the case (`main.nr`, or `main.<function>.nr`) under `workdir/pkg`."""
     pkg = workdir / "pkg"
     (pkg / "src").mkdir(parents=True, exist_ok=True)
-    main_nr = f"main.{function}.nr" if function else "main.nr"
+    main_nr = baseline_file_name("main.nr", function)
     shutil.copyfile(case_dir / main_nr, pkg / "src" / "main.nr")
     (pkg / "Nargo.toml").write_text(
         "[package]\n"
@@ -318,6 +324,29 @@ def setup(case_dir: Path, function: str | None, workdir: Path, target: str, timi
     return {"gates": gates["circuit_size"], "acir_opcodes": gates["acir_opcodes"], "vk_path": str(keys / "vk")}
 
 
+def _returned_fields(value) -> list[int]:
+    """The field elements of a `return` value that `nargo execute
+    --overwrite-return` wrote to `Prover.toml`, flattened in order."""
+    if isinstance(value, list):
+        return [x for v in value for x in _returned_fields(v)]
+    if isinstance(value, bool):
+        return [int(value)]
+    return [(int(value, 0) if isinstance(value, str) else int(value)) % BN254_P]
+
+
+def execute(case_dir: Path, function: str | None, fixture: dict, input_name: str, workdir: Path,
+            timings: dict, tamper: tuple[str, int] | None = None) -> dict:
+    """Solve the witness for one input and decode the outputs, without keys or a proof."""
+    pkg = stage_package(case_dir, workdir / "execute", function)
+    compiled = _timed(timings, "compile_s", lambda: compile_package(pkg))
+    toml = pkg / "Prover.toml"
+    toml.write_text(render_prover_toml(compiled["abi"], fixture, input_name, tamper))
+    _timed(timings, "execute_s", lambda: _run([NARGO, "execute", "--silence-warnings", "--overwrite-return"], pkg))
+    returned = tomllib.loads(toml.read_text()).get("return", [])
+    segments = parse_outputs((pkg / "src" / "main.nr").read_text())
+    return {"publics": decode_publics(segments, _returned_fields(returned))}
+
+
 def _load_setup(case: str, workdir: Path) -> dict:
     path = workdir / "setup.json"
     if not path.exists():
@@ -380,7 +409,7 @@ def main() -> int:
     import argparse
 
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("mode", choices=["stats", "setup", "prove", "verify"])
+    ap.add_argument("mode", choices=["stats", "setup", "prove", "execute", "verify"])
     ap.add_argument("--case", type=Path, required=True)
     ap.add_argument("--function", help="the entry function of an NPBench/Pythran program folder")
     ap.add_argument("--workdir", type=Path, required=True)
@@ -388,7 +417,7 @@ def main() -> int:
     ap.add_argument("--input", default="B")
     ap.add_argument("--out", type=Path)
     ap.add_argument("--tamper-index", type=int)
-    ap.add_argument("--tamper-input", help="prove: NAME:INDEX, that input leaf + 2^64 (out of its domain)")
+    ap.add_argument("--tamper-input", help="prove, execute: NAME:INDEX, that input leaf + 2^64 (out of its domain)")
     ap.add_argument("--target", default=DEFAULT_TARGET)
     a = ap.parse_args()
 
@@ -403,7 +432,7 @@ def main() -> int:
         elif a.mode == "setup":
             report.update(setup(a.case, a.function, a.workdir, a.target, timings))
             ok = True
-        elif a.mode == "prove":
+        elif a.mode in ("prove", "execute"):
             report["input"] = a.input
             fixture = json.loads((a.fixture or default_fixture(a.case, a.function)).read_text())
             tamper = None
@@ -411,7 +440,10 @@ def main() -> int:
                 name, index = a.tamper_input.rsplit(":", 1)
                 tamper = (name, int(index))
                 report["tampered_input"] = a.tamper_input
-            report.update(prove(case, fixture, a.input, a.workdir, timings, tamper))
+            if a.mode == "prove":
+                report.update(prove(case, fixture, a.input, a.workdir, timings, tamper))
+            else:
+                report.update(execute(a.case, a.function, fixture, a.input, a.workdir, timings, tamper))
             ok = True
         else:
             result, ok = verify(case, a.workdir, a.tamper_index, timings)
