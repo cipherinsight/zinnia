@@ -16,6 +16,10 @@
 // Range checks are `assert_max_bit_size` on the original Field, never a
 // truncating `as` cast; a cast to `u64`/`u32` only follows such a check.
 
+// exp, log and tanh, in their own file.
+mod transcendental;
+pub use transcendental::{exp, exp_neg, log, tanh};
+
 pub global SCALE: Field = 4294967296; // 2^32
 pub global OFFSET: Field = 9223372036854775808; // 2^63
 global OFFSET_U64: u64 = 9223372036854775808;
