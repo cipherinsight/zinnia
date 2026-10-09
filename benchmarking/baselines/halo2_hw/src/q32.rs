@@ -696,6 +696,55 @@ impl Q32 {
         self.sin(ctx, shifted)
     }
 
+    // -------------------------------------------------------------- clipping
+
+    /// `np.clip(x, lo, hi)` for constants `lo <= hi` with `hi - lo < 2^32`
+    /// (raw encoding: an integer, or `quantize(v)` for a float), on an `x` with
+    /// a window proof. One 64-bit range check, where two comparisons with the
+    /// bounds take two.
+    ///
+    /// Constraints: region bits `l` (`x < lo`) and `h` (`x > hi`) with
+    /// `l h = 0`, and one 64-bit range check of
+    /// `u = l (lo - 1 - x) + h (x - hi - 1) + m (D K - a (K - 1))`, where
+    /// `m = 1 - l - h`, `a = x - lo`, `D = hi - lo` and
+    /// `K = floor(2^64 / (D + 1)) + 1`. Every term is an integer far below
+    /// `p / 2` (`x` is in the window), so `l` forces `x <= lo - 1`, `h` forces
+    /// `x >= hi + 1`, and `m` forces `D K - 2^64 < a (K - 1) <= D K`; since
+    /// `(D + 1) K > 2^64` and `K > D + 1`, that is `-1 < a < D + 1`, i.e.
+    /// `lo <= x <= hi`. The three regions are disjoint, so the bits are pinned.
+    pub fn clip_const(&self, ctx: &mut Ctx, x: I64, lo: i128, hi: i128) -> Cell {
+        let v = x.value();
+        self.clip_const_with(ctx, x, lo, hi, Fr::from((v < lo) as u64), Fr::from((v > hi) as u64))
+    }
+
+    fn clip_const_with(&self, ctx: &mut Ctx, x: I64, lo: i128, hi: i128, l: Fr, h: Fr) -> Cell {
+        assert!(lo <= hi && hi - lo < 1 << 32, "clip_const: needs lo <= hi < lo + 2^32");
+        let window = -(OFFSET as i128)..OFFSET as i128;
+        assert!(window.contains(&lo) && window.contains(&hi));
+        let d = hi - lo;
+        let k = (1i128 << 64) / (d + 1) + 1;
+        let l = ctx.load_witness(l);
+        let h = ctx.load_witness(h);
+        self.gate.assert_bit(ctx, l);
+        self.gate.assert_bit(ctx, h);
+        let both = self.gate.mul(ctx, l, h);
+        self.gate.assert_is_const(ctx, &both, &Fr::ZERO);
+        // u = A + l B + h C with A the middle region's expression and B, C the
+        // differences of the outer ones from it, each linear in x.
+        let middle = fe(d) * fe(k) + fe(lo) * fe(k - 1); // A = middle - (K - 1) x
+        let a = self.gate.mul_add(ctx, x.cell, Constant(-fe(k - 1)), Constant(middle));
+        let b = self.gate.mul_add(ctx, x.cell, Constant(fe(k - 2)), Constant(fe(lo - 1) - middle));
+        let c = self.gate.mul_add(ctx, x.cell, Constant(fe(k)), Constant(-fe(hi + 1) - middle));
+        let u = self.gate.mul_add(ctx, h, c, a);
+        let u = self.gate.mul_add(ctx, l, b, u);
+        self.range.range_check(ctx, u, 64);
+        // x + l (lo - x) + h (hi - x)
+        let to_lo = self.gate.sub(ctx, Constant(fe(lo)), x.cell);
+        let to_hi = self.gate.sub(ctx, Constant(fe(hi)), x.cell);
+        let y = self.gate.mul_add(ctx, h, to_hi, x.cell);
+        self.gate.mul_add(ctx, l, to_lo, y)
+    }
+
     // ------------------------------------------------------------- selection
 
     /// `xs[keep]`: the number of kept values and the kept values in order at
@@ -1275,6 +1324,41 @@ mod tests {
                 assert!((k - v.cos()).abs() < 1e-6, "cos({v}) = {k}");
             }));
         }
+    }
+
+    #[test]
+    fn clip_const_pins_the_region() {
+        let run = |x: i128, lo: i128, hi: i128, l: u64, h: u64| {
+            accepts(move |c, ctx| {
+                let x = ctx.load_witness(fe(x));
+                let x = c.bound(ctx, x);
+                let y = c.clip_const_with(ctx, x, lo, hi, Fr::from(l), Fr::from(h));
+                let v = signed(x.cell.value());
+                if (l, h) == ((v < lo) as u64, (v > hi) as u64) {
+                    assert_eq!(signed(y.value()), signed(x.cell.value()).clamp(lo, hi));
+                }
+            })
+        };
+        let min = i64::MIN as i128;
+        let max = i64::MAX as i128;
+        for (lo, hi) in [(2i128, 10i128), (-(1 << 30), 1 << 30), (7, 7), (min, min + (1 << 32) - 1), (max - 5, max)] {
+            for x in [min, lo - 1, lo, (lo + hi) / 2, hi, hi + 1, max] {
+                if !(min..=max).contains(&x) {
+                    continue;
+                }
+                let (l, h) = ((x < lo) as u64, (x > hi) as u64);
+                assert!(run(x, lo, hi, l, h), "clip({x}, {lo}, {hi})");
+                // Every other region, and both outer bits at once.
+                for (l2, h2) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    if (l2, h2) != (l, h) {
+                        assert!(!run(x, lo, hi, l2, h2), "clip({x}, {lo}, {hi}) with l = {l2}, h = {h2}");
+                    }
+                }
+            }
+        }
+        // A non-bit region flag.
+        assert!(!run(5, 2, 10, 2, 0));
+        assert!(!run(5, 2, 10, 0, 2));
     }
 
     #[test]

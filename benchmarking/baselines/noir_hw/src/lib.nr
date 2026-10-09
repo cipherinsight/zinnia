@@ -385,6 +385,43 @@ pub fn cos(x: Field) -> Field {
     sin(x + HALF_PI_Q)
 }
 
+// ---------------------------------------------------------------- clipping
+
+// np.clip(x, lo, hi) for constants lo <= hi with hi - lo < 2^32 (integers, or
+// Q32 codes for floats), on an x in the window (its input check). One 64-bit
+// range check, where two comparisons with the bounds take two. Region bits l
+// (x < lo) and h (x > hi) with l h = 0, and one 64-bit check of
+// u = l (lo - 1 - x) + h (x - hi - 1) + m (D K - a (K - 1)), where
+// m = 1 - l - h, a = x - lo, D = hi - lo and K = floor(2^64 / (D + 1)) + 1.
+// Every term is an integer far below p / 2, so l forces x <= lo - 1, h forces
+// x >= hi + 1, and m forces D K - 2^64 < a (K - 1) <= D K; since
+// (D + 1) K > 2^64 and K > D + 1, that is -1 < a < D + 1, i.e. lo <= x <= hi.
+// The three regions are disjoint, so the bits are pinned.
+pub fn clip_const(x: Field, lo: Field, hi: Field) -> Field {
+    // Safety: the region bits are pinned by `check_clip`.
+    let (l, h) = unsafe { clip_region_hint(x, lo, hi) };
+    check_clip(x, lo, hi, l, h)
+}
+
+unconstrained fn clip_region_hint(x: Field, lo: Field, hi: Field) -> (Field, Field) {
+    let w = window(x);
+    ((w < window(lo)) as Field, (w > window(hi)) as Field)
+}
+
+fn check_clip(x: Field, lo: Field, hi: Field, l: Field, h: Field) -> Field {
+    let d = hi - lo;
+    assert(d.lt(SCALE), "clip_const: needs lo <= hi < lo + 2^32");
+    // A constant: lo and hi are.
+    let k = ((1 as u128 << 64) / (d as u128 + 1) + 1) as Field;
+    assert(l * (l - 1) == 0, "clip: region flag not a bit");
+    assert(h * (h - 1) == 0, "clip: region flag not a bit");
+    assert(l * h == 0, "clip: two regions");
+    let m = 1 - l - h;
+    let u = l * (lo - 1 - x) + h * (x - hi - 1) + m * (d * k - (x - lo) * (k - 1));
+    u.assert_max_bit_size::<64>();
+    x + l * (lo - x) + h * (hi - x)
+}
+
 // --------------------------------------------------------------- selection
 
 // Boolean-mask selection: the kept items' payloads, in item order, at the
@@ -722,6 +759,63 @@ fn test_abs_int64_of_int64_min() {
 #[test(should_fail)]
 fn test_abs_int64_above_window() {
     let _ = abs_int64(OFFSET);
+}
+
+#[test]
+fn test_clip_const() {
+    assert(clip_const(-5, 2, 10) == 2);
+    assert(clip_const(2, 2, 10) == 2);
+    assert(clip_const(7, 2, 10) == 7);
+    assert(clip_const(10, 2, 10) == 10);
+    assert(clip_const(11, 2, 10) == 10);
+    assert(clip_const(-OFFSET, 2, 10) == 2);
+    assert(clip_const(OFFSET - 1, 2, 10) == 10);
+    assert(clip_const(-3 * SCALE, -SCALE / 4, SCALE / 2) == -SCALE / 4);
+    assert(clip_const(5, 5, 5) == 5);
+    assert(clip_const(OFFSET - 1, OFFSET - 6, OFFSET - 1) == OFFSET - 1);
+    assert(check_clip(-OFFSET, -OFFSET, -OFFSET + SCALE - 1, 0, 0) == -OFFSET);
+}
+
+// Wrong regions: every alternative to the honest bits is rejected.
+
+#[test(should_fail)]
+fn test_clip_middle_claimed_below() {
+    let _ = check_clip(1, 2, 10, 0, 0);
+}
+
+#[test(should_fail)]
+fn test_clip_middle_claimed_above() {
+    let _ = check_clip(11, 2, 10, 0, 0);
+}
+
+#[test(should_fail)]
+fn test_clip_below_claimed_middle() {
+    let _ = check_clip(2, 2, 10, 1, 0);
+}
+
+#[test(should_fail)]
+fn test_clip_above_claimed_middle() {
+    let _ = check_clip(10, 2, 10, 0, 1);
+}
+
+#[test(should_fail)]
+fn test_clip_above_claimed_below() {
+    let _ = check_clip(11, 2, 10, 1, 0);
+}
+
+#[test(should_fail)]
+fn test_clip_below_claimed_above() {
+    let _ = check_clip(1, 2, 10, 0, 1);
+}
+
+#[test(should_fail)]
+fn test_clip_both_regions() {
+    let _ = check_clip(1, 2, 10, 1, 1);
+}
+
+#[test(should_fail)]
+fn test_clip_flag_not_a_bit() {
+    let _ = check_clip(5, 2, 10, 2, 0);
 }
 
 #[test]
