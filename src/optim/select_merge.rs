@@ -65,6 +65,7 @@ const MAX_CONE: usize = 64;
 
 impl IRPass for SelectMerge {
     fn exec(&self, graph: IRGraph) -> IRGraph {
+        let graph = forward_nested_branches(graph);
         let mut prover = Prover::new(&graph);
         let collapsed: HashMap<StmtId, StmtId> = graph
             .stmts
@@ -94,6 +95,114 @@ impl IRPass for SelectMerge {
         let mut out = b.export_ir_graph();
         out.resolver_mut().on_ir_mutated(&[]);
         out
+    }
+}
+
+/// Normalize a condition by truthiness, not by its numeric value. In
+/// particular, an arbitrary nonzero integer need not equal the Boolean one.
+fn condition_atom(graph: &IRGraph, mut id: StmtId) -> (StmtId, bool) {
+    let mut positive = true;
+    for _ in 0..MAX_CONE {
+        let stmt = &graph.stmts[id as usize];
+        match (&stmt.ir, stmt.arguments.as_slice()) {
+            (IR::LogicalNot, &[arg]) => { positive = !positive; id = arg; }
+            (IR::BoolCast, &[arg]) => { id = arg; }
+            _ => break,
+        }
+    }
+    (id, positive)
+}
+
+/// Under the outer branch's condition, an inner select on the same condition
+/// (or its complement) has a known arm. No arithmetic or assertion is moved:
+/// shared inner selects remain available to their other users. DCE and the
+/// existing unread-input cleanup subsequently remove overwritten inputs.
+fn forward_nested_branches(mut graph: IRGraph) -> IRGraph {
+    let mut changed = false;
+    for index in 0..graph.stmts.len() {
+        if !matches!(graph.stmts[index].ir, IR::SelectI | IR::SelectF | IR::SelectB) {
+            continue;
+        }
+        let args = graph.stmts[index].arguments.clone();
+        let [condition, yes, no] = args.as_slice() else { continue };
+        let (atom, positive) = condition_atom(&graph, *condition);
+        for (arm, mut value) in [(1, *yes), (2, *no)] {
+            for _ in 0..MAX_CONE {
+                let inner = &graph.stmts[value as usize];
+                if !matches!(inner.ir, IR::SelectI | IR::SelectF | IR::SelectB) { break; }
+                let [p, x, y] = inner.arguments.as_slice() else { break };
+                let (inner_atom, inner_positive) = condition_atom(&graph, *p);
+                if inner_atom != atom { break; }
+                let truth = (arm == 1) == (positive == inner_positive);
+                value = if truth { *x } else { *y };
+            }
+            if value != args[arm] {
+                graph.stmts[index].arguments[arm] = value;
+                graph.stmts[index].arg_values.clear();
+                changed = true;
+            }
+        }
+    }
+    if changed { graph.update_graph(graph.stmts.clone()); }
+    graph
+}
+
+#[cfg(test)]
+mod structural_nested_select_tests {
+    use super::*;
+    use crate::circuit_input::InputPath;
+    use crate::ir::IRStatement;
+    use crate::types::ValueId;
+
+    fn graph(rows: Vec<(IR, Vec<StmtId>)>) -> IRGraph {
+        IRGraph::new(rows.into_iter().enumerate().map(|(id, (ir, args))|
+            IRStatement::new(id as u32, ValueId::next(), ir, args, vec![], None)).collect())
+    }
+
+    fn inputs() -> Vec<(IR, Vec<StmtId>)> {
+        ["p", "q", "a", "b", "old"].into_iter().map(|name|
+            (IR::ReadInteger { path: InputPath::new(name, vec![]), is_public: false }, vec![])).collect()
+    }
+
+    #[test]
+    fn complementary_branch_drops_overwritten_input_edge() {
+        for negate_inner in [false, true] {
+            for outer_arm in [1usize, 2] {
+                let mut rows = inputs();
+                rows.push((IR::LogicalNot, vec![0])); // 5 = !p
+                rows.push((IR::SelectI, vec![if negate_inner { 5 } else { 0 }, 2, 4]));
+                rows.push((IR::SelectI, if outer_arm == 1 { vec![0, 6, 3] } else { vec![0, 3, 6] }));
+                rows.push((IR::ExposePublicI, vec![7]));
+                let result = forward_nested_branches(graph(rows));
+                let expected = if (outer_arm == 1) != negate_inner { 2 } else { 4 };
+                assert_eq!(result.stmts[7].arguments[outer_arm], expected);
+                // A shared inner select still computes both original arms.
+                assert_eq!(result.stmts[6].arguments[1..], [2, 4]);
+            }
+        }
+    }
+
+    #[test]
+    fn truth_cast_preserves_nonboolean_condition_semantics() {
+        let mut rows = inputs();
+        rows.push((IR::BoolCast, vec![0]));
+        rows.push((IR::LogicalNot, vec![5]));
+        rows.push((IR::SelectI, vec![6, 2, 4]));
+        rows.push((IR::SelectI, vec![0, 3, 7]));
+        let result = forward_nested_branches(graph(rows));
+        assert_eq!(result.stmts[8].arguments, [0, 3, 2]);
+    }
+
+    #[test]
+    fn unrelated_condition_and_assertions_remain() {
+        let mut rows = inputs();
+        rows.push((IR::SelectI, vec![1, 2, 4]));
+        rows.push((IR::SelectI, vec![0, 3, 5]));
+        rows.push((IR::Assert, vec![1]));
+        let result = forward_nested_branches(graph(rows));
+        assert_eq!(result.stmts[6].arguments, [0, 3, 5]);
+        assert!(matches!(result.stmts[7].ir, IR::Assert));
+        assert_eq!(result.stmts[7].arguments, [1]);
     }
 }
 

@@ -10,7 +10,11 @@ use halo2_base::{
     AssignedValue, QuantumCell,
 };
 
+mod affine;
 mod bitwise;
+mod clip;
+mod vector;
+mod boolean;
 mod fixed_point;
 mod identities;
 mod keys;
@@ -86,6 +90,8 @@ pub struct Halo2BaseSynthesizer<'a> {
     /// `not` cell's id to its operand's), for `refine_by_assertion`.
     comparisons: HashMap<u64, Comparison>,
     negations: HashMap<u64, u64>,
+    and_literals: HashMap<u64, Vec<(u64, bool)>>,
+    indicator_sums: HashMap<u64, Vec<(Halo2BaseCell, Halo2BaseCell)>>,
     /// `a - b` cells by `(a.id, b.id)`, shared by comparisons and selects.
     differences: HashMap<(u64, u64), Halo2BaseCell>,
     /// Low two's-complement bits per cell id (see `bitwise.rs`).
@@ -121,6 +127,7 @@ pub struct Halo2BaseSynthesizer<'a> {
     /// Signed-window order bits `[a < b]` of two cells, by `(a, b)` cell ids
     /// (see `ranges::less_than`: the reverse order then needs one equality).
     orders: HashMap<(u64, u64), Halo2BaseCell>,
+    lower_bounds: HashMap<u64, Vec<(Halo2BaseCell, bool)>>,
     /// Cells an emitted constraint proves non-zero (an asserted `x != 0`).
     nonzero: HashSet<u64>,
     /// `(sign, magnitude)` hints of dynamic divisors, by cell id: pinned by
@@ -158,6 +165,9 @@ pub struct Halo2BaseSynthesizer<'a> {
     /// Deferred products by placeholder id: the factors of a `MulI` that the
     /// plan fuses into its one consumer (see `mul_i`).
     deferred: HashMap<u64, (Halo2BaseCell, Halo2BaseCell)>,
+    vector_deferred: HashSet<u64>,
+    dyadic_origins: HashMap<u64, (Halo2BaseCell, bool, u32)>,
+    dyadic_splits: HashMap<(u64, u32), (Halo2BaseCell, Halo2BaseCell)>,
     /// `(cell id, advice length)` right after `gate_from` emitted the cell:
     /// while the length is unchanged, that cell is the context's last one.
     last_output: Option<(u64, usize)>,
@@ -205,9 +215,12 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             sign_bits: HashMap::new(),
             windows: HashMap::new(),
             orders: HashMap::new(),
+            lower_bounds: HashMap::new(),
             nonzero: HashSet::new(),
             divisor_signs: HashMap::new(),
             negations: HashMap::new(),
+            and_literals: HashMap::new(),
+            indicator_sums: HashMap::new(),
             dyn_meta_bounds: HashMap::new(),
             next_id: 0,
             bit_cells: HashSet::new(),
@@ -228,6 +241,9 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             plan: Plan::default(),
             current_stmt: 0,
             deferred: HashMap::new(),
+            vector_deferred: HashSet::new(),
+            dyadic_origins: HashMap::new(),
+            dyadic_splits: HashMap::new(),
             last_output: None,
             profile: None,
             #[cfg(test)]
@@ -629,6 +645,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
     /// `cell` itself, or for a deferred product its product as a cell (when
     /// both operands of a sum are deferred products, one is emitted).
     fn materialize(&mut self, cell: &Halo2BaseCell) -> Halo2BaseCell {
+        if let Some(out) = self.materialize_vector(cell) { return out; }
         let Some((a, b)) = self.deferred.get(&cell.id).copied() else { return *cell };
         // `0 + a·b` as the first gate of a chain: the multiply-add that
         // consumes it starts at its output cell (three cells, not four).
@@ -716,6 +733,9 @@ impl<'a> Halo2BaseSynthesizer<'a> {
     /// as non-zero when the other is the constant 0, and with it the integer
     /// a float cast stands for. Returns the constant `true`.
     fn assert_distinct(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        if self.params.precision_bits <= 63 && self.plan.square_endpoint_guards.contains(&self.current_stmt) {
+            return self.constant_bool(true);
+        }
         let zero = |s: &Self, x: &Halo2BaseCell| s.is_const_cell(x) && x.value == Fp::zero();
         // `d != 0` before a division by `d` (`Plan::divisor_guards`): record
         // `d` as non-zero and emit nothing. The division then takes
@@ -917,6 +937,14 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn add_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if let Some(out) = self.planned_affine(a.value + b.value)? { return Ok(out); }
+        // Only structural constants qualify; witness values never choose layout.
+        for (constant, other) in [(a, b), (b, a)] {
+            if self.is_const_cell(constant) && constant.value == Fp::zero() {
+                // The original addition may be a deferred product's only consumer.
+                return Ok(self.materialize(other));
+            }
+        }
         if let Some((x, y)) = self.deferred.get(&b.id).copied() {
             let acc = self.materialize(a);
             return Ok(self.multiply_add(&acc, &x, &y));
@@ -938,6 +966,13 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn sub_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if let Some(out) = self.planned_affine(a.value - b.value)? { return Ok(out); }
+        if a.id == b.id {
+            return self.constant_int(0);
+        }
+        if self.is_const_cell(b) && b.value == Fp::zero() {
+            return Ok(self.materialize(a));
+        }
         if let Some((x, y)) = self.deferred.get(&b.id).copied() {
             // `a - x·y` as halo2-base's `[a - x·y, x, y, a]` gate.
             let a = &self.materialize(a);
@@ -949,8 +984,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
             }
             return Ok(out);
         }
-        // A fresh cell per IR value (provenance maps cells to values one to
-        // one); later selects on the same operands may reuse it.
+        if let Some(difference) = self.differences.get(&(a.id, b.id)).copied() {
+            return Ok(difference);
+        }
         let out = self.gate_cell(a.value - b.value, |gate, ctx| gate.sub(ctx, a.quantum(), b.quantum()));
         self.differences.entry((a.id, b.id)).or_insert(out);
         self.differences.entry((a.id, out.id)).or_insert(*b); // a - out = b
@@ -962,6 +998,17 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn mul_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if let Some(out) = self.planned_affine(a.value * b.value)? { return Ok(out); }
+        for (constant, other) in [(a, b), (b, a)] {
+            if self.is_const_cell(constant) {
+                if constant.value == Fp::zero() {
+                    return self.constant_int(0);
+                }
+                if constant.value == Fp::one() {
+                    return Ok(self.materialize(other));
+                }
+            }
+        }
         if self.plan.deferred_products.contains(&self.current_stmt) {
             return Ok(self.defer_product(a, b));
         }
@@ -1113,6 +1160,15 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         self.fixed_mul(a, b)
     }
 
+    fn sum_f(&mut self, terms: &[Self::CellRef]) -> Result<Self::CellRef, ProvingError> {
+        let value = terms.iter().fold(Fp::zero(), |acc, x| acc + x.value);
+        if let Some(out) = self.planned_affine(value)? { return Ok(out); }
+        let Some((first, rest)) = terms.split_first() else { return self.constant_float(0.0) };
+        let mut acc = *first;
+        for term in rest { acc = self.add_i(&acc, term)?; }
+        Ok(acc)
+    }
+
     fn product_sum_f(&mut self, pairs: &[(Self::CellRef, Self::CellRef)]) -> Result<Self::CellRef, ProvingError> {
         self.fixed_product_sum(pairs)
     }
@@ -1173,6 +1229,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     /// Signed `a < b`; operands outside the signed 64-bit window have no
     /// witness (see `ranges::less_than`).
     fn lt_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.plan.clip_links.contains(&self.current_stmt) { return Ok(self.cellless(Fp::zero())); }
         if self.is_asserted_comparison() {
             return self.assert_relation(a, b, true);
         }
@@ -1282,8 +1339,15 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     /// `tanh x = sinh x / cosh x` (the fixed-point quotient), as
     /// `kernel::fp_tanh`; the division pins its quotient.
     fn tanh_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let sinh = self.sinh_f(a)?;
-        let cosh = self.cosh_f(a)?;
+        // Share the constrained exp pair, preserving both separate half floors
+        // and both exp domain checks. Cancelling the halves changes Q rounding.
+        let up = self.exp_f(a)?;
+        let negated = self.negate(a);
+        let down = self.exp_f(&negated)?;
+        let difference = self.sub_i(&up, &down)?;
+        let sinh = self.rescale_by(&difference, 1)?;
+        let sum = self.add_i(&up, &down)?;
+        let cosh = self.rescale_by(&sum, 1)?;
         self.fixed_div(&sinh, &cosh)
     }
     /// `sqrt` as `kernel::fp_sqrt`: `floor(sqrt(a * 2^P))`, and 0 for a
@@ -1385,6 +1449,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn arctan2_f(&mut self, y: &Self::CellRef, x: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.fixed_atan2(y, x) }
 
     fn logical_and(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if a.id == b.id {
+            return Ok(self.truthy_bit(a));
+        }
         // `x and true = [x]`, `x and false = false`.
         for (constant, other) in [(a, b), (b, a)] {
             if let Some(truth) = self.constant_truth(constant) {
@@ -1393,11 +1460,23 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         }
         let ta = self.truthy_bit(a);
         let tb = self.truthy_bit(b);
+        if self.disjoint_bits(&ta, &tb) { return self.constant_bool(false); }
+        if self.implies_negation(&ta, &tb) { return Ok(ta); }
+        if self.implies_negation(&tb, &ta) { return Ok(tb); }
+        let mut factors = self.conjunction(&ta);
+        let other = self.conjunction(&tb);
+        if factors.iter().all(|literal| other.contains(literal)) { return Ok(tb); }
+        if other.iter().all(|literal| factors.contains(literal)) { return Ok(ta); }
+        factors.extend(other); factors.sort_unstable(); factors.dedup();
         let out = self.gate_cell(ta.value * tb.value, |gate, ctx| gate.and(ctx, ta.quantum(), tb.quantum()));
         self.mark_bit(&out);
+        if factors.len() <= 64 { self.and_literals.insert(out.id, factors); }
         Ok(out)
     }
     fn logical_or(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if a.id == b.id {
+            return Ok(self.truthy_bit(a));
+        }
         // `x or false = [x]`, `x or true = true`.
         for (constant, other) in [(a, b), (b, a)] {
             if let Some(truth) = self.constant_truth(constant) {
@@ -1411,6 +1490,13 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         Ok(out)
     }
     fn logical_not(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if let Some(input) = self.plan.falsy_nots.remove(&self.current_stmt) {
+            let input = self.cell_of_vid.get(&input).copied().ok_or_else(|| ProvingError::synthesis("falsy input without a cell"))?;
+            if self.is_bit(&input) || self.is_const_cell(&input) {
+                return self.logical_not(&input);
+            }
+            return Ok(self.is_zero_bit(&input));
+        }
         if let Some(truth) = self.constant_truth(a) {
             return self.constant_bool(!truth);
         }
@@ -1422,6 +1508,8 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn select(&mut self, cond: &Self::CellRef, if_true: &Self::CellRef, if_false: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.plan.clip_links.contains(&self.current_stmt) { return Ok(self.cellless(Fp::zero())); }
+        if let Some(clip) = self.plan.clips.get(&self.current_stmt).copied() { return self.constant_clip(clip); }
         if self.plan.onehot_links.contains(&self.current_stmt) {
             // A link of a one-hot chain (plan.rs): only the chain's last select
             // reads it, through the chain's terms, so it needs no cell.
@@ -1433,10 +1521,24 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
             return self.onehot_chain(&chain, cond, if_true);
         }
         let cond = self.truthy_bit(cond);
+        if let Some(out) = self.vector_select(&cond, if_true, if_false)? { return Ok(out); }
+        let (if_true, if_false) = (self.materialize(if_true), self.materialize(if_false));
+        let (if_true, if_false) = (&if_true, &if_false);
+        if let Some((base, delta)) = self.plan.select_adds.get(&self.current_stmt).copied() {
+            let get = |vid| self.cell_of_vid.get(&vid).copied().ok_or_else(|| ProvingError::synthesis("select increment without a cell"));
+            let (base, delta) = (get(base)?, get(delta)?);
+            let (base, delta) = (self.materialize(&base), self.materialize(&delta));
+            let out = self.multiply_add(&base, &cond, &delta);
+            self.propagate_range(&out, if_true, if_false, |t, f| Some(t.hull(f)));
+            return Ok(out);
+        }
         self.select_bit(&cond, if_true, if_false)
     }
     fn select_bit(&mut self, cond: &Self::CellRef, if_true: &Self::CellRef, if_false: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         self.assert_bit(cond)?;
+        if let Some(truth) = self.constant_truth(cond) { return Ok(self.materialize(if truth { if_true } else { if_false })); }
+        if if_true.id == if_false.id { return Ok(self.materialize(if_true)); }
+        if let Some(sum) = self.redundant_indicator_select(cond, if_true, if_false) { return Ok(sum); }
         let value = cond.value * if_true.value + (Fp::one() - cond.value) * if_false.value;
         // Zero-branch fusion: select(c, 0, x) == (1-c)*x and
         // select(c, x, 0) == c*x — one gate instead of two.
@@ -1459,6 +1561,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         // the hull of the branches' proven ranges holds for the output, and
         // a select between bits is a bit.
         self.propagate_range(&out, if_true, if_false, |t, f| Some(t.hull(f)));
+        self.record_maximum(&out, cond, if_true, if_false);
         if self.is_bit(if_true) && self.is_bit(if_false) {
             self.mark_bit(&out);
         }
@@ -1507,7 +1610,10 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         self.float_casts.insert(out.id, *a);
         Ok(out)
     }
-    fn bool_cast(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { Ok(self.truthy_bit(a)) }
+    fn bool_cast(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.plan.falsy_casts.contains(&self.current_stmt) { return Ok(self.cellless(Fp::from((a.value != Fp::zero()) as u64))); }
+        Ok(self.truthy_bit(a))
+    }
 
     fn read_input(&mut self, path: &InputPath, is_public: bool) -> Result<Self::CellRef, ProvingError> {
         let val = self.get_witness_fp_path(path).unwrap_or(Fp::zero());
@@ -1744,3 +1850,7 @@ mod tests;
 
 #[cfg(test)]
 pub(crate) mod two_phase_tests;
+
+#[cfg(test)]
+#[path = "synthesizer_count_tests.rs"]
+mod count_only_regressions;

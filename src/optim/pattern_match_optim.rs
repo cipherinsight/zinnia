@@ -697,6 +697,82 @@ fn asserted_only(graph: &IRGraph, uses: &HashMap<StmtId, usize>) -> std::collect
         .collect()
 }
 
+/// `abs(x) * abs(x)` can use `x * x` when independent assertions already
+/// put the raw input in signed64. Keep an explicit exclusion of i64::MIN:
+/// it is the only signed64 input rejected by AbsF. Although a Q32 square
+/// also rejects that endpoint, this pass is independent of proving precision.
+///
+/// Do not apply this to arbitrary field-valued intermediates: without the
+/// input bounds, a field square may wrap and satisfy the product's quotient
+/// check while the original absolute value would have rejected the operand.
+/// Only direct, unconditional input assertions count; facts inferred from
+/// the AbsF being removed cannot justify the rewrite. A separately observed
+/// absolute value is left alone rather than duplicating its domain checks.
+fn checked_input_abs_squares(graph: &IRGraph, uses: &HashMap<StmtId, usize>) -> HashMap<StmtId, StmtId> {
+    let mut lower = std::collections::HashSet::new();
+    let mut upper = std::collections::HashSet::new();
+    for assertion in graph.stmts.iter().filter(|s| matches!(s.ir, IR::Assert)) {
+        let Some(&condition) = assertion.arguments.first() else { continue };
+        let Some(check) = graph.stmts.get(condition as usize) else { continue };
+        let [input, bound] = check.arguments.as_slice() else { continue };
+        if !graph.stmts.get(*input as usize).is_some_and(|s| matches!(s.ir, IR::ReadFloat { .. })) {
+            continue;
+        }
+        let Some(bound) = graph.stmts.get(*bound as usize) else { continue };
+        match (&check.ir, &bound.ir) {
+            (IR::GteI, IR::ConstantInt { value: i64::MIN }) => { lower.insert(*input); }
+            (IR::LteI, IR::ConstantInt { value: i64::MAX }) => { upper.insert(*input); }
+            _ => {}
+        }
+    }
+    graph.stmts.iter().filter_map(|square| {
+        if !matches!(square.ir, IR::MulF) { return None; }
+        let [left, right] = square.arguments.as_slice() else { return None };
+        if left != right || uses.get(left).copied() != Some(2) { return None; }
+        let absolute = graph.stmts.get(*left as usize)?;
+        if !matches!(absolute.ir, IR::AbsF) { return None; }
+        let [input] = absolute.arguments.as_slice() else { return None };
+        (lower.contains(input) && upper.contains(input)).then_some((square.stmt_id, *input))
+    }).collect()
+}
+
+/// Terminal lowering of live checked-input absolute-value squares.
+///
+/// This must follow all algebraic simplifications and unused-input cleanup.
+/// Promoting AbsF's implicit endpoint restriction to an explicit assertion
+/// earlier would keep that restriction alive even if a later rewrite removed
+/// the square (for example, `square - square`). Only DCE runs inside this pass;
+/// it removes already-dead expressions before matching and obsolete AbsF after.
+pub struct CheckedAbsSquare;
+
+impl IRPass for CheckedAbsSquare {
+    fn exec(&self, ir_graph: IRGraph) -> IRGraph {
+        let ir_graph = super::DeadCodeElimination.exec(ir_graph);
+        let uses = use_counts(&ir_graph);
+        let abs_squares = checked_input_abs_squares(&ir_graph, &uses);
+        if abs_squares.is_empty() {
+            return ir_graph;
+        }
+        let mut builder = IRBuilder::new();
+        let mut value_lookup: HashMap<StmtId, Value> = HashMap::new();
+        for stmt in ir_graph.get_topological_order(false) {
+            if let Some(input) = abs_squares.get(&stmt.stmt_id) {
+                let input = value_lookup[input].clone();
+                let min = builder.ir_constant_int(i64::MIN);
+                let admissible = builder.create_ir(&IR::NeI, &[input.clone(), min]);
+                builder.create_ir(&IR::Assert, &[admissible]);
+                let square = builder.create_ir(&IR::MulF, &[input.clone(), input]);
+                value_lookup.insert(stmt.stmt_id, square);
+            } else {
+                let args: Vec<Value> = stmt.arguments.iter().map(|id| value_lookup[id].clone()).collect();
+                let value = builder.create_ir(&stmt.ir, &args);
+                value_lookup.insert(stmt.stmt_id, value);
+            }
+        }
+        super::DeadCodeElimination.exec(builder.export_ir_graph())
+    }
+}
+
 impl IRPass for PatternMatchOptim {
     fn exec(&self, ir_graph: IRGraph) -> IRGraph {
         let mut builder = IRBuilder::new();

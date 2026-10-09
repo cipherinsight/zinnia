@@ -1170,6 +1170,78 @@ fn static_for_static_array_read_fixture(
 }
 
 #[test]
+fn masked_last_source_reuses_scan_and_keeps_index_checks() {
+    use crate::helpers::static_array::{base::to_static_array, mask::try_apply_boolean_mask_read};
+    let mut b = crate::builder::IRBuilder::new();
+    let sources: Vec<_> = [10, 20, 30].into_iter().map(|x| b.ir_constant_int(x)).collect();
+    let zero = b.ir_constant_int(0);
+    let mask: Vec<_> = (0..3).map(|i| {
+        let input = b.ir_read_integer(crate::circuit_input::InputPath::new(&format!("m{i}"), vec![]), false);
+        b.ir_greater_than_i(&input, &zero)
+    }).collect();
+    let as_list = |values: Vec<Value>| Value::List(crate::types::CompositeData {
+        elements_type: values.iter().map(Value::zinnia_type).collect(), values,
+        value_id: ValueId::next(),
+    });
+    let arr = to_static_array(&mut b, &as_list(sources.clone())).unwrap();
+    let mask_arr = to_static_array(&mut b, &as_list(mask.clone())).unwrap();
+    let Value::DynamicNDArray(data) = try_apply_boolean_mask_read(&mut b, &arr, &mask_arr).unwrap() else {
+        panic!("runtime mask must produce a dynamic array");
+    };
+    let minus_one = b.ir_constant_int(-1);
+    let indices = [SliceIndex::Single(minus_one)];
+    let _original = crate::helpers::array_ops::dyn_subscript(&mut b, &data, &indices);
+    let before = b.stmts.len();
+    let selected = super::visitors::last_masked_source(&mut b, &data, &indices).unwrap();
+    let last = &b.stmts[selected.stmt_id().unwrap() as usize];
+    assert!(matches!(last.ir, IR::SelectI));
+    assert_eq!(last.arguments[0], mask[2].stmt_id().unwrap());
+    assert_eq!(last.arguments[1], sources[2].stmt_id().unwrap());
+    assert_eq!(b.stmts.len(), before + 2, "only two selects are appended; original bounds and empty-mask checks remain intact");
+    let mut sliced = data.clone();
+    sliced.meta.logical_offset = 1;
+    assert!(super::visitors::last_masked_source(&mut b, &sliced, &indices).is_none());
+    let mut reversed = data.clone();
+    reversed.meta.logical_strides = vec![2];
+    assert!(super::visitors::last_masked_source(&mut b, &reversed, &indices).is_none());
+    let mut resized = data.clone();
+    resized.meta.runtime_length.stmt_id = zero.stmt_id();
+    assert!(super::visitors::last_masked_source(&mut b, &resized, &indices).is_none());
+    let other_index = [SliceIndex::Single(zero)];
+    assert!(super::visitors::last_masked_source(&mut b, &data, &other_index).is_none());
+}
+
+#[test]
+fn active_while_counter_load_unwraps_only_on_proven_path() {
+    let mut gen = IRGenerator::new(IRGenConfig::default());
+    gen.ctx.circuit_enter(crate::types::ZinniaType::None);
+    let x = gen.builder.ir_read_integer(crate::circuit_input::InputPath::new("x", vec![]), false);
+    let zero = gen.builder.ir_constant_int(0);
+    let guard = gen.builder.ir_greater_than_i(&x, &zero);
+    let old = gen.builder.ir_constant_int(4);
+    let one = gen.builder.ir_constant_int(1);
+    let next = gen.builder.ir_sub_i(&old, &one);
+    let merged = gen.builder.ir_select_i(&guard, &next, &old);
+    gen.ctx.set("j", merged.clone());
+    gen.loop_index_bound_contexts.push(LoopIndexBoundContext {
+        var_name: "j".into(), max_bound: 4, current_bound: 4,
+        positive_guard: true, guard_condition: None, record_guard_read: false,
+    });
+    let load = ASTLoad { name: "j".into(), dbg: None };
+    assert_eq!(gen.visit_load(&load).stmt_id(), merged.stmt_id(), "an unrelated path cannot unwrap the exit binding");
+    gen.ctx.loop_enter();
+    let not_guard = gen.builder.ir_logical_not(&guard);
+    gen.ctx.loop_break(Some(not_guard), &mut gen.builder);
+    // loop_break constructs not(not(guard)); use the shared structural
+    // implication checker rather than requiring condition node identity.
+    assert_eq!(gen.visit_load(&load).int_val(), Some(3));
+    assert_eq!(gen.ctx.get("j").unwrap().stmt_id(), merged.stmt_id());
+    gen.ctx.loop_leave();
+    gen.loop_index_bound_contexts.pop();
+    assert_eq!(gen.visit_load(&load).stmt_id(), merged.stmt_id(), "the post-loop value must still include the inactive path");
+}
+
+#[test]
 fn static_for_alias_unit_decrement_caps_symbolic_while_unroll() {
     let init = r#"{"__class__": "ASTLoad", "name": "i"}"#;
     let decrement = r#"{"__class__": "ASTConstantInteger", "value": 1}"#;
@@ -1309,6 +1381,10 @@ fn non_unit_decrement_keeps_static_array_read_witness_bundle() {
         r#"{"__class__": "ASTLoad", "name": "i"}"#,
         r#"{"__class__": "ASTConstantInteger", "value": 2}"#,
     );
+    // Test fallback read checks independently of the rejection of loops
+    // whose termination cannot be proved. The non-unit decrement still
+    // prevents the unit-decrement index proof from matching.
+    let json = break_after_tested_while_body(&json);
     let mut cfg = IRGenConfig::default();
     cfg.loop_limit = 8;
     let graph = IRGenerator::generate_from_json(cfg, &json).unwrap();
@@ -1323,6 +1399,13 @@ fn non_unit_decrement_keeps_static_array_read_witness_bundle() {
         assert_count > 0,
         "non-unit decrement must not use the preproved index-bound path"
     );
+}
+
+fn break_after_tested_while_body(json: &str) -> String {
+    let mut ast: serde_json::Value = serde_json::from_str(json).unwrap();
+    let body = ast["block"][0]["block"][1]["block"].as_array_mut().unwrap();
+    body.push(serde_json::json!({"__class__": "ASTBreakStatement"}));
+    serde_json::to_string(&ast).unwrap()
 }
 
 fn replace_guard_rhs_with_static_array_read(json: &mut String) {
@@ -1603,6 +1686,10 @@ fn nonmatching_guard_lhs_rhs_static_array_read_keeps_witness_bundle() {
                                     "rhs": {"__class__": "ASTConstantInteger", "value": 0}
                                 }"#;
     json = json.replacen(old_guard_lhs, new_guard_lhs, 1);
+    // The x-guard provides no decreasing-counter termination proof.
+    // Bound this fixture explicitly so it tests fallback indexing rather
+    // than the separate rejection of an unbounded while.
+    json = break_after_tested_while_body(&json);
     let mut cfg = IRGenConfig::default();
     cfg.loop_limit = 8;
     let graph = IRGenerator::generate_from_json(cfg, &json).unwrap();

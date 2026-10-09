@@ -5,10 +5,9 @@
 //! `x = relu(input @ w1 + b1)`, `x = relu(x @ w2 + b2)`,
 //! `softmax(x @ w3 + b3)` over the last axis, with `relu(x) = np.maximum(x, 0)`
 //! and softmax as in the softmax entry (`exp(x - max) / sum`).
-//! Each element of a matrix product is one reduction, rescaled once; adding
-//! the bias after the rescale is exact, so the bias joins the rescaled sum
-//! (`floor((sum + b 2^32) / 2^32) = floor(sum / 2^32) + b`), whose quotient is
-//! window-checked by the rescale and feeds relu's sign test directly.
+//! Each dot is rescaled and window-checked before its exact bias addition.
+//! The biased result is separately bounded for Halo2's following comparisons;
+//! fusing bias into rescale would lose the dot's intermediate domain check.
 //! Softmax: each row's maximum is `q.max_of`, whose gap checks are the
 //! precondition of `q.canonical_exp_neg` (the shared gadget, NPB_BASELINES.md section 5,
 //! rule 5); the sum is exact and each quotient divides by it, a positive
@@ -65,7 +64,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
 }
 
 /// `x @ w + b` for `x: [rows, inner]`, `w: [inner, cols]`, `b: [cols]`: each
-/// element `floor((sum_k x w + b 2^32) / 2^32)`, window-checked.
+/// element `floor(sum_k x w / 2^32) + b`, with both required window checks.
 fn dense(q: &Q32, ctx: &mut Ctx, x: &[Cell], w: &[Cell], b: &[Cell], inner: usize, cols: usize) -> Vec<I64> {
     x.chunks(inner)
         .flat_map(|row| {
@@ -73,8 +72,9 @@ fn dense(q: &Q32, ctx: &mut Ctx, x: &[Cell], w: &[Cell], b: &[Cell], inner: usiz
                 .map(|c| {
                     let column = (0..inner).map(|k| Existing(w[k * cols + c]));
                     let sum = q.gate.inner_product(ctx, row.iter().map(|v| Existing(*v)), column);
-                    let biased = q.gate.mul_add(ctx, b[c], Constant(fe(SCALE)), sum);
-                    q.rescale(ctx, biased)
+                    let dot = q.rescale(ctx, sum);
+                    let biased = q.add(ctx, dot.cell, b[c]);
+                    q.bound(ctx, biased)
                 })
                 .collect::<Vec<_>>()
         })

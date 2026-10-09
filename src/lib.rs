@@ -25,8 +25,8 @@ use ir_gen::{IRGenConfig, IRGenerator};
 use lower::{ArrayLowering, Target};
 use optim::{
     AlwaysSatisfiedElimination, AssertSubsumption, AssertedEqualityConstantPropagation,
-    ConstantFold, DeadCodeElimination, DoubleNotElimination, DuplicateCodeElimination,
-    DynamicNDArrayMetaAssertInjection, ExternalCallRemover, IRPass, PatternMatchOptim,
+    CheckedAbsSquare, ConstantFold, ConstantSelectorQueries, DeadCodeElimination, DoubleNotElimination, DuplicateCodeElimination,
+    DynamicNDArrayMetaAssertInjection, ExternalCallRemover, IRPass, NeutralNegation, PatternMatchOptim,
     PredicatedSimplification, SelectChainForwarding, SelectMerge,
 };
 
@@ -112,11 +112,10 @@ fn apply_pass(graph: IRGraph, pass_name: &str, target: Target) -> Option<IRGraph
     // table out for the restore-fallback instead of cloning; if the pass
     // produced its own table we just drop this one.
     //
-    // DuplicateCodeElimination is the sole pass that READS the input table
-    // (it re-keys it), so for that pass alone we leave the table in the
-    // graph it receives and fall back through an empty `provenance_in`.
+    // Identity-remapping passes read and re-key the input table themselves;
+    // leave it in their graph and use an empty restore fallback.
     let mut graph = graph;
-    let provenance_in = if pass_name == "DuplicateCodeElimination" {
+    let provenance_in = if matches!(pass_name, "DuplicateCodeElimination" | "ConstantSelectorQueries") {
         crate::provenance::ProvenanceTable::default()
     } else {
         std::mem::take(&mut graph.provenance)
@@ -129,9 +128,12 @@ fn apply_pass(graph: IRGraph, pass_name: &str, target: Target) -> Option<IRGraph
         "AssertedEqualityConstantPropagation" => AssertedEqualityConstantPropagation.exec(graph),
         "ConstantFold" => ConstantFold.exec(graph),
         "DuplicateCodeElimination" => DuplicateCodeElimination.exec(graph),
+        "ConstantSelectorQueries" => ConstantSelectorQueries.exec(graph),
+        "NeutralNegation" => NeutralNegation.exec(graph),
         "AssertSubsumption" => AssertSubsumption.exec(graph),
         "DynamicNDArrayMetaAssertInjection" => DynamicNDArrayMetaAssertInjection.exec(graph),
         "PatternMatchOptim" => PatternMatchOptim.exec(graph),
+        "CheckedAbsSquare" => CheckedAbsSquare.exec(graph),
         "SelectChainForwarding" => SelectChainForwarding.exec(graph),
         "PredicatedSimplification" => PredicatedSimplification.exec(graph),
         "SelectMerge" => SelectMerge.exec(graph),
@@ -478,6 +480,19 @@ fn compile_circuit_impl(
     // (`optim/select_merge.rs`).
     passes.push("SelectMerge");
     passes.push("DeadCodeElimination");
+    if shortcut_optimization {
+        passes.push("ConstantSelectorQueries");
+        passes.push("NeutralNegation");
+    }
+    // Predicated simplification and array/select lowering can recreate
+    // equal pure expressions. Share those producers before removing the
+    // last unread-input checks; never run algebraic passes after the
+    // terminal CheckedAbsSquare domain-preserving rewrite below.
+    if duplicate_code_elimination {
+        passes.push("DuplicateCodeElimination");
+        passes.push("SelectChainForwarding");
+        passes.push("DeadCodeElimination");
+    }
     // Collapse `AssertU128Lt(stride_k + base, hi)` chains to the tightest
     // (max-stride) member: see `optim/assert_subsumption.rs`. Runs after
     // DCE so the redundant asserts are visible side-by-side.
@@ -498,9 +513,18 @@ fn compile_circuit_impl(
     // Inputs nothing reads need no domain check (`ir_gen::input_domain`);
     // dropping it lets dead-code elimination remove the read again.
     let optimized_graph = ir_gen::input_domain::drop_checks_of_unread_inputs(optimized_graph);
+    // AbsF's implicit endpoint restriction may become an explicit assertion
+    // only after all algebraic simplifications and unused-input cleanup: a
+    // dead square must not leave a newly observable domain restriction.
+    // CheckedAbsSquare performs no algebraic simplification of other nodes.
+    let terminal_passes: &[&str] = if shortcut_optimization {
+        &["DeadCodeElimination", "CheckedAbsSquare"]
+    } else {
+        &["DeadCodeElimination"]
+    };
     let optimized_graph = run_pass_pipeline(
         optimized_graph,
-        &["DeadCodeElimination"],
+        terminal_passes,
         target,
         trace_phases,
     );
