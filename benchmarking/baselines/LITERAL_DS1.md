@@ -17,3 +17,5 @@ Arg scan group checked: 0309, 0310, 0311, 0312, 0320, 0321. All Noir checks pass
 0301, 0317, 0327, 0328, 0336, 0338: both systems pass. Views/copies are full wire mappings; constant overwritten inputs in 0328 and unselected view elements in diagonal cases retain optimized input-domain plumbing (L7). No witness arithmetic is performed outside constraints.
 
 0300: full stable bubble sort, integer rank split and explicit Q32 weight/product interpolation. Noir passes; Halo2 functional/domain checks pass with only the input-recheck policy failure. This is the L5 textbook linear-percentile interpretation.
+
+0318 and 0319: both systems pass; enforce the same permutation precondition, fully materialize inverse permutation by private scatter, then standard indexing. Empty storage starts at zero because the precondition proves every slot overwritten.
