@@ -26,6 +26,8 @@ no shared tools or repository fixtures are modified. Checks use `--fixture-root`
 
 | 0356 | 3807 + 837 = 4644 | 6913 + 1107 = 8020 | 3376 | 3731 | pass/pass/pass/pass |
 
+| 0357 | 3807 + 837 = 4644 | 6913 + 1107 = 8020 | 3376 | 3731 | pass/pass/pass/pass |
+
 ## Case notes
 
 - **0343 (twin 0340):** All four files reuse input/output plumbing. Transpose
@@ -34,3 +36,5 @@ no shared tools or repository fixtures are modified. Checks use `--fixture-root`
   permute checked input wires; no arithmetic can be removed. Literal lint passes.
 
 - **0356 (twin 0355):** Same kernel, shapes, constants and outputs. Reused all four circuits after source review, changing the case header. Optimized code selects payloads using three comparisons per column; literal code bubble-sorts all three keys with indices, materializes static indices, then gathers. No Q32 arithmetic or changed rounding. Stable ties; literal sizes should exceed optimized.
+
+- **0357 (twin 0355):** Reused four circuits and reversed axis 0 after ascending argsort. Optimized payload outputs swap first/last; literal code explicitly creates the reversed index array before static indices and gathers. This reverses ties as well (it is not a descending stable sort).
