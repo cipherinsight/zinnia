@@ -37,7 +37,7 @@ Only these five cases' fixture files are written by this batch.
 
 ## Validation
 
-In progress. Evidence directory:
+All five cases pass all four circuits. Evidence directory:
 `/home/zhantong/Projects/zinnia-project/eval-redo/all-work/setup/`.
 All checks use `hw_check.check --no-prove`, `HW_CHECK_LOCK=.../all-work/lock-a`,
 8 GiB memory limits and `dev-fast` builds with three Cargo jobs. Optimized and
@@ -99,3 +99,95 @@ and integer-square-root oracle exactly across all four circuits, beyond the
 checker’s NumPy-tolerance test. No full-domain equivalence certification is
 claimed. 0386 is equal-sized on both backends; 0477 is equal-sized on Noir.
 No literal baseline is smaller than its optimized counterpart.
+
+## Case-set bookkeeping
+
+`ds1000_perf.RQ1_ACCEPTED` freezes the 132 names from the supplied
+`eval-redo/all-work/rq1-ds-accepted.txt`. The final DS inventory has 167 entries:
+140 perf, 13 historical rejections, 6 unaccepted duplicates, 8 out of scope.
+The accepted perf entries comprise 92 formerly perf, 27 formerly duplicate,
+6 formerly degenerate, 0413/0467 formerly rejected, and the five formerly
+absent folders. The eight legacy perf cases rejected in RQ1 remain unchanged
+apart from the added former-decision fields. All entries retain
+`former_status`, `former_duplicate_of`, `former_reason` and
+`former_decision_source`; missing folders are recorded as `former_status:
+"absent"`, not as a fabricated compiler rejection.
+
+The data-movement decision is true for 38 perf entries, including new 0386
+and 0477; it is false for 0456--0458 and the constant-output cases. The latter
+have no output dependence on private inputs. CCOPY remains false: its private
+N and strides control comparisons, index arithmetic and which cells are copied.
+
+NPBench/Pythran changes are limited to the requested resnet_basicblock,
+floyd_warshall kernel and CCOPY entries, plus counts and selection provenance.
+All three are now perf with former statuses and duplicate links retained.
+Counts are NPBench 32 perf / 22 rejected, Pythran 50 perf / 60 rejected. Their
+old resource-limit acceptance observations remain explicitly historical;
+this batch does not claim new validation of their circuits or ports.
+
+The former `perf_case_set.py --write` ran Zinnia compilation and mock-proving,
+which the batch brief forbids. Regeneration now uses the frozen author
+selection and NumPy fixture validation only, preserving existing compiler
+observations rather than running or fabricating new ones. Plain `--write`
+updates only the case-set JSON; `--write --write-fixtures` additionally
+materializes fixtures. `--reuse-zinnia` remains a compatibility flag; retaining
+historical evidence is always the policy. New performance variants carry
+`compiles: null` rather than inheriting an unperformed compiler check.
+
+Added reproducible draws for ten restored textual twins and six degenerate
+cases. Twin draws use each new case's own seed. Empty A/B inputs are permitted
+only when the kernel has no parameters, and constant outputs are allowed only
+by explicit draw metadata. All 140 perf draws run successfully under NumPy,
+match their recorded fixture hashes, and satisfy the data-movement checks.
+
+The initial `--check` exposed an existing inconsistency for 0318 and 0319:
+their checked-in kernels already carried the permutation precondition required
+by `FILTERING.md` (author decision 2026-10-06, commit 2561803d), but
+`expected_kernel` omitted it. The generation policy now reproduces that exact
+existing decorator. Neither kernel nor either case's circuits were edited.
+The acceptance generator is unchanged.
+
+### Integration boundary: other batches' fixtures
+
+This batch's instructions prohibit writing other cases' fixture files. The
+35 newly promoted, pre-existing DS folders still have no `fixture.json` in
+this worktree; their complete draws and hashes are now reproducible. No
+other batch's circuit, kernel or fixture was edited. After integrating the
+batches, the owner can materialize the missing fixtures with
+`perf_case_set.py --write --write-fixtures` (NumPy only). The exact list is in
+`eval-redo/all-work/setup/inventory-verification.txt`. This is a file-ownership
+boundary, not an unimplemented fixture draw or a failed owned baseline.
+
+## Final verification and evidence
+
+- All 20 owned circuits pass: Halo2 MockProver A/B and counts; Noir compile,
+  unpadded UltraHonk gates and witness execution A/B; both reject the checker's
+  out-of-domain input. Constant outputs are decoded but not public cells.
+- Final optimized and literal lint: zero errors.
+- `perf_case_set.py --check`: `0 kernel(s) differ`.
+- Inventory assertions: exact 132 accepted + 8 legacy selection; every former
+  status and duplicate link preserved; legacy cases' other fields unchanged;
+  fixture generation/hash checks for all 140 perf entries; correct movement
+  count; exactly the three requested NPBench/Pythran promotions.
+- Regeneration is byte-identical on a second run, even with subprocess calls
+  disabled by the verification script. Python syntax compilation passes.
+- No proofs, keys, compiler invocations, compiler circuit sizes, timing runs
+  or scaling runs. Other batches' circuits were not checked by this batch.
+
+Halo2 sizing is automatic, with identical settings for each optimized/literal
+pair: 0386 k=17 / lookup_bits=8; 0456--0458 k=9 / lookup_bits=8;
+0477 k=6 / lookup_bits=5. The table reports advice and lookup separately and
+summed; it excludes fixed and public instance cells. Noir uses the pinned
+noir-recursive target and the checker's unpadded gate count.
+
+Evidence files under `eval-redo/all-work/setup/`:
+`0386-opt.json` and `0386-lit.json` hold the passing Halo2 checks (their Noir
+results belong to the superseded flat-array attempt);
+`0386-opt-nested.json` and `0386-lit-nested.json` hold the final passing Noir
+checks. `rest-opt.json` and `rest-lit.json` hold all four checks for 0456,
+0457, 0458 and 0477. `q32-oracle.txt`, `inventory-verification.txt` and
+`verify_inventory.py` record the additional arithmetic and bookkeeping checks.
+
+All five owned cases are finished. There are no unfinished owned circuits and
+no literal-smaller-than-optimized cases. The resolved Noir memory failure and
+pre-existing generator mismatch are the only substantive tool issues found.

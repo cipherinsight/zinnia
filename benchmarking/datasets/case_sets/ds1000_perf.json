@@ -1,19 +1,25 @@
 {
  "case_set": "ds1000_perf",
- "version": 1,
+ "version": 2,
  "description": "The DS-1000 cross-system performance set: every datasets/ds1000/ds1000_case<NNNN> folder with one status. Written by tools/perf_case_set.py; edit the decisions in tools/ds1000_perf.py and tools/perf_fixtures.py, not this file.",
  "rules": {
-  "status_order": "A case gets the first status whose rule applies, in this order: out_of_scope, degenerate, duplicate, zinnia_rejects, perf.",
+  "status_order": "RQ1_ACCEPTED in tools/ds1000_perf.py takes precedence: every accepted program is perf. Other programs retain their historical status (including the eight legacy perf cases rejected in RQ1). Former exclusion rules below are historical, not new filters.",
   "out_of_scope": "The DS-1000 program is out of scope in ds1000_numpy/manifest.json: it imports or uses a module other than numpy (incl. submodules) and math (the author's rule), or another rule of datasets/FILTERING.md fires (non-numeric data, NaN/infinity, ...), checked on the solution text and on every DS-1000 test input.",
   "degenerate": "No output depends on a private input: every output is fixed by the parameter types and the constants, so there is nothing to prove.",
   "duplicate": "The kernel computes the same function as a case with a lower id; the lower id is kept. Three tests: the kernels are identical after renaming local variables (same types and constants); or, fed the same input values, the outputs are a fixed reordering or reshaping of the other case's (numeric test on both cases' fixtures); or both only copy input cells to outputs (no arithmetic or comparison) and copy the same number of cells the same number of times with the same constant outputs, so they are the same circuit up to which cells are read (input cells no output reads are ignored: no system needs to load them).",
   "zinnia_rejects": "Zinnia at the commit in `zinnia_probe` refuses the kernel: compilation fails, or it compiles but Zinnia refuses to build a witness for either fixture input, or neither the halo2-base nor the Noir backend synthesizes the circuit (error recorded). Provisional: compiler fixes on other branches may change it. A case only one backend refuses stays perf and is listed under zinnia_backend_gaps.",
-  "perf": "None of the above. These are the cases for the cross-system performance comparison.",
-  "kernels": "Every in-scope kernel is the output of tools/generate_ds1000_kernels.py (shapes from the record's last DS-1000 test case; each dtype the narrowest of Boolean < Integer < Float < Complex holding the parameter in every test case; returns the value DS-1000 checks) with the shape parameters listed in tools/ds1000_perf.py bound as compile-time constants. tools/perf_case_set.py --check verifies it.",
+  "perf": "Every program in tools/ds1000_perf.py RQ1_ACCEPTED, plus the eight retained legacy perf cases. Duplicates and constant-output programs are included; former_status and former_duplicate_of preserve the original classification. Analysis filters legacy perf programs rejected in RQ1.",
+  "kernels": "Every in-scope kernel is the output of tools/generate_ds1000_kernels.py (shapes from the record's last DS-1000 test case; each dtype the narrowest of Boolean < Integer < Float < Complex holding the parameter in every test case; returns the value DS-1000 checks) with the shape parameters listed in tools/ds1000_perf.py bound as compile-time constants and the existing 0318/0319 permutation preconditions documented in FILTERING.md. tools/perf_case_set.py --check verifies it.",
   "shape_constants": "Author decision 2026-10-06: in the performance set, DS-1000 shape parameters (values that fix an array shape or a trip count) are compile-time constants with their DS-1000 test-case value. The runtime variants are in the acceptance set (ds1000_numpy/generated/).",
   "data_movement_only": "true when the outputs depend on private inputs only by copying them (no arithmetic or comparison on private values). Such cases stay `perf` but can be reported separately.",
   "numbers": "Every system computes floats in Q32 fixed point (BRIEF.md). Zinnia's quantizer (src/prove/field.rs `quantize`) rounds v * 2^32 to the nearest integer; BRIEF.md says trunc. Integer parameters are 64-bit integers.",
   "float_tolerance": "The output check compares each float output with NumPy on input B as |actual - expected| <= atol + rtol * |expected|. Outputs that copy an input get atol = 2^-32 (one Q32 step), rtol = 0. Computed outputs get atol = rtol = 1e-6: Q32 resolves 2.3e-10 and these kernels round at most a few thousand times on values below 10^7, so an implementation of the same computation lands well inside, while a precision loss to ~16 fractional bits or a wrong value does not. Integer and boolean outputs are compared exactly (`float_tolerance` is null)."
+ },
+ "selection": {
+  "source": "tools/ds1000_perf.py RQ1_ACCEPTED (frozen from eval-redo/all-work/rq1-ds-accepted.txt)",
+  "accepted_programs": 132,
+  "how": "author selection update; NumPy fixture validation only; no new Zinnia probes",
+  "historical_evidence": "zinnia_probe and per-case zinnia fields are retained historical observations, not validation of the present compiler or the new selection"
  },
  "zinnia_probe": {
   "commit": "28029a8679fa30c958ac483aa7226052662dc64e",
@@ -25,12 +31,12 @@
  },
  "counts": {
   "out_of_scope": 8,
-  "degenerate": 6,
-  "duplicate": 33,
-  "zinnia_rejects": 15,
-  "perf": 100
+  "degenerate": 0,
+  "duplicate": 6,
+  "zinnia_rejects": 13,
+  "perf": 140
  },
- "data_movement_only_perf_cases": 21,
+ "data_movement_only_perf_cases": 38,
  "zinnia_backend_gaps": {
   "meaning": "perf cases whose circuit one Zinnia backend cannot synthesize (emit_structural on input B)",
   "cases": {}
@@ -50,10 +56,14 @@
   {
    "case": "ds1000_case0291",
    "problem_id": 291,
-   "status": "degenerate",
-   "reason": "returns a.shape; the annotation fixes it to (2, 5, 5, 2), so `a` is never read",
-   "decision_source": "hand review, tools/ds1000_perf.py DEGENERATE (audit DB-01, DB-08)",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "degenerate",
+   "former_duplicate_of": null,
+   "former_reason": "returns a.shape; the annotation fixes it to (2, 5, 5, 2), so `a` is never read",
+   "former_decision_source": "hand review, tools/ds1000_perf.py DEGENERATE (audit DB-01, DB-08)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -71,13 +81,15 @@
     "a is Float although the last test case passes Integer: DS-1000 test case 2 passes a float value"
    ],
    "kernel_change": "signature (a: Integer[Array, '2 5 5 2']) -> (a: Float[Array, '2 5 5 2'])",
+   "output_kind": "exact",
    "float_tolerance": null,
-   "fixture": null,
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "343605dc122535a51e59b25f92c1b0e902731d41e7ac33ba4e029d8793332b2b"
+   "kernel_sha256": "343605dc122535a51e59b25f92c1b0e902731d41e7ac33ba4e029d8793332b2b",
+   "fixture_sha256": "630c472faf48e7539af9f9b92fed7f58ade4810e6d52872a71af2a04e3032772"
   },
   {
    "case": "ds1000_case0295",
@@ -86,6 +98,10 @@
    "reason": "ZinniaException: IR generation failed: shape element at axis 1 must be a compile-time constant int",
    "decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "duplicate_of": null,
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "ZinniaException: IR generation failed: shape element at axis 1 must be a compile-time constant int",
+   "former_decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -121,6 +137,10 @@
    "reason": "same kernel as 0295 after renaming local variables",
    "decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
    "duplicate_of": "ds1000_case0295",
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0295",
+   "former_reason": "same kernel as 0295 after renaming local variables",
+   "former_decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -152,6 +172,10 @@
    "reason": "ZinniaException: IR generation failed: shape element at axis 1 must be a compile-time constant int",
    "decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "duplicate_of": null,
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "ZinniaException: IR generation failed: shape element at axis 1 must be a compile-time constant int",
+   "former_decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -184,9 +208,13 @@
    "case": "ds1000_case0298",
    "problem_id": 298,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -231,6 +259,10 @@
    "reason": "ZinniaException: IR generation failed: shape element at axis 1 must be a compile-time constant int",
    "decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "duplicate_of": null,
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "ZinniaException: IR generation failed: shape element at axis 1 must be a compile-time constant int",
+   "former_decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -263,9 +295,13 @@
    "case": "ds1000_case0300",
    "problem_id": 300,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -311,9 +347,13 @@
    "case": "ds1000_case0301",
    "problem_id": 301,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "reshape",
    "kernel": {
@@ -358,10 +398,14 @@
   {
    "case": "ds1000_case0302",
    "problem_id": 302,
-   "status": "duplicate",
-   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0301",
-   "decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
-   "duplicate_of": "ds1000_case0301",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0301",
+   "former_reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0301",
+   "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "data_movement_only": true,
    "data_movement": "reshape",
    "kernel": {
@@ -382,21 +426,30 @@
     "nrow = 5 is a compile-time constant (DS-1000 test case 2 value; it sets the number of output rows (reshape)). The runtime variant is ds1000_numpy/generated/case0302/kernel.py."
    ],
    "kernel_change": "signature (A: Float[Array, '20'], nrow: Integer) -> (A: Float[Array, '20']); added: nrow = 5",
-   "float_tolerance": null,
-   "fixture": null,
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 2.3283064365386963e-10,
+    "rtol": 0.0
+   },
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "3c405370c040eea941acb93ff2cedd4e76a430cc8bbcaa6bec22aaa0d4834ba0"
+   "kernel_sha256": "3c405370c040eea941acb93ff2cedd4e76a430cc8bbcaa6bec22aaa0d4834ba0",
+   "fixture_sha256": "29a285937251c26a14613642678bc1705e97dfca23add2ff46225a54a72f5e43"
   },
   {
    "case": "ds1000_case0303",
    "problem_id": 303,
-   "status": "duplicate",
-   "reason": "copies 20 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0301",
-   "decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
-   "duplicate_of": "ds1000_case0301",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0301",
+   "former_reason": "copies 20 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0301",
+   "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "data_movement_only": true,
    "data_movement": "slice + reshape",
    "kernel": {
@@ -417,21 +470,30 @@
     "ncol = 5 is a compile-time constant (DS-1000 test case 2 value; it sets the number of output columns and kept prefix length). The runtime variant is ds1000_numpy/generated/case0303/kernel.py."
    ],
    "kernel_change": "signature (A: Float[Array, '23'], ncol: Integer) -> (A: Float[Array, '23']); added: ncol = 5",
-   "float_tolerance": null,
-   "fixture": null,
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 2.3283064365386963e-10,
+    "rtol": 0.0
+   },
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "046ad3a01501e76051f8bab63cc463a8791700549ee28986e35c48722379a2de"
+   "kernel_sha256": "046ad3a01501e76051f8bab63cc463a8791700549ee28986e35c48722379a2de",
+   "fixture_sha256": "7c71f508729a22e9e57977062c265cffdeb4c190419fd0783bfd208c06070b4b"
   },
   {
    "case": "ds1000_case0304",
    "problem_id": 304,
-   "status": "duplicate",
-   "reason": "copies 20 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0301",
-   "decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
-   "duplicate_of": "ds1000_case0301",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0301",
+   "former_reason": "copies 20 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0301",
+   "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "data_movement_only": true,
    "data_movement": "slice, reverse, reshape",
    "kernel": {
@@ -452,21 +514,30 @@
     "ncol = 5 is a compile-time constant (DS-1000 test case 2 value; it sets the number of output columns and kept suffix length). The runtime variant is ds1000_numpy/generated/case0304/kernel.py."
    ],
    "kernel_change": "signature (A: Float[Array, '23'], ncol: Integer) -> (A: Float[Array, '23']); added: ncol = 5",
-   "float_tolerance": null,
-   "fixture": null,
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 2.3283064365386963e-10,
+    "rtol": 0.0
+   },
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "2fda6f32e02b61c3f5e6e8c007b77cda34b5695746a0dfba20abf25fafc18b06"
+   "kernel_sha256": "2fda6f32e02b61c3f5e6e8c007b77cda34b5695746a0dfba20abf25fafc18b06",
+   "fixture_sha256": "eda17b5248373014eeda4b1844ccc9b01dce47f29c2059a9d5a46280a95767e7"
   },
   {
    "case": "ds1000_case0309",
    "problem_id": 309,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -505,9 +576,13 @@
    "case": "ds1000_case0310",
    "problem_id": 310,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -546,9 +621,13 @@
    "case": "ds1000_case0311",
    "problem_id": 311,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -587,9 +666,13 @@
    "case": "ds1000_case0312",
    "problem_id": 312,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -627,10 +710,14 @@
   {
    "case": "ds1000_case0313",
    "problem_id": 313,
-   "status": "duplicate",
-   "reason": "same kernel as 0309 after renaming local variables",
-   "decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
-   "duplicate_of": "ds1000_case0309",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0309",
+   "former_reason": "same kernel as 0309 after renaming local variables",
+   "former_decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -647,21 +734,27 @@
     "Shapes fixed to DS-1000 test case 2 (a (8, 6)); the DS-1000 program accepts any shape, a circuit needs one."
    ],
    "kernel_change": null,
+   "output_kind": "exact",
    "float_tolerance": null,
-   "fixture": null,
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "94fd6972be5fc4e9bb8fb30117eb9a1a10ec3b290b71fb928f4b2c85d5c1945e"
+   "kernel_sha256": "94fd6972be5fc4e9bb8fb30117eb9a1a10ec3b290b71fb928f4b2c85d5c1945e",
+   "fixture_sha256": "ae6dba1b52cd7ed291cb79ebddab6cc20636d9e2cbd59b9f1884dbb066aa9eed"
   },
   {
    "case": "ds1000_case0314",
    "problem_id": 314,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -700,9 +793,13 @@
    "case": "ds1000_case0317",
    "problem_id": 317,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "np.array of an array (identity copy)",
    "kernel": {
@@ -747,9 +844,13 @@
    "case": "ds1000_case0318",
    "problem_id": 318,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -796,9 +897,13 @@
    "case": "ds1000_case0319",
    "problem_id": 319,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -845,9 +950,13 @@
    "case": "ds1000_case0320",
    "problem_id": 320,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -886,9 +995,13 @@
    "case": "ds1000_case0321",
    "problem_id": 321,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -927,9 +1040,13 @@
    "case": "ds1000_case0322",
    "problem_id": 322,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -968,9 +1085,13 @@
    "case": "ds1000_case0323",
    "problem_id": 323,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -1011,9 +1132,13 @@
    "case": "ds1000_case0324",
    "problem_id": 324,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -1054,9 +1179,13 @@
    "case": "ds1000_case0325",
    "problem_id": 325,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -1094,9 +1223,13 @@
    "case": "ds1000_case0326",
    "problem_id": 326,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -1140,6 +1273,10 @@
    "reason": "no exclusion rule applies",
    "decision_source": "rules above",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "pad with zeros",
    "kernel": {
@@ -1188,6 +1325,10 @@
    "reason": "no exclusion rule applies",
    "decision_source": "rules above",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "copy, zero a tail",
    "kernel": {
@@ -1234,9 +1375,13 @@
    "case": "ds1000_case0329",
    "problem_id": 329,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -1280,10 +1425,14 @@
   {
    "case": "ds1000_case0330",
    "problem_id": 330,
-   "status": "duplicate",
-   "reason": "computes `a ** power` like 0329; 0329 assigns the result back to `a`, 0330 to `result`",
-   "decision_source": "tools/ds1000_perf.py find_duplicates (SEMANTIC_DUPLICATES, hand review)",
-   "duplicate_of": "ds1000_case0329",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0329",
+   "former_reason": "computes `a ** power` like 0329; 0329 assigns the result back to `a`, 0330 to `result`",
+   "former_decision_source": "tools/ds1000_perf.py find_duplicates (SEMANTIC_DUPLICATES, hand review)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -1303,13 +1452,18 @@
     "power = 6 is a compile-time constant (DS-1000 test case 2 value; it sets the exponent (number of multiplications); listed by the author). The runtime variant is ds1000_numpy/generated/case0330/kernel.py."
    ],
    "kernel_change": "signature (a: Float[Array, '8 6'], power: Integer) -> (a: Float[Array, '8 6']); added: power = 6",
-   "float_tolerance": null,
-   "fixture": null,
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "53f781ebb5a1ff46134e2489f6faf066c6f661f5da299dc0851c914f559d36ec"
+   "kernel_sha256": "53f781ebb5a1ff46134e2489f6faf066c6f661f5da299dc0851c914f559d36ec",
+   "fixture_sha256": "b48f4f64b88feb9666286ce479739589ec0a85dd5fba734ab4aea45e51138c30"
   },
   {
    "case": "ds1000_case0331",
@@ -1318,6 +1472,10 @@
    "reason": "ZinniaException: IR generation failed: np.gcd is not implemented",
    "decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "duplicate_of": null,
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "ZinniaException: IR generation failed: np.gcd is not implemented",
+   "former_decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -1353,6 +1511,10 @@
    "reason": "same kernel as 0331 after renaming local variables",
    "decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
    "duplicate_of": "ds1000_case0331",
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0331",
+   "former_reason": "same kernel as 0331 after renaming local variables",
+   "former_decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -1384,9 +1546,13 @@
    "case": "ds1000_case0334",
    "problem_id": 334,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -1436,9 +1602,13 @@
    "case": "ds1000_case0335",
    "problem_id": 335,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -1488,9 +1658,13 @@
    "case": "ds1000_case0336",
    "problem_id": 336,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "anti-diagonal",
    "kernel": {
@@ -1532,10 +1706,14 @@
   {
    "case": "ds1000_case0337",
    "problem_id": 337,
-   "status": "duplicate",
-   "reason": "copies 8 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0336",
-   "decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
-   "duplicate_of": "ds1000_case0336",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0336",
+   "former_reason": "copies 8 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0336",
+   "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "data_movement_only": true,
    "data_movement": "anti-diagonal",
    "kernel": {
@@ -1553,21 +1731,30 @@
     "Shapes fixed to DS-1000 test case 2 (a (8, 10)); the DS-1000 program accepts any shape, a circuit needs one."
    ],
    "kernel_change": null,
-   "float_tolerance": null,
-   "fixture": null,
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 2.3283064365386963e-10,
+    "rtol": 0.0
+   },
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "01f04ed2f96d30a39bfb6744a83c23b8caa7852eff2dbbba564518a1e2faea3e"
+   "kernel_sha256": "01f04ed2f96d30a39bfb6744a83c23b8caa7852eff2dbbba564518a1e2faea3e",
+   "fixture_sha256": "38b77ba7e4a010ba779bd6212ee55edff76b861c9a9081c04ad0cfd5ca93b4f7"
   },
   {
    "case": "ds1000_case0338",
    "problem_id": 338,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "diagonal and anti-diagonal",
    "kernel": {
@@ -1609,10 +1796,14 @@
   {
    "case": "ds1000_case0339",
    "problem_id": 339,
-   "status": "duplicate",
-   "reason": "copies 16 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0338",
-   "decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
-   "duplicate_of": "ds1000_case0338",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0338",
+   "former_reason": "copies 16 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0338",
+   "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "data_movement_only": true,
    "data_movement": "diagonals of a slice",
    "kernel": {
@@ -1630,21 +1821,30 @@
     "Shapes fixed to DS-1000 test case 2 (a (8, 10)); the DS-1000 program accepts any shape, a circuit needs one."
    ],
    "kernel_change": null,
-   "float_tolerance": null,
-   "fixture": null,
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 2.3283064365386963e-10,
+    "rtol": 0.0
+   },
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "fd86ed164efe91364d98bae7af1e9fc677e956b2d6a4f822413ac7bb686c8636"
+   "kernel_sha256": "fd86ed164efe91364d98bae7af1e9fc677e956b2d6a4f822413ac7bb686c8636",
+   "fixture_sha256": "e74ac181e34a77e69ab905982b0dbcda2289090da2f7e22fd2d28b8ed8740e5b"
   },
   {
    "case": "ds1000_case0340",
    "problem_id": 340,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "flatten",
    "kernel": {
@@ -1684,10 +1884,14 @@
   {
    "case": "ds1000_case0341",
    "problem_id": 341,
-   "status": "duplicate",
-   "reason": "same kernel as 0340 after renaming local variables",
-   "decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
-   "duplicate_of": "ds1000_case0340",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0340",
+   "former_reason": "same kernel as 0340 after renaming local variables",
+   "former_decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
    "data_movement_only": true,
    "data_movement": "flatten",
    "kernel": {
@@ -1705,21 +1909,27 @@
     "Shapes fixed to DS-1000 test case 1 (X (5, 6)); the DS-1000 program accepts any shape, a circuit needs one."
    ],
    "kernel_change": null,
+   "output_kind": "exact",
    "float_tolerance": null,
-   "fixture": null,
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "5b664a3db680f642b4ba18e94b2a927fab71a2516b43d6571878311c2bf44c11"
+   "kernel_sha256": "5b664a3db680f642b4ba18e94b2a927fab71a2516b43d6571878311c2bf44c11",
+   "fixture_sha256": "0ec20b236b99cdfacb7273400a35447f9c59a39e3d88635a02a14c8e1223abe3"
   },
   {
    "case": "ds1000_case0342",
    "problem_id": 342,
-   "status": "duplicate",
-   "reason": "same kernel as 0340 after renaming local variables",
-   "decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
-   "duplicate_of": "ds1000_case0340",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0340",
+   "former_reason": "same kernel as 0340 after renaming local variables",
+   "former_decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
    "data_movement_only": true,
    "data_movement": "flatten",
    "kernel": {
@@ -1737,21 +1947,27 @@
     "Shapes fixed to DS-1000 test case 1 (X (5, 6)); the DS-1000 program accepts any shape, a circuit needs one."
    ],
    "kernel_change": null,
+   "output_kind": "exact",
    "float_tolerance": null,
-   "fixture": null,
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "cf006a49a24a2cbf69d9ece76867ccd9b5956d256500d974b1b970b023523f81"
+   "kernel_sha256": "cf006a49a24a2cbf69d9ece76867ccd9b5956d256500d974b1b970b023523f81",
+   "fixture_sha256": "0555be8d2696fff27e2594c1b8c4b3436d466d0a76f88a9fd4f01c85850fcdf4"
   },
   {
    "case": "ds1000_case0343",
    "problem_id": 343,
-   "status": "duplicate",
-   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0340",
-   "decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
-   "duplicate_of": "ds1000_case0340",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0340",
+   "former_reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0340",
+   "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "data_movement_only": true,
    "data_movement": "flatten transposed",
    "kernel": {
@@ -1769,13 +1985,15 @@
     "Shapes fixed to DS-1000 test case 1 (X (5, 6)); the DS-1000 program accepts any shape, a circuit needs one."
    ],
    "kernel_change": null,
+   "output_kind": "exact",
    "float_tolerance": null,
-   "fixture": null,
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "1cc43a5f06a5dcaae25ce467e1646d013f0dfd61ba78bcd7b3c764ded3aebdec"
+   "kernel_sha256": "1cc43a5f06a5dcaae25ce467e1646d013f0dfd61ba78bcd7b3c764ded3aebdec",
+   "fixture_sha256": "049db95241f2c2cf57335f2d811a02033f9c0446c0272a88d76e8a0f45f3e738"
   },
   {
    "case": "ds1000_case0344",
@@ -1784,6 +2002,10 @@
    "reason": "non_numeric_data: test input mystr: test input is a str",
    "decision_source": "tools/ds1000_scope.py -> ds1000_numpy/manifest.json (rules: datasets/FILTERING.md)",
    "duplicate_of": null,
+   "former_status": "out_of_scope",
+   "former_duplicate_of": null,
+   "former_reason": "non_numeric_data: test input mystr: test input is a str",
+   "former_decision_source": "tools/ds1000_scope.py -> ds1000_numpy/manifest.json (rules: datasets/FILTERING.md)",
    "data_movement_only": null,
    "kernel": null,
    "adaptations": [],
@@ -1796,9 +2018,13 @@
    "case": "ds1000_case0345",
    "problem_id": 345,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -1848,9 +2074,13 @@
    "case": "ds1000_case0346",
    "problem_id": 346,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -1900,9 +2130,13 @@
    "case": "ds1000_case0347",
    "problem_id": 347,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -1951,10 +2185,14 @@
   {
    "case": "ds1000_case0349",
    "problem_id": 349,
-   "status": "degenerate",
-   "reason": "returns a.shape[1]; the annotation fixes it to 6, so `a` is never read",
-   "decision_source": "hand review, tools/ds1000_perf.py DEGENERATE (audit DB-01, DB-08)",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "degenerate",
+   "former_duplicate_of": null,
+   "former_reason": "returns a.shape[1]; the annotation fixes it to 6, so `a` is never read",
+   "former_decision_source": "hand review, tools/ds1000_perf.py DEGENERATE (audit DB-01, DB-08)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -1971,21 +2209,27 @@
     "Shapes fixed to DS-1000 test case 1 (a (8, 6)); the DS-1000 program accepts any shape, a circuit needs one."
    ],
    "kernel_change": null,
+   "output_kind": "exact",
    "float_tolerance": null,
-   "fixture": null,
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "2702a2c3f49cc0c6ac9e7c0024da5670bab1ad2b2b98d5ab553bfd2f6ae02ee1"
+   "kernel_sha256": "2702a2c3f49cc0c6ac9e7c0024da5670bab1ad2b2b98d5ab553bfd2f6ae02ee1",
+   "fixture_sha256": "65aab6c621980630512cbb04bf75d88d5f779c8bcc2d6fb8bc05d3ca528a4928"
   },
   {
    "case": "ds1000_case0353",
    "problem_id": 353,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -2031,6 +2275,10 @@
    "reason": "ZinniaException: IR generation failed: np.append is not implemented",
    "decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "duplicate_of": null,
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "ZinniaException: IR generation failed: np.append is not implemented",
+   "former_decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -2064,9 +2312,13 @@
    "case": "ds1000_case0355",
    "problem_id": 355,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -2108,10 +2360,14 @@
   {
    "case": "ds1000_case0356",
    "problem_id": 356,
-   "status": "duplicate",
-   "reason": "same kernel as 0355 after renaming local variables",
-   "decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
-   "duplicate_of": "ds1000_case0355",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0355",
+   "former_reason": "same kernel as 0355 after renaming local variables",
+   "former_decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -2132,21 +2388,27 @@
     "Shapes fixed to DS-1000 test case 1 (a (3, 3, 3), b (3, 3, 3)); the DS-1000 program accepts any shape, a circuit needs one."
    ],
    "kernel_change": null,
+   "output_kind": "exact",
    "float_tolerance": null,
-   "fixture": null,
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "4af5fe2e0add0fab8f8c25fd426673112bf3735b9e3c28fde93239f2be351cd9"
+   "kernel_sha256": "4af5fe2e0add0fab8f8c25fd426673112bf3735b9e3c28fde93239f2be351cd9",
+   "fixture_sha256": "e0d407d146d0486d1368c5f1ed22bbe2c89e174bd5af691b769302a9d76504fb"
   },
   {
    "case": "ds1000_case0357",
    "problem_id": 357,
-   "status": "duplicate",
-   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0355",
-   "decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
-   "duplicate_of": "ds1000_case0355",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0355",
+   "former_reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0355",
+   "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -2167,21 +2429,27 @@
     "Shapes fixed to DS-1000 test case 1 (a (3, 3, 3), b (3, 3, 3)); the DS-1000 program accepts any shape, a circuit needs one."
    ],
    "kernel_change": null,
+   "output_kind": "exact",
    "float_tolerance": null,
-   "fixture": null,
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "d490058e7532e6521f09cfcffdff48c59e6ed6f508a57781f04ea0966aa6c65b"
+   "kernel_sha256": "d490058e7532e6521f09cfcffdff48c59e6ed6f508a57781f04ea0966aa6c65b",
+   "fixture_sha256": "a7c7e261771b4855cd134c9a9134df8833f1745ab78aae183fd5697dcc9c07bf"
   },
   {
    "case": "ds1000_case0358",
    "problem_id": 358,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -2224,9 +2492,13 @@
    "case": "ds1000_case0359",
    "problem_id": 359,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "delete a column",
    "kernel": {
@@ -2269,9 +2541,13 @@
    "case": "ds1000_case0360",
    "problem_id": 360,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "delete a row",
    "kernel": {
@@ -2314,9 +2590,13 @@
    "case": "ds1000_case0361",
    "problem_id": 361,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "delete two columns",
    "kernel": {
@@ -2362,6 +2642,10 @@
    "reason": "no exclusion rule applies",
    "decision_source": "rules above",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "delete a column",
    "kernel": {
@@ -2412,9 +2696,13 @@
    "case": "ds1000_case0363",
    "problem_id": 363,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -2464,9 +2752,13 @@
    "case": "ds1000_case0364",
    "problem_id": 364,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -2516,10 +2808,14 @@
   {
    "case": "ds1000_case0365",
    "problem_id": 365,
-   "status": "duplicate",
-   "reason": "same kernel as 0363 after renaming local variables",
-   "decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
-   "duplicate_of": "ds1000_case0363",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0363",
+   "former_reason": "same kernel as 0363 after renaming local variables",
+   "former_decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -2544,13 +2840,18 @@
     "Shapes fixed to DS-1000 test case 2 (a (100,)); the DS-1000 program accepts any shape, a circuit needs one."
    ],
    "kernel_change": null,
-   "float_tolerance": null,
-   "fixture": null,
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "f6344c05aacab081dd3945c2fd258acdc684e4d475223d9dc10bbf3ce60bbb5a"
+   "kernel_sha256": "f6344c05aacab081dd3945c2fd258acdc684e4d475223d9dc10bbf3ce60bbb5a",
+   "fixture_sha256": "19d2a9334b5e9563abc8b5eaa5c4fffbf5f464d842db7455c28fc81adace6724"
   },
   {
    "case": "ds1000_case0366",
@@ -2559,6 +2860,10 @@
    "reason": "ZinniaException: IR generation failed: np.insert: this bounded slice supports one scalar obj",
    "decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "duplicate_of": null,
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "ZinniaException: IR generation failed: np.insert: this bounded slice supports one scalar obj",
+   "former_decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -2603,6 +2908,10 @@
    "reason": "imports: import copy; non_numeric_data: test input array_of_arrays: object array (e.g. arrays of different shapes)",
    "decision_source": "tools/ds1000_scope.py -> ds1000_numpy/manifest.json (rules: datasets/FILTERING.md)",
    "duplicate_of": null,
+   "former_status": "out_of_scope",
+   "former_duplicate_of": null,
+   "former_reason": "imports: import copy; non_numeric_data: test input array_of_arrays: object array (e.g. arrays of different shapes)",
+   "former_decision_source": "tools/ds1000_scope.py -> ds1000_numpy/manifest.json (rules: datasets/FILTERING.md)",
    "data_movement_only": null,
    "kernel": null,
    "adaptations": [],
@@ -2615,9 +2924,13 @@
    "case": "ds1000_case0368",
    "problem_id": 368,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -2657,9 +2970,13 @@
    "case": "ds1000_case0369",
    "problem_id": 369,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -2698,10 +3015,14 @@
   {
    "case": "ds1000_case0370",
    "problem_id": 370,
-   "status": "duplicate",
-   "reason": "same kernel as 0368 after renaming local variables",
-   "decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
-   "duplicate_of": "ds1000_case0368",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0368",
+   "former_reason": "same kernel as 0368 after renaming local variables",
+   "former_decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -2719,21 +3040,27 @@
     "a is Float although the last test case passes Integer: DS-1000 test case 2 passes a float value"
    ],
    "kernel_change": "signature (a: Integer[Array, '3 3']) -> (a: Float[Array, '3 3'])",
+   "output_kind": "exact",
    "float_tolerance": null,
-   "fixture": null,
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "7eb92d6c8658156b637efe53585fe334a16263e27c7e0ccfec1ff7c3b5977cf8"
+   "kernel_sha256": "7eb92d6c8658156b637efe53585fe334a16263e27c7e0ccfec1ff7c3b5977cf8",
+   "fixture_sha256": "3d1bf0e4f3e4264f368883086916054a670f69c96ba8e62d819127234efb5152"
   },
   {
    "case": "ds1000_case0373",
    "problem_id": 373,
-   "status": "degenerate",
-   "reason": "returns np.arange(1, n+1)/n for n = len(grades) = 50, a constant; the sort is dead code",
-   "decision_source": "hand review, tools/ds1000_perf.py DEGENERATE (audit DB-01, DB-08)",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "degenerate",
+   "former_duplicate_of": null,
+   "former_reason": "returns np.arange(1, n+1)/n for n = len(grades) = 50, a constant; the sort is dead code",
+   "former_decision_source": "hand review, tools/ds1000_perf.py DEGENERATE (audit DB-01, DB-08)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -2750,21 +3077,30 @@
     "Shapes fixed to DS-1000 test case 2 (grades (50,)); the DS-1000 program accepts any shape, a circuit needs one."
    ],
    "kernel_change": null,
-   "float_tolerance": null,
-   "fixture": null,
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "8d7eec8aa14aaedebe70cdf3e554967a469588af2c55a69490d8110ab470f935"
+   "kernel_sha256": "8d7eec8aa14aaedebe70cdf3e554967a469588af2c55a69490d8110ab470f935",
+   "fixture_sha256": "3f080dedac995844a02dd77e114adf0f34c79016ca04554f40836944f01cba50"
   },
   {
    "case": "ds1000_case0374",
    "problem_id": 374,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -2810,9 +3146,13 @@
    "case": "ds1000_case0375",
    "problem_id": 375,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -2858,9 +3198,13 @@
    "case": "ds1000_case0381",
    "problem_id": 381,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -2898,10 +3242,14 @@
   {
    "case": "ds1000_case0382",
    "problem_id": 382,
-   "status": "duplicate",
-   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0381",
-   "decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
-   "duplicate_of": "ds1000_case0381",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0381",
+   "former_reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0381",
+   "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -2918,21 +3266,27 @@
     "Shapes fixed to DS-1000 test case 2 (a (100,)); the DS-1000 program accepts any shape, a circuit needs one."
    ],
    "kernel_change": null,
+   "output_kind": "exact",
    "float_tolerance": null,
-   "fixture": null,
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "eda9d47a8f00d0729a7ae1809f9566c1c5ff6be9ef779842713ca2b6c4cf81a5"
+   "kernel_sha256": "eda9d47a8f00d0729a7ae1809f9566c1c5ff6be9ef779842713ca2b6c4cf81a5",
+   "fixture_sha256": "d3405e90a2a66fc4c98cbcf98978f65fd4c0faef6bafefe5b714d606f0f3c7a8"
   },
   {
    "case": "ds1000_case0383",
    "problem_id": 383,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -2974,9 +3328,13 @@
    "case": "ds1000_case0385",
    "problem_id": 385,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "reshape and transpose",
    "kernel": {
@@ -3016,12 +3374,58 @@
    "fixture_sha256": "53d9088ad2b5a9c6123e724d6244a26f432ed8b44cbe36d4b11418a4cb4ceee6"
   },
   {
+   "case": "ds1000_case0386",
+   "problem_id": 386,
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "absent",
+   "former_duplicate_of": null,
+   "former_reason": "no performance folder after excluded_numpy_family was removed (audit DB-09)",
+   "former_decision_source": "datasets/FILTERING.md: rules removed on 2026-10-06",
+   "data_movement_only": true,
+   "data_movement": "overlapping 2x2 sliding windows",
+   "kernel": {
+    "params": [
+     {
+      "name": "a",
+      "annotation": "Float[Array, \"100 200\"]"
+     }
+    ],
+    "constants": {},
+    "shape_test_case": 2
+   },
+   "adaptations": [
+    "Body: the reference statements; returns `result`, the value DS-1000 checks.",
+    "Shapes fixed to DS-1000 test case 2 (a (100, 200)); the DS-1000 program accepts any shape, a circuit needs one."
+   ],
+   "kernel_change": "new performance folder, mechanically generated from DS-1000",
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 2.3283064365386963e-10,
+    "rtol": 0.0
+   },
+   "fixture": "fixture.json",
+   "zinnia": {
+    "compiles": null,
+    "error": null,
+    "note": "not probed on this performance variant; selection comes from frozen RQ1 acceptance"
+   },
+   "kernel_sha256": "0675ee8a7b2e9460caf238e7bef5bc72b2b0b0b1b4a5e618f2f93cc95fdabcf3",
+   "fixture_sha256": "81103b9c097ee4f7511b6dc408a6708b0e85ca977db2aed676609b9041677cb0"
+  },
+  {
    "case": "ds1000_case0387",
    "problem_id": 387,
-   "status": "duplicate",
-   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0385",
-   "decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
-   "duplicate_of": "ds1000_case0385",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0385",
+   "former_reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0385",
+   "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "data_movement_only": true,
    "data_movement": "reshape and transpose",
    "kernel": {
@@ -3039,13 +3443,18 @@
     "Shapes fixed to DS-1000 test case 2 (a (100, 200)); the DS-1000 program accepts any shape, a circuit needs one."
    ],
    "kernel_change": null,
-   "float_tolerance": null,
-   "fixture": null,
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 2.3283064365386963e-10,
+    "rtol": 0.0
+   },
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "dd4d766fa2f2ab63f3fe429ab2122c017c596ac3968926416dd8823d82a5298c"
+   "kernel_sha256": "dd4d766fa2f2ab63f3fe429ab2122c017c596ac3968926416dd8823d82a5298c",
+   "fixture_sha256": "5019410cfeb2a7e9b52cb55fee1b15bfa64cfa76dcfb46ddad7a02494037dd20"
   },
   {
    "case": "ds1000_case0388",
@@ -3054,6 +3463,10 @@
    "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0385",
    "decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "duplicate_of": "ds1000_case0385",
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0385",
+   "former_reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0385",
+   "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "data_movement_only": true,
    "data_movement": "patches (reshape)",
    "kernel": {
@@ -3086,9 +3499,13 @@
    "case": "ds1000_case0389",
    "problem_id": 389,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "reshape",
    "kernel": {
@@ -3139,6 +3556,10 @@
    "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0385",
    "decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "duplicate_of": "ds1000_case0385",
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0385",
+   "former_reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0385",
+   "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "data_movement_only": true,
    "data_movement": "patches (reshape)",
    "kernel": {
@@ -3171,9 +3592,13 @@
    "case": "ds1000_case0391",
    "problem_id": 391,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "column slice",
    "kernel": {
@@ -3220,10 +3645,14 @@
   {
    "case": "ds1000_case0392",
    "problem_id": 392,
-   "status": "duplicate",
-   "reason": "copies 30 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0340",
-   "decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
-   "duplicate_of": "ds1000_case0340",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0340",
+   "former_reason": "copies 30 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0340",
+   "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "data_movement_only": true,
    "data_movement": "row slice",
    "kernel": {
@@ -3246,21 +3675,30 @@
     "high = 7 is a compile-time constant (DS-1000 test case 2 value; it sets the slice stop, hence output height). The runtime variant is ds1000_numpy/generated/case0392/kernel.py."
    ],
    "kernel_change": "signature (a: Float[Array, '20 10'], low: Integer, high: Integer) -> (a: Float[Array, '20 10']); added: low = 4; high = 7",
-   "float_tolerance": null,
-   "fixture": null,
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 2.3283064365386963e-10,
+    "rtol": 0.0
+   },
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "435ff53f455d3ddb2eb91a4edfa7735c7c39e9e3326b4c9fce5748186135c69b"
+   "kernel_sha256": "435ff53f455d3ddb2eb91a4edfa7735c7c39e9e3326b4c9fce5748186135c69b",
+   "fixture_sha256": "322e1c6ac6904864f97f95c0174c24c0559df56d199478db66d6786d4eb610d1"
   },
   {
    "case": "ds1000_case0393",
    "problem_id": 393,
-   "status": "duplicate",
-   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0391",
-   "decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
-   "duplicate_of": "ds1000_case0391",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0391",
+   "former_reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0391",
+   "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "data_movement_only": true,
    "data_movement": "column slice",
    "kernel": {
@@ -3283,21 +3721,30 @@
     "high = 7 is a compile-time constant (DS-1000 test case 2 value; it sets the slice stop, hence output width). The runtime variant is ds1000_numpy/generated/case0393/kernel.py."
    ],
    "kernel_change": "signature (a: Float[Array, '20 10'], low: Integer, high: Integer) -> (a: Float[Array, '20 10']); added: low = 4; high = 7",
-   "float_tolerance": null,
-   "fixture": null,
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 2.3283064365386963e-10,
+    "rtol": 0.0
+   },
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "ad93941d3a18eeb5c16ce891cebdca12460e384629b298d429ed52af7b713123"
+   "kernel_sha256": "ad93941d3a18eeb5c16ce891cebdca12460e384629b298d429ed52af7b713123",
+   "fixture_sha256": "ea08b93da3a017bb05d3f81138b50a635cf48bc8fb61f6782798344415fddedc"
   },
   {
    "case": "ds1000_case0398",
    "problem_id": 398,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -3349,9 +3796,13 @@
    "case": "ds1000_case0399",
    "problem_id": 399,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -3406,10 +3857,14 @@
   {
    "case": "ds1000_case0400",
    "problem_id": 400,
-   "status": "degenerate",
-   "reason": "no inputs; returns the constant np.array([])",
-   "decision_source": "hand review, tools/ds1000_perf.py DEGENERATE (audit DB-01, DB-08)",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "degenerate",
+   "former_duplicate_of": null,
+   "former_reason": "no inputs; returns the constant np.array([])",
+   "former_decision_source": "hand review, tools/ds1000_perf.py DEGENERATE (audit DB-01, DB-08)",
    "data_movement_only": false,
    "kernel": {
     "params": [],
@@ -3420,21 +3875,27 @@
     "Body: the reference statements; returns `result`, the value DS-1000 checks."
    ],
    "kernel_change": null,
+   "output_kind": "exact",
    "float_tolerance": null,
-   "fixture": null,
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "640a83e0d9405b2713f440e4b9a1761cff74ce6878d457b372db2de6630c3835"
+   "kernel_sha256": "640a83e0d9405b2713f440e4b9a1761cff74ce6878d457b372db2de6630c3835",
+   "fixture_sha256": "54d5c8a4d28d77c387b96b6a6c34a8a86d290bbf387007cb5d49b147a313f1f8"
   },
   {
    "case": "ds1000_case0401",
    "problem_id": 401,
-   "status": "degenerate",
-   "reason": "no inputs; returns the constant np.array([[], [], []])",
-   "decision_source": "hand review, tools/ds1000_perf.py DEGENERATE (audit DB-01, DB-08)",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "degenerate",
+   "former_duplicate_of": null,
+   "former_reason": "no inputs; returns the constant np.array([[], [], []])",
+   "former_decision_source": "hand review, tools/ds1000_perf.py DEGENERATE (audit DB-01, DB-08)",
    "data_movement_only": false,
    "kernel": {
     "params": [],
@@ -3445,21 +3906,27 @@
     "Body: the reference statements; returns `result`, the value DS-1000 checks."
    ],
    "kernel_change": null,
+   "output_kind": "exact",
    "float_tolerance": null,
-   "fixture": null,
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "f509ef87606f4bfcc8c77401b361f66f31b0edec986d63bc7a5381c8076a4339"
+   "kernel_sha256": "f509ef87606f4bfcc8c77401b361f66f31b0edec986d63bc7a5381c8076a4339",
+   "fixture_sha256": "b4096afc991c0fca9d0033c2e534e9c57deaced4301a23f3c699ccc9530a08a0"
   },
   {
    "case": "ds1000_case0402",
    "problem_id": 402,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -3514,9 +3981,13 @@
    "case": "ds1000_case0403",
    "problem_id": 403,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -3574,6 +4045,10 @@
    "reason": "ZinniaException: IR generation failed: np.bincount: x entry value is not statically bounded \u2014 its runtime value could be anything, and the output length is `max(x)+1`. The previous compiler revision silently capped the output at 256 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal int array, or annotate the input with `@requires(lambda x: forall(x, lambda v: v <= K))` so the compiler can derive a tight, sound upper bound.",
    "decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "duplicate_of": null,
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "ZinniaException: IR generation failed: np.bincount: x entry value is not statically bounded \u2014 its runtime value could be anything, and the output length is `max(x)+1`. The previous compiler revision silently capped the output at 256 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal int array, or annotate the input with `@requires(lambda x: forall(x, lambda v: v <= K))` so the compiler can derive a tight, sound upper bound.",
+   "former_decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -3613,6 +4088,10 @@
    "reason": "ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int",
    "decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "duplicate_of": null,
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int",
+   "former_decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -3652,6 +4131,10 @@
    "reason": "ZinniaException: IR generation failed: np.bincount: x entry value is not statically bounded \u2014 its runtime value could be anything, and the output length is `max(x)+1`. The previous compiler revision silently capped the output at 256 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal int array, or annotate the input with `@requires(lambda x: forall(x, lambda v: v <= K))` so the compiler can derive a tight, sound upper bound.",
    "decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "duplicate_of": null,
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "ZinniaException: IR generation failed: np.bincount: x entry value is not statically bounded \u2014 its runtime value could be anything, and the output length is `max(x)+1`. The previous compiler revision silently capped the output at 256 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal int array, or annotate the input with `@requires(lambda x: forall(x, lambda v: v <= K))` so the compiler can derive a tight, sound upper bound.",
+   "former_decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -3691,6 +4174,10 @@
    "reason": "ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int",
    "decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "duplicate_of": null,
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int",
+   "former_decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -3727,9 +4214,13 @@
    "case": "ds1000_case0409",
    "problem_id": 409,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -3780,6 +4271,10 @@
    "reason": "ZinniaException: IR generation failed: Unknown function `slice` in @zk_circuit. If `slice` is a helper you defined, decorate it with @zk_chip (or @zk_external for off-circuit witness functions). registered chips: fill_crop",
    "decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "duplicate_of": null,
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "ZinniaException: IR generation failed: Unknown function `slice` in @zk_circuit. If `slice` is a helper you defined, decorate it with @zk_chip (or @zk_external for off-circuit witness functions). registered chips: fill_crop",
+   "former_decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "data_movement_only": true,
    "data_movement": "copy a crop into zeros",
    "kernel": {
@@ -3818,9 +4313,13 @@
    "case": "ds1000_case0412",
    "problem_id": 412,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -3861,10 +4360,14 @@
   {
    "case": "ds1000_case0413",
    "problem_id": 413,
-   "status": "zinnia_rejects",
-   "reason": "compiles, but Zinnia refuses to build a witness for either fixture input: ZinniaException: Cannot build witness for `x`: `Complex` values are not supported as circuit inputs.",
-   "decision_source": "Zinnia mock prove of both fixture inputs (zinnia_probe)",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "compiles, but Zinnia refuses to build a witness for either fixture input: ZinniaException: Cannot build witness for `x`: `Complex` values are not supported as circuit inputs.",
+   "former_decision_source": "Zinnia mock prove of both fixture inputs (zinnia_probe)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -3886,20 +4389,25 @@
     "atol": 1e-06,
     "rtol": 1e-06
    },
-   "fixture": null,
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "004301a2e4b68dafbfe9f96746077e4d4783c8a7cf8c7fb0820e26e5667cdfb7"
+   "kernel_sha256": "004301a2e4b68dafbfe9f96746077e4d4783c8a7cf8c7fb0820e26e5667cdfb7",
+   "fixture_sha256": "e42bfd8a1486e81a410b937186a6418b46674067db1799ed5ab1187c20d233a5"
   },
   {
    "case": "ds1000_case0414",
    "problem_id": 414,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -3944,9 +4452,13 @@
    "case": "ds1000_case0415",
    "problem_id": 415,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -3991,9 +4503,13 @@
    "case": "ds1000_case0416",
    "problem_id": 416,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4037,10 +4553,14 @@
   {
    "case": "ds1000_case0417",
    "problem_id": 417,
-   "status": "duplicate",
-   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0414",
-   "decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
-   "duplicate_of": "ds1000_case0414",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0414",
+   "former_reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0414",
+   "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4060,21 +4580,30 @@
     "bin_size = 4 is a compile-time constant (DS-1000 test case 2 value; it sets the bin width, hence the number of bins). The runtime variant is ds1000_numpy/generated/case0417/kernel.py."
    ],
    "kernel_change": "signature (data: Float[Array, '8'], bin_size: Integer) -> (data: Float[Array, '8']); added: bin_size = 4",
-   "float_tolerance": null,
-   "fixture": null,
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "4146a3e41000e68557bad8af1255dfc24c75e3335ab53b946d0a9b41d3779bc3"
+   "kernel_sha256": "4146a3e41000e68557bad8af1255dfc24c75e3335ab53b946d0a9b41d3779bc3",
+   "fixture_sha256": "2753de957ae069213b33c095008e5753f8f2444b972750cbaa40d8ce20728184"
   },
   {
    "case": "ds1000_case0418",
    "problem_id": 418,
-   "status": "duplicate",
-   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0416",
-   "decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
-   "duplicate_of": "ds1000_case0416",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0416",
+   "former_reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0416",
+   "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4094,21 +4623,30 @@
     "bin_size = 2 is a compile-time constant (DS-1000 test case 2 value; it sets the bin width, hence the number of bins). The runtime variant is ds1000_numpy/generated/case0418/kernel.py."
    ],
    "kernel_change": "signature (data: Float[Array, '8 6'], bin_size: Integer) -> (data: Float[Array, '8 6']); added: bin_size = 2",
-   "float_tolerance": null,
-   "fixture": null,
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "e4e54beec9648e4ca06236303d93b5e1ec3f20e145a2c4e2b65b9912e4d53c8f"
+   "kernel_sha256": "e4e54beec9648e4ca06236303d93b5e1ec3f20e145a2c4e2b65b9912e4d53c8f",
+   "fixture_sha256": "463fa513c2f3f9f3a795685b6239e86ccf1a178cc8241310333281b885d1fa39"
   },
   {
    "case": "ds1000_case0419",
    "problem_id": 419,
-   "status": "duplicate",
-   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0416",
-   "decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
-   "duplicate_of": "ds1000_case0416",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0416",
+   "former_reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0416",
+   "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4128,21 +4666,30 @@
     "bin_size = 2 is a compile-time constant (DS-1000 test case 2 value; it sets the bin width, hence the number of bins). The runtime variant is ds1000_numpy/generated/case0419/kernel.py."
    ],
    "kernel_change": "signature (data: Float[Array, '8 6'], bin_size: Integer) -> (data: Float[Array, '8 6']); added: bin_size = 2",
-   "float_tolerance": null,
-   "fixture": null,
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "d6af60635a20486b92f9dac5d1d81427453010d8bc16977390c25032b314e958"
+   "kernel_sha256": "d6af60635a20486b92f9dac5d1d81427453010d8bc16977390c25032b314e958",
+   "fixture_sha256": "26d5903f37b96ec0dbefbad1a551b6a75de1c0abc0132c3bc60f1070a22cb42f"
   },
   {
    "case": "ds1000_case0420",
    "problem_id": 420,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4193,9 +4740,13 @@
    "case": "ds1000_case0422",
    "problem_id": 422,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4244,6 +4795,10 @@
    "reason": "no exclusion rule applies",
    "decision_source": "rules above",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4288,6 +4843,10 @@
    "reason": "no exclusion rule applies",
    "decision_source": "rules above",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4332,6 +4891,10 @@
    "reason": "compiles, but no backend synthesizes the circuit: halo2-base: RuntimeError: Circuit synthesis error: halo2-base backend does not yet support bit_xor_i; noir: RuntimeError: Unsupported IR operation in circuit: noir-emit:bit_xor_i",
    "decision_source": "Zinnia emit_structural for every backend (zinnia_probe)",
    "duplicate_of": null,
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "compiles, but no backend synthesizes the circuit: halo2-base: RuntimeError: Circuit synthesis error: halo2-base backend does not yet support bit_xor_i; noir: RuntimeError: Unsupported IR operation in circuit: noir-emit:bit_xor_i",
+   "former_decision_source": "Zinnia emit_structural for every backend (zinnia_probe)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4364,9 +4927,13 @@
    "case": "ds1000_case0428",
    "problem_id": 428,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4408,9 +4975,13 @@
    "case": "ds1000_case0429",
    "problem_id": 429,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4451,10 +5022,14 @@
   {
    "case": "ds1000_case0430",
    "problem_id": 430,
-   "status": "duplicate",
-   "reason": "same kernel as 0428 after renaming local variables",
-   "decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
-   "duplicate_of": "ds1000_case0428",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0428",
+   "former_reason": "same kernel as 0428 after renaming local variables",
+   "former_decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4471,21 +5046,30 @@
     "Shapes fixed to DS-1000 test case 2 (a (30,)); the DS-1000 program accepts any shape, a circuit needs one."
    ],
    "kernel_change": null,
-   "float_tolerance": null,
-   "fixture": null,
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "1c20d7b993bbe25a613a645409274e1c98714e1546070d3e3cb6f1e6e1845b86"
+   "kernel_sha256": "1c20d7b993bbe25a613a645409274e1c98714e1546070d3e3cb6f1e6e1845b86",
+   "fixture_sha256": "035facbc58cd37993fa84ac7cce29dc392c87c26fa6e655741cfe7cd8e72f604"
   },
   {
    "case": "ds1000_case0431",
    "problem_id": 431,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4525,9 +5109,13 @@
    "case": "ds1000_case0433",
    "problem_id": 433,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4574,9 +5162,13 @@
    "case": "ds1000_case0434",
    "problem_id": 434,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4625,9 +5217,13 @@
    "case": "ds1000_case0435",
    "problem_id": 435,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "overwrite a fixed row and column with 0",
    "kernel": {
@@ -4667,9 +5263,13 @@
    "case": "ds1000_case0436",
    "problem_id": 436,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4708,9 +5308,13 @@
    "case": "ds1000_case0437",
    "problem_id": 437,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4749,9 +5353,13 @@
    "case": "ds1000_case0438",
    "problem_id": 438,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4799,9 +5407,13 @@
    "case": "ds1000_case0439",
    "problem_id": 439,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4843,9 +5455,13 @@
    "case": "ds1000_case0440",
    "problem_id": 440,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4887,9 +5503,13 @@
    "case": "ds1000_case0441",
    "problem_id": 441,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4932,9 +5552,13 @@
    "case": "ds1000_case0442",
    "problem_id": 442,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -4977,9 +5601,13 @@
    "case": "ds1000_case0443",
    "problem_id": 443,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -5022,9 +5650,13 @@
    "case": "ds1000_case0444",
    "problem_id": 444,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -5066,10 +5698,14 @@
   {
    "case": "ds1000_case0448",
    "problem_id": 448,
-   "status": "duplicate",
-   "reason": "copies 24 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0361",
-   "decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
-   "duplicate_of": "ds1000_case0361",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0361",
+   "former_reason": "copies 24 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0361",
+   "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "data_movement_only": true,
    "data_movement": "interleave two arrays",
    "kernel": {
@@ -5091,21 +5727,30 @@
     "Shapes fixed to DS-1000 test case 2 (x_dists (3, 4), y_dists (3, 4)); the DS-1000 program accepts any shape, a circuit needs one."
    ],
    "kernel_change": null,
-   "float_tolerance": null,
-   "fixture": null,
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 2.3283064365386963e-10,
+    "rtol": 0.0
+   },
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "bda1d37269574a8ab32b2c067907a77b8867046d71e7f67f3eb27d3ca6554425"
+   "kernel_sha256": "bda1d37269574a8ab32b2c067907a77b8867046d71e7f67f3eb27d3ca6554425",
+   "fixture_sha256": "fce8697d6845ad9508727cef754ffecc552aa77990963dc61cf58133df10faa1"
   },
   {
    "case": "ds1000_case0449",
    "problem_id": 449,
-   "status": "duplicate",
-   "reason": "same kernel as 0448 after renaming local variables; 0448 itself duplicates 0361: copies 24 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0361",
-   "decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
-   "duplicate_of": "ds1000_case0361",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0361",
+   "former_reason": "same kernel as 0448 after renaming local variables; 0448 itself duplicates 0361: copies 24 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0361",
+   "former_decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
    "data_movement_only": true,
    "data_movement": "interleave two arrays",
    "kernel": {
@@ -5127,21 +5772,30 @@
     "Shapes fixed to DS-1000 test case 2 (x_dists (3, 4), y_dists (3, 4)); the DS-1000 program accepts any shape, a circuit needs one."
    ],
    "kernel_change": null,
-   "float_tolerance": null,
-   "fixture": null,
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 2.3283064365386963e-10,
+    "rtol": 0.0
+   },
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "d3deae3af09d6ceb024efcadc332f3700770a476ae718c40fdbead931dacce54"
+   "kernel_sha256": "d3deae3af09d6ceb024efcadc332f3700770a476ae718c40fdbead931dacce54",
+   "fixture_sha256": "b72daf0c4241f6cce514d7edd7bea49a494f40a0f4e945debbc6c3b281e4926d"
   },
   {
    "case": "ds1000_case0450",
    "problem_id": 450,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -5192,10 +5846,14 @@
   {
    "case": "ds1000_case0451",
    "problem_id": 451,
-   "status": "degenerate",
-   "reason": "no inputs; returns the constant np.zeros((20, 10, 10, 2))",
-   "decision_source": "hand review, tools/ds1000_perf.py DEGENERATE (audit DB-01, DB-08)",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "degenerate",
+   "former_duplicate_of": null,
+   "former_reason": "no inputs; returns the constant np.zeros((20, 10, 10, 2))",
+   "former_decision_source": "hand review, tools/ds1000_perf.py DEGENERATE (audit DB-01, DB-08)",
    "data_movement_only": false,
    "kernel": {
     "params": [],
@@ -5206,21 +5864,30 @@
     "Body: the reference statements; returns `arr`, the value DS-1000 checks (exec_context: `result = arr`)."
    ],
    "kernel_change": null,
-   "float_tolerance": null,
-   "fixture": null,
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "475632108934b4b087dfc71c7df28ad793d561bda196390f608844b51b04b495"
+   "kernel_sha256": "475632108934b4b087dfc71c7df28ad793d561bda196390f608844b51b04b495",
+   "fixture_sha256": "b03a78de315c33e8cee0a12fe31ff347c787886ad9225e1f75a576bbd0ac7de8"
   },
   {
    "case": "ds1000_case0452",
    "problem_id": 452,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -5262,9 +5929,13 @@
    "case": "ds1000_case0453",
    "problem_id": 453,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -5306,9 +5977,13 @@
    "case": "ds1000_case0454",
    "problem_id": 454,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -5347,12 +6022,147 @@
    "fixture_sha256": "7462b50e360f568d31e1598da1b810f6f2c25ad7b9373a33a459201fea135ef6"
   },
   {
+   "case": "ds1000_case0456",
+   "problem_id": 456,
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "absent",
+   "former_duplicate_of": null,
+   "former_reason": "no performance folder after excluded_numpy_family was removed (audit DB-09)",
+   "former_decision_source": "datasets/FILTERING.md: rules removed on 2026-10-06",
+   "data_movement_only": false,
+   "kernel": {
+    "params": [
+     {
+      "name": "a",
+      "annotation": "Float[Array, \"8 3\"]"
+     }
+    ],
+    "constants": {},
+    "shape_test_case": 2
+   },
+   "adaptations": [
+    "Body: the reference statements; returns `result`, the value DS-1000 checks.",
+    "Shapes fixed to DS-1000 test case 2 (a (8, 3)); the DS-1000 program accepts any shape, a circuit needs one."
+   ],
+   "kernel_change": "new performance folder, mechanically generated from DS-1000",
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "fixture": "fixture.json",
+   "zinnia": {
+    "compiles": null,
+    "error": null,
+    "note": "not probed on this performance variant; selection comes from frozen RQ1 acceptance"
+   },
+   "kernel_sha256": "7dcdecc3efe9b9dd2d90ed65805d5ebfcb46483444334cd7dd00431b636e6a59",
+   "fixture_sha256": "0aa27aca76668a5ee1ba3fc8e1dd47b780aa5e8557efb37cee464fd9b071116b"
+  },
+  {
+   "case": "ds1000_case0457",
+   "problem_id": 457,
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "absent",
+   "former_duplicate_of": null,
+   "former_reason": "no performance folder after excluded_numpy_family was removed (audit DB-09)",
+   "former_decision_source": "datasets/FILTERING.md: rules removed on 2026-10-06",
+   "data_movement_only": false,
+   "kernel": {
+    "params": [
+     {
+      "name": "a",
+      "annotation": "Float[Array, \"8 6\"]"
+     }
+    ],
+    "constants": {
+     "dim": 6
+    },
+    "shape_test_case": 1
+   },
+   "adaptations": [
+    "Body: the reference statements; returns `result`, the value DS-1000 checks.",
+    "Shapes fixed to DS-1000 test case 1 (a (8, 6)); the DS-1000 program accepts any shape, a circuit needs one.",
+    "dim = 6 is a compile-time constant (DS-1000 test case 1 value; it sets the input array width (DS-1000 constructs a with this many columns)). The runtime variant is ds1000_numpy/generated/case0457/kernel.py.",
+    "unused DS-1000 test inputs kept as parameters: dim."
+   ],
+   "kernel_change": "new performance folder, mechanically generated from DS-1000",
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "fixture": "fixture.json",
+   "zinnia": {
+    "compiles": null,
+    "error": null,
+    "note": "not probed on this performance variant; selection comes from frozen RQ1 acceptance"
+   },
+   "kernel_sha256": "1258076d3adaad7339745b19c52f7aee6f2b0edef8d62e08803ad6c5ecae3ece",
+   "fixture_sha256": "bd46156df9859a23ef69c993930221bd6f6491a828e1e066e74e0d16311d60f0"
+  },
+  {
+   "case": "ds1000_case0458",
+   "problem_id": 458,
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "absent",
+   "former_duplicate_of": null,
+   "former_reason": "no performance folder after excluded_numpy_family was removed (audit DB-09)",
+   "former_decision_source": "datasets/FILTERING.md: rules removed on 2026-10-06",
+   "data_movement_only": false,
+   "kernel": {
+    "params": [
+     {
+      "name": "a",
+      "annotation": "Float[Array, \"8 6\"]"
+     }
+    ],
+    "constants": {
+     "dim": 6
+    },
+    "shape_test_case": 1
+   },
+   "adaptations": [
+    "Body: the reference statements; returns `result`, the value DS-1000 checks.",
+    "Shapes fixed to DS-1000 test case 1 (a (8, 6)); the DS-1000 program accepts any shape, a circuit needs one.",
+    "dim = 6 is a compile-time constant (DS-1000 test case 1 value; it sets the input array width (DS-1000 constructs a with this many columns)). The runtime variant is ds1000_numpy/generated/case0458/kernel.py.",
+    "unused DS-1000 test inputs kept as parameters: dim."
+   ],
+   "kernel_change": "new performance folder, mechanically generated from DS-1000",
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "fixture": "fixture.json",
+   "zinnia": {
+    "compiles": null,
+    "error": null,
+    "note": "not probed on this performance variant; selection comes from frozen RQ1 acceptance"
+   },
+   "kernel_sha256": "e0f141010fb1c08ef683048b6cc6c4b2da134c7ef476469ea13b310a60783ed1",
+   "fixture_sha256": "68d9aa09c4f9cc7b09130db2da518b8db597d593bc3e5529f7252798047e5740"
+  },
+  {
    "case": "ds1000_case0459",
    "problem_id": 459,
    "status": "out_of_scope",
    "reason": "non_numeric_data: test input A: array of strings",
    "decision_source": "tools/ds1000_scope.py -> ds1000_numpy/manifest.json (rules: datasets/FILTERING.md)",
    "duplicate_of": null,
+   "former_status": "out_of_scope",
+   "former_duplicate_of": null,
+   "former_reason": "non_numeric_data: test input A: array of strings",
+   "former_decision_source": "tools/ds1000_scope.py -> ds1000_numpy/manifest.json (rules: datasets/FILTERING.md)",
    "data_movement_only": null,
    "kernel": null,
    "adaptations": [],
@@ -5368,6 +6178,10 @@
    "reason": "non_numeric_data: test input A: array of strings",
    "decision_source": "tools/ds1000_scope.py -> ds1000_numpy/manifest.json (rules: datasets/FILTERING.md)",
    "duplicate_of": null,
+   "former_status": "out_of_scope",
+   "former_duplicate_of": null,
+   "former_reason": "non_numeric_data: test input A: array of strings",
+   "former_decision_source": "tools/ds1000_scope.py -> ds1000_numpy/manifest.json (rules: datasets/FILTERING.md)",
    "data_movement_only": null,
    "kernel": null,
    "adaptations": [],
@@ -5380,9 +6194,13 @@
    "case": "ds1000_case0462",
    "problem_id": 462,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -5420,10 +6238,14 @@
   {
    "case": "ds1000_case0463",
    "problem_id": 463,
-   "status": "duplicate",
-   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0462",
-   "decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
-   "duplicate_of": "ds1000_case0462",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0462",
+   "former_reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0462",
+   "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -5440,21 +6262,27 @@
     "Shapes fixed to DS-1000 test case 2 (a (20, 1)); the DS-1000 program accepts any shape, a circuit needs one."
    ],
    "kernel_change": null,
+   "output_kind": "exact",
    "float_tolerance": null,
-   "fixture": null,
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "1c136a0094c02c1c035076204057e5bf91c4ee9ffaf89c112921d66b75320b0f"
+   "kernel_sha256": "1c136a0094c02c1c035076204057e5bf91c4ee9ffaf89c112921d66b75320b0f",
+   "fixture_sha256": "796ca6bf2901bc4fcc3cf8ae4d243d12698a80d782e3c91b59a6a4019fc4bd73"
   },
   {
    "case": "ds1000_case0467",
    "problem_id": 467,
-   "status": "zinnia_rejects",
-   "reason": "ZinniaException: IR generation failed: IRBuilder::ensure_ptr: cannot materialize a composite (List/Tuple) as a scalar IR pointer; got List(CompositeData { elements_type: [Integer], values: [Integer(ScalarValue { static_val: Some(-1), stmt_id: Some(40), value_id: ValueId(55) })], value_id: ValueId(58) }). A composite reached a scalar IR op; the right fix is at the call site (e.g. dispatch a per-element loop or convert to a StaticArray), not silently taking the first element.",
-   "decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "ZinniaException: IR generation failed: IRBuilder::ensure_ptr: cannot materialize a composite (List/Tuple) as a scalar IR pointer; got List(CompositeData { elements_type: [Integer], values: [Integer(ScalarValue { static_val: Some(-1), stmt_id: Some(40), value_id: ValueId(55) })], value_id: ValueId(58) }). A composite reached a scalar IR op; the right fix is at the call site (e.g. dispatch a per-element loop or convert to a StaticArray), not silently taking the first element.",
+   "former_decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "data_movement_only": true,
    "data_movement": "sliding windows (slices)",
    "kernel": {
@@ -5480,20 +6308,25 @@
    "kernel_change": "signature (a: Integer[Array, '4 4'], size: Integer[Array, '2']) -> (a: Integer[Array, '4 4']); added: size = (3, 3)",
    "output_kind": "exact",
    "float_tolerance": null,
-   "fixture": null,
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": false,
     "error": "ZinniaException: IR generation failed: IRBuilder::ensure_ptr: cannot materialize a composite (List/Tuple) as a scalar IR pointer; got List(CompositeData { elements_type: [Integer], values: [Integer(ScalarValue { static_val: Some(-1), stmt_id: Some(40), value_id: ValueId(55) })], value_id: ValueId(58) }). A composite reached a scalar IR op; the right fix is at the call site (e.g. dispatch a per-element loop or convert to a StaticArray), not silently taking the first element."
    },
-   "kernel_sha256": "e4c43f88de3c27d7e834f35a019c2ca2367384db3528c6c16371311a4344c26f"
+   "kernel_sha256": "e4c43f88de3c27d7e834f35a019c2ca2367384db3528c6c16371311a4344c26f",
+   "fixture_sha256": "ecf179c49316fdb3649298e0ec19d6beb6847810bd24748fc7f3d5136407e9f4"
   },
   {
    "case": "ds1000_case0468",
    "problem_id": 468,
-   "status": "duplicate",
-   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0467",
-   "decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
-   "duplicate_of": "ds1000_case0467",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0467",
+   "former_reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0467",
+   "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "data_movement_only": true,
    "data_movement": "sliding windows (slices)",
    "kernel": {
@@ -5517,13 +6350,15 @@
     "size = (3, 3) is a compile-time constant (DS-1000 test case 1 value; it sets the window shape (slice extents of every window)). The runtime variant is ds1000_numpy/generated/case0468/kernel.py."
    ],
    "kernel_change": "signature (a: Integer[Array, '4 4'], size: Integer[Array, '2']) -> (a: Integer[Array, '4 4']); added: size = (3, 3)",
+   "output_kind": "exact",
    "float_tolerance": null,
-   "fixture": null,
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": false,
     "error": "ZinniaException: IR generation failed: IRBuilder::ensure_ptr: cannot materialize a composite (List/Tuple) as a scalar IR pointer; got List(CompositeData { elements_type: [Integer], values: [Integer(ScalarValue { static_val: Some(-1), stmt_id: Some(40), value_id: ValueId(55) })], value_id: ValueId(58) }). A composite reached a scalar IR op; the right fix is at the call site (e.g. dispatch a per-element loop or convert to a StaticArray), not silently taking the first element."
    },
-   "kernel_sha256": "19279059fecc6882581b744fe85d2d99f541fa99bc6cdbf961f7dd945e1cceca"
+   "kernel_sha256": "19279059fecc6882581b744fe85d2d99f541fa99bc6cdbf961f7dd945e1cceca",
+   "fixture_sha256": "a2fdc3562f90226218618b77c2836913deced36608e229680f735d332f82ffa5"
   },
   {
    "case": "ds1000_case0469",
@@ -5532,6 +6367,10 @@
    "reason": "non_finite_values: test input a: test input contains NaN or infinity",
    "decision_source": "tools/ds1000_scope.py -> ds1000_numpy/manifest.json (rules: datasets/FILTERING.md)",
    "duplicate_of": null,
+   "former_status": "out_of_scope",
+   "former_duplicate_of": null,
+   "former_reason": "non_finite_values: test input a: test input contains NaN or infinity",
+   "former_decision_source": "tools/ds1000_scope.py -> ds1000_numpy/manifest.json (rules: datasets/FILTERING.md)",
    "data_movement_only": null,
    "kernel": null,
    "adaptations": [],
@@ -5547,6 +6386,10 @@
    "reason": "non_finite_values: test input a: test input contains NaN or infinity",
    "decision_source": "tools/ds1000_scope.py -> ds1000_numpy/manifest.json (rules: datasets/FILTERING.md)",
    "duplicate_of": null,
+   "former_status": "out_of_scope",
+   "former_duplicate_of": null,
+   "former_reason": "non_finite_values: test input a: test input contains NaN or infinity",
+   "former_decision_source": "tools/ds1000_scope.py -> ds1000_numpy/manifest.json (rules: datasets/FILTERING.md)",
    "data_movement_only": null,
    "kernel": null,
    "adaptations": [],
@@ -5559,9 +6402,13 @@
    "case": "ds1000_case0471",
    "problem_id": 471,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "slice",
    "kernel": {
@@ -5604,9 +6451,13 @@
    "case": "ds1000_case0472",
    "problem_id": 472,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "slice",
    "kernel": {
@@ -5652,6 +6503,10 @@
    "reason": "non_numeric_data: test input CNTS: ragged sequence (setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions. The detected shape was (4,) + inhomogeneous part.)",
    "decision_source": "tools/ds1000_scope.py -> ds1000_numpy/manifest.json (rules: datasets/FILTERING.md)",
    "duplicate_of": null,
+   "former_status": "out_of_scope",
+   "former_duplicate_of": null,
+   "former_reason": "non_numeric_data: test input CNTS: ragged sequence (setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions. The detected shape was (4,) + inhomogeneous part.)",
+   "former_decision_source": "tools/ds1000_scope.py -> ds1000_numpy/manifest.json (rules: datasets/FILTERING.md)",
    "data_movement_only": null,
    "kernel": null,
    "adaptations": [],
@@ -5661,12 +6516,58 @@
    "zinnia": null
   },
   {
+   "case": "ds1000_case0477",
+   "problem_id": 477,
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "absent",
+   "former_duplicate_of": null,
+   "former_reason": "no performance folder after excluded_numpy_family was removed (audit DB-09)",
+   "former_decision_source": "datasets/FILTERING.md: rules removed on 2026-10-06",
+   "data_movement_only": true,
+   "data_movement": "diagonal with zero padding",
+   "kernel": {
+    "params": [
+     {
+      "name": "i",
+      "annotation": "Float[Array, \"4\"]"
+     }
+    ],
+    "constants": {},
+    "shape_test_case": 1
+   },
+   "adaptations": [
+    "Body: the reference statements; returns `i`, the value DS-1000 checks (exec_context: `result = i`).",
+    "Shapes fixed to DS-1000 test case 1 (i (4,)); the DS-1000 program accepts any shape, a circuit needs one."
+   ],
+   "kernel_change": "new performance folder, mechanically generated from DS-1000",
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 2.3283064365386963e-10,
+    "rtol": 0.0
+   },
+   "fixture": "fixture.json",
+   "zinnia": {
+    "compiles": null,
+    "error": null,
+    "note": "not probed on this performance variant; selection comes from frozen RQ1 acceptance"
+   },
+   "kernel_sha256": "40cca801ca02dea69d164eccd17e5e4b5c183230d5489de738412f71e49627f8",
+   "fixture_sha256": "cabf04d61b85e0cd560e8751e8cd53aa0b1baa0ad82905629c2f623d10e6d227"
+  },
+  {
    "case": "ds1000_case0478",
    "problem_id": 478,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -5705,9 +6606,13 @@
    "case": "ds1000_case0480",
    "problem_id": 480,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -5758,9 +6663,13 @@
    "case": "ds1000_case0481",
    "problem_id": 481,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -5811,9 +6720,13 @@
    "case": "ds1000_case0485",
    "problem_id": 485,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -5862,6 +6775,10 @@
    "reason": "killed by signal 9 after 14 s: exceeded the memory cap (MEMRUN_MAX=8G)",
    "decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "duplicate_of": null,
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "killed by signal 9 after 14 s: exceeded the memory cap (MEMRUN_MAX=8G)",
+   "former_decision_source": "Zinnia compile probe (see zinnia_probe at the top of this file)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -5894,9 +6811,13 @@
    "case": "ds1000_case0490",
    "problem_id": 490,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -5948,9 +6869,13 @@
    "case": "ds1000_case0491",
    "problem_id": 491,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -5996,6 +6921,10 @@
    "reason": "non_finite_values: test input s1: test input contains NaN or infinity",
    "decision_source": "tools/ds1000_scope.py -> ds1000_numpy/manifest.json (rules: datasets/FILTERING.md)",
    "duplicate_of": null,
+   "former_status": "out_of_scope",
+   "former_duplicate_of": null,
+   "former_reason": "non_finite_values: test input s1: test input contains NaN or infinity",
+   "former_decision_source": "tools/ds1000_scope.py -> ds1000_numpy/manifest.json (rules: datasets/FILTERING.md)",
    "data_movement_only": null,
    "kernel": null,
    "adaptations": [],
@@ -6011,6 +6940,10 @@
    "reason": "no exclusion rule applies",
    "decision_source": "rules above",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "pad with zeros",
    "kernel": {
@@ -6062,6 +6995,10 @@
    "reason": "no exclusion rule applies",
    "decision_source": "rules above",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "pad with zeros",
    "kernel": {
@@ -6113,6 +7050,10 @@
    "reason": "no exclusion rule applies",
    "decision_source": "rules above",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "pad with a private constant",
    "kernel": {
@@ -6168,6 +7109,10 @@
    "reason": "same kernel as 0495 after renaming local variables",
    "decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
    "duplicate_of": "ds1000_case0495",
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0495",
+   "former_reason": "same kernel as 0495 after renaming local variables",
+   "former_decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
    "data_movement_only": true,
    "data_movement": "pad with zeros",
    "kernel": {
@@ -6206,6 +7151,10 @@
    "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0496",
    "decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "duplicate_of": "ds1000_case0496",
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0496",
+   "former_reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0496",
+   "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
    "data_movement_only": true,
    "data_movement": "pad with zeros (centred)",
    "kernel": {
@@ -6241,9 +7190,13 @@
    "case": "ds1000_case0500",
    "problem_id": 500,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": true,
    "data_movement": "reshape",
    "kernel": {
@@ -6286,9 +7239,13 @@
    "case": "ds1000_case0501",
    "problem_id": 501,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -6333,10 +7290,14 @@
   {
    "case": "ds1000_case0502",
    "problem_id": 502,
-   "status": "duplicate",
-   "reason": "same kernel as 0501 after renaming local variables",
-   "decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
-   "duplicate_of": "ds1000_case0501",
+   "status": "perf",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+   "duplicate_of": null,
+   "former_status": "duplicate",
+   "former_duplicate_of": "ds1000_case0501",
+   "former_reason": "same kernel as 0501 after renaming local variables",
+   "former_decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -6357,21 +7318,30 @@
     "Shapes fixed to DS-1000 test case 2 (a (13, 13, 2), b (13, 13)); the DS-1000 program accepts any shape, a circuit needs one."
    ],
    "kernel_change": null,
-   "float_tolerance": null,
-   "fixture": null,
+   "output_kind": "float",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "fixture": "fixture.json",
    "zinnia": {
     "compiles": true,
     "error": null
    },
-   "kernel_sha256": "c3261df063f0fa0da7d7b5a977e54d0c68bced82db7ccea08b4c4f7ef53ba297"
+   "kernel_sha256": "c3261df063f0fa0da7d7b5a977e54d0c68bced82db7ccea08b4c4f7ef53ba297",
+   "fixture_sha256": "47ba2c11a97a43e9b0baa97eebf4ebfd00a2873666a90695532d438d21d3ac36"
   },
   {
    "case": "ds1000_case0503",
    "problem_id": 503,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -6417,9 +7387,13 @@
    "case": "ds1000_case0504",
    "problem_id": 504,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -6465,9 +7439,13 @@
    "case": "ds1000_case0505",
    "problem_id": 505,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -6513,9 +7491,13 @@
    "case": "ds1000_case0507",
    "problem_id": 507,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -6554,9 +7536,13 @@
    "case": "ds1000_case0508",
    "problem_id": 508,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -6595,9 +7581,13 @@
    "case": "ds1000_case0509",
    "problem_id": 509,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [
@@ -6639,9 +7629,13 @@
    "case": "ds1000_case0510",
    "problem_id": 510,
    "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+   "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
    "duplicate_of": null,
+   "former_status": "perf",
+   "former_duplicate_of": null,
+   "former_reason": "no exclusion rule applies",
+   "former_decision_source": "rules above",
    "data_movement_only": false,
    "kernel": {
     "params": [

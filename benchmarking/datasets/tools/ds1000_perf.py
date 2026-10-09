@@ -1,24 +1,21 @@
 """The DS-1000 performance set: per-case decisions and the kernels they imply.
 
-The performance set is the 162 folders `datasets/ds1000/ds1000_case<NNNN>/`.
-Every case gets exactly one status, decided by the first rule that applies:
+The performance inventory includes every existing folder under
+`datasets/ds1000/`. RQ1_ACCEPTED is the author's frozen acceptance list:
+all of these programs are `perf`, including duplicates and constant-output
+programs. Earlier exclusion decisions remain in each entry's `former_status`
+and `former_duplicate_of`. The eight historical perf programs outside RQ1's
+acceptance list stay perf for downstream analysis to filter.
 
-1. `out_of_scope`  - the DS-1000 program is out of scope (`ds1000_numpy/manifest.json`,
-                     rules in `datasets/FILTERING.md`).
-2. `degenerate`    - no output depends on a private input: every output is fixed by
-                     the parameter types and the constants, so there is nothing to prove.
-3. `duplicate`     - the kernel computes the same function as a case with a lower id:
-                     the same kernel after renaming local variables, or the same outputs
-                     up to a fixed reordering or reshaping (`functional_duplicates`).
-4. `zinnia_rejects`- the current Zinnia compiler refuses the kernel (provisional: it
-                     depends on the compiler commit recorded in the case set).
-5. `perf`          - none of the above.
-
+Other entries retain their historical out_of_scope / duplicate /
+zinnia_rejects decision. No compiler probe is needed to refresh this selection.
+The dictionaries below still document shape constants, degenerate behavior,
+duplicate relationships and data movement; they no longer exclude an accepted
+program from the performance set.
 This module holds the hand-made inputs to those rules (the shape parameters that
 become compile-time constants, the degenerate cases and their reasons, the
 duplicate that is not textual) and derives each kernel from the generator. It
-never writes kernels; `perf_case_set.py --write-kernels` does, and only for the
-folders listed here.
+never writes kernels; `perf_case_set.py --check` checks their generated source.
 """
 
 from __future__ import annotations
@@ -38,6 +35,24 @@ import ds1000_records as records  # noqa: E402
 import generate_ds1000_kernels as generator  # noqa: E402
 
 PERF_DIR = records.DATASETS / "ds1000"
+
+# Author decision 2026-10-09: time every program accepted in RQ1. Frozen from
+# eval-redo/all-work/rq1-ds-accepted.txt (132 programs); no compiler inference.
+# Keep this decision here so performance regeneration is reproducible without
+# an external acceptance-results directory or a Zinnia invocation.
+RQ1_ACCEPTED: frozenset[int] = frozenset({
+    291, 298, 300, 301, 302, 303, 304, 309, 310, 311, 312, 313,
+    314, 317, 318, 319, 320, 321, 322, 323, 324, 325, 326, 329,
+    330, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343, 345,
+    346, 347, 349, 353, 355, 356, 357, 358, 359, 360, 361, 363,
+    364, 365, 368, 369, 370, 373, 374, 375, 381, 382, 383, 385,
+    386, 387, 389, 391, 392, 393, 398, 399, 400, 401, 402, 403,
+    409, 412, 413, 414, 415, 416, 417, 418, 419, 420, 422, 428,
+    429, 430, 431, 433, 434, 435, 436, 437, 438, 439, 440, 441,
+    442, 443, 444, 448, 449, 450, 451, 452, 453, 454, 456, 457,
+    458, 462, 463, 467, 468, 471, 472, 477, 478, 480, 481, 485,
+    490, 491, 500, 501, 502, 503, 504, 505, 507, 508, 509, 510,
+})
 
 # Author decision (BRIEF.md, 2026-10-06): in the cross-system performance set,
 # DS-1000 shape parameters are compile-time constants bound to their DS-1000
@@ -131,7 +146,15 @@ def problem_id(case_dir: Path) -> int:
 def expected_kernel(record: dict[str, Any]) -> generator.GeneratedKernel:
     """The performance-set kernel for an in-scope record."""
     constants = list(SHAPE_CONSTANTS.get(record["problem_id"], {}))
-    return generator.generate(record, constants)
+    kernel = generator.generate(record, constants)
+    # Existing author-approved contract (FILTERING.md, permutation inputs;
+    # commit 2561803d): uninitialized inverse-permutation cells are undefined
+    # unless the private index array is a permutation. Keep the generator's
+    # acceptance form unchanged; reproduce the performance contract here.
+    if record["problem_id"] in (318, 319):
+        kernel.source = kernel.source.replace(
+            "@zk_circuit\n", "@zk_circuit\n@requires(lambda a, permutation: is_permutation(permutation))\n")
+    return kernel
 
 
 def kernel_ast(source: str) -> str:

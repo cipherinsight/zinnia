@@ -3,7 +3,7 @@
  "version": 1,
  "description": "The NPBench and Pythran entry functions Zinnia accepts that have an audited SP1/RISC Zero port: the zkVM performance comparison beyond DS-1000. Written by datasets/tools/npbench_pythran_perf.py; do not edit.",
  "rules": {
-  "status_order": "A case gets the first status whose rule applies, in this order: not_in_acceptance_results, zinnia_rejects, no_zkvm_port, port_excluded, port_not_audited, perf.",
+  "status_order": "The author RQ1 acceptance expansion in rq1_selection_overrides takes precedence; otherwise: A case gets the first status whose rule applies, in this order: not_in_acceptance_results, zinnia_rejects, no_zkvm_port, port_excluded, port_not_audited, perf.",
   "not_in_acceptance_results": "The acceptance results given to the generator have no row for the entry function.",
   "zinnia_rejects": "The acceptance run did not accept the entry function with outputs equal to NumPy's (its outcome and construct are in the reason).",
   "no_zkvm_port": "The program's zkvm.rs has no module for the function, or the zkVM crates do not register it (run baselines/zkvm_common/sync_cases.py).",
@@ -32,12 +32,12 @@
  },
  "counts": {
   "npbench": {
-   "zinnia_rejects": 24,
-   "perf": 30
+   "zinnia_rejects": 22,
+   "perf": 32
   },
   "pythran": {
-   "perf": 49,
-   "zinnia_rejects": 61
+   "perf": 50,
+   "zinnia_rejects": 60
   }
  },
  "cases": [
@@ -300,8 +300,8 @@
   },
   {
    "case": "npbench_deep_learning_resnet_resnet__resnet_basicblock",
-   "status": "zinnia_rejects",
-   "reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s",
+   "status": "perf",
+   "reason": "accepted in RQ1; author decision 2026-10-09 to include every accepted program",
    "group": "npbench",
    "program": "npbench_deep_learning_resnet_resnet",
    "function": "resnet_basicblock",
@@ -324,7 +324,11 @@
    "zkvm_port": {
     "file": "datasets/npbench/npbench_deep_learning_resnet_resnet/zkvm.rs",
     "sha256": "913476c34f9f0339de43ff6faf80684807896186a85b32c2bf7b9edb86b5b7b6"
-   }
+   },
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s",
+   "decision_source": "author RQ1 acceptance expansion (ALL_SETUP.md); existing acceptance fields are historical"
   },
   {
    "case": "npbench_deep_learning_softmax_softmax__softmax",
@@ -774,8 +778,8 @@
   },
   {
    "case": "npbench_polybench_floyd_warshall_floyd_warshall__kernel",
-   "status": "zinnia_rejects",
-   "reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s",
+   "status": "perf",
+   "reason": "accepted in RQ1; author decision 2026-10-09 to include every accepted program",
    "group": "npbench",
    "program": "npbench_polybench_floyd_warshall_floyd_warshall",
    "function": "kernel",
@@ -797,7 +801,11 @@
    "zkvm_port": {
     "file": "datasets/npbench/npbench_polybench_floyd_warshall_floyd_warshall/zkvm.rs",
     "sha256": "54c55ab95a66035436ab843a1f14b0a35e386cc9c2725cdf7bf052fcba78d674"
-   }
+   },
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s",
+   "decision_source": "author RQ1 acceptance expansion (ALL_SETUP.md); existing acceptance fields are historical"
   },
   {
    "case": "npbench_polybench_gemm_gemm__kernel",
@@ -1790,8 +1798,8 @@
   },
   {
    "case": "pythran_ccopy__CCOPY",
-   "status": "zinnia_rejects",
-   "reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s",
+   "status": "perf",
+   "reason": "accepted in RQ1; author decision 2026-10-09 to include every accepted program",
    "group": "pythran",
    "program": "pythran_ccopy",
    "function": "CCOPY",
@@ -1813,7 +1821,11 @@
    "zkvm_port": {
     "file": "datasets/pythran/pythran_ccopy/zkvm.rs",
     "sha256": "75a0184bfce5e23ac7f13ce87f2bbb0aa0a39a3e385217c6c6ac713ea569faa7"
-   }
+   },
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s",
+   "decision_source": "author RQ1 acceptance expansion (ALL_SETUP.md); existing acceptance fields are historical"
   },
   {
    "case": "pythran_cdotc__CDOTC",
@@ -4301,5 +4313,14 @@
     "sha256": "95961a8df0c179cd8c26935e4f1c3a63b2b167886bfecec56edbe85acb7f58a4"
    }
   }
- ]
+ ],
+ "rq1_selection_overrides": {
+  "date": "2026-10-09",
+  "cases": [
+   "npbench_deep_learning_resnet_resnet__resnet_basicblock",
+   "npbench_polybench_floyd_warshall_floyd_warshall__kernel",
+   "pythran_ccopy__CCOPY"
+  ],
+  "reason": "include every RQ1-accepted program; retain former status and historical acceptance observations; no new compiler or proof run"
+ }
 }

@@ -4,25 +4,22 @@ with its status, the reason and the source of the decision, its adaptations,
 the output tolerance, and what Zinnia did with it.
 
     perf_case_set.py --check          # kernels equal the generator's output?
-    perf_case_set.py --write          # probe Zinnia, verify fixtures, write the case set
+    perf_case_set.py --write          # apply frozen RQ1 decisions; NumPy fixture checks only
 
-`--write` compiles every in-scope kernel with Zinnia (status `zinnia_rejects`
-is provisional and records the commit it was probed at), builds the fixtures
-of the cases that need them (`perf_fixtures.py`), mock-proves them, and writes
-`fixture.json` for every `perf` case. Set `MEMRUN` to a memory-capping wrapper
-(see `zinnia_probe.py`) when running it.
+`--write` refreshes the inventory from the frozen RQ1_ACCEPTED decision in
+`ds1000_perf.py`, retaining historical compiler observations without running
+Zinnia. It verifies the generated fixtures with NumPy. By default it writes
+only the case set; `--write-fixtures` also materializes the generated fixtures.
+Historical statuses and duplicate links are retained in `former_*` fields.
+No compilation, witness generation, key generation or proof is performed.
 """
 
 from __future__ import annotations
 
 import argparse
-import ast
-import datetime
 import hashlib
 import json
-import subprocess
 import sys
-import tempfile
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -34,12 +31,8 @@ import ds1000_perf as perf  # noqa: E402
 import ds1000_records as records  # noqa: E402
 import generate_ds1000_kernels as generator  # noqa: E402
 import perf_fixtures as fixtures  # noqa: E402
-import zinnia_probe  # noqa: E402
 
 CASE_SET = records.DATASETS / "case_sets" / "ds1000_perf.json"
-REPO = records.DATASETS.parents[1]
-PREVIOUS_KERNELS = "11cd122"   # bench-reorg: the kernels before this case set
-Q = 2 ** 32
 
 STATUS_ORDER = ["out_of_scope", "degenerate", "duplicate", "zinnia_rejects", "perf"]
 
@@ -47,7 +40,9 @@ COPY_TOLERANCE = {"atol": 2.0 ** -32, "rtol": 0.0}
 ARITHMETIC_TOLERANCE = {"atol": 1e-6, "rtol": 1e-6}
 
 RULES = {
-    "status_order": "A case gets the first status whose rule applies, in this order: " + ", ".join(STATUS_ORDER) + ".",
+    "status_order": "RQ1_ACCEPTED in tools/ds1000_perf.py takes precedence: every accepted program is perf. "
+                    "Other programs retain their historical status (including the eight legacy perf cases "
+                    "rejected in RQ1). Former exclusion rules below are historical, not new filters.",
     "out_of_scope": "The DS-1000 program is out of scope in ds1000_numpy/manifest.json: it imports or uses a module "
                     "other than numpy (incl. submodules) and math (the author's rule), or another rule of "
                     "datasets/FILTERING.md fires (non-numeric data, NaN/infinity, ...), checked on the solution text "
@@ -66,11 +61,14 @@ RULES = {
                       "the Noir backend synthesizes the circuit (error recorded). Provisional: compiler fixes on other "
                       "branches may change it. A case only one backend refuses stays perf and is listed under "
                       "zinnia_backend_gaps.",
-    "perf": "None of the above. These are the cases for the cross-system performance comparison.",
+    "perf": "Every program in tools/ds1000_perf.py RQ1_ACCEPTED, plus the eight retained legacy perf cases. "
+            "Duplicates and constant-output programs are included; former_status and former_duplicate_of "
+            "preserve the original classification. Analysis filters legacy perf programs rejected in RQ1.",
     "kernels": "Every in-scope kernel is the output of tools/generate_ds1000_kernels.py (shapes from the record's "
                "last DS-1000 test case; each dtype the narrowest of Boolean < Integer < Float < Complex holding the "
                "parameter in every test case; returns the value DS-1000 checks) with the shape parameters listed "
-               "in tools/ds1000_perf.py bound as compile-time constants. tools/perf_case_set.py --check verifies it.",
+               "in tools/ds1000_perf.py bound as compile-time constants and the existing 0318/0319 permutation "
+               "preconditions documented in FILTERING.md. tools/perf_case_set.py --check verifies it.",
     "shape_constants": "Author decision 2026-10-06: in the performance set, DS-1000 shape parameters (values that fix "
                        "an array shape or a trip count) are compile-time constants with their DS-1000 test-case "
                        "value. The runtime variants are in the acceptance set (ds1000_numpy/generated/).",
@@ -109,48 +107,6 @@ CASE_NOTES: dict[int, str] = {
 # ---------------------------------------------------------------------------
 
 
-def git(*args: str) -> str:
-    return subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True, check=True).stdout
-
-
-def previous_kernel(case: str) -> str | None:
-    try:
-        return git("show", f"{PREVIOUS_KERNELS}:benchmarking/datasets/ds1000/{case}/kernel.py")
-    except subprocess.CalledProcessError:
-        return None
-
-
-def _kernel_def(source: str) -> ast.FunctionDef:
-    return next(n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.FunctionDef) and n.name == "kernel")
-
-
-def kernel_change(old: str | None, new: str) -> str | None:
-    """A one-line description of how the kernel changed, or None if only comments/formatting did."""
-    if old is None:
-        return "new kernel"
-    if perf.kernel_ast(old) == perf.kernel_ast(new):
-        return None
-    old_def, new_def = _kernel_def(old), _kernel_def(new)
-    parts = []
-    old_sig = ", ".join(ast.unparse(a) for a in old_def.args.args)
-    new_sig = ", ".join(ast.unparse(a) for a in new_def.args.args)
-    if old_sig != new_sig:
-        parts.append(f"signature ({old_sig}) -> ({new_sig})")
-    old_body = [ast.unparse(s) for s in old_def.body]
-    new_body = [ast.unparse(s) for s in new_def.body]
-    added = [s for s in new_body if s not in old_body]
-    removed = [s for s in old_body if s not in new_body]
-    if removed:
-        parts.append("removed: " + "; ".join(removed))
-    if added:
-        parts.append("added: " + "; ".join(added))
-    old_helpers = [ast.unparse(n) for n in ast.parse(old).body if isinstance(n, ast.FunctionDef) and n.name != "kernel"]
-    new_helpers = [ast.unparse(n) for n in ast.parse(new).body if isinstance(n, ast.FunctionDef) and n.name != "kernel"]
-    if old_helpers != new_helpers:
-        parts.append("helper functions changed")
-    return "; ".join(parts) or "formatting of statements"
-
-
 def dtype_notes(record: dict[str, Any], kernel: generator.GeneratedKernel) -> list[str]:
     notes = []
     cases = [records.evaluate_test_case(record, k) for k in records.test_case_ids(record)]
@@ -186,7 +142,7 @@ def adaptations(record: dict[str, Any], kernel: generator.GeneratedKernel) -> li
 
 
 # ---------------------------------------------------------------------------
-# Output check of the Zinnia mock against NumPy (fixture verification)
+# Output kinds and NumPy fixture tolerance
 # ---------------------------------------------------------------------------
 
 
@@ -203,58 +159,6 @@ def expected_values(output: Any) -> tuple[list[int], list[float]]:
     return ints, floats
 
 
-def public_values(mock: dict[str, Any]) -> tuple[list[int], list[float]]:
-    ints, floats = [], []
-    for entry in mock["publics"]:
-        name, _, value = entry.partition("=")
-        (floats.append(int(value) / Q) if name.startswith("public_f_") else ints.append(int(value)))
-    for entry in mock["elided"]:
-        (ints.append(int(entry["Int"])) if "Int" in entry else floats.append(float(entry["Float"])))
-    return ints, floats
-
-
-def contained(expected: list[float], available: list[float], tol: dict[str, float]) -> list[float]:
-    """Multiset containment within tolerance (sorted sweep, nearest unused
-    candidate); returns the expected values that found no partner."""
-    pool = sorted(available)
-    used = [False] * len(pool)
-    missing = []
-    start = 0
-    for e in sorted(expected):
-        bound = tol["atol"] + tol["rtol"] * abs(e)
-        while start < len(pool) and (used[start] or pool[start] < e - bound):
-            start += 1
-        best = None
-        for j in range(start, len(pool)):
-            if pool[j] > e + bound:
-                break
-            if not used[j] and (best is None or abs(pool[j] - e) < abs(pool[best] - e)):
-                best = j
-        if best is None:
-            missing.append(e)
-        else:
-            used[best] = True
-    return missing
-
-
-def mock_check(mock: dict[str, Any] | None, output: Any, tol: dict[str, float] | None) -> str | None:
-    """None when the mock accepted the witness and its publics contain every NumPy output value."""
-    if mock is None:
-        return "not run"
-    if mock.get("error"):
-        return mock["error"]
-    if not mock["satisfied"]:
-        return "mock prover rejected the honest witness"
-    exp_ints, exp_floats = expected_values(output)
-    pub_ints, pub_floats = public_values(mock)
-    missing_ints = contained([float(v) for v in exp_ints], [float(v) for v in pub_ints] + pub_floats,
-                             {"atol": 0.0, "rtol": 0.0})
-    missing_floats = contained(exp_floats, pub_floats + [float(v) for v in pub_ints], tol or COPY_TOLERANCE)
-    if missing_ints or missing_floats:
-        return f"public values do not contain NumPy outputs {(missing_ints + missing_floats)[:6]}"
-    return None
-
-
 def tolerance_for(pid: int, output: Any) -> dict[str, float] | None:
     _, floats = expected_values(output)
     if not floats:
@@ -267,166 +171,95 @@ def tolerance_for(pid: int, output: Any) -> dict[str, float] | None:
 # ---------------------------------------------------------------------------
 
 
-def extension_sha256() -> str:
-    return sha256(next((REPO / "zinnia").glob("_zinnia_core*.so")))
-
-
-def probe_info() -> dict[str, Any]:
-    commit = git("rev-parse", "HEAD").strip()
-    return {
-        "commit": commit,
-        "compiler_sources": "unchanged since e58e9a6 (src/, zinnia/ as of the eval-redo snapshot); "
-                            f"git diff e58e9a6 -- src zinnia is {'empty' if not git('diff', 'e58e9a6', '--', 'src', 'zinnia').strip() else 'NOT empty'}",
-        "extension": "zinnia/_zinnia_core*.so built from those sources (release, halo2-base and noir backends)",
-        "extension_sha256": extension_sha256(),
-        "date": datetime.date.today().isoformat(),
-        "how": "tools/zinnia_probe.py: ZKCircuit.from_method(kernel).compile() in a child process, 300 s limit, "
-               "8 GB memory cap; fixtures mock-proved with backend='mock'",
-    }
-
-
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def build_entries(write_fixtures: bool, reuse: dict[str, Any] | None) -> list[dict[str, Any]]:
-    """`reuse` maps case -> entry of an earlier case set made with the same Zinnia
-    extension; its Zinnia results are kept for kernels and fixtures with the same hash."""
+    """Apply the author's frozen RQ1 decision without invoking the compiler.
+
+    `reuse` is the historical inventory, not a cache authorizing new probes.
+    Existing non-accepted entries keep their status; in particular the eight
+    legacy perf entries rejected in RQ1 are not removed. Regeneration is
+    idempotent and never overwrites the first recorded former classification.
+    """
+    if reuse is None:
+        if not CASE_SET.exists():
+            raise SystemExit("the historical case set is required to preserve former decisions")
+        reuse = {e["case"]: e for e in json.loads(CASE_SET.read_text())["cases"]}
     manifest = records.load_manifest()
-    in_scope = {perf.problem_id(d): d for d in perf.case_dirs() if manifest[perf.problem_id(d)]["status"] == "in_scope"}
-    kernels = {pid: perf.expected_kernel(manifest[pid]) for pid in in_scope}
-    duplicates = perf.find_duplicates({pid: k.source for pid, k in kernels.items()
-                                       if pid not in perf.DEGENERATE})
-    built: dict[int, fixtures.Fixture] = {}
-    candidates: dict[int, perf.Candidate] = {}
-    for pid, case_dir in in_scope.items():
-        if pid in perf.DEGENERATE or pid in duplicates or pid not in fixtures.DRAWS:
-            continue
-        built[pid] = fixtures.build_fixture(case_dir, manifest[pid])
-        candidates[pid] = perf.Candidate(
-            case_dir / "kernel.py", built[pid].data["parameters"],
-            [zinnia_probe.fixture_args(built[pid].data, name) for name in fixtures.INPUT_NAMES],
-            pid in perf.DATA_MOVEMENT_ONLY)
-    functional = perf.functional_duplicates(candidates)
-    for pid, dup in list(duplicates.items()):      # point every duplicate at its class's lowest id
-        if dup.of in functional:
-            root = functional[dup.of]
-            duplicates[pid] = perf.Duplicate(root.of, f"{dup.reason}; {dup.of:04d} itself duplicates "
-                                                      f"{root.of:04d}: {root.reason}")
+    folders = {perf.problem_id(d): d for d in perf.case_dirs()}
+    missing = perf.RQ1_ACCEPTED - folders.keys()
+    if missing:
+        raise SystemExit(f"RQ1-accepted programs without performance folders: {sorted(missing)}")
+    missing_folders = set(reuse) - {d.name for d in folders.values()}
+    if missing_folders:
+        raise SystemExit(f"historical cases without performance folders: {sorted(missing_folders)}")
     entries = []
-    for case_dir in perf.case_dirs():
-        pid = perf.problem_id(case_dir)
-        record = manifest[pid]
-        entry: dict[str, Any] = {"case": case_dir.name, "problem_id": pid}
-        print(case_dir.name, flush=True)
-        if record["status"] != "in_scope":
-            evidence = "; ".join(f"{rule}: {', '.join(items)}" for rule, items in record["scope_rules"].items())
-            entry.update(status="out_of_scope", reason=evidence,
-                         decision_source="tools/ds1000_scope.py -> ds1000_numpy/manifest.json (rules: datasets/FILTERING.md)",
-                         duplicate_of=None, data_movement_only=None, kernel=None, adaptations=[],
-                         kernel_change="kernel.py kept for reference with an OUT OF SCOPE header; it is not used",
-                         float_tolerance=None, zinnia=None, fixture=None)
-            entries.append(entry)
-            continue
-        kernel = kernels[pid]
-        entry["kernel"] = {"params": [{"name": n, "annotation": t.annotation()} for n, t in kernel.params],
-                           "constants": {n: generator.plain_value(np.asarray(v).tolist()) for n, v in kernel.constants.items()},
-                           "shape_test_case": kernel.shape_case}
-        entry["adaptations"] = adaptations(record, kernel)
-        entry["kernel_change"] = kernel_change(previous_kernel(case_dir.name), kernel.source)
-        entry["duplicate_of"] = None
-        entry["data_movement_only"] = pid in perf.DATA_MOVEMENT_ONLY
-        if entry["data_movement_only"]:
-            entry["data_movement"] = perf.DATA_MOVEMENT_ONLY[pid]
-
-        entry["kernel_sha256"] = sha256(case_dir / "kernel.py")
-        cached = reuse.get(case_dir.name) if reuse is not None else None
-        if cached and cached.get("kernel_sha256") == entry["kernel_sha256"] and cached.get("zinnia"):
-            probe = {"compiled": cached["zinnia"]["compiles"], "compile_error": cached["zinnia"]["error"]}
-        else:
-            cached = None
-            probe = zinnia_probe.run(case_dir / "kernel.py")
-        entry["zinnia"] = {"compiles": probe["compiled"], "error": probe["compile_error"]}
-
-        if pid in perf.DEGENERATE:
-            entry.update(status="degenerate", reason=perf.DEGENERATE[pid],
-                         decision_source="hand review, tools/ds1000_perf.py DEGENERATE (audit DB-01, DB-08)")
-        elif pid in duplicates:
-            dup = duplicates[pid]
-            entry.update(status="duplicate", reason=dup.reason, duplicate_of=f"ds1000_case{dup.of:04d}",
-                         decision_source="tools/ds1000_perf.py find_duplicates" +
-                         (" (SEMANTIC_DUPLICATES, hand review)" if pid in perf.SEMANTIC_DUPLICATES else
-                          " (equal kernels after renaming)"))
-        elif pid in functional:
-            dup = functional[pid]
-            entry.update(status="duplicate", reason=dup.reason, duplicate_of=f"ds1000_case{dup.of:04d}",
-                         decision_source="tools/ds1000_perf.py functional_duplicates (numeric test on the "
-                                         "fixture inputs)")
-        elif not probe["compiled"]:
-            entry.update(status="zinnia_rejects", reason=probe["compile_error"],
-                         decision_source="Zinnia compile probe (see zinnia_probe at the top of this file)")
-        else:
-            entry.update(status="perf", reason="no exclusion rule applies", decision_source="rules above")
-
-        entry["float_tolerance"] = None
-        entry["fixture"] = None
-        if entry["status"] in ("perf", "zinnia_rejects") and pid in fixtures.DRAWS:
-            fixture = built[pid]
-            entry["float_tolerance"] = tolerance_for(pid, fixture.outputs["B"])
-            entry["output_kind"] = "float" if entry["float_tolerance"] else "exact"
+    for pid, case_dir in sorted(folders.items()):
+        previous = reuse.get(case_dir.name)
+        if previous is None and pid not in perf.RQ1_ACCEPTED:
+            raise SystemExit(f"{case_dir.name}: needs an explicit selection decision")
+        # Deep-copy because compiler observations are historical evidence.
+        entry = json.loads(json.dumps(previous)) if previous else {
+            "case": case_dir.name, "problem_id": pid, "status": "absent",
+            "reason": "no performance folder after excluded_numpy_family was removed (audit DB-09)",
+            "decision_source": "datasets/FILTERING.md: rules removed on 2026-10-06",
+            "duplicate_of": None,
+            "zinnia": {"compiles": None, "error": None,
+                       "note": "not probed on this performance variant; selection comes from frozen RQ1 acceptance"},
+        }
+        entry.setdefault("former_status", entry["status"])
+        entry.setdefault("former_duplicate_of", entry.get("duplicate_of"))
+        entry.setdefault("former_reason", entry.get("reason"))
+        entry.setdefault("former_decision_source", entry.get("decision_source"))
+        if pid in perf.RQ1_ACCEPTED:
+            if manifest[pid]["status"] != "in_scope":
+                raise SystemExit(f"{case_dir.name}: frozen RQ1 acceptance conflicts with current scope")
+            kernel = perf.expected_kernel(manifest[pid])
+            if (case_dir / "kernel.py").read_text() != kernel.source:
+                raise SystemExit(f"{case_dir.name}: kernel differs from generated performance variant")
+            if previous and previous.get("kernel_sha256") != sha256(case_dir / "kernel.py"):
+                raise SystemExit(f"{case_dir.name}: kernel changed; historical compiler evidence cannot be reused")
+            entry.update(status="perf", duplicate_of=None,
+                         reason="accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+                         decision_source="author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+                         data_movement_only=pid in perf.DATA_MOVEMENT_ONLY)
+            if pid in perf.DATA_MOVEMENT_ONLY:
+                entry["data_movement"] = perf.DATA_MOVEMENT_ONLY[pid]
+            else:
+                entry.pop("data_movement", None)
+            if not previous:
+                entry["kernel"] = {
+                    "params": [{"name": n, "annotation": t.annotation()} for n, t in kernel.params],
+                    "constants": {n: generator.plain_value(np.asarray(v).tolist())
+                                  for n, v in kernel.constants.items()},
+                    "shape_test_case": kernel.shape_case,
+                }
+                entry["adaptations"] = adaptations(manifest[pid], kernel)
+                entry["kernel_change"] = "new performance folder, mechanically generated from DS-1000"
+                entry["kernel_sha256"] = sha256(case_dir / "kernel.py")
+            fixture = fixtures.build_fixture(case_dir, manifest[pid])
             fixture_hash = hashlib.sha256(json.dumps(fixture.data, sort_keys=True).encode()).hexdigest()
-            if entry["status"] == "perf" and cached and cached.get("fixture_sha256") == fixture_hash \
-                    and "mock_vs_numpy" in cached["zinnia"] and "backends" in cached["zinnia"]:
-                entry["fixture"] = "fixture.json"
-                entry["fixture_sha256"] = fixture_hash
-                entry["zinnia"]["mock_vs_numpy"] = cached["zinnia"]["mock_vs_numpy"]
-                entry["zinnia"]["backends"] = cached["zinnia"].get("backends", {})
-                if write_fixtures:
-                    (case_dir / "fixture.json").write_text(fixtures.format_fixture(fixture.data), encoding="utf-8")
-            elif entry["status"] == "perf" and cached and cached["status"] == "zinnia_rejects":
-                entry.update(status="zinnia_rejects", reason=cached["reason"], decision_source=cached["decision_source"])
-            elif entry["status"] == "perf":
-                runs = {name: run_mock(case_dir, fixture, name) for name in fixtures.INPUT_NAMES}
-                mocks = {name: run[0] for name, run in runs.items()}
-                backends = runs["B"][1]
-                errors = [m.get("error") for m in mocks.values()]
-                if all(errors):
-                    entry.update(status="zinnia_rejects", reason=f"compiles, but Zinnia refuses to build a witness "
-                                 f"for either fixture input: {errors[0]}",
-                                 decision_source="Zinnia mock prove of both fixture inputs (zinnia_probe)")
-                elif backends and not any(v.startswith("ok") for v in backends.values()):
-                    entry.update(status="zinnia_rejects", reason="compiles, but no backend synthesizes the circuit: "
-                                 + "; ".join(f"{b}: {v}" for b, v in backends.items()),
-                                 decision_source="Zinnia emit_structural for every backend (zinnia_probe)")
-                else:
-                    entry["zinnia"]["backends"] = backends
-                    if write_fixtures:
-                        (case_dir / "fixture.json").write_text(fixtures.format_fixture(fixture.data),
-                                                               encoding="utf-8")
-                    entry["fixture"] = "fixture.json"
-                    entry["fixture_sha256"] = fixture_hash
-                    entry["zinnia"]["mock_vs_numpy"] = {
-                        name: mock_check(mocks[name], fixture.outputs[name], entry["float_tolerance"]) or "ok"
-                        for name in fixtures.INPUT_NAMES}
-        elif entry["status"] == "perf":
-            raise SystemExit(f"{case_dir.name}: perf case without a fixture draw")
-        if write_fixtures and entry["status"] != "perf":
-            (case_dir / "fixture.json").unlink(missing_ok=True)
+            # Keep old probe observations only for the very same fixture. A
+            # selection change must not silently relabel stale witness evidence.
+            if entry.get("fixture_sha256") != fixture_hash:
+                for key in ("mock_vs_numpy", "backends"):
+                    if key in entry["zinnia"]:
+                        entry.setdefault("former_zinnia_fixture_evidence", {})[key] = entry["zinnia"].pop(key)
+            entry.update(fixture="fixture.json", fixture_sha256=fixture_hash,
+                         float_tolerance=tolerance_for(pid, fixture.outputs["B"]))
+            entry["output_kind"] = "float" if entry["float_tolerance"] else "exact"
+            if write_fixtures:
+                (case_dir / "fixture.json").write_text(fixtures.format_fixture(fixture.data), encoding="utf-8")
         entries.append(entry)
     return entries
 
 
-def run_mock(case_dir: Path, fixture: fixtures.Fixture, name: str) -> tuple[dict[str, Any], dict[str, str]]:
-    """Mock-prove input `name`; for input B also synthesize every backend's circuit."""
-    with tempfile.TemporaryDirectory() as scratch:
-        path = Path(scratch) / "fixture.json"
-        path.write_text(json.dumps(fixture.data), encoding="utf-8")
-        result = zinnia_probe.run(case_dir / "kernel.py", path, name, structural=name == "B")
-    return result["mock"] or {"error": result["compile_error"]}, result.get("backends", {})
-
-
 def ordered(entry: dict[str, Any]) -> dict[str, Any]:
-    keys = ["case", "problem_id", "status", "reason", "decision_source", "duplicate_of", "data_movement_only",
+    keys = ["case", "problem_id", "status", "reason", "decision_source", "duplicate_of",
+            "former_status", "former_duplicate_of", "former_reason", "former_decision_source",
+            "former_zinnia_fixture_evidence", "data_movement_only",
             "data_movement", "kernel", "adaptations", "kernel_change", "output_kind", "float_tolerance", "fixture",
             "zinnia", "kernel_sha256", "fixture_sha256"]
     return {k: entry[k] for k in keys if k in entry}
@@ -434,14 +267,22 @@ def ordered(entry: dict[str, Any]) -> dict[str, Any]:
 
 def write_case_set(entries: list[dict[str, Any]]) -> None:
     counts = Counter(e["status"] for e in entries)
+    previous = json.loads(CASE_SET.read_text())
     document = {
         "case_set": "ds1000_perf",
-        "version": 1,
+        "version": 2,
         "description": "The DS-1000 cross-system performance set: every datasets/ds1000/ds1000_case<NNNN> folder "
                        "with one status. Written by tools/perf_case_set.py; edit the decisions in tools/ds1000_perf.py "
                        "and tools/perf_fixtures.py, not this file.",
         "rules": RULES,
-        "zinnia_probe": probe_info(),
+        "selection": {
+            "source": "tools/ds1000_perf.py RQ1_ACCEPTED (frozen from eval-redo/all-work/rq1-ds-accepted.txt)",
+            "accepted_programs": len(perf.RQ1_ACCEPTED),
+            "how": "author selection update; NumPy fixture validation only; no new Zinnia probes",
+            "historical_evidence": "zinnia_probe and per-case zinnia fields are retained historical observations, "
+                                   "not validation of the present compiler or the new selection",
+        },
+        "zinnia_probe": previous.get("zinnia_probe"),
         "counts": {status: counts[status] for status in STATUS_ORDER},
         "data_movement_only_perf_cases": sum(1 for e in entries if e["status"] == "perf" and e.get("data_movement_only")),
         "zinnia_backend_gaps": {
@@ -482,20 +323,18 @@ def check_kernels() -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--check", action="store_true", help="compare kernels with the generator output")
-    parser.add_argument("--write", action="store_true", help="probe Zinnia and write the case set and fixtures")
+    parser.add_argument("--write", action="store_true", help="apply frozen RQ1 decisions and write the case set (no compiler)")
+    parser.add_argument("--write-fixtures", action="store_true",
+                        help="with --write, also materialize accepted cases' fixtures; default writes only the case set")
     parser.add_argument("--reuse-zinnia", action="store_true",
-                        help="keep Zinnia results of the existing case set for unchanged kernels and fixtures "
-                             "(only when the Zinnia extension is the same binary)")
+                        help="compatibility flag: historical compiler observations are always retained without new probes")
     args = parser.parse_args()
     if args.check:
         sys.exit(1 if check_kernels() else 0)
+    if args.write_fixtures and not args.write:
+        parser.error("--write-fixtures requires --write")
     if args.write:
-        reuse = None
-        if args.reuse_zinnia and CASE_SET.exists():
-            previous = json.loads(CASE_SET.read_text())
-            if previous["zinnia_probe"].get("extension_sha256") == extension_sha256():
-                reuse = {e["case"]: e for e in previous["cases"]}
-        entries = build_entries(write_fixtures=True, reuse=reuse)
+        entries = build_entries(write_fixtures=args.write_fixtures, reuse=None)
         write_case_set(entries)
         print(json.dumps(Counter(e["status"] for e in entries), indent=1))
 

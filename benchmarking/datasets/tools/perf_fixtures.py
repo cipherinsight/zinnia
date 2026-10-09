@@ -644,6 +644,29 @@ def _(rs):
     return {"im": im}
 
 
+# Restored RQ1-accepted textual twins have the same input names, shapes and
+# distributions. build_fixture seeds with the new case id, so these are their
+# own draws, not copies of another case's stored fixture.
+for _pid, _twin in ((313, 309), (330, 329), (341, 340), (342, 340),
+                    (356, 355), (365, 363), (370, 368), (430, 428),
+                    (449, 448), (502, 501)):
+    _spec = DRAWS[_twin]
+    draw(_pid, _spec.test_case, _spec.how, _spec.require, _spec.outputs_may_match)(_spec.fn)
+
+# Constant-output programs still receive distinct private inputs when they
+# have any. No-input programs necessarily have equal empty A/B inputs.
+draw(291, 4, "shape of DS-1000 test 4 (2, 5, 5, 2); values rand instead of arange, "
+     "which the shape-only kernel never reads", outputs_may_match=True)(
+    lambda rs: {"a": rs.rand(2, 5, 5, 2)})
+draw(349, 1, "DS-1000 test 1: a = rand(8, 6), retaining its seeded shape; output is the width",
+     outputs_may_match=True)(lambda rs: {"a": rs.rand(8, 6)})
+draw(373, 2, "DS-1000 test 2: grades = (rand(50) - 0.5) * 100; output depends only on len(grades)",
+     outputs_may_match=True)(lambda rs: {"grades": (rs.rand(50) - 0.5) * 100})
+for _pid in (400, 401, 451):
+    draw(_pid, 1, "DS-1000 test 1: no kernel inputs; output is a fixed array",
+         outputs_may_match=True)(lambda rs: {})
+
+
 # ---------------------------------------------------------------------------
 # Fixture construction and checks
 # ---------------------------------------------------------------------------
@@ -747,7 +770,8 @@ def build_fixture(case_dir: Path, record: dict[str, Any]) -> Fixture:
             notes.append(f"input {name}: {attempt} sample(s) rejected before one exercised the paths")
         inputs[name] = values
         outputs[name] = output
-    if all(np.array_equal(np.asarray(inputs["A"][n]), np.asarray(inputs["B"][n])) for n, _ in kernel.params):
+    if kernel.params and all(np.array_equal(np.asarray(inputs["A"][n]), np.asarray(inputs["B"][n]))
+                             for n, _ in kernel.params):
         raise FixtureError("inputs A and B are equal")
     if same_output(outputs["A"], outputs["B"]) and not spec.outputs_may_match:
         raise FixtureError("outputs on A and B are equal (degenerate kernel or uninformative inputs?)")
