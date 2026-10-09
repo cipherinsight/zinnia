@@ -25,9 +25,9 @@ no shared tools or repository fixtures are modified. Checks use `--fixture-root`
 | 0343 | 1200 + 360 = 1560 | 1200 + 360 = 1560 | 3004 | 3004 | pass/pass/pass/pass |
 | 0356 | 3807 + 837 = 4644 | 6913 + 1107 = 8020 | 3376 | 3731 | pass/pass/pass/pass |
 | 0357 | 3807 + 837 = 4644 | 6913 + 1107 = 8020 | 3376 | 3731 | pass/pass/pass/pass |
-| 0365 | 5599 + 824 = 6423 | 15117 + 3376 = 18493 | 3891 | 4804 | pass/pass/pass/pass |
 | 0370 | 1335 + 345 = 1680 | 2768 + 675 = 3443 | 3005 | 3024 | pass/pass/pass/pass |
 | 0382 | 66135 + 12570 = 78705 | 616600 + 124550 = 741150 | 5366 | 125038 | pass/pass/pass/pass |
+| 0365 | 5194 + 824 = 6018 | 15117 + 3376 = 18493 | 3891 | 4804 | pass/pass/pass/pass |
 
 ## Case notes
 
@@ -40,8 +40,9 @@ no shared tools or repository fixtures are modified. Checks use `--fixture-root`
 
 - **0357 (twin 0355):** Reused four circuits and reversed axis 0 after ascending argsort. Optimized payload outputs swap first/last; literal code explicitly creates the reversed index array before static indices and gathers. This reverses ties as well (it is not a descending stable sort).
 
-- **0365 (twin 0363):** Same insertion kernel. Reused thermometer-hint optimized construction and direct prefix/element/suffix literal construction. Optimized Halo2 now reuses each adjacent-output product, as Noir already did. Added a Q32 window check after integer-to-float conversion in all four files: the twin omitted this output-overflow guard. Both variants accept insertion endpoints and wrap negative positions in [-100,100]. The literal local sign test and per-output comparisons retain fresh bounds. Lint cast warnings are inside the constrained-and-checked optimized Noir hint only. Additional non-proving checks in both variants/backends accepted pos=-100/100 with inserted values -2^31/2^31-1, and rejected pos=101 and inserted value 2^31.
 
 - **0370 (twin 0368):** Same isclose/all kernel. Optimized tolerance hoisted per column, self-row omitted; literal full 3x3 broadcast computes tolerance per element then a running all reduction. Reused Q(1e-5)=42950 and floor-rescaled products. Optimized Noir uses abs_int64 for differences (equivalent domain to the twin abs followed by window), matching the other files. Retained the documented shared-gadget domain: abs operands and differences must have magnitude below 2^63, including rejection of Q32 i64::MIN. This is the inherited arithmetic contract, not a claim of unrestricted binary64 NumPy equivalence.
 
 - **0382 (twin 0381):** Removed output reversal and the redundant full-length slice in all four circuits. Optimized Halo2 retains the packed-key merge-exchange network; optimized Noir retains a hinted permutation pinned by bounded indices and strictly increasing (value,index) keys. Literal versions bubble-sort all 100 elements with indices (4950 comparisons), then directly return them. Stable ties follow the twin and L5; NumPy default argsort does not promise stable ties at this length, so the fixture check (distinct random values) does not certify its unspecified tie ordering. No rounding operations.
+
+- **0365 (twin 0363):** Same insertion kernel. Reused thermometer-hint optimized construction and direct prefix/element/suffix literal construction. Optimized Halo2 keeps the twin fused multiply-add/subtract gates; Noir keeps its shared adjacent-output products. Added a Q32 window check after integer-to-float conversion in all four files: the twin omitted this output-overflow guard. Both variants accept insertion endpoints and wrap negative positions in [-100,100]. The literal local sign test and per-output comparisons retain fresh bounds. Lint cast warnings are inside the constrained-and-checked optimized Noir hint only. Additional non-proving checks in both variants/backends accepted pos=-100/100 with inserted values -2^31/2^31-1, and rejected pos=101 and inserted value 2^31.

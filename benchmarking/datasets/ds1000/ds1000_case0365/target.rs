@@ -5,7 +5,7 @@
 //! raises IndexError otherwise (no proof). With `P` the insertion point and
 //! `g_k = [P < k]`, output `k` is `a[k]` (k < P), `element` (k = P) or
 //! `a[k-1]` (k > P), i.e. `a[k] + g_{k+1} (e - a[k]) - g_k (e - a[k-1])`:
-//! one product per input and no comparison; adjacent outputs reuse it. The thermometer `g` is a hint
+//! two products per output and no comparison. The thermometer `g` is a hint
 //! pinned by `insertion_point` (no range check).
 
 use crate::prelude::*;
@@ -23,17 +23,12 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let elem = q.int_to_float(ctx, element);
     q.bound(ctx, elem); // The inserted float must fit the Q32 window.
     let g = insertion_point(&q, ctx, pos, N);
-    // Reuse h[k] = g[k] * (elem - a[k]) in both adjacent outputs.
+    // d[k] = e - a[k]; out[k] = a[k] + g_{k+1} d[k] - g_k d[k-1], g_0 = 0.
+    let d: Vec<Cell> = a.iter().map(|x| q.sub(ctx, elem, *x)).collect();
     let mut result = Vec::with_capacity(N + 1);
-    let mut previous = q.int_const(ctx, 0);
     for k in 0..=N {
-        let h = if k < N {
-            let difference = q.sub(ctx, elem, a[k]);
-            q.gate.mul(ctx, g[k], difference)
-        } else { elem };
-        let current = if k < N { q.add(ctx, a[k], h) } else { h };
-        result.push(q.sub(ctx, current, previous));
-        previous = h;
+        let up = if k < N { q.gate.mul_add(ctx, g[k], d[k], a[k]) } else { elem };
+        result.push(if k > 0 { q.gate.sub_mul(ctx, up, g[k - 1], d[k - 1]) } else { up });
     }
     out.floats(&result);
     Ok(())
