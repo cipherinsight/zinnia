@@ -286,6 +286,22 @@ def _timed(timings: dict, name: str, fn):
 
 # ------------------------------------------------------------------- modes
 
+def stats(case_dir: Path, function: str | None, workdir: Path, target: str, timings: dict) -> dict:
+    """Compile and count gates, without witness, keys, or proofs.
+
+    Keep a separate package so counting never mutates an existing setup's
+    package/key pairing in the same workdir.
+    """
+    pkg = stage_package(case_dir, workdir / "stats", function)
+    name = _package_name(pkg)
+    _timed(timings, "compile_s", lambda: compile_package(pkg))
+    bytecode = pkg / "target" / f"{name}.json"
+    gates_json = _timed(timings, "gates_s", lambda: _run(
+        [BB, "gates", *SCHEME, "-b", str(bytecode), "-t", target], pkg))
+    gates = json.loads(gates_json[gates_json.index("{"):])["functions"][0]
+    return {"gates": gates["circuit_size"], "acir_opcodes": gates["acir_opcodes"]}
+
+
 def setup(case_dir: Path, function: str | None, workdir: Path, target: str, timings: dict) -> dict:
     for stale in ("pkg", "keys", "proof"):
         shutil.rmtree(workdir / stale, ignore_errors=True)
@@ -364,7 +380,7 @@ def main() -> int:
     import argparse
 
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("mode", choices=["setup", "prove", "verify"])
+    ap.add_argument("mode", choices=["stats", "setup", "prove", "verify"])
     ap.add_argument("--case", type=Path, required=True)
     ap.add_argument("--function", help="the entry function of an NPBench/Pythran program folder")
     ap.add_argument("--workdir", type=Path, required=True)
@@ -381,7 +397,10 @@ def main() -> int:
     timings: dict = {}
     ok = False
     try:
-        if a.mode == "setup":
+        if a.mode == "stats":
+            report.update(stats(a.case, a.function, a.workdir, a.target, timings))
+            ok = True
+        elif a.mode == "setup":
             report.update(setup(a.case, a.function, a.workdir, a.target, timings))
             ok = True
         elif a.mode == "prove":
