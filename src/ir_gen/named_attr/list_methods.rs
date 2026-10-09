@@ -55,7 +55,10 @@ impl IRGenerator {
         }
         let visited_args = ctx.args;
         let v = match ctx.member {
-            "append" => self.list_method_append(var, visited_args),
+            // These operations store the object itself. The legacy numeric
+            // argument shim turns ndarrays into nested lists, losing both
+            // their shape and their link to the original array storage.
+            "append" => self.list_method_append(var, ctx.args_orig),
             "extend" => self.list_method_extend(var, visited_args),
             "pop" => self.list_method_pop(var, visited_args),
             "remove" => self.list_method_remove(var, visited_args),
@@ -90,7 +93,7 @@ impl IRGenerator {
             "reverse" => self.list_method_reverse(var),
             "count" => self.list_method_count(var, visited_args),
             "index" => self.list_method_index(var, visited_args),
-            "insert" => self.list_method_insert(var, visited_args),
+            "insert" => self.list_method_insert(var, ctx.args_orig),
             _ => return None,
         };
         Some(v)

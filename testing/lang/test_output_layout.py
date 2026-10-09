@@ -131,3 +131,34 @@ def test_layout_survives_serialization():
     assert restored.get_output_layout() == program.get_output_layout()
     assert restored.get_public_inputs() == program.get_public_inputs()
     assert json.loads(program.serialize())["public_layout"]["outputs"] == program.get_output_layout()
+
+
+@pytest.mark.parametrize('store', ['parts.append(view)', 'parts.insert(0, view)'])
+def test_list_storage_preserves_ndarray_shape_and_alias(store):
+    source = f'''
+def kernel(a: NDArray[int, 3, 4]):
+    parts = []
+    view = a[:2, 1:]
+    {store}
+    a[0, 1] = 99
+    return parts, parts[0].shape
+'''
+    assert_layout_matches_numpy(source, np.arange(12).reshape(3, 4))
+
+
+@pytest.mark.parametrize('column_first', [False, True])
+def test_clipped_windows_keep_each_array_part(column_first):
+    outer, inner = ('j', 'i') if column_first else ('i', 'j')
+    source = f'''
+def kernel(a: NDArray[int, 4, 4]):
+    parts = []
+    for {outer} in range(4):
+        for {inner} in range(4):
+            parts.append(a[max(0, i-1):min(4, i+2), max(0, j-1):min(4, j+2)])
+    return parts
+'''
+    a = np.arange(16).reshape(4, 4)
+    assert_layout_matches_numpy(source, a)
+    layout = compile_kernel(source).get_output_layout()
+    assert len(layout) == 16
+    assert all(len(part['shape']) == 2 for part in layout)
