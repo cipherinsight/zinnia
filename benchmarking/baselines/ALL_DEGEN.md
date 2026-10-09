@@ -27,6 +27,8 @@ sizing, advice + lookup (total), and unpadded Noir gates, respectively.
 
 | ds1000_case0400 | 0 + 0 (0) | 0 + 0 (0) | 34 | 34 | All A/B outputs, mocks/executes, counts pass; TOOL-BLOCKED domain-target discovery |
 
+| ds1000_case0401 | 0 + 0 (0) | 0 + 0 (0) | 34 | 34 | All A/B outputs, mocks/executes, counts pass; TOOL-BLOCKED domain-target discovery |
+
 ## Interpretations and per-case review
 
 - 0291: signature shape is [2,5,5,2]. Reads array metadata, not values;
@@ -40,3 +42,6 @@ sizing, advice + lookup (total), and unpadded Noir gates, respectively.
 
 - 0400: empty rank-one array; no inputs or public cells. Both variants retain
   the empty construction. Equal counts are expected. No twin reused.
+
+- 0401: shape (3,0), flattened empty output; no inputs or public cells.
+  Adapted 0400 construction comment and shape semantics; equal counts expected.
