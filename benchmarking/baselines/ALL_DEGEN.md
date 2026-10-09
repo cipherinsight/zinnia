@@ -33,6 +33,8 @@ sizing, advice + lookup (total), and unpadded Noir gates, respectively.
 
 | ds1000_case0373 | 1350 + 400 (1750) | 133650 + 31025 (164675) | 3029 | 28125 | All A/B outputs, mocks/executes, counts pass; TOOL-BLOCKED automatic domain-target discovery; explicit tamper rejected in all four |
 
+| ds1000_case0413 | 1732 + 240 (1972) | 4161 + 200 (4361) | 3149 | 3480 | PASS all four, including domain rejection |
+
 ## Interpretations and per-case review
 
 - 0291: signature shape is [2,5,5,2]. Reads array metadata, not values;
@@ -62,3 +64,22 @@ sizing, advice + lookup (total), and unpadded Noir gates, respectively.
   Explicit grades:0 tampering is rejected by both mocks and both Noir executions;
   evidence 0373-explicit-domain.json supplements the checker's failed search.
   No twin reused. No new witness hints or extra output assertions.
+
+- 0413: complex fixture values use [real,imag] pairs; both parts are Q32 and
+  checked in the signed 64-bit window. This follows Inputs::complexes,
+  hw_check.reference and prover_toml conventions. No magnitude approximation
+  or dropping the imaginary part: the test is exact imaginary-code != 0.
+  The public length counts complex elements (0..10), then 20 interleaved
+  component cells with zero padding, declared dynamic float[10x2].
+  Optimized uses shared two-component compaction; imaginary payload is already
+  zero for rejected items, so its redundant mask multiplication is omitted.
+  Literal materializes the projection/mask, running counts, and all 100
+  input/output equality pairs, summing both components. It is larger on both
+  backends. Input/output plumbing adapted from 0412; literal scan idiom from
+  0442, computation derived from this kernel. No duplicate twin assumed.
+  Extra no-proof checks pass with zero/all selected values, negative imaginary
+  parts, and +/-2^-32 imaginary values. Both variants reject explicit x:1
+  imaginary-domain tampering in addition to the standard real-part tamper.
+  Evidence: 0413-{opt,lit,edge-opt,edge-lit}.json and
+  0413-imaginary-domain.json. Historical case-set zinnia_rejects status is
+  retained by the checker; no compiler was run to reassess it.
