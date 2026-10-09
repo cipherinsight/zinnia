@@ -101,6 +101,12 @@ def main() -> int:
     report = make_report(checks, frozen["npbench_pythran"], args.reference_root.resolve())
     report["provenance"] = {"zinnia": {"path": str(args.zinnia.resolve()), "sha256": digest(args.zinnia)},
                             "checks": [{"path": str(p.resolve()), "sha256": digest(p)} for p in args.checks]}
+    shared = [*(BENCH / "baselines/halo2_hw/src").rglob("*.rs"),
+              *(BENCH / "baselines/noir_hw/src").rglob("*.nr"),
+              *(BENCH / "baselines/hw_check").glob("*.py"),
+              BENCH / "baselines/halo2_hw/Cargo.lock"]
+    report["provenance"]["shared_sources"] = {
+        str(p.relative_to(BENCH.parent)): digest(p) for p in sorted(shared)}
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=2) + "\n")
     lines = ["# NPBench/Pythran circuit sizes", "", report["scope"] + ".", "",
