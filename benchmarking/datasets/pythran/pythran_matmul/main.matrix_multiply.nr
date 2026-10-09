@@ -1,6 +1,8 @@
 // pythran_matmul__matrix_multiply (Pythran matmul), Noir baseline.
 // Kernel: the triple loop r += m0[i][k] * m1[k][j] for m0: Float[N, K],
 // m1: Float[K, P], returning the N x P products as nested lists.
+// (zero(n, m) builds m rows of n, so the kernel runs only for N == P, as at
+// the fixture's shape.)
 // Each output accumulates its products into one variable, so it is one
 // reduction rescaled once (NPB_BASELINES.md section 5.3).
 // @outputs: float[N * P]
