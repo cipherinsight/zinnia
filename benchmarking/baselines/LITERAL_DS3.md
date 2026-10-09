@@ -1,5 +1,7 @@
 # Literal DS3 baselines
 
+**0420 update (2026-10-09):** The appended amended-L4 revalidation supersedes the historical withdrawn status, counts and blocker for 0420 below. Both literal files are now present and both checkers pass. Other cases were not revalidated in this update.
+
 **Status:** 18 cases pass both non-proving checkers: 0403, 0409, 0414, 0416, 0422, 0425, 0426, 0428, 0429, 0433, 0434, 0435, 0438, 0439, 0440, 0441, 0442, 0443. Six complete implementations cannot receive a passing Halo2 checker verdict under the current fresh-bound rules: 0412, 0415, 0431, 0436, 0437, 0444; Noir passes for all six. Case 0420 is not finishable under the combined eager-evaluation and valid-input-domain requirements and has no final literal files.
 
 All 25 cases were assessed; 24 retain complete literal implementations in both systems. Case 0420 was withdrawn after a concrete domain failure. Validation uses original shapes, `--no-prove`, `MEMRUN_MAX=8G`, `CARGO_BUILD_JOBS=3`, `dev-fast`, and `HW_CHECK_LOCK=/home/zhantong/Projects/zinnia-project/eval-redo/literal-work/lock-a`. Literal builds use `HW_VARIANT=literal` and `target-literal`; optimized builds unset the variant and use `target`. All workdirs/logs are under `/home/zhantong/Projects/zinnia-project/eval-redo/literal-work/ds3/`.
@@ -132,3 +134,23 @@ SHA-256 of each kernel and final literal sources (full hashes).
 | 0442 | 203d0ff788ac2b0c5c37f12fe94f140d72eeef18b5460fb8c9467abc79ad0001 | ab7a67e05ce4d51e95a6b94f63d2f5796048c58e0e71e4a7bbefd94e96123f16 | 67bb430f0a3c420cdf729886e3eb74a11bd3d02264e7dfd8e8e28b9a757de661 |
 | 0443 | fd93ca95a23424d73622c9880e800ee3c9e660113a911bc838a087018deaa6fa | 977fc3ba37b0c22a06993d89a5d76690222f0c46cd807a4015179984f695cb88 | 73c6a45de58717a4b726fa4efa72d0f1c71ffb0d756abc6cdfe47d9e68337496 |
 | 0444 | e3df526c71b0c7c3b32f7c07da6fa5ed820b2c87cabee8213e5c60734954eae9 | 74700f46271f878bd07b9a3e7519b167960a36e53444be8937fd3eceb1cdecc3 | 72c92ed6496140ea07a78c064f66b3339994a76ae548f4cceb1db4715a350bb5 |
+
+## 0420 amended-L4 revalidation (2026-10-09)
+
+| Case | Literal Halo2 | Literal Noir | Optimized Halo2 | Optimized Noir | H2/Noir verdict (literal; optimized) | Audit and notes |
+|---|---:|---:|---:|---:|---|---|
+| 0420 | 635 + 165 = 800 | 2877 | 529 + 142 = 671 | 2880 | P/P; P/P | Reused b127bbf4; amended L4 selects zero into the inactive polynomial. Independent powers, fresh comparison bounds, separate arithmetic and nested selects retained. Edge fixture accepted by both systems with output 1.0. **Not larger: Noir.** |
+
+The only computation change from the withdrawn candidate is the L4 guard: the polynomial operand is zero when `below | above`, and x otherwise. Either enclosing clamp makes the polynomial inactive; both powers can overflow for valid clamped inputs, so the guard protects both. The two powers remain independently computed in source, with no shared square, reassociation, added range checks or custom hints. Input/output plumbing is unchanged. This is the amended rule's required domain protection, not an optimization. Reviewed both files against kernel.py and L1-L7; source commit: `8ae252d1`.
+
+The current checker exempts literal comparison bounds from its repeated-input-check failure. Halo2 still reports two repeated checks, as required by L5/L6; it now receives a genuine pass. No checker or library was modified. The previous 0420 domain blocker is resolved by amended L4. Noir's 2877 gates are three fewer than the optimized baseline's 2880: the sources retain different select/control-flow forms, and Noir can eliminate the independently written duplicate square. This is permitted compiler optimization, not source-level CSE; no compiler IR was inspected to attribute the exact three-gate difference.
+
+Verified with `hw_check.check 0420 --no-prove` for literal and optimized variants: A/B outputs match NumPy, Halo2 mocks satisfy constraints, Noir witness execution succeeds, and each system rejects the checker's `x:0` out-of-domain tamper. Literal Halo2 automatic k/lookup bits: 7/6; optimized: 6/5. These are automatic-size counts, not a common-lookup-width comparison. `HW_VARIANT=literal`, `CARGO_TARGET_DIR=target-literal`, `CARGO_BUILD_JOBS=3`, `MEMRUN_MAX=8G`, `dev-fast`, and `HW_CHECK_LOCK=/home/zhantong/Projects/zinnia-project/eval-redo/literal-work/lock-fix` were used; optimized validation unsets the variant and uses `target`.
+
+Reused the prior external edge fixture with B = `(x=10000, x_min=0, x_max=1)`. Explicit Halo2 `mock --fixture ... --input B` and Noir `execute --fixture ... --input B` both return `ok: true`, publics `[1.0]`; Halo2 also reports `satisfied: true` and no failures. The result is exactly the selected NumPy upper bound. Lint: zero errors. No proof, setup, key generation, proof verification, Zinnia run, IR/size inspection, timing experiment or scaling run was performed. This verifies the specified fixtures and source audit, not exhaustive all-input equivalence.
+
+Evidence and all workroots/TMPDIR are under `/home/zhantong/Projects/zinnia-project/eval-redo/literal-work/fix0420/`: `build.log`, `check.json`, `check.log`, `edge-fixture.json`, `edge-results.json`, `lint.log`, `build-optimized.log`, `optimized.json`, and `optimized.log`. Python emitted the existing harmless virtualenv-prefix warnings. An initial restoration command used the crate directory for a root-relative destination and failed before writing files; its ensuing build failed on the missing source. Restoration and both final builds then succeeded. No resource cap was hit.
+
+| Case | kernel.py SHA-256 | target.literal.rs SHA-256 | main.literal.nr SHA-256 |
+|---|---|---|---|
+| 0420 | bf00cc91d37e058c50a65333591ae7ad7d3d09d1becc2220e935d9d03f373929 | 1403d7ad40ad2933e9e9f6723226a871dc3b21c4a5870dc5d8050bf0a2351552 | 1254329b6b999b38eb74d4e26d89486a5145375da4a6096189c8a10c0ba0e5c3 |
