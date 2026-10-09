@@ -1,13 +1,13 @@
 // pythran_wdist__slow_wdist (Pythran wdist), Noir baseline.
 // Kernel: D[ii, jj] = sqrt(sum_k ((A[k, ii] - B[k, jj]) / W[k, ii]) ** 2) on
 // A: Float[K, MM], B: Float[K, NN], W: Float[K, MM]. Each quotient is a float
-// division (NumPy materializes wdiff); (wdiff ** 2).sum() is one reduction,
-// rescaled once (NPB_BASELINES.md section 5, rule 3); the root is the exact
+// division (NumPy materializes wdiff); each square rounds before the sum,
+// followed by the exact
 // floor square root. A divisor W[k, ii] serves every jj, so its sign test runs
 // once (`abs`, then `div_by_abs`: `div` with the magnitude hoisted).
 // @outputs: float[MM * NN]
 
-use noir_hw::{abs, check_inputs, div_by_abs, rescale, sqrt};
+use noir_hw::{abs, check_inputs, div_by_abs, mul, sqrt};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global K: u32 = 2; // = A_0
@@ -33,9 +33,9 @@ fn main(A: [[Field; MM]; K], B: [[Field; NN]; K], W: [[Field; MM]; K]) -> pub [[
             let mut acc: Field = 0;
             for k in 0..K {
                 let wdiff = div_by_abs(A[k][ii] - B[k][jj], W[k][ii], w_abs[k][ii]);
-                acc += wdiff * wdiff;
+                acc += mul(wdiff, wdiff);
             }
-            d[ii][jj] = sqrt(rescale(acc));
+            d[ii][jj] = sqrt(acc);
         }
     }
     d

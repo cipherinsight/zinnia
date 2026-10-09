@@ -1,8 +1,8 @@
 //! pythran_wdist__slow_wdist (Pythran wdist), halo2-base baseline.
 //! Kernel: `D[ii, jj] = sqrt(sum_k ((A[k, ii] - B[k, jj]) / W[k, ii]) ** 2)`
 //! on A: Float[K, MM], B: Float[K, NN], W: Float[K, MM]. Each quotient is a
-//! float division (NumPy materializes `wdiff`); `(wdiff ** 2).sum()` is one
-//! reduction, rescaled once (NPB_BASELINES.md section 5, rule 3); the root is
+//! float division (NumPy materializes `wdiff`); each square rounds before
+//! the sum, followed by
 //! the exact floor square root. A divisor `W[k, ii]` serves every `jj`, so its
 //! sign test runs once (`q.abs`, then `div_by_abs`: `q.div` with the
 //! magnitude hoisted out of the loop over `jj`).
@@ -34,8 +34,9 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
                     q.div_by_abs(ctx, diff, w[k * MM + ii].cell, w_abs[k * MM + ii]).cell
                 })
                 .collect();
-            let squares = q.dot(ctx, &wdiff, &wdiff);
-            d.push(q.sqrt(ctx, squares.cell).cell);
+            let squares: Vec<Cell> = wdiff.iter().map(|x| q.mul(ctx, *x, *x).cell).collect();
+            let total = q.sum(ctx, squares);
+            d.push(q.sqrt(ctx, total).cell);
         }
     }
     out.floats(&d);

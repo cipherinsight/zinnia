@@ -5,20 +5,18 @@
 // NumPy's cov: the mean of each variable (sum / NO, a float division by the
 // integer count: floor(sum / NO) in Q32), the deviations (exact), the product
 // of the deviation matrix with its transpose (each element one reduction,
-// rescaled once) and c *= 1 / (NO - 1) (a rounded product with the constant
-// 1 / (NO - 1), as NumPy multiplies by the reciprocal). The product is
-// symmetric, so each pair is computed once and output twice.
-// M is read only by the precondition (NPB_BASELINES.md section 5, rule 2): it
-// is proven to lie in [0, 1024], which implies its domain (an int64).
+// rescaled once), then direct division by NO - 1. Multiplication by a
+// quantized reciprocal changes Q32 rounding and is not used. Symmetric
+// entries reuse the identical ordered products as exact commutative CSE.
+// M is checked against the source precondition 0 <= M <= 1024.
 // @outputs: float[NV * NV]
 
-use noir_hw::{check_inputs, divmod_pos, mul, rescale};
+use noir_hw::{check_inputs, divmod_pos, rescale};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global NO: u32 = 16; // = data_0
 global NV: u32 = 14; // = data_1
 // round(2^32 / (NO - 1)), the Q32 code of 1 / (NO - 1).
-global RECIPROCAL: Field = 286331153; // = (2 ** 33 // (data_0 - 1) + 1) // 2
 
 fn main(M: Field, float_n: Field, data: [[Field; NV]; NO]) -> pub [[Field; NV]; NV] {
     let _ = float_n;
@@ -47,7 +45,7 @@ fn main(M: Field, float_n: Field, data: [[Field; NV]; NO]) -> pub [[Field; NV]; 
             for o in 0..NO {
                 acc += deviations[a][o] * deviations[b][o];
             }
-            let c = mul(rescale(acc), RECIPROCAL);
+            let (c, _) = divmod_pos(rescale(acc), (NO - 1) as Field);
             cov[a][b] = c;
             cov[b][a] = c;
         }

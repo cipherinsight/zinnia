@@ -1,0 +1,341 @@
+{
+  "scope": "Original1x only. Arithmetic/source review, not acceptance-domain certification. Explicit source np.dot/@ and supported array-mul sum remain fused; scalar products and **2 must retain original rounding.",
+  "entries": [
+    {
+      "case": "npbench_compute_compute__compute",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Integer clip and exact integer arithmetic; no floating rescale.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "npbench_deep_learning_conv2d_bias_conv2d__conv2d_bias",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Source array multiply followed by sum retains product provenance and one fused reduction. Bias add is exact. float32 is still modeled as Q32, a shared policy/domain caveat.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "npbench_polybench_atax_atax__kernel",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Preserves (A @ x) @ A, with a separate rounded dot at each stage.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "npbench_polybench_bicg_bicg__kernel",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Preserves two source matrix-vector products.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "npbench_polybench_cholesky_cholesky__kernel",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Preserves sequential row factorization; each explicit np.dot, subtraction, division, sqrt remains.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "npbench_polybench_covariance2_covariance2__kernel",
+      "arithmetic_status": "corrected",
+      "evidence": "Direct quotient by NO-1, not multiplication by quantized reciprocal; exact symmetric product CSE retained.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "npbench_polybench_durbin_durbin__kernel",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Preserves alpha/beta recurrence, dot, and old-y snapshot before reversed-vector update.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "npbench_polybench_gemm_gemm__kernel",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Rounds alpha*A before @B; beta*C separately rounded.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "npbench_polybench_gemver_gemver__kernel",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Rounds outer products, then beta*y before @A and alpha*A before @x; mutation order preserved.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "npbench_polybench_gesummv_gesummv__kernel",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Preserves source matrix-vector reductions and scalar products around them.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "npbench_polybench_gramschmidt_gramschmidt__kernel",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Explicit source dots stay fused; per-element projection updates rounded separately; ordered mutation maintained.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "npbench_polybench_k2mm_k2mm__kernel",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Preserves ((alpha*A)@B)@C and beta*D rounding stages.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "npbench_polybench_k3mm_k3mm__kernel",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Preserves three matrix products and intermediate rounding.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "npbench_polybench_mvt_mvt__kernel",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Preserves two matrix-vector products and additions to original vectors.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "npbench_polybench_symm_symm__kernel",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Rounds alpha*B before further product; temp2 uses explicit source dot; mutation order preserved.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "npbench_polybench_syr2k_syr2k__kernel",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Rounds A[j,k]*alpha and B[j,k]*alpha before second products. Reuses identical first products only.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "npbench_polybench_syrk_syrk__kernel",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Rounds alpha*A[i,k] then its product with A[j,k]; beta*C separate.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "npbench_polybench_trisolv_trisolv__kernel",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Preserves forward solve: source dot, subtraction, quotient in sequence.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "npbench_polybench_trmm_trmm__kernel",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Explicit source dots feed in-place B, followed by rounded alpha multiplication.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "npbench_scattering_self_energies_scattering_self_energies__scattering_self_energies",
+      "arithmetic_status": "corrected",
+      "evidence": "Four rounded real products per complex product; exact factor/gather CSE retained.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "npbench_weather_stencils_vadv_vadv__vadv",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Forward/back sweeps preserved; dyadic constant products represented by quotient/remainder decomposition. Specialized reciprocal divisor bounds need acceptance-domain audit.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_allpairs__sqr_dists",
+      "arithmetic_status": "corrected",
+      "evidence": "Direct coordinate differences, separately rounded squares; original output ordering.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_allpairs__sqr_dists_loops",
+      "arithmetic_status": "corrected",
+      "evidence": "Direct coordinate differences, separately rounded squares; original output ordering.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_create_grid__create_grid",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Input copies and literal zero column; no numerical arithmetic.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_cronbach__cronbach",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Variance primitive is centered dot followed by quotient; source variance path already uses fused ir_dot_f. Final constant ratio multiplied separately.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_d2q9_nxnyns__one_time_step",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Source streamed moments/relaxation/reconstruction retained. Exact integer combinations and dyadic divisions preserve product rounding; live input subsets reviewed.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_euclidean_distance_square__euclidean_distance_square",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Source explicitly uses norm/dot identity. np.square is array mul, retaining product provenance for fused row sum; unlike **2 spelling.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_fbcorr__fbcorr",
+      "arithmetic_status": "corrected",
+      "evidence": "Round each tap product before accumulating into the existing output.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_harris__harris",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Preserves A,B,C, determinant, and (k*tr)*tr rounded intermediates; no algebraic determinant cancellation.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_hasting__fweb",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Preserves left-to-right products/divisions; identical predation expressions reused locally.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_l2norm__l2_norm",
+      "arithmetic_status": "corrected",
+      "evidence": "Round each square before row reduction and sqrt.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_lap__laplacian",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Preserves nine updates including source index-0 quirk; each coefficient product rounded; exact repeated product CSE.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_lapl3d__laplacien",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Integer-weight stencil exact; absolute value, max, epsilon, division preserved. Reduced-width fraction quotient needs acceptance-domain audit.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_ln__ln",
+      "arithmetic_status": "corrected",
+      "evidence": "MSB-first power schedule: d6=d3*d3; d7=d6*d, each product rounded.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_matmul__matrix_multiply",
+      "arithmetic_status": "corrected",
+      "evidence": "Round each scalar product in the original triple loop.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_multi_export__a",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Identity output/data movement.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_multitype__check",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Source integer truthiness selects x or x+x; returns y unchanged.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_multitype__check2",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "One-element bool truthiness selects x or x+x; bool checked.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_multitype__times",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Exact integer multiplication under same explicit 0..1024 preconditions.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_pairwise__pairwise",
+      "arithmetic_status": "corrected",
+      "evidence": "Every ordered pair; rounded squares; no triangular algorithm.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_periodic_bc__periodic_bc",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Preserves copy from plane -2 to plane0; overwritten input plane is dead.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_perm__permutations",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Enumerates constant index permutations; no data-dependent ordering replacement.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_pythagorean_triples__next_pythagorean_triples",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Exact same constant integer matrix and reshape ordering.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_reverse_cumsum__reverse_cumsum",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Reverse cumulative exact sums in source order.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_rosen__rosen",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Every elementwise square rounded; factor100 exact; no norm-style fusion.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_smoothing__smoothing",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Each of two scalar recurrence products rounded; only 1-alpha hoisted.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_specialconvolve__specialconvolve",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Retains shared three-row sums then three-column sums and center subtraction; integer arithmetic.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_spectraldns__add_pressure_diffusion",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Each live complex-times-real product rounded before sum; final unreturned dU write eliminated according to output contract.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_spectraldns__cross2",
+      "arithmetic_status": "source_review_no_mismatch_found",
+      "evidence": "Each complex-times-real component rounded before subtraction; multiply by1j is exact sign/swap.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_sumarray3d__summation",
+      "arithmetic_status": "corrected",
+      "evidence": "Round scalar squares and every weighted product before accumulation.",
+      "acceptance_domain": "not_certified"
+    },
+    {
+      "case": "pythran_wdist__slow_wdist",
+      "arithmetic_status": "corrected",
+      "evidence": "Round each squared quotient before sum and sqrt.",
+      "acceptance_domain": "not_certified"
+    }
+  ],
+  "other_owner_entries": [
+    "npbench_crc16_crc16__crc16",
+    "npbench_deep_learning_mlp_mlp__mlp",
+    "npbench_deep_learning_softmax_softmax__softmax",
+    "npbench_go_fast_go_fast__go_fast",
+    "npbench_polybench_deriche_deriche__kernel",
+    "npbench_polybench_lu_lu__kernel",
+    "npbench_polybench_ludcmp_ludcmp__kernel",
+    "npbench_pythran_arc_distance_arc_distance__arc_distance",
+    "npbench_weather_stencils_hdiff_hdiff__hdiff",
+    "pythran_arc_distance__arc_distance",
+    "pythran_bubble_sort__bubble_sort",
+    "pythran_clip__clip",
+    "pythran_crotg__CROTG",
+    "pythran_deuxd_convolution__conv",
+    "pythran_fibo_seq__fibo",
+    "pythran_goodexpomeasure__goodExpoMeasure",
+    "pythran_insertion_sort__insertion_sort",
+    "pythran_ising__ising_step",
+    "pythran_log_likelihood__log_likelihood",
+    "pythran_lu__factorMatrix0",
+    "pythran_lu__factorMatrix1",
+    "pythran_make_decision__md",
+    "pythran_periodic_dist__dist",
+    "pythran_projection_simplex__projection_simplex",
+    "pythran_tax__tax",
+    "pythran_value_index__tri",
+    "pythran_vibr_energy__calculate_vibr_energy",
+    "pythran_weights__weights"
+  ]
+}

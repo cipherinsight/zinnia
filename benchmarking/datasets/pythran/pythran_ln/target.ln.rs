@@ -2,11 +2,9 @@
 //! Kernel: `Y[:] = d - d ** 2 / 2 + d ** 3 / 3 - ... + d ** 9 / 9` with
 //! `d = X - 1` on X, Y: Float[N]; returns `Y`. `Y` is overwritten before it
 //! is read, so it is not loaded.
-//! Each power is `q.pow_const`'s square-and-multiply product chain; the chains
-//! of the eight powers share their squares and `d ** 3`, so the eight powers
-//! cost eight rounded products. `v / n` by the integer constant `n` is
-//! `floor(v * 2^32 / (n * 2^32)) = floor(v / n)`: `q.floor_div_const(v, n)`,
-//! whose remainder check is against `n` itself.
+//! Each power follows MSB-first square-and-multiply; only identical
+//! intermediate products are shared. Constant positive integer division
+//! is floor division of the Q32 code, preserving the source rounding.
 
 use crate::prelude::*;
 
@@ -37,7 +35,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
 }
 
 /// `[_, d, d ** 2, ..., d ** 9]`, each power with the products and rounding
-/// of `q.pow_const(d, n)` (right-to-left square and multiply), shared.
+/// of the MSB-first exponentiation contract (most-significant-bit-first square and multiply), shared.
 fn powers_to_9(q: &Q32, ctx: &mut Ctx, d: Cell) -> [Cell; 10] {
     let mut mul = |a: Cell, b: Cell| q.mul(ctx, a, b).cell;
     let d2 = mul(d, d);
@@ -45,8 +43,8 @@ fn powers_to_9(q: &Q32, ctx: &mut Ctx, d: Cell) -> [Cell; 10] {
     let d8 = mul(d4, d4);
     let d3 = mul(d, d2);
     let d5 = mul(d, d4);
-    let d6 = mul(d2, d4);
-    let d7 = mul(d3, d4);
+    let d6 = mul(d3, d3);
+    let d7 = mul(d6, d);
     let d9 = mul(d, d8);
     [d, d, d2, d3, d4, d5, d6, d7, d8, d9]
 }

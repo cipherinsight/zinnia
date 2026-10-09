@@ -5,9 +5,10 @@
 //! NumPy's `cov`: the mean of each variable (`sum / NO`, a float division by
 //! the integer count: `floor(sum / NO)` in Q32), the deviations (exact), the
 //! product of the deviation matrix with its transpose (each element one
-//! reduction, rescaled once) and `c *= 1 / (NO - 1)` (a rounded product with
-//! the constant `1 / (NO - 1)`, as NumPy multiplies by the reciprocal). The
-//! product is symmetric, so each pair is computed once and output twice.
+//! reduction, rescaled once), then a direct division by NO - 1. This is the
+//! comparison's Q32 covariance contract; do not multiply by a quantized
+//! reciprocal. Symmetric entries reuse exactly the same ordered products
+//! (commuted factors), rounding and checks, so local CSE is exact.
 //! M is read only by the precondition (NPB_BASELINES.md section 5, rule 2):
 //! it is proven to lie in [0, 1024], which implies its domain (an int64).
 
@@ -38,12 +39,11 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
             column.iter().map(|x| q.sub(ctx, *x, mean.cell)).collect()
         })
         .collect();
-    let reciprocal = Constant(fe(quantize(1.0 / (NO - 1) as f64)));
     let mut cov: Vec<Option<Cell>> = vec![None; NV * NV];
     for a in 0..NV {
         for b in a..NV {
             let product = q.dot(ctx, &deviations[a], &deviations[b]);
-            let c = q.mul(ctx, product.cell, reciprocal).cell;
+            let c = q.floor_div_const(ctx, product.cell, (NO - 1) as u64).0.cell;
             cov[a * NV + b] = Some(c);
             cov[b * NV + a] = Some(c);
         }

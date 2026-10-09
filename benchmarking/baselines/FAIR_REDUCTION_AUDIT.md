@@ -81,3 +81,50 @@ This is a source audit, not a blanket certification of the corpus.
 - Other handwritten power chains, reduced-width constant-divisor gadgets,
   precondition-dependent range reuse, and sorting/pivot algorithms require their
   own audits. A/B output agreement alone cannot certify their full domains.
+
+## Three additional corrections
+
+The subsequent inventory found and corrected weighted distance, covariance2
+and the logarithm-series kernel. They also pass exact-Q32 A/B comparisons via
+Noir execute, release compilation, and stats-only counting.
+
+| Entry | Halo2 advice | Halo2 lookup | Noir gates |
+|---|---:|---:|---:|
+| wdist | 4,137 | 1,071 | 3,515 |
+| ln | 11,232 | 2,928 | 4,869 |
+| covariance2 | 21,307 | 4,246 | 9,748 |
+
+Covariance uses direct division of its rounded deviation dot by NO-1. A
+quantized reciprocal multiplier is not the same Q32 operation. Symmetric
+entries may still share the identical sequence of commuted real products,
+sum, rescale and quotient: this is exact local CSE with unchanged checks.
+The ln powers use the same MSB-first square-and-multiply schedule as the
+scalar-power contract, particularly d6=d3*d3 and d7=d6*d. Weighted distance
+rounds each square after the division, before sum and sqrt.
+
+## Complete ownership inventory
+
+`fair_reduction_inventory.json` records every owned entry individually, with
+its arithmetic status and evidence, and explicitly lists entries delegated
+to other owners. There are 11 corrected entries and 40 source-reviewed entries
+with no arithmetic mismatch found. The latter status is a source review, not
+an exact-output test or proof that all admissible inputs share the same
+acceptance domain. **No new aggregate fair-comparison ratio is justified yet.**
+
+Subtle source spelling matters: np.square dispatches array multiplication
+(`src/ops/static_ndarray_ops/elementwise.rs:73`), whose product provenance is
+consumed by sum (`src/helpers/static_array/reductions.rs:286`). Thus the
+explicit norm/dot algorithm in euclidean_distance_square and the array-product
+convolution reduction can legitimately retain fused sums under the existing
+contract. The variance primitive itself uses a deviation dot followed by
+division (`src/helpers/static_array/reductions.rs:510`); cronbach is not a
+scalar-square-loop mismatch. Covariance normalization is direct division
+(`src/ops/static_ndarray_ops/statistics.rs:279`). Constant powers are MSB-first
+(`src/builder.rs:2209`). These observations establish the arithmetic contract;
+no emitted circuit was used to construct the replacement handwritten code.
+
+All entries remain marked `acceptance_domain: not_certified`, including the
+11 corrected ones. Particular follow-up risks are vadv's specialized reciprocal
+domain, lapl3d's restricted quotient construction, overflow checks after exact
+linear combinations, float32-as-Q32 policy, and inactive-branch divisions.
+Source-level algorithm alignment and A/B equality do not settle those risks.

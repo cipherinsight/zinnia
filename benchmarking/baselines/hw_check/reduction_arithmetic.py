@@ -17,6 +17,8 @@ CASES = ['pythran_fbcorr__fbcorr', 'pythran_matmul__matrix_multiply',
          'pythran_allpairs__sqr_dists', 'pythran_allpairs__sqr_dists_loops',
          'pythran_pairwise__pairwise', 'pythran_l2norm__l2_norm',
          'pythran_sumarray3d__summation',
+         'pythran_wdist__slow_wdist',
+         'pythran_ln__ln', 'npbench_polybench_covariance2_covariance2__kernel',
          'npbench_scattering_self_energies_scattering_self_energies__scattering_self_energies']
 
 def mul(a,b): return int(a)*int(b)//SCALE
@@ -60,6 +62,30 @@ def reference(case, fixture, inp):
             total[i] += mul(weights[j],dr)
             for k in range(3): xyz[i,k] += mul(weights[j],delta[k])
         return total+[int(x) for x in xyz.flat]
+    elif case == 'pythran_wdist__slow_wdist':
+        x,y,w = a['A'],a['B'],a['W']
+        out = np.zeros((x.shape[1],y.shape[1]),dtype=object)
+        for i,j in np.ndindex(out.shape):
+            # Euclidean quotient: numerator = quotient*divisor + remainder,
+            # with nonnegative remainder below abs(divisor), for either sign.
+            diffs = [(int(x[k,i]-y[k,j])*SCALE//abs(int(w[k,i]))) * (1 if w[k,i]>0 else -1)
+                     for k in range(len(x))]
+            out[i,j] = root(sum(mul(d,d) for d in diffs))
+    elif case == 'pythran_ln__ln':
+        def power(x,n):
+            y=x
+            for bit in bin(n)[3:]:
+                y=mul(y,y)
+                if bit=='1': y=mul(y,x)
+            return y
+        return [sum((-1 if n%2==0 else 1)*(power(int(x)-SCALE,n)//n) for n in range(1,10)) for x in a['X']]
+    elif case == 'npbench_polybench_covariance2_covariance2__kernel':
+        data=a['data']; no,nv=data.shape
+        means=[sum(data[:,i])//no for i in range(nv)]
+        out=np.zeros((nv,nv),dtype=object)
+        for i,j in np.ndindex(nv,nv):
+            raw=sum((data[o,i]-means[i])*(data[o,j]-means[j]) for o in range(no))
+            out[i,j]=(raw//SCALE)//(no-1)
     else:
         assert case == CASES[-1]
         def product(u,v):
