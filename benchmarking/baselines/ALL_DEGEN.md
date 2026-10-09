@@ -31,6 +31,8 @@ sizing, advice + lookup (total), and unpadded Noir gates, respectively.
 
 | ds1000_case0451 | 0 + 0 (0) | 0 + 0 (0) | 34 | 34 | All A/B outputs, mocks/executes, counts pass; TOOL-BLOCKED domain-target discovery |
 
+| ds1000_case0373 | 1350 + 400 (1750) | 133650 + 31025 (164675) | 3029 | 28125 | All A/B outputs, mocks/executes, counts pass; TOOL-BLOCKED automatic domain-target discovery; explicit tamper rejected in all four |
+
 ## Interpretations and per-case review
 
 - 0291: signature shape is [2,5,5,2]. Reads array metadata, not values;
@@ -51,3 +53,12 @@ sizing, advice + lookup (total), and unpadded Noir gates, respectively.
 - 0451: all 4000 zeros of shape (20,10,10,2) are declared, with no public
   instances. Literal materializes the constant array; equal counts expected.
   No twin reused.
+
+- 0373: the source reads all 50 grades in np.sort, so both variants check all
+  input domains. Optimized drops the unused sort; literal keeps the helper call
+  and all 1225 bubble-sort comparisons, with fresh bounds per comparison.
+  The shape-only arange/division is folded with floor(i * 2^32 / 50) in both
+  variants, not nearest rounding. Literal is larger in both backends.
+  Explicit grades:0 tampering is rejected by both mocks and both Noir executions;
+  evidence 0373-explicit-domain.json supplements the checker's failed search.
+  No twin reused. No new witness hints or extra output assertions.
