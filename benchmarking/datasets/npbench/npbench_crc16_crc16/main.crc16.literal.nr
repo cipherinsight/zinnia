@@ -8,7 +8,6 @@ global WORD: u32 = 64;
 global SIGN: u32 = WORD - 1;
 global OUT_BITS: u32 = 16;
 global OFFSET: Field = 9223372036854775808;
-global HIGH_OFFSET: Field = 36028797018963968;
 
 fn twos_complement_bits(x: Field) -> [Field; WORD] {
     let offset: [bool; WORD] = (x + OFFSET).to_le_bits();

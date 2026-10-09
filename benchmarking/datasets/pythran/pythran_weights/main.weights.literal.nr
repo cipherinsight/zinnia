@@ -7,7 +7,6 @@ use noir_hw::{check_input, check_inputs, SCALE};
 // Sizes (hw_check.sizes): from fixture.json.
 global S: u32 = 5; // = input_data_0
 global L: u32 = 2; // = input_data_1
-global COUNT_BITS: u32 = 14; // = 14 * cdiv(bits(input_data_0), 14)
 
 fn main(input_data: [[Field; L]; S], threshold: Field) -> pub [Field; S] {
     // Input domain: every input element is an int64 or a Q32 code in the window.

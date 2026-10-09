@@ -2,7 +2,7 @@
 // Evaluate both branches and select per update; float32 remains Q32; clamp and update mirror the source helpers.
 // @outputs: int[N * M]
 
-use noir_hw::{check_input, check_inputs, window, canonical_le, canonical_exp, SCALE};
+use noir_hw::{check_input, check_inputs, canonical_exp, SCALE};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global N: u32 = 2; // = field_0

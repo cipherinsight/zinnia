@@ -2,7 +2,7 @@
 // Local hint-free power helper preserves optimized MSB-first Q32 schedule; no powers or X-1 arrays shared.
 // @outputs: float[N]
 
-use noir_hw::{check_inputs, floor_div_const, floor_div_pow2, mul, SCALE};
+use noir_hw::{check_inputs, floor_div_const, mul, SCALE};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global N: u32 = 16; // = X_0

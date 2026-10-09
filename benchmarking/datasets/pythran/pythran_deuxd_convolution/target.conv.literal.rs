@@ -17,20 +17,34 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let x = inputs.floats("x", &[SX0, SX1])?;
     let weights = inputs.floats("weights", &[SW0, SW1])?;
     if SW0 >= SX0 || SW0 >= SX1 {
-        return Err(Error::new("x[SW0, SW0] is out of bounds: NumPy raises IndexError"));
+        return Err(Error::new(
+            "x[SW0, SW0] is out of bounds: NumPy raises IndexError",
+        ));
     }
     let q = Q32::new(builder);
     let ctx = builder.main(0);
 
     // x[r][c] for r, c <= SW0, the part the kernel reads.
-    let x: Vec<Vec<Cell>> =
-        (0..=SW0).map(|r| (0..=SW0).map(|c| q.load_float(ctx, x[r * SX1 + c])).collect()).collect();
+    let x: Vec<Vec<Cell>> = (0..=SW0)
+        .map(|r| {
+            (0..=SW0)
+                .map(|c| q.load_float(ctx, x[r * SX1 + c]))
+                .collect()
+        })
+        .collect();
     let weights = q.load_floats(ctx, &weights);
-    let mut result = vec![ctx.load_zero(); SX0*SX1];
-    for i in 0..SX0 { for j in 0..SX1 { for ii in 0..SW0 { for jj in 0..SW1 {
-        let idx = (clamp(i,ii),clamp(j,jj));
-        let product = q.mul(ctx,x[idx.0][idx.1],weights[ii*SW1+jj]).cell;
-        result[i*SX1+j] = q.add(ctx,result[i*SX1+j],product);
-    } } } }
-    out.floats(&result); Ok(())
+    let mut result = vec![ctx.load_zero(); SX0 * SX1];
+    for i in 0..SX0 {
+        for j in 0..SX1 {
+            for ii in 0..SW0 {
+                for jj in 0..SW1 {
+                    let idx = (clamp(i, ii), clamp(j, jj));
+                    let product = q.mul(ctx, x[idx.0][idx.1], weights[ii * SW1 + jj]).cell;
+                    result[i * SX1 + j] = q.add(ctx, result[i * SX1 + j], product);
+                }
+            }
+        }
+    }
+    out.floats(&result);
+    Ok(())
 }

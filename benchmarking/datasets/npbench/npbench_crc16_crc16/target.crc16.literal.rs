@@ -18,7 +18,9 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let poly = q.load_int(ctx, poly);
 
     // crc = 65535: the low 16 bits set, the rest clear.
-    let mut crc: Vec<Cell> = (0..WORD).map(|i| ctx.load_constant(Fr::from((i < OUT_BITS) as u64))).collect();
+    let mut crc: Vec<Cell> = (0..WORD)
+        .map(|i| ctx.load_constant(Fr::from((i < OUT_BITS) as u64)))
+        .collect();
     let p = twos_complement_bits(&q, ctx, poly);
 
     for b in data {
@@ -43,19 +45,34 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     // crc = ~crc & 65535
     let mut masked = vec![ctx.load_zero(); WORD];
     for i in 0..WORD {
-        let complemented = q.gate.not(ctx,crc[i]);
-        masked[i] = if i < OUT_BITS { complemented } else { ctx.load_zero() };
+        let complemented = q.gate.not(ctx, crc[i]);
+        masked[i] = if i < OUT_BITS {
+            complemented
+        } else {
+            ctx.load_zero()
+        };
     }
     // crc = crc << 8 | crc >> 8 & 255
     let mut combined = vec![ctx.load_zero(); WORD];
     for i in 0..WORD {
-        let left = if i >= 8 { masked[i-8] } else { ctx.load_zero() };
-        let right = if i < 8 { masked[i+8] } else { ctx.load_zero() };
-        combined[i] = q.gate.or(ctx,left,right);
+        let left = if i >= 8 {
+            masked[i - 8]
+        } else {
+            ctx.load_zero()
+        };
+        let right = if i < 8 {
+            masked[i + 8]
+        } else {
+            ctx.load_zero()
+        };
+        combined[i] = q.gate.or(ctx, left, right);
     }
     // return crc & 65535
-    let result = q.gate.inner_product(ctx,combined[..OUT_BITS].iter().copied(),
-        (0..OUT_BITS).map(|i| Constant(Fr::from(1u64<<i))));
+    let result = q.gate.inner_product(
+        ctx,
+        combined[..OUT_BITS].iter().copied(),
+        (0..OUT_BITS).map(|i| Constant(Fr::from(1u64 << i))),
+    );
     out.int(result);
     Ok(())
 }

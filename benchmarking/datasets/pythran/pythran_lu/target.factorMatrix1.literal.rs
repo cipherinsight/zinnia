@@ -17,31 +17,33 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         // cmax = line; vmax = abs(M[line,line]); scan with conditional updates.
         let line_const = q.int_const(ctx, line as i64);
         let mut cmax = line_const;
-        let mut best_val = q.abs_int64(ctx, m[at(line,line)]);
-        for i in line+1..N {
-            let candidate = q.abs_int64(ctx, m[at(i,line)]);
+        let mut best_val = q.abs_int64(ctx, m[at(line, line)]);
+        for i in line + 1..N {
+            let candidate = q.abs_int64(ctx, m[at(i, line)]);
             let a = q.bound(ctx, candidate);
             let b = q.bound(ctx, best_val);
-            let larger = q.gt(ctx,a,b);
-            let assigned = q.abs_int64(ctx, m[at(i,line)]);
-            best_val = q.gate.select(ctx,assigned,best_val,larger);
-            let index = q.int_const(ctx,i as i64);
-            cmax = q.gate.select(ctx,index,cmax,larger);
+            let larger = q.gt(ctx, a, b);
+            let assigned = q.abs_int64(ctx, m[at(i, line)]);
+            best_val = q.gate.select(ctx, assigned, best_val, larger);
+            let index = q.int_const(ctx, i as i64);
+            cmax = q.gate.select(ctx, index, cmax, larger);
         }
         let same = q.eq(ctx, cmax, line_const);
         let swap = q.gate.not(ctx, same);
         let old = m.clone();
         let mut branch = old.clone();
         for k in line..COLS {
-            let t = branch[at(line,k)];
-            let column: Vec<Cell> = (0..N).map(|p| branch[at(p,k)]).collect();
-            branch[at(line,k)] = q.index(ctx,&column,cmax);
+            let t = branch[at(line, k)];
+            let column: Vec<Cell> = (0..N).map(|p| branch[at(p, k)]).collect();
+            branch[at(line, k)] = q.index(ctx, &column, cmax);
             for p in 0..N {
-                let hit = q.eq(ctx,cmax,Constant(fe(p as i128)));
-                branch[at(p,k)] = q.gate.select(ctx,t,branch[at(p,k)],hit);
+                let hit = q.eq(ctx, cmax, Constant(fe(p as i128)));
+                branch[at(p, k)] = q.gate.select(ctx, t, branch[at(p, k)], hit);
             }
         }
-        for p in 0..N*COLS { m[p] = q.gate.select(ctx,branch[p],old[p],swap); }
+        for p in 0..N * COLS {
+            m[p] = q.gate.select(ctx, branch[p], old[p], swap);
+        }
 
         // pivot = M[line, line]; for j in line+1..n: v = M[j, line] / pivot.
         let pivot = m[at(line, line)];

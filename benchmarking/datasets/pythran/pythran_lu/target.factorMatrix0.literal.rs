@@ -15,7 +15,9 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let at = |i: usize, k: usize| i * COLS + k;
     for line in 0..N.saturating_sub(1) {
         // cmax = np.argmax(abs(M[line:n, line])) + line.
-        let magnitudes: Vec<Cell> = (line..N).map(|i| q.abs_int64(ctx, m[at(i,line)])).collect();
+        let magnitudes: Vec<Cell> = (line..N)
+            .map(|i| q.abs_int64(ctx, m[at(i, line)]))
+            .collect();
         let mut best_val = magnitudes[0];
         let mut rel_idx = ctx.load_zero();
         for step in 1..magnitudes.len() {
@@ -32,19 +34,25 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         let same = q.eq(ctx, cmax, line_const);
         let swap = q.gate.not(ctx, same);
         let old = m.clone();
-        let row: Vec<Cell> = (0..COLS).map(|k| {
-            let column: Vec<Cell> = (0..N).map(|p| old[at(p,k)]).collect();
-            q.index(ctx, &column, cmax)
-        }).collect();
+        let row: Vec<Cell> = (0..COLS)
+            .map(|k| {
+                let column: Vec<Cell> = (0..N).map(|p| old[at(p, k)]).collect();
+                q.index(ctx, &column, cmax)
+            })
+            .collect();
         let mut branch = old.clone();
-        for k in 0..COLS { branch[at(line,k)] = row[k]; }
+        for k in 0..COLS {
+            branch[at(line, k)] = row[k];
+        }
         for p in 0..N {
             for k in 0..COLS {
                 let hit = q.eq(ctx, cmax, Constant(fe(p as i128)));
-                branch[at(p,k)] = q.gate.select(ctx, old[at(line,k)], branch[at(p,k)], hit);
+                branch[at(p, k)] = q.gate.select(ctx, old[at(line, k)], branch[at(p, k)], hit);
             }
         }
-        for p in 0..N*COLS { m[p] = q.gate.select(ctx, branch[p], old[p], swap); }
+        for p in 0..N * COLS {
+            m[p] = q.gate.select(ctx, branch[p], old[p], swap);
+        }
 
         // pivot = M[line, line]; for j in line+1..n: v = M[j, line] / pivot.
         let pivot = m[at(line, line)];

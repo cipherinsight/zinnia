@@ -13,28 +13,47 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let ctx = builder.main(0);
 
     // Precondition 0 <= M <= 1024: M and 1024 - M in [0, 2^16).
-    let m = q.load_int(ctx,m);
+    let m = q.load_int(ctx, m);
     q.range.range_check(ctx, m, 16);
     let headroom = q.sub(ctx, Constant(fe(1024)), m);
     q.range.range_check(ctx, headroom, 16);
 
     let data = q.load_floats(ctx, &data);
     let mut transposed = vec![vec![ctx.load_zero(); NO]; NV];
-    for v in 0..NV { for o in 0..NO { transposed[v][o] = data[o*NV+v]; } }
+    for v in 0..NV {
+        for o in 0..NO {
+            transposed[v][o] = data[o * NV + v];
+        }
+    }
     let mut means = Vec::new();
     for v in 0..NV {
         let mut total = ctx.load_zero();
-        for o in 0..NO { total = q.add(ctx,total,transposed[v][o]); }
-        means.push(q.floor_div_const(ctx,total,NO as u64).0.cell);
+        for o in 0..NO {
+            total = q.add(ctx, total, transposed[v][o]);
+        }
+        means.push(q.floor_div_const(ctx, total, NO as u64).0.cell);
     }
     let mut deviations = transposed.clone();
-    for v in 0..NV { for o in 0..NO { deviations[v][o] = q.sub(ctx,transposed[v][o],means[v]); } }
-    let mut products = vec![ctx.load_zero(); NV*NV];
-    for a in 0..NV { for b in 0..NV {
-        let mut raw = ctx.load_zero();
-        for o in 0..NO { let term = q.gate.mul(ctx,deviations[a][o],deviations[b][o]); raw = q.add(ctx,raw,term); }
-        products[a*NV+b] = q.rescale(ctx,raw).cell;
-    } }
-    let cov: Vec<Cell> = products.iter().map(|v| q.floor_div_const(ctx,*v,(NO-1) as u64).0.cell).collect();
-    out.floats(&cov); Ok(())
+    for v in 0..NV {
+        for o in 0..NO {
+            deviations[v][o] = q.sub(ctx, transposed[v][o], means[v]);
+        }
+    }
+    let mut products = vec![ctx.load_zero(); NV * NV];
+    for a in 0..NV {
+        for b in 0..NV {
+            let mut raw = ctx.load_zero();
+            for o in 0..NO {
+                let term = q.gate.mul(ctx, deviations[a][o], deviations[b][o]);
+                raw = q.add(ctx, raw, term);
+            }
+            products[a * NV + b] = q.rescale(ctx, raw).cell;
+        }
+    }
+    let cov: Vec<Cell> = products
+        .iter()
+        .map(|v| q.floor_div_const(ctx, *v, (NO - 1) as u64).0.cell)
+        .collect();
+    out.floats(&cov);
+    Ok(())
 }

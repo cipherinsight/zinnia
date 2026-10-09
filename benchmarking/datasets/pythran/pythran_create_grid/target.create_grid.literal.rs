@@ -11,10 +11,21 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let ctx = builder.main(0);
 
     let x = q.load_floats(ctx, &x);
-    let mut z = vec![ctx.load_zero(); N*N*3];
-    for i in 0..N { for j in 0..N { z[(i*N+j)*3] = x[i]; } }
-    for i in 0..N { for j in 0..N { z[(i*N+j)*3+1] = x[j]; } }
+    let mut z = vec![ctx.load_zero(); N * N * 3];
+    for i in 0..N {
+        for j in 0..N {
+            z[(i * N + j) * 3] = x[i];
+        }
+    }
+    for i in 0..N {
+        for j in 0..N {
+            z[(i * N + j) * 3 + 1] = x[j];
+        }
+    }
     let fast_grid = z;
-    for row in 0..N*N { out.floats(&fast_grid[row*3..row*3+2]); out.const_floats(&[0.0]); }
+    for row in 0..N * N {
+        out.floats(&fast_grid[row * 3..row * 3 + 2]);
+        out.const_floats(&[0.0]);
+    }
     Ok(())
 }

@@ -21,18 +21,26 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
             cycles[i] -= 1;
             if cycles[i] == 0 {
                 let first = indices[i];
-                for j in i..N-1 { indices[j] = indices[j+1]; }
-                indices[N-1] = first;
-                cycles[i] = N-i;
+                for j in i..N - 1 {
+                    indices[j] = indices[j + 1];
+                }
+                indices[N - 1] = first;
+                cycles[i] = N - i;
             } else {
                 let j = cycles[i];
-                indices.swap(i,N-j);
-                for index in &indices { result.push(pool[*index]); }
-                broke = true; break;
+                indices.swap(i, N - j);
+                for index in &indices {
+                    result.push(pool[*index]);
+                }
+                broke = true;
+                break;
             }
         }
-        if !broke { break; }
+        if !broke {
+            break;
+        }
     }
-    assert_eq!(result.len(),COUNT*N);
-    out.ints(&result); Ok(())
+    assert_eq!(result.len(), COUNT * N);
+    out.ints(&result);
+    Ok(())
 }

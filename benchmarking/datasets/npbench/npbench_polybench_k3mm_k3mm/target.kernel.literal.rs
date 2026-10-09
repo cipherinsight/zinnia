@@ -21,17 +21,31 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let b = q.load_floats(ctx, &b);
     let c = q.load_floats(ctx, &c);
     let d = q.load_floats(ctx, &d);
-    let ab = matmul(&q,ctx,&a,&b,NI,NJ,NK);
-    let abc = matmul(&q,ctx,&ab,&c,NI,NK,NL);
-    let result = matmul(&q,ctx,&abc,&d,NI,NL,NM);
-    out.floats(&result); Ok(())
+    let ab = matmul(&q, ctx, &a, &b, NI, NJ, NK);
+    let abc = matmul(&q, ctx, &ab, &c, NI, NK, NL);
+    let result = matmul(&q, ctx, &abc, &d, NI, NL, NM);
+    out.floats(&result);
+    Ok(())
 }
-fn matmul(q: &Q32, ctx: &mut Ctx, a: &[Cell], b: &[Cell], rows: usize, inner: usize, cols: usize) -> Vec<Cell> {
+fn matmul(
+    q: &Q32,
+    ctx: &mut Ctx,
+    a: &[Cell],
+    b: &[Cell],
+    rows: usize,
+    inner: usize,
+    cols: usize,
+) -> Vec<Cell> {
     let mut result = Vec::new();
-    for i in 0..rows { for j in 0..cols {
-        let mut raw = ctx.load_zero();
-        for k in 0..inner { let term = q.gate.mul(ctx,a[i*inner+k],b[k*cols+j]); raw = q.add(ctx,raw,term); }
-        result.push(q.rescale(ctx,raw).cell);
-    } }
+    for i in 0..rows {
+        for j in 0..cols {
+            let mut raw = ctx.load_zero();
+            for k in 0..inner {
+                let term = q.gate.mul(ctx, a[i * inner + k], b[k * cols + j]);
+                raw = q.add(ctx, raw, term);
+            }
+            result.push(q.rescale(ctx, raw).cell);
+        }
+    }
     result
 }

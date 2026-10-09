@@ -19,25 +19,43 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let beta = q.load_float(ctx, beta);
     let c = q.load_floats(ctx, &c);
     // a_low[i] = A[i, :i + 1]
-    let a_low: Vec<Vec<Cell>> = (0..M).map(|i| (0..=i).map(|k| q.load_float(ctx, a[i * M + k])).collect()).collect();
+    let a_low: Vec<Vec<Cell>> = (0..M)
+        .map(|i| (0..=i).map(|k| q.load_float(ctx, a[i * M + k])).collect())
+        .collect();
     let b = q.load_floats(ctx, &b);
 
     let mut temp2 = vec![ctx.load_zero(); N];
-    let mut c: Vec<Cell> = c.iter().map(|v| q.mul(ctx,*v,beta).cell).collect();
+    let mut c: Vec<Cell> = c.iter().map(|v| q.mul(ctx, *v, beta).cell).collect();
     for i in 0..M {
         for j in 0..N {
-            let ab = q.mul(ctx,alpha,b[i*N+j]).cell;
-            let terms: Vec<Cell> = (0..i).map(|k| q.mul(ctx,ab,a_low[i][k]).cell).collect();
-            for k in 0..i { c[k*N+j] = q.add(ctx,c[k*N+j],terms[k]); }
+            let ab = q.mul(ctx, alpha, b[i * N + j]).cell;
+            let terms: Vec<Cell> = (0..i).map(|k| q.mul(ctx, ab, a_low[i][k]).cell).collect();
+            for k in 0..i {
+                c[k * N + j] = q.add(ctx, c[k * N + j], terms[k]);
+            }
             let mut raw = ctx.load_zero();
-            for k in 0..i { let t=q.gate.mul(ctx,b[k*N+j],a_low[i][k]); raw=q.add(ctx,raw,t); }
-            temp2[j] = if i == 0 { ctx.load_zero() } else { q.rescale(ctx,raw).cell };
+            for k in 0..i {
+                let t = q.gate.mul(ctx, b[k * N + j], a_low[i][k]);
+                raw = q.add(ctx, raw, t);
+            }
+            temp2[j] = if i == 0 {
+                ctx.load_zero()
+            } else {
+                q.rescale(ctx, raw).cell
+            };
         }
-        let ab: Vec<Cell> = (0..N).map(|j| q.mul(ctx,alpha,b[i*N+j]).cell).collect();
-        let diagonal: Vec<Cell> = (0..N).map(|j| q.mul(ctx,ab[j],a_low[i][i]).cell).collect();
-        let at: Vec<Cell> = (0..N).map(|j| q.mul(ctx,alpha,temp2[j]).cell).collect();
-        let update: Vec<Cell> = (0..N).map(|j| q.add(ctx,diagonal[j],at[j])).collect();
-        for j in 0..N { c[i*N+j] = q.add(ctx,c[i*N+j],update[j]); }
+        let ab: Vec<Cell> = (0..N)
+            .map(|j| q.mul(ctx, alpha, b[i * N + j]).cell)
+            .collect();
+        let diagonal: Vec<Cell> = (0..N)
+            .map(|j| q.mul(ctx, ab[j], a_low[i][i]).cell)
+            .collect();
+        let at: Vec<Cell> = (0..N).map(|j| q.mul(ctx, alpha, temp2[j]).cell).collect();
+        let update: Vec<Cell> = (0..N).map(|j| q.add(ctx, diagonal[j], at[j])).collect();
+        for j in 0..N {
+            c[i * N + j] = q.add(ctx, c[i * N + j], update[j]);
+        }
     }
-    out.floats(&c); Ok(())
+    out.floats(&c);
+    Ok(())
 }
