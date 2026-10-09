@@ -30,10 +30,12 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
             plane
                 .iter()
                 .map(|v| {
-                    let d = q.sub(ctx, *v, Constant(fe(CENTRE as i128)));
-                    let square = q.gate.mul(ctx, d, d);
-                    // -(d ** 2) as a float: -d^2 2^32.
-                    let numerator = q.gate.mul(ctx, square, Constant(-fe(SCALE)));
+                    let converted = q.int_to_float(ctx, *v);
+                    let d = q.sub(ctx, converted, Constant(fe(CENTRE as i128 * SCALE)));
+                    // SubF discards the compiler's float-cast factor alias;
+                    // its subsequent MulF rounds and checks the Q32 square.
+                    let square = q.mul(ctx, d, d);
+                    let numerator = q.neg(ctx, square.cell);
                     let t = q.div_by_abs(ctx, numerator, sigma.cell, magnitude);
                     q.canonical_exp(ctx, t).cell
                 })

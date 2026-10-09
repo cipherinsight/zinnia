@@ -54,8 +54,7 @@ fn main(inRGB: [[[Field; W]; H]; C], sigma: Field) -> pub [[Field; W]; H] {
         }
     }
     check_input(sigma);
-    // -(d ** 2) / sigma = floor(-d^2 2^64 / sigma): divide by |sigma|, then
-    // restore the sign (as noir_hw::div, with the sign test once).
+    // Preserve the MulF check after FloatCast/SubF before dividing by sigma.
     let negative = is_neg(sigma);
     let magnitude = if negative { -sigma } else { sigma };
     let mut result: [[Field; W]; H] = [[0; W]; H];
@@ -63,8 +62,9 @@ fn main(inRGB: [[[Field; W]; H]; C], sigma: Field) -> pub [[Field; W]; H] {
         for j in 0..W {
             let mut e: [Field; PLANES] = [0; PLANES];
             for c in 0..PLANES {
-                let d = inRGB[c][i][j] - CENTRE;
-                let (quotient, _) = divmod_pos(-(d * d) * SCALE * SCALE, magnitude);
+                let d = inRGB[c][i][j] * SCALE - CENTRE * SCALE;
+                let square = mul(d, d);
+                let (quotient, _) = divmod_pos(-square * SCALE, magnitude);
                 e[c] = canonical_exp(if negative { -quotient } else { quotient });
             }
             let x = mul(mul(e[0], e[1]), e[2]);

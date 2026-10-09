@@ -14,14 +14,16 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let mean = q.load_float(ctx, mean);
     let sigma = q.load_float(ctx, sigma);
     let sigma_sq = q.mul(ctx, sigma, sigma);
+    // The rounded square is nonnegative and below 2^63, so twice is
+    // nonnegative and below 2^64. The compiler's dynamic division constrains
+    // its remainder and gap, not the divisor to the signed-64 window.
     let twice = q.add(ctx, sigma_sq.cell, sigma_sq.cell);
-    let twice = q.bound(ctx, twice);
     let scale = q.mul(ctx, Constant(fe(quantize((2.0 * std::f64::consts::PI).sqrt()))), sigma);
     let mut terms = Vec::with_capacity(N);
     for x in data {
         let deviation = q.sub(ctx, x, mean);
         let square = q.mul(ctx, deviation, deviation);
-        let s = q.div(ctx, square.cell, twice);
+        let s = q.div_by_abs(ctx, square.cell, twice, twice);
         let neg_s = q.neg(ctx, s.cell);
         let neg_s = q.bound(ctx, neg_s);
         let density = q.canonical_exp(ctx, neg_s);
