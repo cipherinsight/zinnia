@@ -45,7 +45,7 @@ literal binaries use separate `target` and `target-literal` directories.
 
 | Case | Optimized Halo2 advice + lookup = total | Literal Halo2 advice + lookup = total | Optimized Noir gates | Literal Noir gates | Four check verdicts |
 |---|---:|---:|---:|---:|---|
-| 0386 | pending | pending | pending | pending | pending |
+| 0386 | 540,000 + 160,000 = 700,000 | 540,000 + 160,000 = 700,000 | 245,424 | 245,424 | pass / pass / pass / pass |
 | 0456 | 5,045 + 1,228 = 6,273 | 11,656 + 2,560 = 14,216 | 3,727 | 4,392 | pass / pass / pass / pass |
 | 0457 | 6,281 + 1,420 = 7,701 | 14,608 + 2,752 = 17,360 | 3,997 | 4,830 | pass / pass / pass / pass |
 | 0458 | 6,281 + 1,420 = 7,701 | 14,609 + 2,752 = 17,361 | 3,941 | 4,774 | pass / pass / pass / pass |
@@ -86,3 +86,16 @@ pre-existing twin computation. Literal constructs all 16 matrix cells, optimized
 exposes the four diagonal input wires directly. Noir sizes are equal because
 constant-index array construction is wiring. Halo2 literal has one extra
 constant cell for zero initialization (not additional arithmetic).
+
+0386 initially exceeded the 8 GiB cap in Noir compilation with a flat array of
+78,804 successive updates. The superseded literal compilation was stopped
+while running the same construction. Both final files build patches and rows
+as nested arrays; the ABI flattens in the identical row-major order. Both final
+Noir checks pass. The Halo2 files were unchanged and passed both variants.
+
+All five cases pass both variants' static lint (zero errors). The A/B outputs
+of 0456--0458 also match an independent integer-Q32 sum-of-squares, floor-rescale
+and integer-square-root oracle exactly across all four circuits, beyond the
+checker’s NumPy-tolerance test. No full-domain equivalence certification is
+claimed. 0386 is equal-sized on both backends; 0477 is equal-sized on Noir.
+No literal baseline is smaller than its optimized counterpart.

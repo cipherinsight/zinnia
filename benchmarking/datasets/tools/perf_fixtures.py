@@ -128,6 +128,18 @@ def by_input(fn: Callable[..., Values]) -> bool:
 # fixture.json, so it must say what DS-1000 does and how this draw differs.
 # ---------------------------------------------------------------------------
 
+draw(386, 2, "DS-1000 test 2: a = rand(100, 200)")(
+    lambda rs: {"a": rs.rand(100, 200)})
+draw(456, 2, "DS-1000 test 2: a = rand(8, 3), retaining its seeded row count")(
+    lambda rs: {"a": rs.rand(8, 3)})
+for _pid in (457, 458):
+    draw(_pid, 1, "DS-1000 test 1: a = rand(8, 6), retaining its seeded row count and dim = 6")(
+        lambda rs: {"a": rs.rand(8, 6)})
+draw(477, 1, "DS-1000 test 1 supplies the four singular values of a fixed 4x4 matrix with entries "
+     "1..6; here singular values of randint(1, 7, (4, 4)), so A and B differ. SVD is fixture "
+     "preprocessing, not part of the kernel (which only calls diag)")(
+    lambda rs: {"i": np.linalg.svd(rs.randint(1, 7, (4, 4)), compute_uv=False)})
+
 # One-hot encodings with a data-dependent width (0295-0299).
 @draw(295, 2, "DS-1000 test 2: a = randint(0, 20, 50)")
 def _(rs): return {"a": rs.randint(0, 20, 50)}
