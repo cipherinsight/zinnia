@@ -435,8 +435,14 @@ impl Halo2BaseSynthesizer<'_> {
         Factor::Unknown
     }
 
-    /// `x · m` for a constant `m` (one gate, the constant inline).
+    /// `x · m` for a constant `m` (one gate with inline constant, none for 0/1).
     fn mul_by_constant(&mut self, x: &Halo2BaseCell, m: i128) -> Result<Halo2BaseCell, ProvingError> {
+        if m == 0 {
+            return self.constant_int(0);
+        }
+        if m == 1 {
+            return Ok(self.materialize(x));
+        }
         let factor = kernel::i128_to_fp(m);
         let out = self.gate_cell(x.value * factor, |gate, ctx| gate.mul(ctx, x.quantum(), QuantumCell::Constant(factor)));
         if let Some(range) = self.proven_range(x).zip(Interval::point(m)).and_then(|(r, c)| r.mul(&c)) {

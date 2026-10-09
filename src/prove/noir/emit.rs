@@ -1007,20 +1007,34 @@ impl<'a> NoirEmitter<'a> {
         if k == 0 && self.sign_abs_of.contains_key(x) {
             return None;
         }
+        // qmul/qscale_down_raw already constrain x + 2^63 to 64 bits
+        // inside the library. Reuse that exact expression lazily instead
+        // of emitting another sign hint and range check for its result.
+        if !self.window_of.contains_key(x)
+            && self.known_range(x) == Some((-(1i128 << 63), (1i128 << 63) - 1))
+        {
+            let t = self.bind(&format!("{x} + {}", 1u64 << 63));
+            self.window_of.insert(x.to_string(), (t, -(1i128 << 63), 64));
+        }
         let (t, c, width) = self.window_of.get(x).cloned()?;
         let bound = k - c;
         if bound <= 0 || bound + 1 >= 1i128 << width {
             return None;
         }
-        // x < k  <=>  t < bound;   x <= k  <=>  t < bound + 1.
-        let (limit, negate) = match cmp {
-            Cmp::Lt => (bound, false),
-            Cmp::Ge => (bound, true),
-            Cmp::Le => (bound + 1, false),
-            Cmp::Gt => (bound + 1, true),
+        // At the signed zero threshold, native > keeps the power-of-two
+        // boundary and saves gates. Retain the existing lowering at other
+        // thresholds: native > is not uniformly cheaper there.
+        let signed_zero = k == 0 && c == -(1i128 << 63) && width == 64;
+        let (operator, limit, negate) = match cmp {
+            Cmp::Lt => ("<", bound, false),
+            Cmp::Ge => ("<", bound, true),
+            Cmp::Le if signed_zero => (">", bound, true),
+            Cmp::Gt if signed_zero => (">", bound, false),
+            Cmp::Le => ("<", bound + 1, false),
+            Cmp::Gt => ("<", bound + 1, true),
         };
-        let less = self.bind_typed(&format!("({t} as u64) < {limit}"), "bool");
-        let flag = if negate { format!("(!{less}) as Field") } else { format!("{less} as Field") };
+        let comparison = self.bind_typed(&format!("({t} as u64) {operator} {limit}"), "bool");
+        let flag = if negate { format!("(!{comparison}) as Field") } else { format!("{comparison} as Field") };
         Some(self.bind_flag(&flag))
     }
 
@@ -1242,6 +1256,10 @@ impl<'a> NoirEmitter<'a> {
         self.raw_constant(cell).map(|c| (c, c)).or_else(|| self.proven_range.get(cell).copied())
     }
 
+    fn record_signed64(&mut self, cell: &str) {
+        self.narrow_proven_range(cell, -(1i128 << 63), (1i128 << 63) - 1);
+    }
+
     /// Remember that `out = a + b`, so a select between `out` and one of
     /// its summands is one product of the other summand (see `select`).
     fn record_sum(&mut self, out: &str, a: &str, b: &str) {
@@ -1443,6 +1461,9 @@ impl<'a> NoirEmitter<'a> {
     fn sign_abs(&mut self, x: &str) -> (String, String) {
         if let Some(pair) = self.sign_abs_of.get(x) {
             return pair.clone();
+        }
+        if self.known_range(x).is_some_and(|(lo, hi)| lo >= 0 && hi < 1i128 << 64) {
+            return ("false".to_string(), x.to_string());
         }
         self.use_lib("sign_abs");
         let (negative, mag) = (self.fresh(), self.fresh());
@@ -2322,6 +2343,7 @@ impl Synthesizer for NoirEmitter<'_> {
         }
         self.use_lib("qmul");
         let v = self.bind(&format!("qmul({}, {})", a, b));
+        self.record_signed64(&v);
         Ok(v)
     }
     fn product_sum_f(&mut self, pairs: &[(CellRef, CellRef)]) -> Result<CellRef, ProvingError> {
@@ -2344,6 +2366,7 @@ impl Synthesizer for NoirEmitter<'_> {
             // the same linear combination.
             let sum = if raw.len() > LONG_SUM_TERMS { self.bind_sum(&raw) } else { raw.join(" + ") };
             let rescaled = self.bind(&format!("qscale_down_raw({sum})"));
+            self.record_signed64(&rescaled);
             exact.push(rescaled);
         }
         if let [single] = exact.as_slice() {
@@ -2613,13 +2636,18 @@ impl Synthesizer for NoirEmitter<'_> {
         // An operand a check emitted earlier proves non-negative (the
         // `x >= 0` precondition of `np.sqrt`) is its own magnitude, below
         // 2^64, inside `isqrt_floor`'s domain.
-        if self.proven_range.get(a.as_str()).is_some_and(|(lo, hi)| *lo >= 0 && *hi < 1i128 << 64) {
+        let root = if self.proven_range.get(a.as_str()).is_some_and(|(lo, hi)| *lo >= 0 && *hi < 1i128 << 64) {
             self.use_lib("qsqrt_of");
-            return Ok(self.bind(&format!("qsqrt_of(false, {a})")));
-        }
-        let (negative, mag) = self.sign_abs(a);
-        self.use_lib("qsqrt_of");
-        Ok(self.bind(&format!("qsqrt_of({negative}, {mag})")))
+            self.bind(&format!("qsqrt_of(false, {a})"))
+        } else {
+            let (negative, mag) = self.sign_abs(a);
+            self.use_lib("qsqrt_of");
+            self.bind(&format!("qsqrt_of({negative}, {mag})"))
+        };
+        // Both paths clamp negatives to zero and apply floor sqrt to an
+        // unsigned64 magnitude times Q=2^32, so the root is <2^48.
+        self.narrow_proven_range(&root, 0, (1i128 << 48) - 1);
+        Ok(root)
     }
     /// `floor(sqrt(b * c) * 2^32)` of integers with `0 <= b < 2^64` and
     /// `0 <= b * c < 2^62` (`qsqrt_product_int`'s checks; `noir_fpc`
@@ -2664,6 +2692,9 @@ impl Synthesizer for NoirEmitter<'_> {
 
     fn logical_and(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let (a, b) = (self.booleanize(a), self.booleanize(b));
+        if a == b {
+            return Ok(a);
+        }
         let (af, bf) = (&a, &b);
         let v = self.bind_flag(&format!("{} * {}", af, bf));
         if self.literal_vals.get(&v).is_none() {
@@ -2673,6 +2704,9 @@ impl Synthesizer for NoirEmitter<'_> {
     }
     fn logical_or(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let (a, b) = (self.booleanize(a), self.booleanize(b));
+        if a == b {
+            return Ok(a);
+        }
         // An operand that is an AND (`p * q`, still an expression in Noir)
         // gets a witness first: `a + (1 - a) * b` of two such expressions
         // otherwise makes Noir bind `1 - p * q` and keep two product terms
@@ -3574,6 +3608,112 @@ mod tests {
         assert!(em.body.contains("qmul(x, "), "{}", em.body);
         em.product_sum_f(&[(n.clone(), x.clone()), (x.clone(), y.clone())]).unwrap();
         assert!(em.body.contains("qscale_down_raw((x * y))"), "{}", em.body);
+    }
+
+    // These tests inspect emitted text/metadata only: no constraint or
+    // witness execution is involved.
+    #[test]
+    fn primitive_result_facts_sqrt_reuses_sign_and_window() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        let x = "x".to_string();
+        let root = em.sqrt_f(&x).unwrap();
+        assert_eq!(em.known_range(&root), Some((0, (1i128 << 48) - 1)));
+        assert_eq!(em.body.matches("= sign_abs(x)").count(), 1);
+        // The original input still goes through sign handling/clamping.
+        assert!(!em.body.contains("qsqrt_of(false, x)"));
+        em.nonzero.insert(root.clone());
+        em.div_f(&"numerator".to_string(), &root).unwrap();
+        em.arctan2_f(&root, &root).unwrap();
+        assert!(em.body.contains("divmod_by_positive::<64>"), "{}", em.body);
+        assert_eq!(em.body.matches("= sign_abs(").count(), 1, "{}", em.body);
+        assert!(!em.body.contains("assert_in_window"), "{}", em.body);
+    }
+
+    #[test]
+    fn primitive_result_facts_sqrt_requires_checked_input_range() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        em.interval_of.insert("unverified".to_string(), (0, 100));
+        em.sqrt_f(&"unverified".to_string()).unwrap();
+        assert!(em.body.contains("sign_abs(unverified)"));
+        em.narrow_proven_range("checked", 0, (1i128 << 64) - 1);
+        let root = em.sqrt_f(&"checked".to_string()).unwrap();
+        assert!(em.body.contains("qsqrt_of(false, checked)"));
+        assert_eq!(em.known_range(&root), Some((0, (1i128 << 48) - 1)));
+    }
+
+    #[test]
+    fn primitive_result_facts_narrow_root_does_not_create_shifted_window() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        let root = em.sqrt_f(&"x".to_string()).unwrap();
+        let epsilon = em.constant_float(0.000001).unwrap();
+        em.lt_f(&root, &epsilon).unwrap();
+        assert!(!em.window_of.contains_key(&root));
+        assert!(!em.body.contains("as u64"), "{}", em.body);
+        assert!(em.body.contains("qlt_bits"), "{}", em.body);
+    }
+
+    #[test]
+    fn primitive_result_facts_rounded_product_reuses_window() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        let product = em.mul_f(&"x".to_string(), &"y".to_string()).unwrap();
+        let zero = em.constant_int(0).unwrap();
+        em.gt_f(&product, &zero).unwrap();
+        em.lte_f(&product, &zero).unwrap();
+        assert!(em.body.contains("as u64) > 9223372036854775808"), "{}", em.body);
+        assert!(!em.body.contains("qlt_bits") && !em.body.contains("sign_abs"), "{}", em.body);
+        assert!(!em.body.contains("assert_in_window"), "{}", em.body);
+    }
+
+    #[test]
+    fn primitive_result_facts_nonzero_threshold_keeps_complement_lowering() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        let product = em.mul_f(&"x".to_string(), &"y".to_string()).unwrap();
+        let threshold = em.constant_int(7).unwrap();
+        em.gt_f(&product, &threshold).unwrap();
+        em.lte_f(&product, &threshold).unwrap();
+        assert_eq!(em.body.matches("as u64) < 9223372036854775816").count(), 1, "{}", em.body);
+        assert!(!em.body.contains("as u64) >"), "{}", em.body);
+    }
+
+    #[test]
+    fn primitive_result_facts_exact_products_do_not_gain_windows() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        let integer = em.float_cast(&"n".to_string()).unwrap();
+        let x = "x".to_string();
+        let exact = em.mul_f(&integer, &x).unwrap();
+        assert_eq!(em.known_range(&exact), None);
+        let zero = em.constant_int(0).unwrap();
+        em.gt_f(&exact, &zero).unwrap();
+        assert!(em.body.contains("qlt_bits::<64>"), "{}", em.body);
+        assert!(!em.body.contains("as u64"), "{}", em.body);
+        let y = "y".to_string();
+        let rounded = em.product_sum_f(&[(x.clone(), y.clone())]).unwrap();
+        assert_eq!(em.known_range(&rounded), Some((-(1i128 << 63), (1i128 << 63) - 1)));
+        let mixed = em.product_sum_f(&[(integer, x.clone()), (x, y)]).unwrap();
+        assert_eq!(em.known_range(&mixed), None);
+    }
+
+    #[test]
+    fn primitive_result_facts_boolean_idempotence_keeps_truth_conversion() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        let x = "x".to_string();
+        let and = em.logical_and(&x, &x).unwrap();
+        let or = em.logical_or(&x, &x).unwrap();
+        assert_eq!(and, or);
+        assert_ne!(and, x);
+        assert_eq!(em.body.matches("if x == 0 { 0 } else { 1 }").count(), 1);
+        assert!(!em.body.contains(" * "), "{}", em.body);
+        let before = em.body.clone();
+        assert_eq!(em.logical_and(&and, &and).unwrap(), and);
+        assert_eq!(em.logical_or(&or, &or).unwrap(), or);
+        assert_eq!(em.body, before);
     }
 
     // Bitwise ops with constant masks read the low bits of the operand once;

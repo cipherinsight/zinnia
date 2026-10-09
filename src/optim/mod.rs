@@ -33,7 +33,7 @@ pub use double_not_elimination::DoubleNotElimination;
 pub use duplicate_code_elimination::DuplicateCodeElimination;
 pub use dyn_ndarray_meta_assert::DynamicNDArrayMetaAssertInjection;
 pub use external_call_remover::ExternalCallRemover;
-pub use pattern_match_optim::PatternMatchOptim;
+pub use pattern_match_optim::{CheckedAbsSquare, PatternMatchOptim};
 pub use predicated_simplification::PredicatedSimplification;
 pub use select_merge::SelectMerge;
 pub use select_chain_forwarding::SelectChainForwarding;

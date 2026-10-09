@@ -510,4 +510,112 @@ mod tests {
         }
     }
 
+    // Structural optimizer tests only: no witness evaluation or proving.
+    fn abs_square_graph() -> IRGraph {
+        graph_of(vec![
+            (IR::ReadFloat { path: crate::circuit_input::InputPath::new("x", vec![]), is_public: false }, vec![]),
+            (IR::ConstantInt { value: i64::MIN }, vec![]),
+            (IR::GteI, vec![0, 1]),
+            (IR::Assert, vec![2]),
+            (IR::ConstantInt { value: i64::MAX }, vec![]),
+            (IR::LteI, vec![0, 4]),
+            (IR::Assert, vec![5]),
+            (IR::AbsF, vec![0]),
+            (IR::MulF, vec![7, 7]),
+            (IR::ExposePublicF, vec![8]),
+        ])
+    }
+
+    #[test]
+    fn abs_square_checked_input_keeps_endpoint_exclusion() {
+        let result = CheckedAbsSquare.exec(abs_square_graph());
+        assert!(!result.stmts.iter().any(|s| matches!(s.ir, IR::AbsF)));
+        let square = result.stmts.iter().find(|s| matches!(s.ir, IR::MulF)).unwrap();
+        assert_eq!(square.arguments[0], square.arguments[1]);
+        assert!(matches!(result.stmts[square.arguments[0] as usize].ir, IR::ReadFloat { .. }));
+        let endpoint = result.stmts.iter().find(|s| matches!(s.ir, IR::NeI)).unwrap();
+        assert_eq!(endpoint.arguments[0], square.arguments[0]);
+        assert!(matches!(result.stmts[endpoint.arguments[1] as usize].ir, IR::ConstantInt { value: i64::MIN }));
+        assert!(result.stmts.iter().any(|s| matches!(s.ir, IR::Assert) && s.arguments == [endpoint.stmt_id]));
+        // Both independent bounds and the abs endpoint guard remain.
+        assert_eq!(result.stmts.iter().filter(|s| matches!(s.ir, IR::Assert)).count(), 3);
+    }
+
+    #[test]
+    fn abs_square_requires_both_unconditional_input_bounds() {
+        for missing in [3, 6] {
+            let mut graph = abs_square_graph();
+            // A bound used as a returned boolean is not an assertion.
+            graph.stmts[missing].ir = IR::ExposePublicI;
+            graph.update_graph(graph.stmts.clone());
+            let result = CheckedAbsSquare.exec(graph);
+            assert!(result.stmts.iter().any(|s| matches!(s.ir, IR::AbsF)), "missing bound at {missing}");
+            assert!(!result.stmts.iter().any(|s| matches!(s.ir, IR::NeI)));
+        }
+    }
+
+    #[test]
+    fn abs_square_preserves_observed_absolute_value_and_mixed_products() {
+        let mut shared = abs_square_graph();
+        shared.stmts.push(IRStatement::new(10, crate::types::ValueId::next(), IR::ExposePublicF, vec![7], vec![], None));
+        let mut mixed = abs_square_graph();
+        mixed.stmts[8].arguments[1] = 0;
+        mixed.stmts[8].arg_values.clear();
+        for mut graph in [shared, mixed] {
+            graph.update_graph(graph.stmts.clone());
+            let result = CheckedAbsSquare.exec(graph);
+            assert!(result.stmts.iter().any(|s| matches!(s.ir, IR::AbsF)));
+            assert!(!result.stmts.iter().any(|s| matches!(s.ir, IR::NeI)));
+        }
+    }
+
+    #[test]
+    fn abs_square_does_not_weaken_unbounded_intermediate_domain() {
+        let mut graph = abs_square_graph();
+        graph.stmts.truncate(7);
+        for (ir, args) in [
+            (IR::AddF, vec![0, 0]),
+            (IR::AbsF, vec![7]),
+            (IR::MulF, vec![8, 8]),
+            (IR::ExposePublicF, vec![9]),
+        ] {
+            let id = graph.stmts.len() as u32;
+            graph.stmts.push(IRStatement::new(id, crate::types::ValueId::next(), ir, args, vec![], None));
+        }
+        graph.update_graph(graph.stmts.clone());
+        let result = CheckedAbsSquare.exec(graph);
+        assert!(result.stmts.iter().any(|s| matches!(s.ir, IR::AbsF)));
+        assert!(!result.stmts.iter().any(|s| matches!(s.ir, IR::NeI)));
+    }
+
+    #[test]
+    fn abs_square_terminal_pass_does_not_constrain_dead_square() {
+        let mut graph = abs_square_graph();
+        // Keep x observable but discard abs(x)**2. The original abs domain
+        // is dead, so the terminal rewrite must not assert x != i64::MIN.
+        graph.stmts[9].arguments = vec![0];
+        graph.stmts[9].arg_values.clear();
+        graph.update_graph(graph.stmts.clone());
+        let result = CheckedAbsSquare.exec(graph);
+        assert!(!result.stmts.iter().any(|s| matches!(s.ir, IR::AbsF | IR::MulF | IR::NeI)));
+        assert_eq!(result.stmts.iter().filter(|s| matches!(s.ir, IR::Assert)).count(), 2);
+    }
+
+    #[test]
+    fn abs_square_terminal_pass_follows_square_annihilation() {
+        let mut graph = abs_square_graph();
+        graph.stmts[9].ir = IR::SubF;
+        graph.stmts[9].arguments = vec![8, 8];
+        graph.stmts[9].arg_values.clear();
+        graph.stmts.push(IRStatement::new(10, crate::types::ValueId::next(), IR::ExposePublicF, vec![9], vec![], None));
+        // The ordinary pattern pass must leave abs implicit until the later
+        // simplification removes its only live result.
+        graph.update_graph(graph.stmts.clone());
+        let simplified = PatternMatchOptim.exec(graph);
+        assert!(!simplified.stmts.iter().any(|s| matches!(s.ir, IR::NeI)));
+        let result = CheckedAbsSquare.exec(simplified);
+        assert!(!result.stmts.iter().any(|s| matches!(s.ir, IR::AbsF | IR::MulF | IR::NeI)));
+        assert_eq!(result.stmts.iter().filter(|s| matches!(s.ir, IR::Assert)).count(), 2);
+    }
+
 }

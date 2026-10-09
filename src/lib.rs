@@ -25,7 +25,7 @@ use ir_gen::{IRGenConfig, IRGenerator};
 use lower::{ArrayLowering, Target};
 use optim::{
     AlwaysSatisfiedElimination, AssertSubsumption, AssertedEqualityConstantPropagation,
-    ConstantFold, DeadCodeElimination, DoubleNotElimination, DuplicateCodeElimination,
+    CheckedAbsSquare, ConstantFold, DeadCodeElimination, DoubleNotElimination, DuplicateCodeElimination,
     DynamicNDArrayMetaAssertInjection, ExternalCallRemover, IRPass, PatternMatchOptim,
     PredicatedSimplification, SelectChainForwarding, SelectMerge,
 };
@@ -132,6 +132,7 @@ fn apply_pass(graph: IRGraph, pass_name: &str, target: Target) -> Option<IRGraph
         "AssertSubsumption" => AssertSubsumption.exec(graph),
         "DynamicNDArrayMetaAssertInjection" => DynamicNDArrayMetaAssertInjection.exec(graph),
         "PatternMatchOptim" => PatternMatchOptim.exec(graph),
+        "CheckedAbsSquare" => CheckedAbsSquare.exec(graph),
         "SelectChainForwarding" => SelectChainForwarding.exec(graph),
         "PredicatedSimplification" => PredicatedSimplification.exec(graph),
         "SelectMerge" => SelectMerge.exec(graph),
@@ -498,9 +499,18 @@ fn compile_circuit_impl(
     // Inputs nothing reads need no domain check (`ir_gen::input_domain`);
     // dropping it lets dead-code elimination remove the read again.
     let optimized_graph = ir_gen::input_domain::drop_checks_of_unread_inputs(optimized_graph);
+    // AbsF's implicit endpoint restriction may become an explicit assertion
+    // only after all algebraic simplifications and unused-input cleanup: a
+    // dead square must not leave a newly observable domain restriction.
+    // CheckedAbsSquare performs no algebraic simplification of other nodes.
+    let terminal_passes: &[&str] = if shortcut_optimization {
+        &["DeadCodeElimination", "CheckedAbsSquare"]
+    } else {
+        &["DeadCodeElimination"]
+    };
     let optimized_graph = run_pass_pipeline(
         optimized_graph,
-        &["DeadCodeElimination"],
+        terminal_passes,
         target,
         trace_phases,
     );

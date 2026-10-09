@@ -917,6 +917,13 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn add_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        // Only structural constants qualify; witness values never choose layout.
+        for (constant, other) in [(a, b), (b, a)] {
+            if self.is_const_cell(constant) && constant.value == Fp::zero() {
+                // The original addition may be a deferred product's only consumer.
+                return Ok(self.materialize(other));
+            }
+        }
         if let Some((x, y)) = self.deferred.get(&b.id).copied() {
             let acc = self.materialize(a);
             return Ok(self.multiply_add(&acc, &x, &y));
@@ -938,6 +945,12 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn sub_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if a.id == b.id {
+            return self.constant_int(0);
+        }
+        if self.is_const_cell(b) && b.value == Fp::zero() {
+            return Ok(self.materialize(a));
+        }
         if let Some((x, y)) = self.deferred.get(&b.id).copied() {
             // `a - x·y` as halo2-base's `[a - x·y, x, y, a]` gate.
             let a = &self.materialize(a);
@@ -962,6 +975,16 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn mul_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        for (constant, other) in [(a, b), (b, a)] {
+            if self.is_const_cell(constant) {
+                if constant.value == Fp::zero() {
+                    return self.constant_int(0);
+                }
+                if constant.value == Fp::one() {
+                    return Ok(self.materialize(other));
+                }
+            }
+        }
         if self.plan.deferred_products.contains(&self.current_stmt) {
             return Ok(self.defer_product(a, b));
         }
@@ -1282,8 +1305,15 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     /// `tanh x = sinh x / cosh x` (the fixed-point quotient), as
     /// `kernel::fp_tanh`; the division pins its quotient.
     fn tanh_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let sinh = self.sinh_f(a)?;
-        let cosh = self.cosh_f(a)?;
+        // Share the constrained exp pair, preserving both separate half floors
+        // and both exp domain checks. Cancelling the halves changes Q rounding.
+        let up = self.exp_f(a)?;
+        let negated = self.negate(a);
+        let down = self.exp_f(&negated)?;
+        let difference = self.sub_i(&up, &down)?;
+        let sinh = self.rescale_by(&difference, 1)?;
+        let sum = self.add_i(&up, &down)?;
+        let cosh = self.rescale_by(&sum, 1)?;
         self.fixed_div(&sinh, &cosh)
     }
     /// `sqrt` as `kernel::fp_sqrt`: `floor(sqrt(a * 2^P))`, and 0 for a
@@ -1385,6 +1415,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn arctan2_f(&mut self, y: &Self::CellRef, x: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.fixed_atan2(y, x) }
 
     fn logical_and(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if a.id == b.id {
+            return Ok(self.truthy_bit(a));
+        }
         // `x and true = [x]`, `x and false = false`.
         for (constant, other) in [(a, b), (b, a)] {
             if let Some(truth) = self.constant_truth(constant) {
@@ -1398,6 +1431,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         Ok(out)
     }
     fn logical_or(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if a.id == b.id {
+            return Ok(self.truthy_bit(a));
+        }
         // `x or false = [x]`, `x or true = true`.
         for (constant, other) in [(a, b), (b, a)] {
             if let Some(truth) = self.constant_truth(constant) {
@@ -1744,3 +1780,7 @@ mod tests;
 
 #[cfg(test)]
 pub(crate) mod two_phase_tests;
+
+#[cfg(test)]
+#[path = "synthesizer_count_tests.rs"]
+mod count_only_regressions;
