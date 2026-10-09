@@ -12,6 +12,10 @@
 //! this keeps iteration builds small. A bare number names a DS-1000 case
 //! (`0300` is `ds1000_case0300`), anything else is a case id as is. Unset,
 //! every circuit is built.
+//!
+//! `HALO2_HW_NPB_SOURCE_ROOT` replaces NPBench/Pythran source discovery with
+//! program folders under a materialized scaling cap (e.g. DATA/cap32). IDs
+//! remain `<program>__<function>`; use a separate target directory per cap.
 
 use std::env;
 use std::fmt::Write as _;
@@ -25,6 +29,7 @@ fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let datasets = manifest.join("../../datasets").canonicalize().expect("datasets folder");
     println!("cargo:rerun-if-env-changed=HALO2_HW_CASES");
+    println!("cargo:rerun-if-env-changed=HALO2_HW_NPB_SOURCE_ROOT");
 
     let wanted: Option<Vec<String>> = env::var("HALO2_HW_CASES").ok().map(|s| {
         s.split(',')
@@ -35,9 +40,8 @@ fn main() {
     });
 
     let mut cases = ds1000_cases(&datasets.join("ds1000"));
-    for dataset in SHAPE_GENERIC_DATASETS {
-        cases.extend(shape_generic_cases(&datasets.join(dataset)));
-    }
+    let source_root = env::var_os("HALO2_HW_NPB_SOURCE_ROOT").map(PathBuf::from);
+    cases.extend(npb_cases(&datasets, source_root.as_deref()));
     cases.retain(|(name, _)| wanted.as_ref().map_or(true, |w| w.contains(name)));
     cases.sort();
     if let Some(w) = &wanted {
@@ -109,4 +113,45 @@ fn shape_generic_cases(dataset: &Path) -> Vec<(String, PathBuf)> {
         }
     }
     cases
+}
+
+/// External scaled sources replace original NPBench/Pythran cases, never union
+/// with them: otherwise the same case ID could select CAP-16 constants.
+fn npb_cases(datasets: &Path, source_root: Option<&Path>) -> Vec<(String, PathBuf)> {
+    if let Some(root) = source_root {
+        let root = root.canonicalize().expect("HALO2_HW_NPB_SOURCE_ROOT folder");
+        return shape_generic_cases(&root);
+    }
+    SHAPE_GENERIC_DATASETS.iter()
+        .flat_map(|dataset| shape_generic_cases(&datasets.join(dataset)))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scaled_sources_replace_originals_and_keep_function_ids() {
+        let root = env::temp_dir().join(format!("halo2-hw-build-test-{}", std::process::id()));
+        let original = root.join("datasets");
+        let scaled = root.join("cap32");
+        fs::create_dir_all(original.join("npbench/demo")).unwrap();
+        fs::create_dir_all(original.join("pythran")).unwrap();
+        fs::create_dir_all(scaled.join("demo")).unwrap();
+        fs::write(original.join("npbench/demo/target.first.rs"), "original").unwrap();
+        fs::write(scaled.join("demo/target.first.rs"), "scaled first").unwrap();
+        fs::write(scaled.join("demo/target.second.rs"), "scaled second").unwrap();
+        fs::write(scaled.join("demo/main.first.nr"), "ignored").unwrap();
+        let base = npb_cases(&original, None);
+        assert_eq!(base.len(), 1);
+        assert_eq!(base[0].0, "demo__first");
+        let mut candidates = npb_cases(&original, Some(&scaled));
+        candidates.sort();
+        assert_eq!(candidates.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(),
+                   ["demo__first", "demo__second"]);
+        assert!(candidates.iter().all(|c| c.1.starts_with(scaled.canonicalize().unwrap())));
+        assert_eq!(fs::read_to_string(&candidates[0].1).unwrap(), "scaled first");
+        fs::remove_dir_all(root).unwrap();
+    }
 }
