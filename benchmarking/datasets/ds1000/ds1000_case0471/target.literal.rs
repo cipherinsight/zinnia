@@ -2,7 +2,7 @@
 //! Static slice: only selected input cells are read and domain-checked (L7).
 use crate::prelude::*;
 pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
-    let raw = inputs.floats("Z", &[6,2,9,3,7,4])?;
+    let raw = inputs.floats("Z", &[6, 2, 9, 3, 7, 4])?;
     let q = Q32::new(builder);
     let ctx = builder.main(0);
     // result = Z[..., -1:]

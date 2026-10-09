@@ -23,7 +23,8 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
             // row = a[i, second[j], :]
             let row: Vec<Cell> = (0..D2)
                 .map(|p2| {
-                    let candidates: Vec<Cell> = (0..D1).map(|p1| a[(i * D1 + p1) * D2 + p2]).collect();
+                    let candidates: Vec<Cell> =
+                        (0..D1).map(|p1| a[(i * D1 + p1) * D2 + p2]).collect();
                     q.index(ctx, &candidates, second[j])
                 })
                 .collect();
@@ -35,4 +36,3 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     out.floats(&result);
     Ok(())
 }
-
