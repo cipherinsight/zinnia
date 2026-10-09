@@ -32,3 +32,19 @@ The old1.501x/1.300x size ratios remain withdrawn as fair headlines. Use only
 fresh counts whose source and shared-library hashes match this audited snapshot.
 Circuit sizes do not establish proving speed. Remote proof validation, when
 approved, must use the final audited source hashes and unchanged1x fixtures.
+
+## Residual-size review follow-up
+
+The 38 entries larger on at least one backend received a second review.
+It found and repaired an additional MLP domain issue in b6fb8bf3: the dot
+must be bounded before adding bias; Noir ReLU/max must use the frozen gap
+comparison domains. Both refreshed compilation/count checks pass. The current
+inventory and counts include this correction; earlier MLP measurements are
+superseded. No related issue was found in conv2d_bias.
+
+Workspace `eval-redo/npb-hw/fairness/RESIDUAL_REVIEW.md` links per-case evidence,
+including isolated compiler IR/source experiments that count equivalent
+circuits. Findings identify redundant arithmetic, missing expression reuse,
+loop-index induction, bound propagation and backend gate-layout opportunities.
+The frozen compiler is unchanged. These experiments are not published as new
+benchmark implementations and do not establish proving-time improvements.
