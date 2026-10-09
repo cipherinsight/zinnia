@@ -46,10 +46,14 @@ executed, and are not being presented as witness-validation results.
   every uncorrected difference must subsequently have a signed64 Q32 square.
   Both directed masks remain sequential, and each directed square remains
   separately rounded.
-- GoodExpo's final IntCast uses truncation and `sign_and_abs` on its dividend
-  in the frozen backend. The signed64 check after multiplying by255 therefore
-  reproduces a downstream requirement; it is not the lost square check above.
-  Its nonnegative product is below 2^63, so the 38-bit hundredths integer
+- GoodExpo's final IntCast differs between frozen backends: Halo2 uses
+  signed64 `sign_and_abs`, while Noir uses `sign_abs` with a 64-bit magnitude.
+  Halo2 retains its signed64 check. Noir multiplies the rounded value by255
+  exactly, checks the nonnegative dividend to 64 bits, then divides by SCALE;
+  truncation equals floor for this nonnegative value. For example, all three
+  channels129 and sigma=-0.1875 produce a product near exp(16), whose value
+  times255 lies between 2^31 and 2^32. This differentiates the input windows.
+  The earlier nonnegative exp product is below 2^63, so the 38-bit hundredths integer
   decomposition (100*x / 2^32 plus rounding) is sufficient.
 - Insertion/bubble comparisons operate on selected original bounded values.
   Sorting primitive uses in projection-simplex and value-index retain the

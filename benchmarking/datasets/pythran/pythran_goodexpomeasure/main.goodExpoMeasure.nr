@@ -3,7 +3,7 @@
 // No rational floor(255*n/100) shortcut.
 // @outputs: int[H * W]
 
-use noir_hw::{check_input, check_inputs, divmod_pos, canonical_exp, is_neg, mul, to_int, SCALE};
+use noir_hw::{check_input, check_inputs, divmod_pos, canonical_exp, is_neg, mul, SCALE};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global C: u32 = 16; // = inRGB_0
@@ -70,7 +70,12 @@ fn main(inRGB: [[[Field; W]; H]; C], sigma: Field) -> pub [[Field; W]; H] {
             let x = mul(mul(e[0], e[1]), e[2]);
             let n = rint_hundredths(x);
             let (rounded, _) = divmod_pos(n * SCALE, 100);
-            let integer = to_int(mul(rounded, 255 * SCALE));
+            // Integer-valued constant multiplication is exact in the compiler.
+            // Noir IntCast permits a nonnegative dividend below 2^64 (its
+            // sign_abs domain), unlike Halo2's signed64 input window.
+            let scaled = 255 * rounded;
+            scaled.assert_max_bit_size::<64>();
+            let (integer, _) = divmod_pos(scaled, SCALE);
             let (_, byte) = divmod_pos(integer, 256);
             result[i][j] = byte;
         }
