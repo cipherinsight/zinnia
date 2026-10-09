@@ -233,6 +233,27 @@ fn check_div_pow2<let K: u32>(n: Field, q: Field, r: Field) {
     (q + OFFSET).assert_max_bit_size::<64>();
 }
 
+// Floor division by a small positive constant D (2 <= D <= 256; Python //,
+// or a float divided by the integer D, whose quotient floor(v * 2^32 /
+// (D * 2^32)) is floor(v / D)): n = q * D + r with r and D - 1 - r 8-bit
+// values (so 0 <= r < D) and q in the window, which pins (q, r) as in
+// `divmod_pos`; the 8-bit checks use the range table the 64-bit checks
+// already build.
+pub fn floor_div_const<let D: u32>(n: Field) -> Field {
+    // Safety: q and r are pinned by `check_div_const`.
+    let (q, r) = unsafe { divmod_hint(n, D as Field) };
+    check_div_const::<D>(n, q, r);
+    q
+}
+
+fn check_div_const<let D: u32>(n: Field, q: Field, r: Field) {
+    assert((2 <= D) & (D <= 256), "floor_div_const: D must be in [2, 256]");
+    assert(q * (D as Field) + r == n, "floor_div_const: recomposition");
+    r.assert_max_bit_size::<8>();
+    ((D as Field) - 1 - r).assert_max_bit_size::<8>();
+    (q + OFFSET).assert_max_bit_size::<64>();
+}
+
 // floor(p / 2^32) for a raw product or sum of products p in [-2^95, 2^95):
 // p = q * 2^32 + r, r in [0, 2^32), q in the window.
 pub fn rescale(p: Field) -> Field {
@@ -661,6 +682,35 @@ fn test_div_pow2_next_quotient() {
 #[test(should_fail)]
 fn test_div_pow2_field_quotient() {
     check_div_pow2::<2>(-7, (-7 - 2) / 4, 2);
+}
+
+#[test]
+fn test_floor_div_const() {
+    assert(floor_div_const::<3>(-7) == -3);
+    assert(floor_div_const::<3>(7) == 2);
+    assert(floor_div_const::<9>(-9) == -1);
+    assert(floor_div_const::<256>(-1) == -1);
+    check_div_const::<5>(-23, -5, 2);
+}
+
+#[test(should_fail)]
+fn test_div_const_next_quotient() {
+    check_div_const::<5>(-23, -4, -3);
+}
+
+#[test(should_fail)]
+fn test_div_const_previous_quotient() {
+    check_div_const::<5>(-23, -6, 7);
+}
+
+#[test(should_fail)]
+fn test_div_const_field_quotient() {
+    check_div_const::<5>(-23, (-23 - 3) / 5, 3);
+}
+
+#[test(should_fail)]
+fn test_div_const_remainder_equal_to_divisor() {
+    check_div_const::<5>(-20, -5, 5);
 }
 
 #[test]
