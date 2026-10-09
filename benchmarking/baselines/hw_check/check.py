@@ -28,8 +28,9 @@ order, whose change changes NumPy's output on input B, else A;
 `CaseCheck.read_input`) is moved out of its dtype's domain (halo2: `mock
 --tamper-input`, a float to Q32 code 2^63 or an integer to 2^64 + v; Noir:
 `prove --tamper-input`, the field value + 2^64); both systems must reject it
-(the same input untampered is accepted by the A/B steps). A case with no such
-element fails. The halo2 mock also reports `redundant_input_checks`, which
+(the same input untampered is accepted by the A/B steps). When no element
+changes the output (a degenerate kernel), the first non-Boolean input element
+is used; a kernel without one skips the step. The halo2 mock also reports `redundant_input_checks`, which
 must be 0 (each input checked once); literal baselines are exempt, since
 they re-check an operand at every comparison (LITERAL_BASELINES.md L5).
 
@@ -180,6 +181,13 @@ class CaseCheck:
                     if out != base:
                         leaf = 2 * index if params[k]["dtype"] == "complex" else index
                         return params[k]["name"], leaf, input_name
+        # No element changes the output (a degenerate kernel, whose outputs are fixed by the
+        # types and constants): its inputs are still declared, so the first non-Boolean one
+        # must still be range-checked.
+        for k, index in order:
+            if params[k]["dtype"] != "bool":
+                leaf = 2 * index if params[k]["dtype"] == "complex" else index
+                return params[k]["name"], leaf, "B"
         return None
 
     def tamper_target(self) -> tuple[str, int, str] | None:
@@ -224,7 +232,7 @@ class CaseCheck:
             problems.append(f"{steps['mock_B']['redundant_input_checks']} inputs checked twice")
         target = self.tamper_target()
         if target is None:
-            problems.append("no input element to move out of its domain")
+            steps["out_of_domain"] = "skipped: no non-Boolean input"
         else:
             name, index, input_name = target
             spec = f"{name}:{index}"
@@ -265,7 +273,7 @@ class CaseCheck:
                     lambda i: run_json([*drv, "verify", *common, "--tamper-index", str(i)], cwd), n, problems)
             target = self.tamper_target()
             if target is None:
-                problems.append("no input element to move out of its domain")
+                steps["out_of_domain"] = "skipped: no non-Boolean input"
             else:
                 name, index, input_name = target
                 spec = f"{name}:{index}"
