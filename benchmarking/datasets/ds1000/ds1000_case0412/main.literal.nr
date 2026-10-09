@@ -13,7 +13,7 @@ fn main(x: [Field; 10]) -> pub [Field; 11] {
 
     let mut keep: [Field; 10] = [0; 10];
     for i in 0..10 {
-        keep[i] = (!noir_hw::is_neg(x[i])) as Field;
+        keep[i] = (noir_hw::ge(x[i], 0)) as Field;
     }
 
     let mut prefix: [Field; 11] = [0; 11];

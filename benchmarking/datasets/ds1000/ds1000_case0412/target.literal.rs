@@ -7,11 +7,7 @@
 //! which L6 forbids. `count_i` is the number of kept elements before
 //! position `i` (`prefix[i]`); an element kept at position `i` lands in
 //! output slot `prefix[i]`.
-//! `x[i] >= 0` is the one and only source comparison on each `x[i]`, so the
-//! single domain-check window proof from `load_floats_bounded` is used
-//! directly for it (CONVENTIONS.md 1.6: the domain check is not "reuse";
-//! using a second, fresh `q.bound()` on the same input cell here would only
-//! add a redundant window check the checker counts and rejects).
+//! Each comparison obtains fresh operand bounds as required by L5.
 
 use crate::prelude::*;
 
@@ -22,13 +18,15 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    let x = q.load_floats_bounded(ctx, &x);
+    let x = q.load_floats(ctx, &x);
 
     // kept_i = x_i >= 0, i.e. not (x_i < 0).
     let mut keep = Vec::with_capacity(N);
     for xi in &x {
-        let neg = q.is_neg(ctx, *xi);
-        keep.push(q.gate.not(ctx, neg));
+        let xb = q.bound(ctx, *xi);
+        let zero = q.int_const(ctx, 0);
+        let zb = q.bound(ctx, zero);
+        keep.push(q.ge(ctx, xb, zb));
     }
 
     // prefix[i] = number of kept elements among x_0 .. x_{i-1}.
@@ -47,7 +45,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         for i in 0..N {
             let is_slot = q.eq(ctx, prefix[i], j_const);
             let kept_here = q.gate.mul(ctx, keep[i], is_slot);
-            terms.push(q.gate.mul(ctx, kept_here, x[i].cell));
+            terms.push(q.gate.mul(ctx, kept_here, x[i]));
         }
         outvals.push(q.sum(ctx, terms));
     }
