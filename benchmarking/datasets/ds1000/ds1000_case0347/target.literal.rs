@@ -1,18 +1,7 @@
-//! DS-1000 case 0347, halo2-base baseline, literal translation of kernel.py
-//! (LITERAL_BASELINES.md).
-//! Kernel:
-//!   a[row-1, :] /= divide_number
-//!   result = np.multiply.reduce(a[row-1, :])
-//! on `a: Float[8, 6]`, `row: Integer`, `divide_number: Float`. Row write and
-//! read as in case 0346 (`row - 1` in `[-8, 8)`, computed and checked once
-//! per statement, no CSE across statements; the write uses the local
-//! `row_hits` helper, the read uses `q.index` once per column). The division
-//! is `q.div`, not `q.div_by_abs` (that gadget assumes a magnitude already
-//! proven elsewhere, an optimization not available to a one-off literal
-//! division). `np.multiply.reduce` is a running product left to right (L5),
-//! one rescaled product per step, seeded with the first element (no identity
-//! element multiplication, matching NumPy's `reduce`).
-
+// DS-1000 case 0347, literal translation of kernel.py (LITERAL_BASELINES.md).
+// Gather the augmented-assignment slice, compute each element, then scatter by equality selects.
+// Negative indices wrap; each source indexed expression is evaluated separately.
+// Reduction is a running accumulator in index order.
 use crate::prelude::*;
 
 const ROWS: usize = 8;
@@ -27,18 +16,19 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
 
     let mut a = q.load_floats(ctx, &a);
     let row = q.load_int(ctx, row);
-    let divisor = q.load_float_bounded(ctx, divide_number);
+    let divisor = q.load_float(ctx, divide_number);
 
     // a[row-1, :] /= divide_number
     let idx1 = q.gate.sub(ctx, row, Constant(Fr::ONE));
     let hits1 = row_hits(&q, ctx, idx1, ROWS);
-    for i in 0..ROWS {
-        for j in 0..COLS {
-            let old = a[i * COLS + j];
-            let quotient = q.div(ctx, old, divisor).cell;
-            a[i * COLS + j] = q.gate.select(ctx, quotient, old, hits1[i]);
-        }
-    }
+    let values: Vec<Cell> = (0..COLS).map(|j| {
+        let column: Vec<Cell> = (0..ROWS).map(|i| a[i*COLS+j]).collect();
+        q.index(ctx, &column, idx1)
+    }).collect();
+    let scaled: Vec<Cell> = values.iter().map(|v| { let d = q.bound(ctx, divisor); q.div(ctx, *v, d).cell }).collect();
+    for i in 0..ROWS { for j in 0..COLS {
+        a[i*COLS+j] = q.gate.select(ctx, scaled[j], a[i*COLS+j], hits1[i]);
+    }}
 
     // result = np.multiply.reduce(a[row-1, :])
     let idx2 = q.gate.sub(ctx, row, Constant(Fr::ONE)); // recomputed: no CSE across statements

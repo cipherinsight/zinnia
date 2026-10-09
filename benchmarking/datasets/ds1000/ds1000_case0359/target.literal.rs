@@ -14,6 +14,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
 
     // a = np.delete(a, 2, axis=1)
     let del_col: usize = 2;
+    let a = a.as_slice();
     let kept: Vec<f64> = (0..3)
         .flat_map(|i| (0..3).filter(|&j| j != del_col).map(move |j| a[i * 3 + j]))
         .collect();

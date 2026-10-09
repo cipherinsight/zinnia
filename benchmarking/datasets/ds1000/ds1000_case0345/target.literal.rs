@@ -1,20 +1,7 @@
-//! DS-1000 case 0345, halo2-base baseline, literal translation of kernel.py
-//! (LITERAL_BASELINES.md).
-//! Kernel:
-//!   a[:, col-1] *= multiply_number
-//!   result = np.cumsum(a[:, col-1])
-//! on `a: Float[8, 6]`, `col: Integer`, `multiply_number: Float`. NumPy index
-//! semantics: `col - 1` must lie in `[-6, 6)` (negative indices count from the
-//! end); any other value has no witness. `col - 1` is written twice in the
-//! source (once per statement), so it is computed, and its validity checked,
-//! twice (no CSE across statements). There is no shared gadget for "write at
-//! a private index" (only reads), so the write uses the local helper
-//! `column_hits` below, per the L5 rule for `a[i] = v`. The write touches
-//! every one of the 48 cells of `a` (L2: the full mutated array), selecting
-//! per row and column whether that column is the target column. The read
-//! (`a[:, col-1]`) is the direct form of an indexed read (`q.index`).
-//! `np.cumsum` is a running accumulator over the 8 rows in order (L5).
-
+// DS-1000 case 0345, literal translation of kernel.py (LITERAL_BASELINES.md).
+// Gather the augmented-assignment slice, compute each element, then scatter by equality selects.
+// Negative indices wrap; each source indexed expression is evaluated separately.
+// Reduction is a running accumulator in index order.
 use crate::prelude::*;
 
 const ROWS: usize = 8;
@@ -34,13 +21,11 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     // a[:, col-1] *= multiply_number
     let idx1 = q.gate.sub(ctx, col, Constant(Fr::ONE));
     let hits1 = column_hits(&q, ctx, idx1, COLS);
-    for i in 0..ROWS {
-        for k in 0..COLS {
-            let old = a[i * COLS + k];
-            let scaled = q.mul(ctx, old, multiply_number).cell;
-            a[i * COLS + k] = q.gate.select(ctx, scaled, old, hits1[k]);
-        }
-    }
+    let values: Vec<Cell> = (0..ROWS).map(|i| q.index(ctx, &a[i*COLS..(i+1)*COLS], idx1)).collect();
+    let scaled: Vec<Cell> = values.iter().map(|v| q.mul(ctx, *v, multiply_number).cell).collect();
+    for i in 0..ROWS { for k in 0..COLS {
+        a[i*COLS+k] = q.gate.select(ctx, scaled[i], a[i*COLS+k], hits1[k]);
+    }}
 
     // result = np.cumsum(a[:, col-1])
     let idx2 = q.gate.sub(ctx, col, Constant(Fr::ONE)); // recomputed: no CSE across statements

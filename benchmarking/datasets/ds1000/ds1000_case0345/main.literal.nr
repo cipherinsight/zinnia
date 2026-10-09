@@ -1,21 +1,8 @@
-// DS-1000 case 0345, Noir baseline, literal translation of kernel.py
-// (LITERAL_BASELINES.md).
-// Kernel:
-//   a[:, col-1] *= multiply_number
-//   result = np.cumsum(a[:, col-1])
-// on a: Float[8, 6], col: Integer, multiply_number: Float. NumPy index
-// semantics: col - 1 must lie in [-6, 6) (negative indices count from the
-// end); any other value has no witness. col - 1 is written twice in the
-// source (once per statement), so it is computed, and its validity checked,
-// twice (no CSE across statements). There is no shared gadget for "write at
-// a private index" (only reads), so the write uses the local helper
-// `column_hits` below, per the L5 rule for a[i] = v. The write touches every
-// one of the 48 cells of a (L2: the full mutated array), selecting per row
-// and column whether that column is the target column. The read
-// (a[:, col-1]) is the direct form of an indexed read (noir_hw::index_pos).
-// np.cumsum is a running accumulator over the 8 rows in order (L5).
+// DS-1000 case 0345, literal translation of kernel.py (LITERAL_BASELINES.md).
+// Gather the augmented-assignment slice, compute each element, then scatter by equality selects.
+// Negative indices wrap; each source indexed expression is evaluated separately.
+// Reduction is a running accumulator in index order.
 // @outputs: float[8]
-
 use noir_hw::{index_pos, mul};
 
 global ROWS: u32 = 8;
@@ -50,13 +37,17 @@ fn main(a: [Field; 48], col: Field, multiply_number: Field) -> pub [Field; 8] {
     let idx1 = col - 1;
     let hits1 = column_hits(idx1, COLS);
     let mut a = a;
+    let mut values = [0; ROWS];
     for i in 0..ROWS {
-        for k in 0..COLS {
-            let old = a[i * COLS + k];
-            let scaled = mul(old, multiply_number);
-            a[i * COLS + k] = if hits1[k] { scaled } else { old };
-        }
+        let mut row_values = [0; COLS];
+        for j in 0..COLS { row_values[j] = a[i*COLS+j]; }
+        values[i] = row_values[index_pos::<8>(idx1, COLS)];
     }
+    let mut scaled = [0; ROWS];
+    for i in 0..ROWS { scaled[i] = mul(values[i], multiply_number); }
+    for i in 0..ROWS { for k in 0..COLS {
+        a[i*COLS+k] = if hits1[k] { scaled[i] } else { a[i*COLS+k] };
+    }}
 
     // result = np.cumsum(a[:, col-1])
     let idx2 = col - 1; // recomputed: no CSE across statements

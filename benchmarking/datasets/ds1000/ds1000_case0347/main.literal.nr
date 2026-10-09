@@ -1,21 +1,8 @@
-// DS-1000 case 0347, Noir baseline, literal translation of kernel.py
-// (LITERAL_BASELINES.md).
-// Kernel:
-//   a[row-1, :] /= divide_number
-//   result = np.multiply.reduce(a[row-1, :])
-// on a: Float[8, 6], row: Integer, divide_number: Float. Row write and read
-// as in case 0346 (row - 1 in [-8, 8), computed and checked once per
-// statement, no CSE across statements; the write uses the local `row_hits`
-// helper, the read uses noir_hw::index_pos once per column). The division is
-// noir_hw::div, called plainly at each of the 48 positions (unlike the
-// optimized baseline, this does not hoist the divisor's sign test: any
-// sharing of that check across positions is the compiler's own SSA pass, not
-// something this translation does by hand). np.multiply.reduce is a running
-// product left to right (L5), one rescaled product per step, seeded with
-// the first element (no identity-element multiplication, matching NumPy's
-// reduce).
+// DS-1000 case 0347, literal translation of kernel.py (LITERAL_BASELINES.md).
+// Gather the augmented-assignment slice, compute each element, then scatter by equality selects.
+// Negative indices wrap; each source indexed expression is evaluated separately.
+// Reduction is a running accumulator in index order.
 // @outputs: float[1]
-
 use noir_hw::{div, index_pos, mul};
 
 global ROWS: u32 = 8;
@@ -50,13 +37,17 @@ fn main(a: [Field; 48], row: Field, divide_number: Field) -> pub Field {
     let idx1 = row - 1;
     let hits1 = row_hits(idx1, ROWS);
     let mut a = a;
-    for i in 0..ROWS {
-        for j in 0..COLS {
-            let old = a[i * COLS + j];
-            let quotient = div(old, divide_number);
-            a[i * COLS + j] = if hits1[i] { quotient } else { old };
-        }
+    let mut values = [0; COLS];
+    for j in 0..COLS {
+        let mut column = [0; ROWS];
+        for i in 0..ROWS { column[i] = a[i*COLS+j]; }
+        values[j] = column[index_pos::<8>(idx1, ROWS)];
     }
+    let mut scaled = [0; COLS];
+    for j in 0..COLS { scaled[j] = div(values[j], divide_number); }
+    for i in 0..ROWS { for j in 0..COLS {
+        a[i*COLS+j] = if hits1[i] { scaled[j] } else { a[i*COLS+j] };
+    }}
 
     // result = np.multiply.reduce(a[row-1, :])
     let idx2 = row - 1; // recomputed: no CSE across statements
