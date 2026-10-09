@@ -23,12 +23,9 @@ fn compute(
         let dx = pxi - pos[j][0];
         let dy = pyi - pos[j][1];
         let dz = pzi - pos[j][2];
-        let dr = noir_hw::div(
-            noir_hw::SCALE,
-            noir_hw::sqrt(
-                noir_hw::mul(dx, dx) + noir_hw::mul(dy, dy) + noir_hw::mul(dz, dz),
-            ),
-        );
+        let sum = noir_hw::mul(dx, dx) + noir_hw::mul(dy, dy) + noir_hw::mul(dz, dz);
+        sum.assert_max_bit_size::<64>(); // Optimized radicand domain.
+        let dr = noir_hw::div(noir_hw::SCALE, noir_hw::sqrt(sum));
         total += noir_hw::mul(weight_j, dr);
         sum_array3d[i][0] += noir_hw::mul(weight_j, dx);
         sum_array3d[i][1] += noir_hw::mul(weight_j, dy);

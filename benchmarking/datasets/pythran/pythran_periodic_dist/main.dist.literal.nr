@@ -1,5 +1,7 @@
 // pythran_periodic_dist__dist: literal translation of kernel.py (LITERAL_BASELINES.md).
+// L4: inactive axis updates use L=0 so L/2 cannot overflow. Radicand guard matches optimized.
 // Tile/transpose are wires. Mask reads use L5 equality-test compaction; masked writes scatter by count equality. Private flags select complete updated arrays; no symmetry.
+// Comparison domain follows optimized canonical gaps, including values beyond signed64.
 // @outputs: float[PAIRS]; float[PAIRS]; float[PAIRS]; float[PAIRS]
 global N: u32 = 16; // = x_0
 global PAIRS: u32 = 256; // = x_0 * x_0
@@ -10,9 +12,9 @@ fn update(values: [Field; PAIRS], L: Field, negative: bool) -> [Field; PAIRS] {
     let mut keep = [false; PAIRS];
     for i in 0..PAIRS {
         keep[i] = if negative {
-            noir_hw::lt(values[i], half)
+            noir_hw::canonical_lt(values[i], half)
         } else {
-            noir_hw::gt(values[i], half)
+            noir_hw::canonical_gt(values[i], half)
         };
     }
     let mut count: Field = 0;
@@ -43,9 +45,9 @@ fn update(values: [Field; PAIRS], L: Field, negative: bool) -> [Field; PAIRS] {
     let mut target_keep = [false; PAIRS];
     for i in 0..PAIRS {
         target_keep[i] = if negative {
-            noir_hw::lt(values[i], half)
+            noir_hw::canonical_lt(values[i], half)
         } else {
-            noir_hw::gt(values[i], half)
+            noir_hw::canonical_gt(values[i], half)
         };
     }
     let mut next: Field = 0;
@@ -118,18 +120,21 @@ fn main(
             dz[i * N + j] = ztemp[i * N + j] - ztemp[j * N + i];
         }
     }
-    let first = update(dx, L, false);
-    let second = update(first, L, true);
+    let safe_l = if periodicX { L } else { 0 };
+    let first = update(dx, safe_l, false);
+    let second = update(first, safe_l, true);
     for at in 0..PAIRS {
         dx[at] = if periodicX { second[at] } else { dx[at] };
     }
-    let first = update(dy, L, false);
-    let second = update(first, L, true);
+    let safe_l = if periodicY { L } else { 0 };
+    let first = update(dy, safe_l, false);
+    let second = update(first, safe_l, true);
     for at in 0..PAIRS {
         dy[at] = if periodicY { second[at] } else { dy[at] };
     }
-    let first = update(dz, L, false);
-    let second = update(first, L, true);
+    let safe_l = if periodicZ { L } else { 0 };
+    let first = update(dz, safe_l, false);
+    let second = update(first, safe_l, true);
     for at in 0..PAIRS {
         dz[at] = if periodicZ { second[at] } else { dz[at] };
     }
@@ -155,6 +160,7 @@ fn main(
     }
     let mut roots = [0; PAIRS];
     for at in 0..PAIRS {
+        xyz[at].assert_max_bit_size::<64>();
         roots[at] = noir_hw::sqrt(xyz[at]);
     }
     let mut mask = [false; PAIRS];

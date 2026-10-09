@@ -1,4 +1,5 @@
 // pythran_periodic_dist__dist: literal translation of kernel.py (LITERAL_BASELINES.md).
+// L4: inactive axis updates use L=0 so L/2 cannot overflow. Radicand guard matches optimized.
 // Tile/transpose are wires. Mask reads use L5 equality-test compaction; masked writes scatter by count equality. Private flags select complete updated arrays; no symmetry.
 use crate::prelude::*;
 const N: usize = 16; // = x_0
@@ -110,18 +111,21 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let mut dz: Vec<Cell> = (0..PAIRS)
         .map(|at| q.sub(ctx, ztemp[at], ztemp[(at % N) * N + at / N]))
         .collect();
-    let first = update(&q, ctx, &dx, l, false);
-    let second = update(&q, ctx, &first, l, true);
+    let safe_l = q.gate.mul(ctx, l, px);
+    let first = update(&q, ctx, &dx, safe_l, false);
+    let second = update(&q, ctx, &first, safe_l, true);
     dx = (0..PAIRS)
         .map(|at| q.gate.select(ctx, second[at], dx[at], px))
         .collect();
-    let first = update(&q, ctx, &dy, l, false);
-    let second = update(&q, ctx, &first, l, true);
+    let safe_l = q.gate.mul(ctx, l, py);
+    let first = update(&q, ctx, &dy, safe_l, false);
+    let second = update(&q, ctx, &first, safe_l, true);
     dy = (0..PAIRS)
         .map(|at| q.gate.select(ctx, second[at], dy[at], py))
         .collect();
-    let first = update(&q, ctx, &dz, l, false);
-    let second = update(&q, ctx, &first, l, true);
+    let safe_l = q.gate.mul(ctx, l, pz);
+    let first = update(&q, ctx, &dz, safe_l, false);
+    let second = update(&q, ctx, &first, safe_l, true);
     dz = (0..PAIRS)
         .map(|at| q.gate.select(ctx, second[at], dz[at], pz))
         .collect();
@@ -130,7 +134,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let xy: Vec<Cell> = (0..PAIRS).map(|at| q.add(ctx, sx[at], sy[at])).collect();
     let sz: Vec<Cell> = (0..PAIRS).map(|at| q.pow_const(ctx, dz[at], 2)).collect();
     let xyz: Vec<Cell> = (0..PAIRS).map(|at| q.add(ctx, xy[at], sz[at])).collect();
-    let roots: Vec<Cell> = (0..PAIRS).map(|at| q.sqrt(ctx, xyz[at]).cell).collect();
+    let roots: Vec<Cell> = (0..PAIRS).map(|at| { let sum = q.bound(ctx, xyz[at]).cell; q.sqrt(ctx, sum).cell }).collect();
     let mask: Vec<Cell> = roots.iter().map(|v| q.eq(ctx, *v, zero)).collect();
     let d: Vec<Cell> = (0..PAIRS)
         .map(|at| {

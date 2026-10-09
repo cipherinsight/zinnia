@@ -1,5 +1,5 @@
 // npbench_deep_learning_mlp_mlp__mlp: literal translation of kernel.py (LITERAL_BASELINES.md).
-// Matmuls rescale before separate bias arrays. ReLU/softmax are source helpers; max and sum scan in index order, canonical exp per element.
+// Matmuls rescale with the optimized bias-shifted window, then restore the dot value before the separate source bias addition. ReLU/softmax are source helpers; max and sum scan in index order, canonical exp per element.
 
 use crate::prelude::*;
 
@@ -27,17 +27,17 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let b2 = q.load_floats(ctx, &b2);
     let w3 = q.load_floats(ctx, &w3);
     let b3 = q.load_floats(ctx, &b3);
-    let product = matmul(&q, ctx, &input, &w1, C_IN, S0);
+    let product = matmul(&q, ctx, &input, &w1, &b1, C_IN, S0);
     let biased: Vec<Cell> = (0..N * S0)
         .map(|t| q.add(ctx, product[t], b1[t % S0]))
         .collect();
     let x = relu(&q, ctx, &biased);
-    let product = matmul(&q, ctx, &x, &w2, S0, S1);
+    let product = matmul(&q, ctx, &x, &w2, &b2, S0, S1);
     let biased: Vec<Cell> = (0..N * S1)
         .map(|t| q.add(ctx, product[t], b2[t % S1]))
         .collect();
     let x = relu(&q, ctx, &biased);
-    let product = matmul(&q, ctx, &x, &w3, S1, S2);
+    let product = matmul(&q, ctx, &x, &w3, &b3, S1, S2);
     let biased: Vec<Cell> = (0..N * S2)
         .map(|t| q.add(ctx, product[t], b3[t % S2]))
         .collect();
@@ -46,12 +46,21 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     Ok(())
 }
 // L5 defining matrix product, one rescale per output.
-fn matmul(q: &Q32, ctx: &mut Ctx, x: &[Cell], w: &[Cell], inner: usize, cols: usize) -> Vec<Cell> {
+fn matmul(q: &Q32, ctx: &mut Ctx, x: &[Cell], w: &[Cell], bias: &[Cell], inner: usize, cols: usize) -> Vec<Cell> {
     let mut result = Vec::with_capacity(N * cols);
     for r in 0..N {
         for c in 0..cols {
-            let column: Vec<Cell> = (0..inner).map(|k| w[k * cols + c]).collect();
-            result.push(q.dot(ctx, &x[r * inner..(r + 1) * inner], &column).cell);
+            let mut raw = q.int_const(ctx, 0);
+            for k in 0..inner {
+                let term = q.gate.mul(ctx, x[r * inner + k], w[k * cols + c]);
+                raw = q.add(ctx, raw, term);
+            }
+            // Range plumbing only: floor((raw + b*SCALE)/SCALE)-b = floor(raw/SCALE).
+            // The optimized circuit bounds dot+b, not the dot on its own.
+            let shift = q.gate.mul(ctx, bias[c], Constant(fe(SCALE)));
+            let shifted = q.add(ctx, raw, shift);
+            let rounded = q.rescale(ctx, shifted).cell;
+            result.push(q.sub(ctx, rounded, bias[c]));
         }
     }
     result

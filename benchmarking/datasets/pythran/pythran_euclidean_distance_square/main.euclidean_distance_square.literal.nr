@@ -1,5 +1,5 @@
 // pythran_euclidean_distance_square__euclidean_distance_square: literal translation of kernel.py (LITERAL_BASELINES.md).
-// Only np.dot fuses rescaling; square arrays round individually, additions remain left-associated.
+// Each dot and square sum rescales once as optimized; full square arrays and source addition order remain.
 
 // @outputs: float[R1 * R2]
 
@@ -32,7 +32,7 @@ fn main(x1: [[Field; D]; R1], x2: [[Field; D]; R2]) -> pub [[Field; R2]; R1] {
     let mut squares1 = [[0; D]; R1];
     for i in 0..R1 {
         for k in 0..D {
-            squares1[i][k] = noir_hw::mul(x1[i][k], x1[i][k]);
+            squares1[i][k] = x1[i][k] * x1[i][k];
         }
     }
     let mut sums1 = [0; R1];
@@ -40,6 +40,7 @@ fn main(x1: [[Field; D]; R1], x2: [[Field; D]; R2]) -> pub [[Field; R2]; R1] {
         for k in 0..D {
             sums1[i] += squares1[i][k];
         }
+        sums1[i] = noir_hw::rescale(sums1[i]);
     }
     let mut first = [[0; R2]; R1];
     for i in 0..R1 {
@@ -50,7 +51,7 @@ fn main(x1: [[Field; D]; R1], x2: [[Field; D]; R2]) -> pub [[Field; R2]; R1] {
     let mut squares2 = [[0; D]; R2];
     for j in 0..R2 {
         for k in 0..D {
-            squares2[j][k] = noir_hw::mul(x2[j][k], x2[j][k]);
+            squares2[j][k] = x2[j][k] * x2[j][k];
         }
     }
     let mut sums2 = [0; R2];
@@ -58,6 +59,7 @@ fn main(x1: [[Field; D]; R1], x2: [[Field; D]; R2]) -> pub [[Field; R2]; R1] {
         for k in 0..D {
             sums2[j] += squares2[j][k];
         }
+        sums2[j] = noir_hw::rescale(sums2[j]);
     }
     let mut result = [[0; R2]; R1];
     for i in 0..R1 {

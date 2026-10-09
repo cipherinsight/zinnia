@@ -1,6 +1,6 @@
 //! npbench_deep_learning_conv2d_bias_conv2d__conv2d_bias.
 //! Literal translation of kernel.py (LITERAL_BASELINES.md).
-//! Broadcast products are materialized and rounded before axis-order sums.
+//! Broadcast raw products are materialized; each sum rescales once, as optimized.
 //! The conv2d helper completes before the broadcast bias addition.
 
 use crate::prelude::*;
@@ -45,12 +45,11 @@ fn conv2d(q: &Q32, ctx: &mut Ctx, input: &[Cell], weights: &[Cell]) -> Vec<Cell>
                         for ci in 0..C_IN {
                             for co in 0..C_OUT {
                                 products.push(
-                                    q.mul(
+                                    q.gate.mul(
                                         ctx,
                                         input[((b * HEIGHT + i + a) * WIDTH + j + c) * C_IN + ci],
                                         weights[((a * K + c) * C_IN + ci) * C_OUT + co],
-                                    )
-                                    .cell,
+                                    ),
                                 );
                             }
                         }
@@ -71,7 +70,7 @@ fn conv2d(q: &Q32, ctx: &mut Ctx, input: &[Cell], weights: &[Cell]) -> Vec<Cell>
                             }
                         }
                     }
-                    output[((b * H_OUT + i) * W_OUT + j) * C_OUT + co] = acc;
+                    output[((b * H_OUT + i) * W_OUT + j) * C_OUT + co] = q.rescale(ctx, acc).cell;
                 }
             }
         }

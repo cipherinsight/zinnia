@@ -1,5 +1,5 @@
 //! pythran_euclidean_distance_square__euclidean_distance_square: literal translation of kernel.py (LITERAL_BASELINES.md).
-//! Only np.dot fuses rescaling; square arrays round individually, additions remain left-associated.
+//! Each dot and square sum rescales once as optimized; full square arrays and source addition order remain.
 
 use crate::prelude::*;
 
@@ -28,7 +28,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         .iter()
         .map(|v| q.mul_int(ctx, *v, Constant(fe(-2))))
         .collect();
-    let squares1: Vec<Cell> = x1.iter().map(|v| q.mul(ctx, *v, *v).cell).collect();
+    let squares1: Vec<Cell> = x1.iter().map(|v| q.gate.mul(ctx, *v, *v)).collect();
     let sums1: Vec<Cell> = squares1
         .chunks(D)
         .map(|row| {
@@ -36,13 +36,13 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
             for v in row {
                 acc = q.add(ctx, acc, *v);
             }
-            acc
+            q.rescale(ctx, acc).cell
         })
         .collect();
     let first: Vec<Cell> = (0..R1 * R2)
         .map(|i| q.add(ctx, scaled[i], sums1[i / R2]))
         .collect();
-    let squares2: Vec<Cell> = x2.iter().map(|v| q.mul(ctx, *v, *v).cell).collect();
+    let squares2: Vec<Cell> = x2.iter().map(|v| q.gate.mul(ctx, *v, *v)).collect();
     let sums2: Vec<Cell> = squares2
         .chunks(D)
         .map(|row| {
@@ -50,7 +50,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
             for v in row {
                 acc = q.add(ctx, acc, *v);
             }
-            acc
+            q.rescale(ctx, acc).cell
         })
         .collect();
     let result: Vec<Cell> = (0..R1 * R2)

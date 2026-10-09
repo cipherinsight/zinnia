@@ -1,5 +1,5 @@
 //! pythran_cronbach__cronbach: literal translation of kernel.py (LITERAL_BASELINES.md).
-//! Variance uses mean, full deviations, rounded squares, sum, then ddof=1 division.
+//! Variance uses mean, full deviations, raw squares, sum with one optimized rescale, then ddof=1 division.
 
 use crate::prelude::*;
 
@@ -22,10 +22,11 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let deviations: Vec<Cell> = (0..ROWS * COLS)
         .map(|i| q.sub(ctx, scores[i], means[i / COLS]))
         .collect();
-    let squares: Vec<Cell> = deviations.iter().map(|v| q.mul(ctx, *v, *v).cell).collect();
+    let squares: Vec<Cell> = deviations.iter().map(|v| q.gate.mul(ctx, *v, *v)).collect();
     let mut itemvars = Vec::new();
     for row in squares.chunks(COLS) {
         let total = sum(&q, ctx, row);
+        let total = q.rescale(ctx, total).cell;
         itemvars.push(q.floor_div_const(ctx, total, (COLS - 1) as u64).0.cell);
     }
     let mut tscores = Vec::new();
@@ -37,8 +38,9 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let total = sum(&q, ctx, &tscores);
     let mean = q.floor_div_const(ctx, total, COLS as u64).0.cell;
     let deviations: Vec<Cell> = tscores.iter().map(|v| q.sub(ctx, *v, mean)).collect();
-    let squares: Vec<Cell> = deviations.iter().map(|v| q.mul(ctx, *v, *v).cell).collect();
+    let squares: Vec<Cell> = deviations.iter().map(|v| q.gate.mul(ctx, *v, *v)).collect();
     let total = sum(&q, ctx, &squares);
+    let total = q.rescale(ctx, total).cell;
     let tvar = q.floor_div_const(ctx, total, (COLS - 1) as u64).0.cell;
     let ratio = q.canonical_div_nonzero(ctx, itemvars_sum, tvar).cell;
     let complement = q.sub(ctx, Constant(fe(SCALE)), ratio);

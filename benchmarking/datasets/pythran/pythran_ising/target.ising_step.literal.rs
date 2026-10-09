@@ -1,4 +1,5 @@
 // pythran_ising__ising_step: literal translation of kernel.py (LITERAL_BASELINES.md).
+// L4: zero the inactive exponential argument before its range check.
 // Evaluate both branches and select per update; float32 remains Q32; clamp and update mirror the source helpers.
 use crate::prelude::*;
 
@@ -54,6 +55,7 @@ fn update(q: &Q32, ctx: &mut Ctx, field: &mut [Cell], beta: Cell, n: usize, m: u
     let first_value = q.gate.mul(ctx, field[n * M + m], Constant(fe(-1)));
     let negative = q.neg(ctx, de);
     let argument = q.mul_int(ctx, beta, negative);
+    let argument = q.gate.mul_not(ctx, first, argument);
     let argument = q.bound(ctx, argument);
     let exponential = q.canonical_exp(ctx, argument).cell;
     let left = q.bound(ctx, exponential);

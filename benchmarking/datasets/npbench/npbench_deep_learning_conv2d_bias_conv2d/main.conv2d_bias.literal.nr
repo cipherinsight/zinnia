@@ -1,10 +1,10 @@
 // npbench_deep_learning_conv2d_bias_conv2d__conv2d_bias.
 // Literal translation of kernel.py (LITERAL_BASELINES.md).
-// Broadcast products are materialized and rounded before axis-order sums.
+// Broadcast raw products are materialized; each sum rescales once, as optimized.
 // The conv2d helper completes before the broadcast bias addition.
 // @outputs: float[NB * H_OUT * W_OUT * C_OUT]
 
-use noir_hw::{check_inputs, mul};
+use noir_hw::{check_inputs, rescale};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global NB: u32 = 4; // = input_0
@@ -65,7 +65,7 @@ fn conv2d(
                         for ci in 0..C_IN {
                             for co in 0..C_OUT {
                                 products[b][a][c][ci][co] =
-                                    mul(input[b][i + a][j + c][ci], weights[a][c][ci][co]);
+                                    input[b][i + a][j + c][ci] * weights[a][c][ci][co];
                             }
                         }
                     }
@@ -81,7 +81,7 @@ fn conv2d(
                             }
                         }
                     }
-                    output[b][i][j][co] = acc;
+                    output[b][i][j][co] = rescale(acc);
                 }
             }
         }

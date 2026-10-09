@@ -2,6 +2,7 @@
 // Helpers and all arithmetic follow source order, without shared products or strength reduction.
 // The first nine population assignments are fixed by the source; shape loops use NS/MS.
 // Overwritten input borders/interiors use placeholders until assigned (same L7 input plumbing).
+// Integer-valued moment coefficients use exact products without extra windows, as optimized.
 // @outputs: float[MX * MY * MS]
 global NX: u32 = 16; // = f1_0
 global NY: u32 = 16; // = f1_1
@@ -178,30 +179,30 @@ fn f2m_loc(f: [Field; NS], m: [Field; NS]) -> [Field; NS] {
     let t18 = (t17) - (f[8]);
     m[2] = t18;
     // m[3] = -4.0 * f[0] - f[1] - f[2] - f[3] - f[4] + 2.0 * f[5] + 2.0 * f[6] + 2.0 * f[7] + 2.0 * f[8]
-    let t19 = -(17179869184);
-    let t20 = noir_hw::mul(t19, f[0]);
+    let t19 = -(4);
+    let t20 = t19 * f[0];
     let t21 = (t20) - (f[1]);
     let t22 = (t21) - (f[2]);
     let t23 = (t22) - (f[3]);
     let t24 = (t23) - (f[4]);
-    let t25 = noir_hw::mul(8589934592, f[5]);
+    let t25 = 2 * f[5];
     let t26 = (t24) + (t25);
-    let t27 = noir_hw::mul(8589934592, f[6]);
+    let t27 = 2 * f[6];
     let t28 = (t26) + (t27);
-    let t29 = noir_hw::mul(8589934592, f[7]);
+    let t29 = 2 * f[7];
     let t30 = (t28) + (t29);
-    let t31 = noir_hw::mul(8589934592, f[8]);
+    let t31 = 2 * f[8];
     let t32 = (t30) + (t31);
     m[3] = t32;
     // m[4] = 4.0 * f[0] - 2.0 * f[1] - 2.0 * f[2] - 2.0 * f[3] - 2.0 * f[4] + f[5] + f[6] + f[7] + f[8]
-    let t33 = noir_hw::mul(17179869184, f[0]);
-    let t34 = noir_hw::mul(8589934592, f[1]);
+    let t33 = 4 * f[0];
+    let t34 = 2 * f[1];
     let t35 = (t33) - (t34);
-    let t36 = noir_hw::mul(8589934592, f[2]);
+    let t36 = 2 * f[2];
     let t37 = (t35) - (t36);
-    let t38 = noir_hw::mul(8589934592, f[3]);
+    let t38 = 2 * f[3];
     let t39 = (t37) - (t38);
-    let t40 = noir_hw::mul(8589934592, f[4]);
+    let t40 = 2 * f[4];
     let t41 = (t39) - (t40);
     let t42 = (t41) + (f[5]);
     let t43 = (t42) + (f[6]);
@@ -209,9 +210,9 @@ fn f2m_loc(f: [Field; NS], m: [Field; NS]) -> [Field; NS] {
     let t45 = (t44) + (f[8]);
     m[4] = t45;
     // m[5] = -2.0 * f[1] + 2.0 * f[3] + f[5] - f[6] - f[7] + f[8]
-    let t46 = -(8589934592);
-    let t47 = noir_hw::mul(t46, f[1]);
-    let t48 = noir_hw::mul(8589934592, f[3]);
+    let t46 = -(2);
+    let t47 = t46 * f[1];
+    let t48 = 2 * f[3];
     let t49 = (t47) + (t48);
     let t50 = (t49) + (f[5]);
     let t51 = (t50) - (f[6]);
@@ -219,9 +220,9 @@ fn f2m_loc(f: [Field; NS], m: [Field; NS]) -> [Field; NS] {
     let t53 = (t52) + (f[8]);
     m[5] = t53;
     // m[6] = -2.0 * f[2] + 2.0 * f[4] + f[5] + f[6] - f[7] - f[8]
-    let t54 = -(8589934592);
-    let t55 = noir_hw::mul(t54, f[2]);
-    let t56 = noir_hw::mul(8589934592, f[4]);
+    let t54 = -(2);
+    let t55 = t54 * f[2];
+    let t56 = 2 * f[4];
     let t57 = (t55) + (t56);
     let t58 = (t57) + (f[5]);
     let t59 = (t58) + (f[6]);

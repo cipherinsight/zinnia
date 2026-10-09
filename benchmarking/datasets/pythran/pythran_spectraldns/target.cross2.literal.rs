@@ -1,6 +1,6 @@
 //! pythran_spectraldns__cross2: literal translation of kernel.py (LITERAL_BASELINES.md).
 //! Materialize full complex arrays per expression, with no CSE or dead-write elimination.
-//! Real-complex multiplication is two Q32 products; multiplication by 1j uses the complex definition.
+//! Real-complex multiplication is two Q32 products; multiplication by 1j forms all four exact 0/1 products without extra range checks, as optimized.
 
 use crate::prelude::*;
 
@@ -20,11 +20,11 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let c = cross1(&q, ctx, &a, &b);
     let mut result = Vec::new();
     for i in 0..3 * POINTS {
-        let re0 = q.mul(ctx, c[2 * i], Constant(fe(0))).cell;
-        let im1 = q.mul(ctx, c[2 * i + 1], Constant(fe(SCALE))).cell;
+        let re0 = q.mul_int(ctx, c[2 * i], Constant(fe(0)));
+        let im1 = q.mul_int(ctx, c[2 * i + 1], Constant(fe(1)));
         let re = q.sub(ctx, re0, im1);
-        let re1 = q.mul(ctx, c[2 * i], Constant(fe(SCALE))).cell;
-        let im0 = q.mul(ctx, c[2 * i + 1], Constant(fe(0))).cell;
+        let re1 = q.mul_int(ctx, c[2 * i], Constant(fe(1)));
+        let im0 = q.mul_int(ctx, c[2 * i + 1], Constant(fe(0)));
         let im = q.add(ctx, re1, im0);
         result.extend([re, im]);
     }

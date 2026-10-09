@@ -32,6 +32,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
             for x in squares {
                 total = q.add(ctx, total, x);
             }
+            q.range.range_check(ctx, total, 63); // Optimized radicand domain.
             d[ii * NN + jj] = q.sqrt(ctx, total).cell;
         }
     }

@@ -1,5 +1,5 @@
 // pythran_crotg__CROTG: literal translation of kernel.py (LITERAL_BASELINES.md).
-// Repeated abs calls remain separate. Complex primitives retain current Q32 rounding. Inactive zero divisions are totalized and nonzero assertions guarded; outputs select both branches.
+// Repeated abs calls remain separate. Complex primitives retain current Q32 rounding. L4 masks inactive CB before its magnitude can overflow. Inactive zero divisions are totalized and nonzero assertions guarded; outputs select both branches.
 // @outputs: float[7]
 
 use noir_hw::{check_inputs, mul, SCALE, sqrt};
@@ -21,7 +21,8 @@ fn main(CA: [Field; 2], CB: [Field; 2]) -> pub ([Field; 2], [Field; 2], Field, [
     check_inputs(CB);
     let zero = magnitude(CA) == 0;
     let active = !zero;
-    let scale = magnitude(CA) + magnitude(CB);
+    let safe_cb = if active { CB } else { [0, 0] };
+    let scale = magnitude(CA) + magnitude(safe_cb);
     let a_magnitude = magnitude(complex_div(CA, scale, active));
     let a_squared = mul(a_magnitude, a_magnitude);
     let b_magnitude = magnitude(complex_div(CB, scale, active));

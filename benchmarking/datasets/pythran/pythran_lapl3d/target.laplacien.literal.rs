@@ -1,5 +1,6 @@
 // pythran_lapl3d__laplacien: literal translation of kernel.py (LITERAL_BASELINES.md).
 // Full array passes; integer 4 multiplication is exact; maximum scan then scalar maximum. Only unread corner inputs omitted.
+// The max+epsilon divisor may cross signed64, as allowed by optimized division.
 use crate::prelude::*;
 const H: usize = 16; // = image_0
 const W: usize = 16; // = image_1
@@ -83,8 +84,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let result: Vec<Cell> = magnitudes
         .iter()
         .map(|v| {
-            let den = q.bound(ctx, valmax);
-            q.div(ctx, *v, den).cell
+            q.canonical_div_nonzero(ctx, *v, valmax).cell
         })
         .collect();
     out.floats(&result);

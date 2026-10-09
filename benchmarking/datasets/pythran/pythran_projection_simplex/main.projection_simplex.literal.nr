@@ -1,9 +1,10 @@
 // pythran_projection_simplex__projection_simplex: literal translation of kernel.py (LITERAL_BASELINES.md).
 // Stable bubble sort; each mask call independently uses prefix counts and pairwise equality tests.
 // Nonempty checks preserve IndexError for [-1] on an empty selection.
+// Comparison domain follows optimized canonical gaps, including values beyond signed64.
 // @outputs: float[N]
 use noir_hw::{
-    canonical_div_nonzero, check_input, check_inputs, divmod_pos, gt, index_pos, max, SCALE,
+    canonical_div_nonzero, check_input, check_inputs, divmod_pos, gt, index_pos, SCALE,
 };
 global N: u32 = 10; // = v_0
 global INDEX_BITS: u32 = 8; // = 8 + 20 * min(1, (v_0 - 1) // 128)
@@ -48,7 +49,7 @@ fn main(v: [Field; N], z: Field) -> pub [Field; N] {
     }
     let mut cond = [false; N];
     for i in 0..N {
-        cond[i] = gt(gaps[i], 0);
+        cond[i] = noir_hw::canonical_gt(gaps[i], 0);
     }
     let (count, selected) = compact_literal(ind, cond);
     assert(count != 0);
@@ -63,7 +64,7 @@ fn main(v: [Field; N], z: Field) -> pub [Field; N] {
     }
     let mut w = [0; N];
     for i in 0..N {
-        w[i] = max(differences[i], 0);
+        w[i] = if noir_hw::canonical_gt(differences[i], 0) { differences[i] } else { 0 };
     }
     w
 }

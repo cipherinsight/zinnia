@@ -1,5 +1,6 @@
 // pythran_weights__weights: literal translation of kernel.py (LITERAL_BASELINES.md).
 // Equality array and each reduction are separate; repeat threshold*length each iteration; float32 stays Q32.
+// Comparison domain follows optimized canonical gaps, including values beyond signed64.
 // @outputs: float[S]
 
 use noir_hw::{check_input, check_inputs, SCALE};
@@ -23,7 +24,7 @@ fn main(input_data: [[Field; L]; S], threshold: Field) -> pub [Field; S] {
         for row in 0..S { for c in 0..L { counts[row] += matches[row][c]; } }
         let bar = threshold * L as Field;
         let mut over = [0; S];
-        for row in 0..S { over[row] = noir_hw::gt(counts[row]*SCALE,bar) as Field; }
+        for row in 0..S { over[row] = noir_hw::canonical_gt(counts[row]*SCALE,bar) as Field; }
         let mut total: Field = 0;
         for row in 0..S { total += over[row]; }
         weights[i] = noir_hw::div(SCALE,total*SCALE);

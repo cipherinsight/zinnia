@@ -1,7 +1,9 @@
 // npbench_weather_stencils_hdiff_hdiff__hdiff: literal translation of kernel.py (LITERAL_BASELINES.md).
 // Every array operator is a separate full pass, including unused lap_field corners (L2).
 // np.where computes its rounded product, comparison and select in separate passes.
-// Only four unread input corners and overwritten out_field are omitted from input checks.
+// Discarded-only border inputs use shared integer limbs, retaining their actual
+// quantized values without the signed64 bounds omitted by optimized. Four never-read
+// outer corners and overwritten out_field are not loaded. Exact 4*x matches optimized.
 use crate::prelude::*;
 const I: usize = 11; // = out_field_0
 const J: usize = 11; // = out_field_1
@@ -20,7 +22,10 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
             if !((i == 0 || i == IN_I - 1) && (j == 0 || j == IN_J - 1)) {
                 for k in 0..K {
                     let at = (i * IN_J + j) * K + k;
-                    field[at] = q.load_float(ctx, input[at]);
+                    let used = (i >= 2 && i < IN_I - 2) || (j >= 2 && j < IN_J - 2)
+                        || ((i > 0 && i < IN_I - 1) && (j > 0 && j < IN_J - 1));
+                    field[at] = if used { q.load_float(ctx, input[at]) }
+                        else { load_discarded_q32(&q, ctx, input[at]) };
                 }
             }
         }
@@ -31,12 +36,11 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         for j in 0..J + 2 {
             for k in 0..K {
                 four[(((i) * (J + 2) + (j)) * K) + k] = q
-                    .mul(
+                    .mul_int(
                         ctx,
-                        Constant(fe(quantize(4.0))),
+                        Constant(fe(4)),
                         field[(((i + 1) * IN_J + (j + 1)) * K) + k],
-                    )
-                    .cell;
+                    );
             }
         }
     }
@@ -278,4 +282,19 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     }
     out.floats(&result);
     Ok(())
+}
+
+// Statement input encoding for a value used only by discarded source work.
+// Three bounded integer limbs reconstruct the full quantized i128 input without
+// imposing a signed64 window on it. Only shared input loaders are used (L6).
+fn load_discarded_q32(q: &Q32, ctx: &mut Ctx, value: f64) -> Cell {
+    let code = quantize(value);
+    let mask = (1i128 << 63) - 1;
+    let low = q.load_int(ctx, (code & mask) as i64);
+    let middle = q.load_int(ctx, ((code >> 63) & mask) as i64);
+    let high = q.load_int(ctx, (code >> 126) as i64);
+    let middle = q.mul_int(ctx, middle, Constant(fe(1i128 << 63)));
+    let high = q.mul_int(ctx, high, Constant(fe(1i128 << 126)));
+    let lower = q.add(ctx, low, middle);
+    q.add(ctx, lower, high)
 }

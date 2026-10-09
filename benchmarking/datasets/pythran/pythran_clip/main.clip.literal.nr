@@ -1,11 +1,12 @@
 // pythran_clip__clip: literal translation of kernel.py (LITERAL_BASELINES.md).
-// Each abs occurrence is recomputed; complex magnitude/division retain the optimized Q32 arithmetic family. Inactive zero division is totalized and validity gated.
+// Each abs occurrence is recomputed; complex magnitude/division retain the optimized Q32 arithmetic family. L4 masks the inactive limit1 input to prevent unused products overflowing. Inactive zero division is totalized and validity gated.
 // @outputs: float[2 * N]
 global N: u32 = 2; // = z_0
 fn magnitude(x: [Field; 2]) -> Field {
     noir_hw::sqrt(noir_hw::mul(x[0], x[0]) + noir_hw::mul(x[1], x[1]))
 }
 fn limit1(x: [Field; 2], outer: bool) -> [Field; 2] {
+    let x = if outer { x } else { [0, 0] };
     let tiny = noir_hw::lt(magnitude(x), 4295);
     let mag = magnitude(x);
     let den = noir_hw::mul(mag, mag);
