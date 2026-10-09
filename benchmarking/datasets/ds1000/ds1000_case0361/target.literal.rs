@@ -20,7 +20,11 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     // a = np.delete(a, temp, axis=1)
     let a = a.as_slice();
     let kept: Vec<f64> = (0..6)
-        .flat_map(|i| (0..6).filter(|j| !temp.contains(j)).map(move |j| a[i * 6 + j]))
+        .flat_map(|i| {
+            (0..6)
+                .filter(|j| !temp.contains(j))
+                .map(move |j| a[i * 6 + j])
+        })
         .collect();
     let kept = q.load_floats(ctx, &kept);
     out.floats(&kept);

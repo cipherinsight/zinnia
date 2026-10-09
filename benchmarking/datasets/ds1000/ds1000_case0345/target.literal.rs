@@ -21,24 +21,27 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     // a[:, col-1] *= multiply_number
     let idx1 = q.gate.sub(ctx, col, Constant(Fr::ONE));
     let hits1 = column_hits(&q, ctx, idx1, COLS);
-    let values: Vec<Cell> = (0..ROWS).map(|i| q.index(ctx, &a[i*COLS..(i+1)*COLS], idx1)).collect();
-    let scaled: Vec<Cell> = values.iter().map(|v| q.mul(ctx, *v, multiply_number).cell).collect();
-    for i in 0..ROWS { for k in 0..COLS {
-        a[i*COLS+k] = q.gate.select(ctx, scaled[i], a[i*COLS+k], hits1[k]);
-    }}
+    let values: Vec<Cell> = (0..ROWS)
+        .map(|i| q.index(ctx, &a[i * COLS..(i + 1) * COLS], idx1))
+        .collect();
+    let scaled: Vec<Cell> = values
+        .iter()
+        .map(|v| q.mul(ctx, *v, multiply_number).cell)
+        .collect();
+    for i in 0..ROWS {
+        for k in 0..COLS {
+            a[i * COLS + k] = q.gate.select(ctx, scaled[i], a[i * COLS + k], hits1[k]);
+        }
+    }
 
     // result = np.cumsum(a[:, col-1])
     let idx2 = q.gate.sub(ctx, col, Constant(Fr::ONE)); // recomputed: no CSE across statements
-    let mut acc: Option<Cell> = None;
-    let mut cumsum = Vec::with_capacity(ROWS);
-    for i in 0..ROWS {
-        let row = &a[i * COLS..(i + 1) * COLS];
-        let picked = q.index(ctx, row, idx2);
-        acc = Some(match acc {
-            None => picked,
-            Some(prev) => q.add(ctx, prev, picked),
-        });
-        cumsum.push(acc.unwrap());
+    let values: Vec<Cell> = (0..ROWS)
+        .map(|i| q.index(ctx, &a[i * COLS..(i + 1) * COLS], idx2))
+        .collect();
+    let mut cumsum = vec![values[0]];
+    for value in &values[1..] {
+        cumsum.push(q.add(ctx, *cumsum.last().unwrap(), *value));
     }
     out.floats(&cumsum);
     Ok(())

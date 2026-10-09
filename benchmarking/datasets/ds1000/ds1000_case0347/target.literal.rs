@@ -21,14 +21,24 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     // a[row-1, :] /= divide_number
     let idx1 = q.gate.sub(ctx, row, Constant(Fr::ONE));
     let hits1 = row_hits(&q, ctx, idx1, ROWS);
-    let values: Vec<Cell> = (0..COLS).map(|j| {
-        let column: Vec<Cell> = (0..ROWS).map(|i| a[i*COLS+j]).collect();
-        q.index(ctx, &column, idx1)
-    }).collect();
-    let scaled: Vec<Cell> = values.iter().map(|v| { let d = q.bound(ctx, divisor); q.div(ctx, *v, d).cell }).collect();
-    for i in 0..ROWS { for j in 0..COLS {
-        a[i*COLS+j] = q.gate.select(ctx, scaled[j], a[i*COLS+j], hits1[i]);
-    }}
+    let values: Vec<Cell> = (0..COLS)
+        .map(|j| {
+            let column: Vec<Cell> = (0..ROWS).map(|i| a[i * COLS + j]).collect();
+            q.index(ctx, &column, idx1)
+        })
+        .collect();
+    let scaled: Vec<Cell> = values
+        .iter()
+        .map(|v| {
+            let d = q.bound(ctx, divisor);
+            q.div(ctx, *v, d).cell
+        })
+        .collect();
+    for i in 0..ROWS {
+        for j in 0..COLS {
+            a[i * COLS + j] = q.gate.select(ctx, scaled[j], a[i * COLS + j], hits1[i]);
+        }
+    }
 
     // result = np.multiply.reduce(a[row-1, :])
     let idx2 = q.gate.sub(ctx, row, Constant(Fr::ONE)); // recomputed: no CSE across statements

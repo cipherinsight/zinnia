@@ -51,16 +51,14 @@ fn main(a: [Field; 48], row: Field, multiply_number: Field) -> pub [Field; 6] {
 
     // result = np.cumsum(a[row-1, :])
     let idx2 = row - 1; // recomputed: no CSE across statements
-    let mut cumsum: [Field; 6] = [0; COLS];
-    let mut acc: Field = 0;
+    let mut values = [0; COLS];
     for j in 0..COLS {
-        let mut column: [Field; 8] = [0; ROWS];
-        for i in 0..ROWS {
-            column[i] = a[i * COLS + j];
-        }
-        let picked = column[index_pos::<8>(idx2, ROWS)];
-        acc += picked;
-        cumsum[j] = acc;
+        let mut column = [0; ROWS];
+        for i in 0..ROWS { column[i] = a[i*COLS+j]; }
+        values[j] = column[index_pos::<8>(idx2, ROWS)];
     }
+    let mut cumsum = [0; COLS];
+    cumsum[0] = values[0];
+    for i in 1..COLS { cumsum[i] = cumsum[i-1] + values[i]; }
     cumsum
 }
