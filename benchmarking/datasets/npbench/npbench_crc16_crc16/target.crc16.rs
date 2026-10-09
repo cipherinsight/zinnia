@@ -1,101 +1,41 @@
-//! npbench_crc16_crc16__crc16 (NPBench crc16), halo2-base baseline.
-//! Kernel: CRC-16-CCITT of the low bytes of `data: Int[L]` with a private
-//! int64 `poly`, bit by bit: `crc` starts at 65535; for each of the
-//! `STEPS = 8 L` data bits `d_t` (low bit first), `c_t = (crc & 1) ^ d_t`,
-//! then `crc = (crc >> 1) ^ poly` if `c_t` else `crc >> 1`; the result is
-//! `~crc & 65535` with its two bytes swapped.
-//! `crc` is an int64 throughout (`>>` is arithmetic, so its bit 63 repeats),
-//! and the steps are linear over GF(2) given the `c_t`: bit `i` of `crc`
-//! after step `t` is bit `min(63, i + t)` of 65535 XOR the bits
-//! `c_u & p[min(63, i + t - 1 - u)]` for `u < t`, `p` the bits of `poly`.
-//! An XOR of bits is the parity of their integer sum, so each `c_t` is the
-//! parity of `d_t + bit_t(65535) + sum_u c_u p[t - 1 - u]` (the terms with
-//! index 63 summed as `p[63]` times a running count of the `c_u`), and the
-//! 16 output bits likewise. Each parity is a hinted bit pinned by
-//! `sum = 2 h + bit` with `h` range-checked. This costs one product per
-//! (step, earlier step) pair, about 7,000, against two gates per bit and
-//! step when `crc` is carried as 64 bits.
-
+//! Source CRC recurrence, carried as 64 Boolean bits. Each of 8*L steps
+//! shifts the current CRC, XORs poly conditionally, and shifts cur_byte.
+//! No linear-GF2 parity-history reformulation. Arithmetic right shift repeats
+//! the sign bit, including for a negative private polynomial.
 use crate::prelude::*;
-
 // Sizes (hw_check.sizes): from fixture.json.
 const L: usize = 16; // = data_0
-const STEPS: usize = 8 * L;
-// The parity sums are at most STEPS + 2 (bits and products of bits), so
-// their halves fit SUM_HALF_BITS bits.
-const SUM_HALF_BITS: usize = 7; // = bits(8 * data_0 + 2) - 1
-
-/// The initial `crc`, from the kernel's text.
-const INIT: u64 = 65535;
-/// The bits of an int64, and the index of its sign bit.
 const WORD: usize = 64;
 const SIGN: usize = WORD - 1;
-/// The output keeps the low 16 bits.
 const OUT_BITS: usize = 16;
-
 pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
     let data = inputs.ints("data", &[L])?;
     let poly = inputs.int("poly")?;
     let q = Q32::new(builder);
     let ctx = builder.main(0);
-
     let data = q.load_ints(ctx, &data);
     let poly = q.load_int(ctx, poly);
-    let d: Vec<Cell> = data.iter().flat_map(|b| low_byte_bits(&q, ctx, *b)).collect();
     let p = twos_complement_bits(&q, ctx, poly);
-    let init_bit = |i: usize| (INIT >> i.min(SIGN)) & 1;
-
-    // c[t], and count[x] = c[0] + ... + c[x - 1].
-    let mut c: Vec<Cell> = Vec::with_capacity(STEPS);
-    let mut count: Vec<Cell> = vec![ctx.load_zero()];
-    // The parity of: bit `i + t` of INIT, `extra`, and `c_u p[i + t - 1 - u]`
-    // for u < t (index capped at 63), i.e. bit i of crc after t steps
-    // (XOR `extra`).
-    let crc_bit = |ctx: &mut Ctx, c: &[Cell], count: &[Cell], i: usize, t: usize, extra: Option<Cell>| -> Cell {
-        // Below index 63: u from i + t - 63 on.
-        let first = (i + t).saturating_sub(SIGN);
-        let products = q.gate.inner_product(
-            ctx,
-            c[first..t].iter().map(|x| Existing(*x)),
-            (first..t).map(|u| Existing(p[i + t - 1 - u])),
-        );
-        let capped = q.gate.mul_add(ctx, p[SIGN], count[first], products);
-        let mut sum = q.add(ctx, capped, Constant(Fr::from(init_bit(i + t))));
-        if let Some(e) = extra {
-            sum = q.add(ctx, sum, e);
+    let mut crc: Vec<Cell> = (0..WORD).map(|i| ctx.load_constant(Fr::from((i < OUT_BITS) as u64))).collect();
+    for b in data {
+        let mut cur_byte = low_byte_bits(&q, ctx, b);
+        for _ in 0..8 {
+            let feedback = q.gate.xor(ctx, crc[0], cur_byte[0]);
+            let shifted: Vec<Cell> = (0..WORD).map(|i| crc[(i + 1).min(SIGN)]).collect();
+            for i in 0..WORD {
+                let xored = q.gate.xor(ctx, shifted[i], p[i]);
+                crc[i] = q.gate.select(ctx, xored, shifted[i], feedback);
+            }
+            cur_byte.remove(0);
+            cur_byte.push(ctx.load_zero());
         }
-        parity(&q, ctx, sum)
-    };
-    for t in 0..STEPS {
-        let bit = crc_bit(ctx, &c, &count, 0, t, Some(d[t]));
-        let next = q.add(ctx, count[t], bit);
-        c.push(bit);
-        count.push(next);
     }
-    // ~crc & 65535 with its bytes swapped: output bit k is NOT crc bit
-    // (k + 8) % 16.
-    let crc: Vec<Cell> = (0..OUT_BITS).map(|i| crc_bit(ctx, &c, &count, i, STEPS, None)).collect();
-    let weights = (0..OUT_BITS).map(|i| Constant(Fr::from(1u64 << ((i + OUT_BITS / 2) % OUT_BITS))));
-    let set = q.gate.inner_product(ctx, crc.iter().map(|b| Existing(*b)), weights);
-    let result = q.sub(ctx, Constant(Fr::from((1u64 << OUT_BITS) - 1)), set);
+    // Complement, mask to 16 bits, swap bytes, mask again.
+    let complemented: Vec<Cell> = crc[..OUT_BITS].iter().map(|b| q.gate.not(ctx, *b)).collect();
+    let weights = (0..OUT_BITS).map(|i| Constant(Fr::from(1u64 << ((i + 8) % OUT_BITS))));
+    let result = q.gate.inner_product(ctx, complemented, weights);
     out.int(result);
     Ok(())
-}
-
-/// The parity of a sum of at most `STEPS + 2` bits: a hinted bit, pinned by
-/// `sum = 2 h + bit` with `bit` a bit and `h` below `2^SUM_HALF_BITS` (the
-/// sum is a small non-negative integer, so `(h, bit)` is its unique
-/// decomposition).
-fn parity(q: &Q32, ctx: &mut Ctx, sum: Cell) -> Cell {
-    let v = crate::q32::signed(sum.value());
-    // Hints, pinned as above.
-    let bit = ctx.load_witness(fe(v & 1));
-    let half = ctx.load_witness(fe(v >> 1));
-    q.gate.assert_bit(ctx, bit);
-    q.range.range_check(ctx, half, SUM_HALF_BITS);
-    let recomposed = q.gate.mul_add(ctx, half, Constant(Fr::from(2)), bit);
-    ctx.constrain_equal(&recomposed, &sum);
-    bit
 }
 
 /// The eight low bits of an int64 `b` (`255 & b`, two's complement): hinted
