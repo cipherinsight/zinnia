@@ -334,6 +334,26 @@
      }
     }
    }
+  ],
+  "pythran_ising__ising_step": [
+   {
+    "name": "float32_acceptance_boundary",
+    "set": {
+     "field": [
+      [
+       1,
+       1
+      ],
+      [
+       1,
+       1
+      ]
+     ],
+     "beta": 0.04332169867120683
+    },
+    "expect": "numpy",
+    "why": "beta rounds upward to float32 before the exp acceptance test: at dE=16 unrounded beta incorrectly flips, whereas NumPy retains every +1 spin."
+   }
   ]
  }
 }

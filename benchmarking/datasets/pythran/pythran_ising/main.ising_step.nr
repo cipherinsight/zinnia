@@ -8,16 +8,12 @@
 // exp is increasing, so exp(-dE * beta) > 0.5 is decided exactly as
 // beta * dE < -ln(0.5) on the Q32 code of beta * dE (an integer comparison
 // with the constant -round(ln(0.5) * 2^32); no exp gadget, no approximation
-// error). np.float32(beta) is computed in Q32 like any float (NPB_BASELINES.md
-// section 5.4): rounding beta to float32 changes the outcome only when
-// beta * dE is within 6e-8 relative of ln 2; the fixture's values are far
-// from it (beta * dE is 0 or 3.2, against ln 2 = 0.69). dE is an int64 (a
-// comparison puts it in the window); the product beta * dE is compared as a
-// wide integer, so any int64 dE and Q32 beta have a proof, as NumPy's float64
-// product has a value.
+// error). Clamp beta to [0,1], which preserves the acceptance decision for
+// positive integer dE, then round its Q32 code to 24 significant bits,
+// ties to even. This implements np.float32(beta) for the predicate.
 // @outputs: int[N * M]
 
-use noir_hw::{check_input, check_inputs, window};
+use noir_hw::{check_input, check_inputs, window, divmod_pos, SCALE};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global N: u32 = 2; // = field_0
@@ -57,6 +53,7 @@ fn main(field: [[Field; M]; N], beta: Field) -> pub [[Field; M]; N] {
         check_inputs(field[n]);
     }
     check_input(beta);
+    let beta = acceptance_beta(beta);
     let mut f = field;
     for n_offset in 0..2 {
         for m_offset in 0..2 {
@@ -83,4 +80,64 @@ fn main(field: [[Field; M]; N], beta: Field) -> pub [[Field; M]; N] {
         }
     }
     f
+}
+
+unconstrained fn shift_hint(code: Field) -> Field {
+    let v = code as u64;
+    let mut shift: u32 = 0;
+    for s in 1..10 {
+        if v >= (1 as u64) << (23 + s) { shift = s as u32; }
+    }
+    shift as Field
+}
+
+// One-hot shift and magnitude interval pin the hinted float32 exponent.
+fn round_float32(code: Field, shift: Field) -> Field {
+    let mut count: Field = 0;
+    let mut factor: Field = 0;
+    let mut low: Field = 0;
+    let mut high: Field = 0;
+    for s in 0..10 {
+        let choice = (shift == s as Field) as Field;
+        count += choice;
+        factor += choice * 2.pow_32(s as Field);
+        low += choice * if s == 0 { 0 } else { 2.pow_32((23 + s) as Field) };
+        high += choice * 2.pow_32((24 + s) as Field);
+    }
+    assert(count == 1);
+    (code - low).assert_max_bit_size::<32>();
+    (high - 1 - code).assert_max_bit_size::<32>();
+    let (mantissa, rem) = divmod_pos(code, factor);
+    let (_, odd) = divmod_pos(mantissa, 2);
+    let twice_rem = window(2 * rem);
+    let factor_window = window(factor);
+    let up = (twice_rem > factor_window) | ((twice_rem == factor_window) & (odd == 1));
+    (mantissa + up as Field) * factor
+}
+
+fn acceptance_beta(beta: Field) -> Field {
+    let w = window(beta);
+    let code = if w < window(0) { 0 } else if w > window(SCALE) { SCALE } else { beta };
+    // Safety: round_float32 pins the shift by a one-hot and magnitude bounds.
+    let shift = unsafe { shift_hint(code) };
+    round_float32(code, shift)
+}
+
+#[test]
+fn beta_float32_rounding() {
+    assert(acceptance_beta(186065279) == 186065280);
+    assert(acceptance_beta(-1) == 0);
+    assert(acceptance_beta(2 * SCALE) == SCALE);
+    assert(acceptance_beta(16777217) == 16777216);
+    assert(acceptance_beta(16777219) == 16777220);
+}
+
+#[test(should_fail)]
+fn beta_float32_rejects_wrong_exponent() {
+    let _ = round_float32(186065279, 0);
+}
+
+#[test(should_fail)]
+fn beta_float32_rejects_nonintegral_exponent() {
+    let _ = round_float32(186065279, 1 / 2);
 }
