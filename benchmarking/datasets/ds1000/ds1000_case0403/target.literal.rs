@@ -7,14 +7,7 @@
 //! strides (4608, 512, 64, 8, 1), accumulated term by term in index order
 //! k = 0..5 (not reversed, unlike the optimized baseline, which reorders to
 //! save a cell on the leading stride-1 term: L3 forbids that reordering).
-//! NumPy raises unless `0 <= index[k] < dims[k]`; this is also exactly the
-//! input-domain check of CONVENTIONS.md 1.6 for an int64 (a check the
-//! kernel's own semantics already impose and that implies the domain
-//! replaces the generic one, as 1.6 says by name for this case). Each
-//! index[k] gets exactly one such check, via halo2-base's own
-//! `check_less_than_safe`, the plain (non-cell-optimized) "0 <= a < b"
-//! gadget, instead of the optimized baseline's hand-rolled `assert_below`
-//! lookup-table trick.
+//! Inputs use the standard loader; dimension bounds enforce NumPy index semantics.
 //! `a` (the `Float[8,9,8,8,8]` parameter) is never read by the kernel, so it
 //! is not loaded and gets no check (CONVENTIONS.md 1.6, L7 plumbing).
 
@@ -31,9 +24,10 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     // flat = sum_k index[k] * stride[k], each term added as it is formed,
     // in source (index) order; 0 <= index[k] < dims[k] checked at the same
     // point, once per element.
+    let index = q.load_ints(ctx, &index);
     let mut flat = q.int_const(ctx, 0);
     for k in 0..5 {
-        let x = ctx.load_witness(fe(index[k] as i128));
+        let x = index[k];
         q.range.check_less_than_safe(ctx, x, DIMS[k]);
         let term = q.gate.mul(ctx, x, Constant(Fr::from(STRIDES[k])));
         flat = q.gate.add(ctx, flat, term);
