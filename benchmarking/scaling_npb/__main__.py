@@ -145,6 +145,29 @@ def parser() -> argparse.ArgumentParser:
     gen.add_argument("--caps", help="comma-separated caps (default 32,64,128)")
     gen.set_defaults(func=cmd_generate)
 
+    hw = sub.add_parser("handwritten", help="audit size-only handwritten baseline rewrites")
+    hw.add_argument("--data", type=Path, required=True)
+    hw.add_argument("--baseline-root", type=Path, required=True,
+                    help="checkout containing handwritten baselines and hw_check/sizes.py")
+    hw.add_argument("--out", type=Path, required=True, help="coverage and source-diff report JSON")
+    hw.add_argument("--caps", help="comma-separated caps (default all materialized caps)")
+    hw.add_argument("--write", action="store_true", help="write checked baselines beside scaled fixtures")
+    from benchmarking.scaling_npb.handwritten import main as handwritten_main
+    hw.set_defaults(func=handwritten_main)
+
+    hc = sub.add_parser("handwritten-counts", help="serial count-only scaled baseline evaluation")
+    hc.add_argument("--audit", type=Path, required=True)
+    hc.add_argument("--cap", type=int, required=True)
+    hc.add_argument("--halo2-bin", type=Path, help="binary compiled with this cap's source root")
+    hc.add_argument("--memory-runner", type=Path, required=True, help="memrun.sh or equivalent")
+    hc.add_argument("--memory", default="8G")
+    hc.add_argument("--timeout", type=float, default=1800)
+    hc.add_argument("--work", type=Path, required=True)
+    hc.add_argument("--out", type=Path, required=True, help="append-only JSONL; successful counts resume")
+    hc.add_argument("--cases", help="comma-separated scaled case IDs")
+    from benchmarking.scaling_npb.handwritten_counts import main as handwritten_counts_main
+    hc.set_defaults(func=handwritten_counts_main)
+
     rel = sub.add_parser("relocate", help="point the case sets at DATA's current location")
     rel.add_argument("--data", type=Path, required=True)
     rel.set_defaults(func=cmd_relocate)
