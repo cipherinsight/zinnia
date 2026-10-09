@@ -46,17 +46,36 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     // beta * D (fresh array, one rounded product per element)
     let beta_d: Vec<Cell> = d.iter().map(|x| q.mul(ctx, beta, *x).cell).collect();
     // final + (exact elementwise)
-    let result: Vec<Cell> = abc.iter().zip(&beta_d).map(|(x, y)| q.add(ctx, *x, *y)).collect();
+    let result: Vec<Cell> = abc
+        .iter()
+        .zip(&beta_d)
+        .map(|(x, y)| q.add(ctx, *x, *y))
+        .collect();
     out.floats(&result);
     Ok(())
 }
 
 /// `x @ y` for x: [rows, inner] and y: [inner, cols], row-major: the defining
 /// sum, one rescale per output element (L5).
-fn matmul(q: &Q32, ctx: &mut Ctx, x: &[Cell], y: &[Cell], rows: usize, inner: usize, cols: usize) -> Vec<Cell> {
-    let columns: Vec<Vec<Cell>> = (0..cols).map(|j| (0..inner).map(|k| y[k * cols + j]).collect()).collect();
+fn matmul(
+    q: &Q32,
+    ctx: &mut Ctx,
+    x: &[Cell],
+    y: &[Cell],
+    rows: usize,
+    inner: usize,
+    cols: usize,
+) -> Vec<Cell> {
+    let columns: Vec<Vec<Cell>> = (0..cols)
+        .map(|j| (0..inner).map(|k| y[k * cols + j]).collect())
+        .collect();
     x.chunks(inner)
         .take(rows)
-        .flat_map(|row| columns.iter().map(|column| q.dot(ctx, row, column).cell).collect::<Vec<_>>())
+        .flat_map(|row| {
+            columns
+                .iter()
+                .map(|column| q.dot(ctx, row, column).cell)
+                .collect::<Vec<_>>()
+        })
         .collect()
 }

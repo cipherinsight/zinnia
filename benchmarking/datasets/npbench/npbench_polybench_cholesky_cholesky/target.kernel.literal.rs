@@ -1,4 +1,4 @@
-// cholesky: literal translation of kernel.py (LITERAL_BASELINES.md).
+// npbench_polybench_cholesky_cholesky__kernel: literal translation of kernel.py (LITERAL_BASELINES.md).
 // Empty dots are constant zero; nonempty dots rescale once; fresh divisor bound at every division.
 use crate::prelude::*;
 
@@ -16,14 +16,15 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let root = q.sqrt(ctx, a[at(0, 0)]);
     a[at(0, 0)] = root.cell;
 
-
     for i in 1..N {
         for j in 0..i {
             // A[i, j] -= np.dot(A[i, :j], A[j, :j])
             let dot = if j > 0 {
                 let dot = q.dot(ctx, &a[at(i, 0)..at(i, j)], &a[at(j, 0)..at(j, j)]);
                 dot.cell
-            } else { q.float_const(ctx, 0.0) };
+            } else {
+                q.float_const(ctx, 0.0)
+            };
             a[at(i, j)] = q.sub(ctx, a[at(i, j)], dot);
             // A[i, j] /= A[j, j]
             let divisor = q.bound(ctx, a[at(j, j)]);
@@ -35,7 +36,6 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         // A[i, i] = np.sqrt(A[i, i])
         let root = q.sqrt(ctx, radicand);
         a[at(i, i)] = root.cell;
-    
     }
     out.floats(&a);
     Ok(())

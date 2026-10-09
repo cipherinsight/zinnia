@@ -1,13 +1,15 @@
 // pythran_d2q9_nxnyns__one_time_step: literal translation of kernel.py (LITERAL_BASELINES.md).
 // Helpers and all arithmetic follow source order, without shared products or strength reduction.
-// Nine populations are fixed by the source; periodic copies use the original loops.
+// The first nine population assignments are fixed by the source; shape loops use NS/MS.
 // Overwritten input borders/interiors use placeholders until assigned (same L7 input plumbing).
 use crate::prelude::*;
 const NX: usize = 16; // = f1_0
 const NY: usize = 16; // = f1_1
 const MX: usize = 16; // = f2_0
 const MY: usize = 16; // = f2_1
-fn m2f_loc(q: &Q32, ctx: &mut Ctx, m: &[Cell; 9], f: &mut [Cell; 9]) {
+const NS: usize = 9; // = f1_2
+const MS: usize = 9; // = f2_2
+fn m2f_loc(q: &Q32, ctx: &mut Ctx, m: &[Cell; NS], f: &mut [Cell; NS]) {
     // c0 = 1.0 / 6
     let c0 = Constant(fe(quantize(0.16666666666666666)));
     // c1 = 1.0 / 9
@@ -147,7 +149,7 @@ fn m2f_loc(q: &Q32, ctx: &mut Ctx, m: &[Cell; 9], f: &mut [Cell; 9]) {
     f[8] = t109;
 }
 
-fn f2m_loc(q: &Q32, ctx: &mut Ctx, f: &[Cell; 9], m: &mut [Cell; 9]) {
+fn f2m_loc(q: &Q32, ctx: &mut Ctx, f: &[Cell; NS], m: &mut [Cell; NS]) {
     // m[0] = f[0] + f[1] + f[2] + f[3] + f[4] + f[5] + f[6] + f[7] + f[8]
     let t1 = q.add(ctx, f[0], f[1]);
     let t2 = q.add(ctx, t1, f[2]);
@@ -235,7 +237,7 @@ fn f2m_loc(q: &Q32, ctx: &mut Ctx, f: &[Cell; 9], m: &mut [Cell; 9]) {
     m[8] = t67;
 }
 
-fn relaxation_loc(q: &Q32, ctx: &mut Ctx, m: &mut [Cell; 9]) {
+fn relaxation_loc(q: &Q32, ctx: &mut Ctx, m: &mut [Cell; NS]) {
     // m[3] += 1.1312217194570136 * (-2 * m[0] + 3.0 * m[1] * m[1] + 3.0 * m[2] * m[2] - m[3])
     let t2 = q.mul_int(ctx, m[0], Constant(fe(-2)));
     let t3 = q.mul(ctx, Constant(fe(quantize(3.0))), m[1]).cell;
@@ -292,70 +294,71 @@ fn relaxation_loc(q: &Q32, ctx: &mut Ctx, m: &mut [Cell; 9]) {
         .cell;
     m[8] = q.add(ctx, m[8], t32);
 }
-fn getf(f: &[Cell], floc: &mut [Cell; 9], i: usize, j: usize) {
-    floc[0] = f[(((i) * NY + (j)) * 9) + 0];
-    floc[1] = f[(((i - 1) * NY + (j)) * 9) + 1];
-    floc[2] = f[(((i) * NY + (j - 1)) * 9) + 2];
-    floc[3] = f[(((i + 1) * NY + (j)) * 9) + 3];
-    floc[4] = f[(((i) * NY + (j + 1)) * 9) + 4];
-    floc[5] = f[(((i - 1) * NY + (j - 1)) * 9) + 5];
-    floc[6] = f[(((i + 1) * NY + (j - 1)) * 9) + 6];
-    floc[7] = f[(((i + 1) * NY + (j + 1)) * 9) + 7];
-    floc[8] = f[(((i - 1) * NY + (j + 1)) * 9) + 8];
+fn getf(f: &[Cell], floc: &mut [Cell; NS], i: usize, j: usize) {
+    floc[0] = f[(((i) * NY + (j)) * NS) + 0];
+    floc[1] = f[(((i - 1) * NY + (j)) * NS) + 1];
+    floc[2] = f[(((i) * NY + (j - 1)) * NS) + 2];
+    floc[3] = f[(((i + 1) * NY + (j)) * NS) + 3];
+    floc[4] = f[(((i) * NY + (j + 1)) * NS) + 4];
+    floc[5] = f[(((i - 1) * NY + (j - 1)) * NS) + 5];
+    floc[6] = f[(((i + 1) * NY + (j - 1)) * NS) + 6];
+    floc[7] = f[(((i + 1) * NY + (j + 1)) * NS) + 7];
+    floc[8] = f[(((i - 1) * NY + (j + 1)) * NS) + 8];
 }
-fn setf(f: &mut [Cell], floc: &[Cell; 9], i: usize, j: usize) {
-    f[(j * MY + i) * 9 + 0] = floc[0];
-    f[(j * MY + i) * 9 + 1] = floc[1];
-    f[(j * MY + i) * 9 + 2] = floc[2];
-    f[(j * MY + i) * 9 + 3] = floc[3];
-    f[(j * MY + i) * 9 + 4] = floc[4];
-    f[(j * MY + i) * 9 + 5] = floc[5];
-    f[(j * MY + i) * 9 + 6] = floc[6];
-    f[(j * MY + i) * 9 + 7] = floc[7];
-    f[(j * MY + i) * 9 + 8] = floc[8];
+fn setf(f: &mut [Cell], floc: &[Cell; NS], i: usize, j: usize) {
+    f[(j * MY + i) * MS + 0] = floc[0];
+    f[(j * MY + i) * MS + 1] = floc[1];
+    f[(j * MY + i) * MS + 2] = floc[2];
+    f[(j * MY + i) * MS + 3] = floc[3];
+    f[(j * MY + i) * MS + 4] = floc[4];
+    f[(j * MY + i) * MS + 5] = floc[5];
+    f[(j * MY + i) * MS + 6] = floc[6];
+    f[(j * MY + i) * MS + 7] = floc[7];
+    f[(j * MY + i) * MS + 8] = floc[8];
 }
 fn periodic_bc(f: &mut [Cell]) {
     for j in 0..NY {
-        for k in 0..9 {
-            f[j * 9 + k] = f[((NX - 2) * NY + j) * 9 + k];
-            f[((NX - 1) * NY + j) * 9 + k] = f[(NY + j) * 9 + k];
+        for k in 0..NS {
+            f[j * NS + k] = f[((NX - 2) * NY + j) * NS + k];
+            f[((NX - 1) * NY + j) * NS + k] = f[(NY + j) * NS + k];
         }
     }
     for i in 0..NX {
-        for k in 0..9 {
-            f[i * NY * 9 + k] = f[(i * NY + NY - 2) * 9 + k];
-            f[(i * NY + NY - 1) * 9 + k] = f[(i * NY + 1) * 9 + k];
+        for k in 0..NS {
+            f[i * NY * NS + k] = f[(i * NY + NY - 2) * NS + k];
+            f[(i * NY + NY - 1) * NS + k] = f[(i * NY + 1) * NS + k];
         }
     }
 }
 pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
-    let input1 = inputs.floats("f1", &[NX, NY, 9])?;
-    let input2 = inputs.floats("f2", &[MX, MY, 9])?;
+    let input1 = inputs.floats("f1", &[NX, NY, NS])?;
+    let input2 = inputs.floats("f2", &[MX, MY, MS])?;
     let q = Q32::new(builder);
     let ctx = builder.main(0);
     let zero = q.float_const(ctx, 0.0);
-    let mut f1 = vec![zero; NX * NY * 9];
-    let mut f2 = vec![zero; MX * MY * 9];
+    let mut f1 = vec![zero; NX * NY * NS];
+    let mut f2 = vec![zero; MX * MY * MS];
     for i in 1..NX - 1 {
         for j in 1..NY - 1 {
-            for k in 0..9 {
-                let at = (i * NY + j) * 9 + k;
+            for k in 0..NS {
+                let at = (i * NY + j) * NS + k;
                 f1[at] = q.load_float(ctx, input1[at]);
             }
         }
     }
     for j in 0..MX {
         for i in 0..MY {
-            if !(j > 0 && j < NY - 1 && i > 0 && i < NX - 1) {
-                for k in 0..9 {
-                    let at = (j * MY + i) * 9 + k;
+            for k in 0..MS {
+                // setf overwrites exactly the nine source population slots.
+                if !(j > 0 && j < NY - 1 && i > 0 && i < NX - 1 && k < 9) {
+                    let at = (j * MY + i) * MS + k;
                     f2[at] = q.load_float(ctx, input2[at]);
                 }
             }
         }
     }
-    let mut floc = [zero; 9];
-    let mut mloc = [zero; 9];
+    let mut floc = [zero; NS];
+    let mut mloc = [zero; NS];
     periodic_bc(&mut f1);
     for i in 1..NX - 1 {
         for j in 1..NY - 1 {

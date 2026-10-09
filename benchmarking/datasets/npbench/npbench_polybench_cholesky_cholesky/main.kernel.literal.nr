@@ -1,4 +1,4 @@
-// cholesky: literal translation of kernel.py (LITERAL_BASELINES.md).
+// npbench_polybench_cholesky_cholesky__kernel: literal translation of kernel.py (LITERAL_BASELINES.md).
 // Dots rescale once; ordinary division at each source division.
 // @outputs: float[N * N]
 
@@ -20,16 +20,13 @@ fn main(A: [[Field; N]; N]) -> pub [[Field; N]; N] {
     for i in 1..N {
         for j in 0..i {
             // A[i, j] -= np.dot(A[i, :j], A[j, :j])
-            let mut value = a[i][j];
-            if j > 0 {
-                let mut acc: Field = 0;
-                for k in 0..j {
-                    acc += a[i][k] * a[j][k];
-                }
-                value -= rescale(acc);
+            let mut acc: Field = 0;
+            for k in 0..j {
+                acc += a[i][k] * a[j][k];
             }
+            let dot = if j == 0 { 0 } else { rescale(acc) };
+            a[i][j] -= dot;
             // A[i, j] /= A[j, j]
-            a[i][j] = value;
             a[i][j] = div(a[i][j], a[j][j]);
         }
         // A[i, i] -= np.dot(A[i, :i], A[i, :i])

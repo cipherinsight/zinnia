@@ -61,6 +61,10 @@ fn main(
             beta_c[i][j] = mul(beta, C[i][j]);
         }
     }
-    for i in 0..NI { for j in 0..NJ { result[i][j] = result[i][j] + beta_c[i][j]; } }
+    for i in 0..NI {
+        for j in 0..NJ {
+            result[i][j] = result[i][j] + beta_c[i][j];
+        }
+    }
     result
 }

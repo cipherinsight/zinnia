@@ -20,17 +20,24 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let b = q.load_int(ctx, b);
     let c = q.load_int(ctx, c);
 
-    let clipped: Vec<Cell> = array_1.iter().map(|x| {
-        let x = q.bound(ctx, *x);
-        let lo = q.bounded_const(ctx, 2);
-        let lower = q.max(ctx, x, lo).cell;
-        let lower = q.bound(ctx, lower);
-        let hi = q.bounded_const(ctx, 10);
-        q.min(ctx, lower, hi).cell
-    }).collect();
+    let clipped: Vec<Cell> = array_1
+        .iter()
+        .map(|x| {
+            let x = q.bound(ctx, *x);
+            let lo = q.bounded_const(ctx, 2);
+            let lower = q.max(ctx, x, lo).cell;
+            let lower = q.bound(ctx, lower);
+            let hi = q.bounded_const(ctx, 10);
+            q.min(ctx, lower, hi).cell
+        })
+        .collect();
     let term1: Vec<Cell> = clipped.iter().map(|x| q.gate.mul(ctx, *x, a)).collect();
     let term2: Vec<Cell> = array_2.iter().map(|y| q.gate.mul(ctx, *y, b)).collect();
-    let sums: Vec<Cell> = term1.iter().zip(&term2).map(|(x,y)| q.add(ctx, *x, *y)).collect();
+    let sums: Vec<Cell> = term1
+        .iter()
+        .zip(&term2)
+        .map(|(x, y)| q.add(ctx, *x, *y))
+        .collect();
     let result: Vec<Cell> = sums.iter().map(|x| q.add(ctx, *x, c)).collect();
     out.ints(&result);
     Ok(())

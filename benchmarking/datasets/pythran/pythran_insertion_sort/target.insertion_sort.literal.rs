@@ -2,7 +2,6 @@
 // While bounded by i; private j retained, active gates every effect. Reads use indexing; writes scan equality tests. At j=0 the inactive -1 read is valid.
 use crate::prelude::*;
 const N: usize = 10; // = list2_0
-const INDEX_BITS: usize = 8; // = 8 + 20 * min(1, (list2_0 - 1) // 128)
 
 pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
     let values = inputs.floats("list2", &[N])?;

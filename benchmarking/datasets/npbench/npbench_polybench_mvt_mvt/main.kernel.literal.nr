@@ -40,7 +40,9 @@ fn main(
     for i in 0..N0 {
         product1[i] = dot(A[i], y_1);
     }
-    for i in 0..N0 { new_x1[i] += product1[i]; }
+    for i in 0..N0 {
+        new_x1[i] += product1[i];
+    }
     // x2 += y_2 @ A
     let mut product2 = [0; N1];
     let mut new_x2 = x2;
@@ -51,6 +53,8 @@ fn main(
         }
         product2[j] = rescale(acc);
     }
-    for j in 0..N1 { new_x2[j] += product2[j]; }
+    for j in 0..N1 {
+        new_x2[j] += product2[j];
+    }
     (new_x1, new_x2)
 }

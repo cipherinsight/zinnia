@@ -1,4 +1,4 @@
-// trisolv: literal translation of kernel.py (LITERAL_BASELINES.md).
+// npbench_polybench_trisolv_trisolv__kernel: literal translation of kernel.py (LITERAL_BASELINES.md).
 // Empty dot is constant zero; nonempty dot is rescaled once; ordinary division.
 // @outputs: float[N]
 

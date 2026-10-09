@@ -71,7 +71,11 @@ fn main(
     }
     // beta * D, then final addition in separate full passes.
     let mut beta_d = [[0; NL]; NI];
-    for i in 0..NI { for l in 0..NL { beta_d[i][l] = mul(beta, D[i][l]); } }
+    for i in 0..NI {
+        for l in 0..NL {
+            beta_d[i][l] = mul(beta, D[i][l]);
+        }
+    }
     let mut result: [[Field; NL]; NI] = [[0; NL]; NI];
     for i in 0..NI {
         for l in 0..NL {

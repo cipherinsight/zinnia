@@ -37,7 +37,9 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     // alpha * A (fresh array, one rounded product per element)
     let alpha_a: Vec<Cell> = a.iter().map(|x| q.mul(ctx, alpha, *x).cell).collect();
     // (alpha * A) @ B: one reduction per output element, rescaled once.
-    let columns: Vec<Vec<Cell>> = (0..NJ).map(|j| (0..NK).map(|k| b[k * NJ + j]).collect()).collect();
+    let columns: Vec<Vec<Cell>> = (0..NJ)
+        .map(|j| (0..NK).map(|k| b[k * NJ + j]).collect())
+        .collect();
     let mut result: Vec<Cell> = Vec::with_capacity(NI * NJ);
     for i in 0..NI {
         let row = &alpha_a[i * NK..(i + 1) * NK];
@@ -48,7 +50,11 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     }
     // beta * C (fresh array, one rounded product per element)
     let beta_c: Vec<Cell> = c.iter().map(|x| q.mul(ctx, beta, *x).cell).collect();
-    let result: Vec<Cell> = result.iter().zip(&beta_c).map(|(x,y)| q.add(ctx, *x, *y)).collect();
+    let result: Vec<Cell> = result
+        .iter()
+        .zip(&beta_c)
+        .map(|(x, y)| q.add(ctx, *x, *y))
+        .collect();
     out.floats(&result);
     Ok(())
 }

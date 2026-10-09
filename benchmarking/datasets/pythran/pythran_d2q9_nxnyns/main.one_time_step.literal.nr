@@ -1,13 +1,15 @@
 // pythran_d2q9_nxnyns__one_time_step: literal translation of kernel.py (LITERAL_BASELINES.md).
 // Helpers and all arithmetic follow source order, without shared products or strength reduction.
-// Nine populations are fixed by the source; periodic copies use the original loops.
+// The first nine population assignments are fixed by the source; shape loops use NS/MS.
 // Overwritten input borders/interiors use placeholders until assigned (same L7 input plumbing).
-// @outputs: float[MX * MY * 9]
+// @outputs: float[MX * MY * MS]
 global NX: u32 = 16; // = f1_0
 global NY: u32 = 16; // = f1_1
 global MX: u32 = 16; // = f2_0
 global MY: u32 = 16; // = f2_1
-fn m2f_loc(m: [Field; 9], f: [Field; 9]) -> [Field; 9] {
+global NS: u32 = 9; // = f1_2
+global MS: u32 = 9; // = f2_2
+fn m2f_loc(m: [Field; NS], f: [Field; NS]) -> [Field; NS] {
     let mut f = f;
     // c0 = 1.0 / 6
     let c0 = 715827883;
@@ -149,7 +151,7 @@ fn m2f_loc(m: [Field; 9], f: [Field; 9]) -> [Field; 9] {
     f
 }
 
-fn f2m_loc(f: [Field; 9], m: [Field; 9]) -> [Field; 9] {
+fn f2m_loc(f: [Field; NS], m: [Field; NS]) -> [Field; NS] {
     let mut m = m;
     // m[0] = f[0] + f[1] + f[2] + f[3] + f[4] + f[5] + f[6] + f[7] + f[8]
     let t1 = (f[0]) + (f[1]);
@@ -239,7 +241,7 @@ fn f2m_loc(f: [Field; 9], m: [Field; 9]) -> [Field; 9] {
     m
 }
 
-fn relaxation_loc(m: [Field; 9]) -> [Field; 9] {
+fn relaxation_loc(m: [Field; NS]) -> [Field; NS] {
     let mut m = m;
     // m[3] += 1.1312217194570136 * (-2 * m[0] + 3.0 * m[1] * m[1] + 3.0 * m[2] * m[2] - m[3])
     let t2 = -2 * (m[0]);
@@ -286,7 +288,7 @@ fn relaxation_loc(m: [Field; 9]) -> [Field; 9] {
     m[8] = m[8] + t32;
     m
 }
-fn getf(f: [[[Field; 9]; NY]; NX], floc: [Field; 9], i: u32, j: u32) -> [Field; 9] {
+fn getf(f: [[[Field; NS]; NY]; NX], floc: [Field; NS], i: u32, j: u32) -> [Field; NS] {
     let mut floc = floc;
     floc[0] = f[i][j][0];
     floc[1] = f[i - 1][j][1];
@@ -299,7 +301,7 @@ fn getf(f: [[[Field; 9]; NY]; NX], floc: [Field; 9], i: u32, j: u32) -> [Field; 
     floc[8] = f[i - 1][j + 1][8];
     floc
 }
-fn setf(f: [[[Field; 9]; MY]; MX], floc: [Field; 9], i: u32, j: u32) -> [[[Field; 9]; MY]; MX] {
+fn setf(f: [[[Field; MS]; MY]; MX], floc: [Field; NS], i: u32, j: u32) -> [[[Field; MS]; MY]; MX] {
     let mut f = f;
     f[j][i][0] = floc[0];
     f[j][i][1] = floc[1];
@@ -312,23 +314,23 @@ fn setf(f: [[[Field; 9]; MY]; MX], floc: [Field; 9], i: u32, j: u32) -> [[[Field
     f[j][i][8] = floc[8];
     f
 }
-fn periodic_bc(f: [[[Field; 9]; NY]; NX]) -> [[[Field; 9]; NY]; NX] {
+fn periodic_bc(f: [[[Field; NS]; NY]; NX]) -> [[[Field; NS]; NY]; NX] {
     let mut f = f;
     for j in 0..NY {
-        for k in 0..9 {
+        for k in 0..NS {
             f[0][j][k] = f[NX - 2][j][k];
             f[NX - 1][j][k] = f[1][j][k];
         }
     }
     for i in 0..NX {
-        for k in 0..9 {
+        for k in 0..NS {
             f[i][0][k] = f[i][NY - 2][k];
             f[i][NY - 1][k] = f[i][1][k];
         }
     }
     f
 }
-fn main(f1: [[[Field; 9]; NY]; NX], f2: [[[Field; 9]; MY]; MX]) -> pub [[[Field; 9]; MY]; MX] {
+fn main(f1: [[[Field; NS]; NY]; NX], f2: [[[Field; MS]; MY]; MX]) -> pub [[[Field; MS]; MY]; MX] {
     for i in 1..NX - 1 {
         for j in 1..NY - 1 {
             noir_hw::check_inputs(f1[i][j]);
@@ -336,14 +338,16 @@ fn main(f1: [[[Field; 9]; NY]; NX], f2: [[[Field; 9]; MY]; MX]) -> pub [[[Field;
     }
     for j in 0..MX {
         for i in 0..MY {
-            if !((j > 0) & (j < NY - 1) & (i > 0) & (i < NX - 1)) {
-                noir_hw::check_inputs(f2[j][i]);
+            for k in 0..MS {
+                if !((j > 0) & (j < NY - 1) & (i > 0) & (i < NX - 1) & (k < 9)) {
+                    noir_hw::check_input(f2[j][i][k]);
+                }
             }
         }
     }
     let mut f2 = f2;
-    let mut floc = [0; 9];
-    let mut mloc = [0; 9];
+    let mut floc = [0; NS];
+    let mut mloc = [0; NS];
     let f1 = periodic_bc(f1);
     for i in 1..NX - 1 {
         for j in 1..NY - 1 {

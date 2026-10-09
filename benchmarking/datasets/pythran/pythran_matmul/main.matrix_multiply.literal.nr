@@ -11,7 +11,11 @@ global P: u32 = 16; // = m1_1
 
 fn zero() -> [[Field; N]; P] {
     let mut result = [[0; N]; P];
-    for col in 0..P { for row in 0..N { result[col][row] = 0; } }
+    for col in 0..P {
+        for row in 0..N {
+            result[col][row] = 0;
+        }
+    }
     result
 }
 

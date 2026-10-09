@@ -41,7 +41,11 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
             product.cell
         })
         .collect();
-    let x1: Vec<Cell> = x1.iter().zip(&product1).map(|(x,p)| q.add(ctx, *x, *p)).collect();
+    let x1: Vec<Cell> = x1
+        .iter()
+        .zip(&product1)
+        .map(|(x, p)| q.add(ctx, *x, *p))
+        .collect();
     // x2 += y_2 @ A
     let product2: Vec<Cell> = (0..N1)
         .map(|j| {
@@ -50,7 +54,11 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
             product.cell
         })
         .collect();
-    let x2: Vec<Cell> = x2.iter().zip(&product2).map(|(x,p)| q.add(ctx, *x, *p)).collect();
+    let x2: Vec<Cell> = x2
+        .iter()
+        .zip(&product2)
+        .map(|(x, p)| q.add(ctx, *x, *p))
+        .collect();
     out.floats(&x1);
     out.floats(&x2);
     Ok(())
