@@ -49,7 +49,7 @@ literal binaries use separate `target` and `target-literal` directories.
 | 0456 | 5,045 + 1,228 = 6,273 | 11,656 + 2,560 = 14,216 | 3,727 | 4,392 | pass / pass / pass / pass |
 | 0457 | 6,281 + 1,420 = 7,701 | 14,608 + 2,752 = 17,360 | 3,997 | 4,830 | pass / pass / pass / pass |
 | 0458 | 6,281 + 1,420 = 7,701 | 14,609 + 2,752 = 17,361 | 3,941 | 4,774 | pass / pass / pass / pass |
-| 0477 | pending | pending | pending | pending | pending |
+| 0477 | 184 + 56 = 240 | 185 + 56 = 241 | 2,841 | 2,841 | pass / pass / pass / pass |
 
 The four files for each row are
 `datasets/ds1000/ds1000_caseNNNN/{target.rs,main.nr,target.literal.rs,main.literal.nr}`.
@@ -80,3 +80,9 @@ cells. Literal code computes the complete difference and norm arrays and then
 forms the full `triu` matrix. Optimized skips the discarded lower triangle.
 Their domains still agree: reversed pairs have identical squared norms, and
 diagonal differences are zero. No guard on discarded work adds a restriction.
+
+0477 uses standard loaders and constant-output layout plumbing, with no
+pre-existing twin computation. Literal constructs all 16 matrix cells, optimized
+exposes the four diagonal input wires directly. Noir sizes are equal because
+constant-index array construction is wiring. Halo2 literal has one extra
+constant cell for zero initialization (not additional arithmetic).
