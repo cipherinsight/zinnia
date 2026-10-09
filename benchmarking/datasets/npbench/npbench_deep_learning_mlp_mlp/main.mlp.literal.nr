@@ -1,5 +1,5 @@
 // npbench_deep_learning_mlp_mlp__mlp: literal translation of kernel.py (LITERAL_BASELINES.md).
-// Matmuls use the optimized bias-shifted range, restore each dot, then form separate source bias arrays. ReLU/softmax are source helpers; max and sum scan in index order, canonical exp per element.
+// Matmuls rescale and window-check each dot, then form separate source bias arrays; relu and the row maximum compare with canonical_gt, as the optimized baseline does since b6fb8bf3. ReLU/softmax are source helpers; max and sum scan in index order, canonical exp per element.
 // @outputs: float[N * S2]
 
 use noir_hw::{check_inputs, rescale};
@@ -16,7 +16,6 @@ global S2: u32 = 2; // = w3_1
 fn matmul<let R: u32, let K: u32, let C: u32>(
     x: [[Field; K]; R],
     w: [[Field; C]; K],
-    bias: [Field; C],
 ) -> [[Field; C]; R] {
     let mut result = [[0; C]; R];
     for r in 0..R {
@@ -25,8 +24,7 @@ fn matmul<let R: u32, let K: u32, let C: u32>(
             for k in 0..K {
                 acc += x[r][k] * w[k][c];
             }
-            // Bias shifts only the rescale window; the returned value is still the dot.
-            result[r][c] = rescale(acc + bias[c] * noir_hw::SCALE) - bias[c];
+            result[r][c] = rescale(acc);
         }
     }
     result
@@ -44,7 +42,7 @@ fn relu<let R: u32, let C: u32>(x: [[Field; C]; R]) -> [[Field; C]; R] {
     let mut result = [[0; C]; R];
     for r in 0..R {
         for c in 0..C {
-            result[r][c] = noir_hw::max(x[r][c], 0);
+            result[r][c] = if noir_hw::canonical_gt(x[r][c], 0) { x[r][c] } else { 0 };
         }
     }
     result
@@ -54,7 +52,7 @@ fn softmax(x: [[Field; S2]; N]) -> [[Field; S2]; N] {
     for r in 0..N {
         let mut best = x[r][0];
         for c in 1..S2 {
-            best = noir_hw::max(best, x[r][c]);
+            if noir_hw::canonical_gt(x[r][c], best) { best = x[r][c]; }
         }
         tmp_max[r] = best;
     }
@@ -110,8 +108,8 @@ fn main(
         check_inputs(w3[k]);
     }
     check_inputs(b3);
-    let x = relu(bias(matmul(input, w1, b1), b1));
-    let x = relu(bias(matmul(x, w2, b2), b2));
-    let x = softmax(bias(matmul(x, w3, b3), b3));
+    let x = relu(bias(matmul(input, w1), b1));
+    let x = relu(bias(matmul(x, w2), b2));
+    let x = softmax(bias(matmul(x, w3), b3));
     x
 }
