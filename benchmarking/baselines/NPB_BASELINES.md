@@ -310,7 +310,7 @@ gives NumPy's stable order (CONVENTIONS section 3).
    intermediates: a squared distance whose Q32 value leaves the window has no
    proof.
 
-## 6. The remaining 76 entries in 4 batches
+## 6. The 76 non-pilot entries in 4 batches
 
 The batches are balanced by expected effort: each entry was rated 1 (direct
 use of existing gadgets), 2 (several gadgets, sequential dependencies or a
@@ -436,3 +436,32 @@ Zinnia's sizing rule chooses (`halo2_hw stats`); Noir: Barretenberg gates
 | `npbench_polybench_atax_atax__kernel` | 9 | 8,485 | 2,140 | 4,397 |
 | `pythran_insertion_sort__insertion_sort` | 8 | 2,208 | 441 | 3,063 |
 | `pythran_lu__factorMatrix0` | 9 | 5,215 | 1,136 | 4,450 |
+
+## 8. Completed implementations and size-only evaluation
+
+All 79 entries now have both handwritten implementations. The original-size
+fixtures pass the full checker on both targets. The current evaluation measures
+circuit sizes only; correctness proofs are not timing benchmark samples.
+
+The completed batches retain numerical-domain caveats. See
+`NPB_BATCH1_VALIDATION.md` for exp's upper boundary and algebraic log-likelihood,
+and `BATCH4_VALIDATION.md` for goodExpoMeasure's discrete float64 differences and
+the corrected Ising float32 branch. Deriche's negative-alpha error amplification
+and value_index's stable tie policy are documented in their source headers.
+Passing A/B checks does not establish equivalence for every input of the signature.
+
+From this directory, compare full checker JSON files against a frozen Zinnia
+count file using:
+
+```bash
+../../.venv/bin/python -m hw_check.summarize \
+  --checks check-b1.json check-b23.json check-b4.json \
+  --zinnia measure_final.json --reference-root /path/to/frozen/checkout \
+  --out circuit-sizes.json
+```
+
+The report checks the original kernels and fixtures against the frozen checkout,
+preserves missing/failed entries, records source hashes, and gives corpus and
+copy-only strata. Halo2 uses advice plus lookup cells at each circuit's sizing
+rule, and Noir uses UltraHonk gates. For audited size-only source rewriting and
+resumable scaled counts, see `../scaling_npb/HANDWRITTEN.md`.
