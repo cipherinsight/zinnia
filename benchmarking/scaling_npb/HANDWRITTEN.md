@@ -1,5 +1,12 @@
 # Handwritten NPBench/Pythran scaling
 
+The current study budget is **64 GiB per count job**, with a six-hour step
+timeout (`--memory 64G --timeout 21600`). Run these jobs on the evaluation
+server with sufficient physical RAM; the development machine has only 46 GiB.
+At most two such jobs run concurrently. The 8 GiB commands and local results
+below describe the earlier preparation/smoke configuration, not the final
+resource-limit verdict. Noir final counts use key-free `stats` mode.
+
 After merging the original-size authoring branches, audit their sources against
 already generated scaling fixtures. The baseline root supplies both the sources
 and `benchmarking/baselines/hw_check/sizes.py`, so the size-formula language has
