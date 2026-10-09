@@ -22,6 +22,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import time
@@ -93,6 +94,15 @@ class NoirPackage:
             f"[dependencies]\n{dependencies}")
         for lib, source in libraries.items():
             shutil.copytree(source, directory / lib, ignore=shutil.ignore_patterns("target"))
+        # A copied library that depends on another copied one (noir_hw on noir_fpc)
+        # names it by a path relative to its source folder; point it at the copy.
+        for lib in libraries:
+            manifest = directory / lib / "Nargo.toml"
+            text = manifest.read_text()
+            for other in libraries:
+                text = re.sub(rf'^({other}\s*=\s*\{{\s*path\s*=\s*)"[^"]*"', rf'\1"../{other}"',
+                              text, flags=re.M)
+            manifest.write_text(text)
         return NoirPackage(directory, name)
 
     @property
