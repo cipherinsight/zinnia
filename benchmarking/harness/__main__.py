@@ -142,7 +142,7 @@ def parser() -> argparse.ArgumentParser:
 
     build = sub.add_parser("build", help="release build of the extension + build record")
     build.add_argument("--jobs", type=int, default=5)
-    build.add_argument("--baselines", help="also build these programs: halo2_hw,sp1,risc0,cairo")
+    build.add_argument("--baselines", help="also build these programs: halo2_hw,halo2_lit,sp1,risc0,cairo")
     build.add_argument("--noir-execute", action="store_true",
                        help="also build Noir's artifact executor from the commit nargo reports")
     build.add_argument("--skip-zinnia", action="store_true",

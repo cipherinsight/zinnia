@@ -32,7 +32,7 @@ def test_missing_requested_baseline_fails(tmp_path, monkeypatch):
     (tmp_path / "target.kernel.rs").write_text("// present")
     out = tmp_path / "results.json"
     monkeypatch.setattr(check, "npb_entries", lambda: {entry.case: entry})
-    monkeypatch.setattr(check.CaseCheck, "__init__", lambda *args: None)
+    monkeypatch.setattr(check.CaseCheck, "__init__", lambda *args, **kwargs: None)
     monkeypatch.setattr(check.CaseCheck, "halo2", lambda self: {"verdict": "pass"})
     monkeypatch.setattr(sys, "argv", ["check", "--npb", "--perf", "--out", str(out)])
     assert check.main() == 1

@@ -13,8 +13,10 @@ ZINNIA_SYSTEMS = ("zinnia_halo2", "zinnia_noir")
 #: Zinnia with every runtime-index array access left to the backend's own memory
 #: (`ZINNIA_FORCE_CONSTRUCTION=@delegate`): baselines for the array-lowering layer.
 DELEGATE_SYSTEMS = ("zinnia_halo2_delegate", "zinnia_noir_delegate")
+#: The literal-translation baselines (`baselines/LITERAL_BASELINES.md`).
+LITERAL_SYSTEMS = ("halo2_lit", "noir_lit")
 BASELINE_SYSTEMS = ("halo2_hw", "noir_hw", "sp1", "sp1_groth16", "risc0", "risc0_groth16",
-                    "cairo") + DELEGATE_SYSTEMS
+                    "cairo") + DELEGATE_SYSTEMS + LITERAL_SYSTEMS
 ALL_SYSTEMS = ZINNIA_SYSTEMS + BASELINE_SYSTEMS
 #: The systems that compile with the installed Zinnia extension.
 EXTENSION_SYSTEMS = ZINNIA_SYSTEMS + DELEGATE_SYSTEMS
@@ -39,6 +41,9 @@ def get_adapter(name: str) -> Adapter:
     if name == "noir_hw":
         from benchmarking.harness.adapters.noir_hw import NoirHandwrittenAdapter
         return NoirHandwrittenAdapter()
+    if name == "noir_lit":
+        from benchmarking.harness.adapters.noir_hw import NoirLiteralAdapter
+        return NoirLiteralAdapter()
     from benchmarking.harness.adapters.contract import PROGRAMS, ContractProgramAdapter
     if name in PROGRAMS:
         return ContractProgramAdapter(PROGRAMS[name])

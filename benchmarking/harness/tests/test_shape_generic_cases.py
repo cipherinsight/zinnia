@@ -84,6 +84,9 @@ def test_handwritten_circuits_are_per_entry_function(tmp_path, fake_baselines):
     assert case.baseline_file("target.rs") == case.directory / "target.scale.rs"
     assert case.baseline_file("main.nr") == case.directory / "main.scale.nr"
     assert replace(case, shape_generic=False).baseline_file("main.nr") == case.directory / "main.nr"
+    assert case.baseline_file("main.nr", "literal") == case.directory / "main.scale.literal.nr"
+    assert replace(case, shape_generic=False).baseline_file("target.rs", "literal") \
+        == case.directory / "target.literal.rs"
 
     # No circuit for this entry yet: reported as such, nothing runs.
     records = run_case(tmp_path / "epoch-1", case, ["halo2_hw", "noir_hw"])

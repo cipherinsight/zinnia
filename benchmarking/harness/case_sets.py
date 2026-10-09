@@ -102,15 +102,15 @@ class PerfCase:
     def kernel_path(self) -> Path:
         return self.directory / "kernel.py"
 
-    def baseline_file(self, name: str) -> Path:
+    def baseline_file(self, name: str, variant: str = "") -> Path:
         """A handwritten circuit of this case: `target.rs` / `main.nr` in a
         DS-1000 folder, `target.<function>.rs` / `main.<function>.nr` in a
         shape-generic program folder (the names `baselines/hw_check/entries.py`
-        uses)."""
-        if not self.shape_generic:
-            return self.directory / name
+        uses); a variant such as `literal` adds its tag before the suffix
+        (`target.literal.rs`, `main.<function>.literal.nr`)."""
         stem, suffix = name.split(".", 1)
-        return self.directory / f"{stem}.{self.function}.{suffix}"
+        tags = [t for t in (self.function if self.shape_generic else None, variant) if t]
+        return self.directory / ".".join([stem, *tags, suffix])
 
     def to_json(self) -> dict:
         return {"case": self.case, "directory": str(self.directory),

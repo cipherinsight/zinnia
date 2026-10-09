@@ -24,8 +24,8 @@ HOME = Path.home()
 #: the commit nargo reports; see `probe_noir_execute_build`).
 NOIR_VERSION = "1.0.0-beta.20"
 
-NOIR_SYSTEMS = ("zinnia_noir", "noir_hw", "zinnia_noir_delegate")
-HALO2_SYSTEMS = ("zinnia_halo2", "halo2_hw", "zinnia_halo2_delegate")
+NOIR_SYSTEMS = ("zinnia_noir", "noir_hw", "zinnia_noir_delegate", "noir_lit")
+HALO2_SYSTEMS = ("zinnia_halo2", "halo2_hw", "zinnia_halo2_delegate", "halo2_lit")
 SP1_SYSTEMS = ("sp1", "sp1_groth16")
 RISC0_SYSTEMS = ("risc0", "risc0_groth16")
 

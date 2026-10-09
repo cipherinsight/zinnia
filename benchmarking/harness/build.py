@@ -144,9 +144,16 @@ def installed_build_problems() -> tuple[dict | None, list[str]]:
 #: with a `target.rs`; the variable is recorded.
 BASELINE_BUILDS: dict[str, list[str]] = {
     "halo2_hw": ["cargo", "build", "--release"],
+    "halo2_lit": ["cargo", "build", "--release"],
     "sp1": ["cargo", "build", "--release"],
     "risc0": ["cargo", "build", "--release"],
     "cairo": [str(toolchains.tool_executable("scarb")), "build"],
+}
+#: Builds that are a variant of another program: its directory, extra environment
+#: and target directory (`halo2_hw/build.rs` selects the literal circuits).
+BASELINE_VARIANTS: dict[str, tuple[str, dict[str, str], str]] = {
+    "halo2_lit": ("halo2_hw", {"HW_VARIANT": "literal", "CARGO_TARGET_DIR": "target-literal"},
+                  "target-literal"),
 }
 BASELINE_RECORD = paths.REPO_ROOT / "target" / "zinnia-harness-baselines.json"
 
@@ -155,8 +162,9 @@ def build_baselines(names: list[str], jobs: int = DEFAULT_BUILD_JOBS) -> dict:
     """Build baseline programs one at a time; record command, toolchain and outputs."""
     record = json.loads(BASELINE_RECORD.read_text()) if BASELINE_RECORD.exists() else {}
     for name in names:
-        directory = paths.BASELINES / name
-        env = dict(os.environ, CARGO_BUILD_JOBS=str(jobs))
+        program, variant_env, target = BASELINE_VARIANTS.get(name, (name, {}, "target"))
+        directory = paths.BASELINES / program
+        env = dict(os.environ, CARGO_BUILD_JOBS=str(jobs), **variant_env)
         env["PATH"] = f"{Path.home() / '.sp1' / 'bin'}:{env.get('PATH', '')}"
         command = ["nice", "-n", "10", *BASELINE_BUILDS[name]]
         print(f"building {name}: {' '.join(command)} (in {directory})", flush=True)
@@ -164,13 +172,14 @@ def build_baselines(names: list[str], jobs: int = DEFAULT_BUILD_JOBS) -> dict:
         proc = subprocess.run(command, cwd=directory, env=env)
         if proc.returncode != 0:
             raise RuntimeError(f"building {name} failed (exit {proc.returncode})")
-        binaries = sorted((directory / "target" / "release").glob("*")) \
-            if (directory / "target" / "release").is_dir() else []
+        binaries = sorted((directory / target / "release").glob("*")) \
+            if (directory / target / "release").is_dir() else []
         record[name] = {
             "built_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "build_seconds": round(time.time() - started, 1),
             "command": command,
             "HALO2_HW_CASES": os.environ.get("HALO2_HW_CASES"),
+            **({"variant_env": variant_env} if variant_env else {}),
             "rustc": _command_version("rustc", "--version"),
             "executables_sha256": {paths.relative_to_repo(b): sha256_file(b) for b in binaries
                                    if b.is_file() and os.access(b, os.X_OK)},

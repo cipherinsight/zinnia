@@ -84,6 +84,8 @@ def _package_name(case: PerfCase) -> str:
 
 class NoirHandwrittenAdapter(Adapter):
     name = "noir_hw"
+    #: The baseline variant's file tag (`baselines/LITERAL_BASELINES.md`).
+    variant = ""
     description = ("handwritten Noir (main.nr) -> nargo 1.0.0-beta.20 compile, noir-execute, "
                    "bb UltraHonk (ZK)")
     windows = dict(
@@ -95,11 +97,11 @@ class NoirHandwrittenAdapter(Adapter):
     )
 
     def missing_program(self, case: PerfCase) -> str | None:
-        main_nr = case.baseline_file("main.nr")
+        main_nr = case.baseline_file("main.nr", self.variant)
         return None if main_nr.exists() else f"no {main_nr.name}"
 
     def program_files(self, case: PerfCase) -> list[Path]:
-        files = [case.baseline_file("main.nr")]
+        files = [case.baseline_file("main.nr", self.variant)]
         if NOIR_HW_LIBRARY.exists():
             files += sorted(NOIR_HW_LIBRARY.rglob("*.nr"))
         if HW_CHECK.exists():
@@ -107,7 +109,10 @@ class NoirHandwrittenAdapter(Adapter):
         return files
 
     def _package(self, ctx: StepContext) -> noir_toolchain.NoirPackage:
-        return noir_toolchain.NoirPackage(ctx.work_dir / "package", _package_name(ctx.case))
+        return noir_toolchain.NoirPackage(ctx.work_dir / "package", self._package_name(ctx.case))
+
+    def _package_name(self, case: PerfCase) -> str:
+        return _package_name(case) + (f"_{self.variant}" if self.variant else "")
 
     def _inputs(self, ctx: StepContext, package: noir_toolchain.NoirPackage,
                 input_name: str) -> tuple[str, str]:
@@ -123,12 +128,12 @@ class NoirHandwrittenAdapter(Adapter):
             raise StepFailure("setup_failed", f"Prover.toml: {exc}") from None
 
     def setup(self, ctx: StepContext) -> SetupResult:
-        main_nr = ctx.case.baseline_file("main.nr").read_text()
+        main_nr = ctx.case.baseline_file("main.nr", self.variant).read_text()
         libraries = {"noir_fpc": paths.NOIR_FPC}
         if NOIR_HW_LIBRARY.exists():
             libraries = {"noir_hw": NOIR_HW_LIBRARY, **libraries}
         package = noir_toolchain.NoirPackage.create(ctx.work_dir / "package",
-                                                    _package_name(ctx.case), main_nr, libraries)
+                                                    self._package_name(ctx.case), main_nr, libraries)
         compile_s = package.compile()
         toml, writer = self._inputs(ctx, package, SETUP_INPUT)
         package.write_inputs("Prover_A", toml)
@@ -169,3 +174,13 @@ class NoirHandwrittenAdapter(Adapter):
     def verify(self, ctx: StepContext) -> VerifyResult:
         return noir_toolchain.verify_proof(self._package(ctx).vk, ctx.proof_path, ctx.tamper,
                                            has_outputs=True)
+
+
+class NoirLiteralAdapter(NoirHandwrittenAdapter):
+    """The literal translations (`main.literal.nr`, `main.<function>.literal.nr`),
+    proved exactly like `noir_hw`."""
+
+    name = "noir_lit"
+    variant = "literal"
+    description = ("literal-translation Noir (main.literal.nr) -> nargo 1.0.0-beta.20 compile, "
+                   "noir-execute, bb UltraHonk (ZK)")

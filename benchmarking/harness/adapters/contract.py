@@ -72,10 +72,13 @@ class Program:
     #: In a shape-generic folder, `case_file` is per entry function
     #: (`target.rs` -> `target.<function>.rs`) rather than one for the program.
     file_per_function: bool = False
+    #: The handwritten-baseline variant (`baselines/LITERAL_BASELINES.md`): its
+    #: tag in the case file's name; `""` for the optimized baselines.
+    variant: str = ""
 
     def case_file_path(self, case: PerfCase) -> Path:
         if self.file_per_function:
-            return case.baseline_file(self.case_file)
+            return case.baseline_file(self.case_file, self.variant)
         return case.directory / self.case_file
 
     def argv(self) -> list[str]:
@@ -89,6 +92,10 @@ class Program:
         return paths.BASELINES / Path(self.command[-1]).parts[0]
 
 
+_HALO2_HW_WINDOWS = {"prove_core": "create_proof (prove_s)",
+                     "end_to_end": "witness synthesis (witness_s) + create_proof (prove_s)",
+                     "verify": "verify_proof with the stored verifying key (verify_s)"}
+
 _SP1_NOTE = ("SP1's SDK proves from the program and its input, so execution happens inside "
              "the prove call and cannot be excluded")
 
@@ -96,10 +103,13 @@ PROGRAMS: dict[str, Program] = {p.name: p for p in (
     Program("halo2_hw", "handwritten halo2-base (Zinnia's prover stack: IPA/BN254, Blake2b)",
             "target.rs", ("halo2_hw/target/release/halo2_hw",), HALO2_HW_STYLE, (),
             prove_core=("prove_s",), end_to_end=("witness_s", "prove_s"), verify=("verify_s",),
-            windows={"prove_core": "create_proof (prove_s)",
-                     "end_to_end": "witness synthesis (witness_s) + create_proof (prove_s)",
-                     "verify": "verify_proof with the stored verifying key (verify_s)"},
-            file_per_function=True),
+            windows=_HALO2_HW_WINDOWS, file_per_function=True),
+    # The literal translations: the same program built with HW_VARIANT=literal
+    # into its own target directory (`halo2_hw/build.rs`).
+    Program("halo2_lit", "literal-translation halo2-base (same prover stack as halo2_hw)",
+            "target.rs", ("halo2_hw/target-literal/release/halo2_hw",), HALO2_HW_STYLE, (),
+            prove_core=("prove_s",), end_to_end=("witness_s", "prove_s"), verify=("verify_s",),
+            windows=_HALO2_HW_WINDOWS, file_per_function=True, variant="literal"),
     Program("sp1", "SP1 6.8.1, core (STARK) proof, Q32 guest", "zkvm.rs",
             ("sp1/target/release/sp1-baseline",), HOST_STYLE, ("--proof-mode", "core"),
             prove_core=("prove",), end_to_end=("prove",), verify=("verify",),
