@@ -1,0 +1,26 @@
+// DS-1000 case 0370, Noir baseline.
+// Kernel: `np.isclose(a, a[0], atol=0).all()` on Float[3, 3]: every row close
+// to row 0 by NumPy's |x - y| <= atol + rtol * |y| with rtol = 1e-5, atol = 0,
+// y = a[0, j]. Row 0 against itself is always close and is skipped; the
+// tolerance rtol * |a[0, j]| (a rescaled product) is computed once per column.
+// @outputs: bool[1]
+
+use noir_hw::{abs_int64, mul, window};
+
+global N: u32 = 3;
+global RTOL_Q: Field = 42950; // round(1e-5 * 2^32)
+
+fn main(a: [Field; 9]) -> pub bool {
+    // Input domain: every input element is an int64 / a Q32 code in the window.
+    noir_hw::check_inputs(a);
+    let mut all_close = true;
+    for j in 0..N {
+        let y = a[j];
+        let tol = window(mul(abs_int64(y), RTOL_Q));
+        for i in 1..N {
+            let gap = window(abs_int64(a[i * N + j] - y));
+            all_close &= gap <= tol;
+        }
+    }
+    all_close
+}
