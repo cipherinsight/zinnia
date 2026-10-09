@@ -21,6 +21,7 @@ Fixture values are unchanged. No repository fixtures or tools are modified.
 | 0430 | all pass | 1804 + 443 = 2247 | 2956 + 462 = 3418 | 3086 | 3086 |
 | 0448 | all pass | 960 + 288 = 1248 | 960 + 288 = 1248 | 2966 | 2966 |
 | 0449 | all pass | 960 + 288 = 1248 | 960 + 288 = 1248 | 2966 | 2966 |
+| 0463 | all pass | 3589 + 200 = 3789 | 11126 + 200 = 11326 | 3650 | 5096 |
 
 0417: adapted all four 0414 twins by wiring the reversed input before binning.
 Literal means scan each bin in source order. Noir counts are equal because the
@@ -40,3 +41,5 @@ No proofs, keys, tampered-public verification, timing or scaling runs.
 0448: Reused 0361 copy-only loading/output plumbing for 24 cells. Changed to two 3x4 parameters and interleaved x/y output of shape 3x4x2. Literal explicitly wires both transposes, vstack and final transpose. Both kinds have equal counts in both backends.
 
 0449: Same adaptation of 0361 as 0448, with its own standalone files and its own fixture. Both kinds have equal counts in both backends.
+
+0463: Adapted 0462: Halo2 input shape is 20x1; Noir flat ABI holds the same 20 cells. Final reshape(-1,1) is wiring. Public dynamic count denotes rows of unit width one, followed by up to 20 values padded with zeros. Literal retains complete masks and equality-per-pair compaction.
