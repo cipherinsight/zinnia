@@ -13,6 +13,42 @@ const ATAN_Q: [i128; 10] = [-7489138, 45873335, -131930687, 246804093,
     -359577404, 469877966, -612529925, 858917466, -1431653573, 4294967285];
 
 impl Q32 {
+    /// Frozen dynamic DivF: zero divisors map to zero. Source-language
+    /// nonzero assertions, when present, must be imposed by the caller.
+    /// The two 64-bit remainder checks constrain the divisor magnitude;
+    /// unlike `div`, this does not first restrict the divisor to signed64.
+    pub fn canonical_div_or_zero(
+        &self, ctx: &mut Ctx, a: impl Into<QuantumCell<Fr>>, b: Cell,
+    ) -> I64 {
+        let zero = self.gate.is_zero(ctx, b);
+        let divisor = self.add(ctx, b, zero);
+        let numerator = self.gate.mul_not(ctx, zero, a);
+        let negative = ctx.load_witness(fe((signed(divisor.value()) < 0) as i128));
+        self.gate.assert_bit(ctx, negative);
+        let opposite = self.gate.neg(ctx, divisor);
+        let magnitude = self.gate.select(ctx, opposite, divisor, negative);
+        // Decode after field multiplication. Accepted inputs can require a
+        // 128-bit unsigned magnitude, so signed i128 multiplication is unsafe.
+        let scaled = *numerator.value() * fe(SCALE);
+        let small = |value: Fr| -> Option<u128> {
+            let bytes = value.to_bytes_le();
+            if bytes[16..].iter().any(|&byte| byte != 0) { return None; }
+            Some(u128::from_le_bytes(bytes[..16].try_into().unwrap()))
+        };
+        let (num, neg_num) = if let Some(value) = small(scaled) {
+            (value, false)
+        } else { (small(-scaled).unwrap_or(0), true) };
+        let den = small(*magnitude.value()).unwrap_or(1).max(1);
+        let quotient = num / den;
+        let remainder = num % den;
+        let round = neg_num && remainder != 0;
+        let quotient = Fr::from_u128(quotient) + if round { Fr::ONE } else { Fr::ZERO };
+        let quotient = if neg_num != (signed(divisor.value()) < 0) { -quotient } else { quotient };
+        let remainder = if round { den - remainder } else { remainder };
+        self.div_with(ctx, Existing(numerator), divisor, magnitude,
+            quotient, Fr::from_u128(remainder))
+    }
+
     fn canonical_horner(&self, ctx: &mut Ctx, x: Cell, coefficients: &[i128]) -> Cell {
         let mut acc = ctx.load_constant(fe(coefficients[0]));
         for &coefficient in &coefficients[1..] {

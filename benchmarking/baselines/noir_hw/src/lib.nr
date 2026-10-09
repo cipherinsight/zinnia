@@ -1190,7 +1190,7 @@ fn test_index_too_negative() {
 
 // Strict-comparison primitive APIs: share the frozen compiler's arithmetic
 // schedules/coefficients rather than the historical tolerance-only minimax fits.
-pub use noir_fpc::{qexp as canonical_exp, qlog as canonical_log, qtanh as canonical_tanh,
+pub use noir_fpc::{qdiv as canonical_div_or_zero, qexp as canonical_exp, qlog as canonical_log, qtanh as canonical_tanh,
     qsin as canonical_sin, qcos as canonical_cos, qarctan2 as canonical_arctan2};
 pub fn canonical_exp_neg(gap: Field) -> Field { canonical_exp(-gap) }
 pub fn canonical_arctan2_nonneg(y: Field, x: Field) -> Field { canonical_arctan2(y, x) }
