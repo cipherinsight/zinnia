@@ -147,19 +147,6 @@ impl Q32 {
         self.canonical_sin_magnitude(ctx, negative, magnitude)
     }
 
-    // cos shifts an int64 argument by pi/2; the shifted value can cross the
-    // int64 boundary while its magnitude still fits the compiler's 64-bit
-    // trigonometric reduction domain. A 65-bit signed window preserves it.
-    fn canonical_sin_value(&self, ctx: &mut Ctx, x: Cell) -> Cell {
-        let offset = self.add(ctx, x, Constant(fe(1i128 << 64)));
-        self.range.range_check(ctx, offset, 65);
-        let negative = self.range.is_less_than(ctx, offset, Constant(fe(1i128 << 64)), 65);
-        let opposite = self.gate.neg(ctx, x);
-        let magnitude = self.gate.select(ctx, opposite, x, negative);
-        self.range.range_check(ctx, magnitude, 64);
-        self.canonical_sin_magnitude(ctx, negative, magnitude)
-    }
-
     fn canonical_sin_magnitude(&self, ctx: &mut Ctx, negative: Cell, magnitude: Cell) -> Cell {
         let (_, r) = self.floor_div_const(ctx, magnitude, 26986075410);
         let below_pi = self.range.is_less_than(ctx, r, Constant(fe(13493037705)), 35);
@@ -178,7 +165,10 @@ impl Q32 {
 
     pub fn canonical_cos(&self, ctx: &mut Ctx, x: Cell) -> Cell {
         let shifted = self.add(ctx, x, Constant(fe(6746518852)));
-        self.canonical_sin_value(ctx, shifted)
+        // The frozen Halo2 sin_f constrains the shifted input to signed64.
+        // Noir qcos uses its own wider sign_abs domain.
+        let shifted = self.bound(ctx, shifted);
+        self.canonical_sin(ctx, shifted)
     }
 
     pub fn canonical_arctan2(&self, ctx: &mut Ctx, y: I64, x: I64) -> Cell {
