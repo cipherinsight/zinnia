@@ -1,5 +1,5 @@
 // pythran_cronbach__cronbach: literal translation of kernel.py (LITERAL_BASELINES.md).
-// Variance uses mean, full deviations, rounded squares, sum, then ddof=1 division.
+// Variance uses mean, full deviations, raw squares, sum with one optimized rescale, then ddof=1 division.
 
 // @outputs: float[1]
 
@@ -34,7 +34,7 @@ fn main(itemscores: [[Field; COLS]; ROWS]) -> pub [Field; 1] {
     let mut squares = [[0; COLS]; ROWS];
     for i in 0..ROWS {
         for j in 0..COLS {
-            squares[i][j] = mul(deviations[i][j], deviations[i][j]);
+            squares[i][j] = deviations[i][j] * deviations[i][j];
         }
     }
     let mut itemvars = [0; ROWS];
@@ -43,7 +43,7 @@ fn main(itemscores: [[Field; COLS]; ROWS]) -> pub [Field; 1] {
         for j in 0..COLS {
             total += squares[i][j];
         }
-        itemvars[i] = noir_hw::divmod_pos(total, DDOF_DIVISOR as Field).0;
+        itemvars[i] = noir_hw::divmod_pos(noir_hw::rescale(total), DDOF_DIVISOR as Field).0;
     }
     let mut tscores = [0; COLS];
     for j in 0..COLS {
@@ -66,13 +66,13 @@ fn main(itemscores: [[Field; COLS]; ROWS]) -> pub [Field; 1] {
     }
     let mut squares = [0; COLS];
     for j in 0..COLS {
-        squares[j] = mul(deviations[j], deviations[j]);
+        squares[j] = deviations[j] * deviations[j];
     }
     let mut total: Field = 0;
     for j in 0..COLS {
         total += squares[j];
     }
-    let tvar = noir_hw::divmod_pos(total, DDOF_DIVISOR as Field).0;
+    let tvar = noir_hw::divmod_pos(noir_hw::rescale(total), DDOF_DIVISOR as Field).0;
     let ratio = noir_hw::canonical_div_nonzero(itemvars_sum, tvar);
     [mul(RATIO_Q, SCALE - ratio)]
 }
