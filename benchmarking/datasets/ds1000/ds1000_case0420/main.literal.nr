@@ -2,13 +2,15 @@
 // Both where branches computed eagerly; powers computed independently; integer literals multiply Q32 exactly.
 // L4: select zero for the polynomial operand when either clamp applies;
 // otherwise unused powers can overflow Q32 for valid inputs (e.g. x=10000).
+// L4 also guards the inner comparison: x_max need not fit Q32 when below is true.
 // @outputs: float[1]
 fn main(x: Field, x_min: Field, x_max: Field) -> pub Field {
     noir_hw::check_input(x);
     noir_hw::check_input(x_min);
     noir_hw::check_input(x_max);
     let below = noir_hw::lt(x, noir_hw::from_int(x_min));
-    let above = noir_hw::gt(x, noir_hw::from_int(x_max));
+    let safe_hi = if below { 0 } else { x_max };
+    let above = noir_hw::gt(x, noir_hw::from_int(safe_hi));
     let t = if below | above { 0 } else { x };
     let square = noir_hw::mul(t, t);
     let first = 3 * square;
