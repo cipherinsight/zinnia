@@ -480,6 +480,37 @@ impl Q32 {
         self.bound(ctx, q_cell)
     }
 
+    /// `a / b` for floats with `0 <= a < b` (a ratio in `[0, 1)`, such as a
+    /// value divided by a larger maximum), rounded like [`Q32::div`]:
+    /// `floor(a * 2^32 / b)`. Any other `a`, `b` has no witness.
+    ///
+    /// Constraints: `a * 2^32 = q * b + r`, `r` and `b - r - 1` in `[0, 2^64)`
+    /// (so `0 <= r < b`), and `q` in `[0, 2^32)`, which the precondition
+    /// guarantees and which replaces the window check of `q`. The terms are
+    /// below `2^97`, so the identity holds over the integers and `(q, r)` is
+    /// unique. `b` needs no proof of its own: the remainder checks make it an
+    /// integer in `[1, 2^65)`.
+    pub fn div_fraction(&self, ctx: &mut Ctx, a: Cell, b: Cell) -> Cell {
+        let num = signed(a.value()) * SCALE;
+        let bv = signed(b.value());
+        let (q, r) = if bv <= 0 { (0, 0) } else { (num.div_euclid(bv), num.rem_euclid(bv)) };
+        self.div_fraction_with(ctx, a, b, fe(q), fe(r))
+    }
+
+    fn div_fraction_with(&self, ctx: &mut Ctx, a: Cell, b: Cell, q: Fr, r: Fr) -> Cell {
+        let scaled = self.gate.mul(ctx, a, Constant(fe(SCALE)));
+        let q_cell = ctx.load_witness(q);
+        let r_cell = ctx.load_witness(r);
+        let recomposed = self.gate.mul_add(ctx, q_cell, b, r_cell);
+        ctx.constrain_equal(&recomposed, &scaled);
+        self.range.range_check(ctx, r_cell, 64);
+        let gap = self.gate.sub(ctx, b, r_cell);
+        let gap = self.gate.sub(ctx, gap, Constant(Fr::ONE));
+        self.range.range_check(ctx, gap, 64);
+        self.range.range_check(ctx, q_cell, FRAC_BITS as usize);
+        q_cell
+    }
+
     /// Float division by a nonzero float constant `d`.
     pub fn div_const(&self, ctx: &mut Ctx, a: impl Into<QuantumCell<Fr>>, d: f64) -> I64 {
         let dq = quantize(d);
@@ -1226,6 +1257,35 @@ mod tests {
             let z = c.bound(ctx, z);
             c.div(ctx, a, z);
         }));
+    }
+
+    #[test]
+    fn div_fraction_pins_the_quotient() {
+        let (a, b) = (3i128 << 30, 5i128 << 31); // 0.75 / 2.5
+        let num = a * SCALE;
+        let (q, r) = (num.div_euclid(b), num.rem_euclid(b));
+        let run = |av: i128, bv: i128, qh: Fr, rh: Fr| {
+            accepts(move |c, ctx| {
+                let a = ctx.load_witness(fe(av));
+                let b = ctx.load_witness(fe(bv));
+                c.div_fraction_with(ctx, a, b, qh, rh);
+            })
+        };
+        assert!(run(a, b, fe(q), fe(r)));
+        assert!(accepts(|c, ctx| {
+            let a = ctx.load_witness(fe(a));
+            let b = ctx.load_witness(fe(b));
+            assert_eq!(*c.div_fraction(ctx, a, b).value(), fe(q));
+        }));
+        // Neighbouring and non-integer quotients.
+        assert!(!run(a, b, fe(q + 1), fe(r - b)));
+        assert!(!run(a, b, fe(q - 1), fe(r + b)));
+        assert!(!run(a, b, field_quotient(num, r + 1, b), fe(r + 1)));
+        // Outside 0 <= a < b: a = b, a < 0, b = 0.
+        assert!(!run(b, b, fe(SCALE), fe(0)));
+        assert!(!run(-a, b, fe((-num).div_euclid(b)), fe((-num).rem_euclid(b))));
+        assert!(!run(0, 0, fe(0), fe(0)));
+        assert!(run(0, 1, fe(0), fe(0)));
     }
 
     #[test]

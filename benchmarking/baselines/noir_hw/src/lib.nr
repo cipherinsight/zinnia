@@ -301,6 +301,26 @@ pub fn div_by_abs(a: Field, b: Field, abs_b: Field) -> Field {
     if b == abs_b { q } else { -q }
 }
 
+// a / b for floats with 0 <= a < b (a ratio in [0, 1), such as a value divided
+// by a larger maximum), rounded like `div`: floor(a * 2^32 / b). Any other a, b
+// has no witness. a * 2^32 = q * b + r with r and b - r - 1 in [0, 2^64) (so
+// 0 <= r < b, and b is an integer in [1, 2^65)) and q in [0, 2^32), which the
+// precondition guarantees and which replaces the window check of q. The terms
+// are below 2^97, so the identity holds over the integers and (q, r) is unique.
+pub fn div_fraction(a: Field, b: Field) -> Field {
+    // Safety: q and r are pinned by `check_div_fraction`.
+    let (q, r) = unsafe { divmod_hint(a * SCALE, b) };
+    check_div_fraction(a, b, q, r);
+    q
+}
+
+fn check_div_fraction(a: Field, b: Field, q: Field, r: Field) {
+    assert(q * b + r == a * SCALE, "div_fraction: recomposition");
+    r.assert_max_bit_size::<64>();
+    (b - r - 1).assert_max_bit_size::<64>();
+    q.assert_max_bit_size::<32>();
+}
+
 // int(x) for a float x: truncation toward zero.
 pub fn to_int(x: Field) -> Field {
     let (q, r) = divmod_pos(x, SCALE);
@@ -609,6 +629,44 @@ fn test_div_by_abs() {
     assert(div_by_abs(SCALE, -4 * SCALE, 4 * SCALE) == div(SCALE, -4 * SCALE));
     assert(div_by_abs(-3 * SCALE, 2 * SCALE, 2 * SCALE) == div(-3 * SCALE, 2 * SCALE));
     assert(div_by_abs(7, -3, 3) == div(7, -3));
+}
+
+#[test]
+fn test_div_fraction() {
+    // 0.75 / 2.5 = 0.3
+    assert(div_fraction(3 * SCALE / 4, 5 * SCALE / 2) == div(3 * SCALE / 4, 5 * SCALE / 2));
+    assert(div_fraction(0, 1) == 0);
+    check_div_fraction(1, 3, 1431655765, 1);
+}
+
+#[test(should_fail)]
+fn test_div_fraction_next_quotient() {
+    check_div_fraction(1, 3, 1431655766, -2);
+}
+
+#[test(should_fail)]
+fn test_div_fraction_previous_quotient() {
+    check_div_fraction(1, 3, 1431655764, 4);
+}
+
+#[test(should_fail)]
+fn test_div_fraction_field_quotient() {
+    check_div_fraction(1, 3, (SCALE - 2) / 3, 2);
+}
+
+#[test(should_fail)]
+fn test_div_fraction_not_below_one() {
+    let _ = div_fraction(3, 3);
+}
+
+#[test(should_fail)]
+fn test_div_fraction_negative() {
+    let _ = div_fraction(-1, 3);
+}
+
+#[test(should_fail)]
+fn test_div_fraction_zero_divisor() {
+    check_div_fraction(0, 0, 0, 0);
 }
 
 #[test(should_fail)]
