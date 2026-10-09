@@ -40,6 +40,9 @@ use halo2_base::{AssignedValue, Context, QuantumCell};
 
 use crate::Builder;
 
+// `exp`, `log`, `tanh` (methods of `Q32`, in their own file).
+mod transcendental;
+
 /// A circuit cell.
 pub type Cell = AssignedValue<Fr>;
 /// A halo2-base gate thread.
