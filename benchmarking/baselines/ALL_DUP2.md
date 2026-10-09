@@ -24,9 +24,13 @@ no shared tools or repository fixtures are modified. Checks use `--fixture-root`
 |---|---:|---:|---:|---:|---|
 | 0343 | 1200 + 360 = 1560 | 1200 + 360 = 1560 | 3004 | 3004 | pass/pass/pass/pass |
 
+| 0356 | 3807 + 837 = 4644 | 6913 + 1107 = 8020 | 3376 | 3731 | pass/pass/pass/pass |
+
 ## Case notes
 
 - **0343 (twin 0340):** All four files reuse input/output plumbing. Transpose
   changes the output to column-first traversal of X (j then i). Literal append
   loop directly follows X.T.flat. Equal sizes are expected: both variants only
   permute checked input wires; no arithmetic can be removed. Literal lint passes.
+
+- **0356 (twin 0355):** Same kernel, shapes, constants and outputs. Reused all four circuits after source review, changing the case header. Optimized code selects payloads using three comparisons per column; literal code bubble-sorts all three keys with indices, materializes static indices, then gathers. No Q32 arithmetic or changed rounding. Stable ties; literal sizes should exceed optimized.
