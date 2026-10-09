@@ -23,10 +23,9 @@ no shared tools or repository fixtures are modified. Checks use `--fixture-root`
 | Case | Optimized Halo2 advice + lookup = total | Literal Halo2 advice + lookup = total | Optimized Noir gates | Literal Noir gates | Four checks |
 |---|---:|---:|---:|---:|---|
 | 0343 | 1200 + 360 = 1560 | 1200 + 360 = 1560 | 3004 | 3004 | pass/pass/pass/pass |
-
 | 0356 | 3807 + 837 = 4644 | 6913 + 1107 = 8020 | 3376 | 3731 | pass/pass/pass/pass |
-
 | 0357 | 3807 + 837 = 4644 | 6913 + 1107 = 8020 | 3376 | 3731 | pass/pass/pass/pass |
+| 0365 | 5599 + 824 = 6423 | 15117 + 3376 = 18493 | 3891 | 4804 | pass/pass/pass/pass |
 
 ## Case notes
 
@@ -38,3 +37,5 @@ no shared tools or repository fixtures are modified. Checks use `--fixture-root`
 - **0356 (twin 0355):** Same kernel, shapes, constants and outputs. Reused all four circuits after source review, changing the case header. Optimized code selects payloads using three comparisons per column; literal code bubble-sorts all three keys with indices, materializes static indices, then gathers. No Q32 arithmetic or changed rounding. Stable ties; literal sizes should exceed optimized.
 
 - **0357 (twin 0355):** Reused four circuits and reversed axis 0 after ascending argsort. Optimized payload outputs swap first/last; literal code explicitly creates the reversed index array before static indices and gathers. This reverses ties as well (it is not a descending stable sort).
+
+- **0365 (twin 0363):** Same insertion kernel. Reused thermometer-hint optimized construction and direct prefix/element/suffix literal construction. Optimized Halo2 now reuses each adjacent-output product, as Noir already did. Added a Q32 window check after integer-to-float conversion in all four files: the twin omitted this output-overflow guard. Both variants accept insertion endpoints and wrap negative positions in [-100,100]. The literal local sign test and per-output comparisons retain fresh bounds. Lint cast warnings are inside the constrained-and-checked optimized Noir hint only. Additional non-proving checks in both variants/backends accepted pos=-100/100 with inserted values -2^31/2^31-1, and rejected pos=101 and inserted value 2^31.
