@@ -302,6 +302,9 @@ Q32 in and out; batch 1 publishes the interface first).
 
 ### Batch 1 (exp, log, tanh; 36 points)
 
+Validation and remaining numerical-domain caveats are recorded in
+[`NPB_BATCH1_VALIDATION.md`](NPB_BATCH1_VALIDATION.md).
+
 | entry | rating | notes |
 |---|---|---|
 | `npbench_deep_learning_mlp_mlp__mlp` | 4 | relu, matmuls, softmax (max, exp, division) |

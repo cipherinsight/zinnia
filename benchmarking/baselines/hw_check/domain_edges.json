@@ -334,6 +334,51 @@
      }
     }
    }
+  ],
+  "pythran_log_likelihood__log_likelihood": [
+   {
+    "name": "finite_density_below_q32",
+    "expect": "numpy",
+    "why": "exp(-50) is finite in NumPy but below one Q32 unit; evaluate log density algebraically before Q32 pdf materialization.",
+    "set": {
+     "data": [
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0
+     ],
+     "mean": 0.0,
+     "sigma": 1.0
+    }
+   },
+   {
+    "name": "negative_sigma",
+    "expect": "reject",
+    "why": "Negative density has no finite NumPy logarithm.",
+    "set": {
+     "sigma": -1.0
+    }
+   },
+   {
+    "name": "zero_sigma",
+    "expect": "reject",
+    "why": "Violates the kernel sigma != 0 precondition.",
+    "set": {
+     "sigma": 0.0
+    }
+   }
   ]
  }
 }
