@@ -16,6 +16,7 @@ Fixture values are unchanged. No repository fixtures or tools are modified.
 | Case | Four-file check status | Opt Halo2 advice + lookup = total | Literal Halo2 advice + lookup = total | Opt Noir gates | Literal Noir gates |
 |---|---|---:|---:|---:|---:|
 | 0417 | all pass | 494 + 144 = 638 | 508 + 144 = 652 | 2875 | 2875 |
+| 0418 | all pass | 2928 + 744 = 3672 | 3048 + 744 = 3792 | 3218 | 3218 |
 
 0417: adapted all four 0414 twins by wiring the reversed input before binning.
 Literal means scan each bin in source order. Noir counts are equal because the
@@ -25,3 +26,5 @@ is already direct. No added arithmetic rounding points or domain guards.
 Verified for completed rows: Halo2 MockProver A/B, Noir compilation/count and
 witness solving A/B, decoded outputs against NumPy, out-of-domain input rejection.
 No proofs, keys, tampered-public verification, timing or scaling runs.
+
+0418: Adapted 0416: reverse all six columns of each input row before pairwise means; all 24 means remain in reversed bin order.
