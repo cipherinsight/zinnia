@@ -114,3 +114,14 @@ Noir gotchas that matter here:
 Every case of the performance set with a Noir baseline is listed in the
 bench-circuits report (`eval-redo/fix/bench-circuits.md`) with its check result
 and gate count; cases without a Noir baseline are listed there with the reason.
+
+## Constraint-free circuits
+
+For circuits with no ACIR opcodes and no public parameters or return values,
+Noir can retain unused private ABI inputs in the executor's witness map while
+bb expects one unused witness slot. Both benchmark Noir adapters and the baseline
+driver use `benchmarking.noir_witness` to supply that zero slot in a separate
+transport file; the original executor witnesses remain available for comparison.
+Zinnia's standalone Noir driver applies the same rule. No constraints, public
+values, input-domain guards, or benchmark-program work are added. In particular,
+never expose a private input or add artificial work to make an empty circuit prove.

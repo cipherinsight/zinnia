@@ -158,6 +158,7 @@ pub fn run_pipeline(pkg_dir: &Path, paths: &DriverPaths) -> Result<DriverOutput,
     let target = pkg_dir.join("target");
     let bytecode = target.join(format!("{}.json", PACKAGE_NAME));
     let witness = target.join(format!("{}.gz", PACKAGE_NAME));
+    let witness = super::witness::for_barretenberg(&bytecode, &witness)?;
 
     // bb write_vk (excluded from the prove_seconds window).
     run(

@@ -149,9 +149,7 @@ class ZinniaNoirAdapter(Adapter):
                                               f"witness_{ctx.proof_dir.name}", ctx.proof_dir,
                                               state["bytecode_sha256"])
 
-        # With no exposed output the emitter adds one synthetic public (an input
-        # cell) so bb accepts the circuit; it is not an output.
-        fields = noir_toolchain.public_fields(ctx.proof_dir) if state["expose_kinds"] else []
+        fields = noir_toolchain.public_fields(ctx.proof_dir)
         proof_path = ctx.proof_dir / "proof"
         return ProveResult(
             prove_core_s=timings.bb_prove, end_to_end_s=timings.end_to_end,

@@ -372,7 +372,9 @@ def prove(case: str, fixture: dict, input_name: str, workdir: Path, timings: dic
     if proof_dir.exists():
         shutil.rmtree(proof_dir)
     proof_dir.mkdir()
-    witness = pkg / "target" / f"{name}.gz"
+    from benchmarking.noir_witness import for_barretenberg
+
+    witness = for_barretenberg(bytecode, pkg / "target" / f"{name}.gz")
     _timed(timings, "prove_s", lambda: _run(
         [BB, "prove", *SCHEME, "-b", str(bytecode), "-w", str(witness), "-k", str(workdir / "keys" / "vk"),
          "-o", str(proof_dir), "-t", target], pkg))

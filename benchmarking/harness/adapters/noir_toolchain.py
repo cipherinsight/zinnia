@@ -164,6 +164,9 @@ class NoirPackage:
                 "acir_opcodes": first.get("acir_opcodes")}
 
     def prove(self, witness: Path, out_dir: Path) -> float:
+        from benchmarking.noir_witness import for_barretenberg
+
+        witness = for_barretenberg(self.bytecode, witness)
         out_dir.mkdir(parents=True, exist_ok=True)
         seconds, _ = run_tool([str(toolchains.bb_path()), "prove", "-b", str(self.bytecode),
                                "-w", str(witness), "-k", str(self.vk), "-o", str(out_dir),

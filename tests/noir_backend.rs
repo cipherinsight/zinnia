@@ -420,3 +420,12 @@ fn test_corrupted_proof_is_rejected_by_verify() {
     corrupted.proof_bytes.replace_range(128..192, &flipped);
     assert!(!NoirProverBackend.verify(&corrupted).unwrap().valid);
 }
+
+#[test]
+fn constant_output_never_exposes_a_private_input() {
+    let out = emit_circuit(&IRGraph::new(vec![]), &three_float_witness(), &ProvingParams::default()).unwrap();
+    assert_eq!(out.return_count, 0);
+    assert_eq!(out.public_input_count, 0);
+    assert!(!out.main_nr.contains("pub "), "{}", out.main_nr);
+    assert!(!out.main_nr.contains("a["), "{}", out.main_nr);
+}

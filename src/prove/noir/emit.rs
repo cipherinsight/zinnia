@@ -3401,8 +3401,7 @@ impl Synthesizer for NoirEmitter<'_> {
 // ---------------------------------------------------------------------------
 
 /// Render `main.nr`. Returns the source text; `main` returns the exposed
-/// values in IR order (plus, for a circuit with no output and no body, one
-/// synthetic return value; see below).
+/// values in IR order, with no synthetic return values.
 #[cfg(test)]
 pub(super) use self::{settle_range_widths as settle_range_widths_for_tests, DeferredWidth as DeferredWidthForTests};
 
@@ -3574,39 +3573,10 @@ fn render_main_nr(inputs: &[EmittedInput], emitter: &NoirEmitter) -> String {
             }
         }
     }
-    // bb requires `witness.size() == max_witness_index + 1`. A trivially-empty
-    // circuit (no exposes — e.g. a kernel whose result is a degenerate empty
-    // array from `x[all_False]`) leaves declared input witnesses unused; bb
-    // then aborts with an internal-invariant failure. Synthesize a single
-    // public output referencing the last cell of the last input array so the
-    // resulting circuit has at least one constraint that touches a witness.
-    // nargo folds `let _ = x[N-1];` and `assert(x[N-1] == x[N-1])` to nothing,
-    // so we promote to a pub return — that emission survives DCE.
+    // Only declared outputs may be public. Constraint-free circuits are
+    // handled by the driver's witness transport, never by exposing an input.
     let pruned_body = settle_range_widths(&dce_body(&emitter.body, &emitter.exposes), &emitter.deferred_widths);
-    let mut synthetic_exposes: Vec<String> = Vec::new();
-    if pruned_body.trim().is_empty() && emitter.exposes.is_empty() {
-        if let Some(inp) = inputs
-            .iter()
-            .rfind(|i| !matches!(i.kind, InputKind::ScalarField))
-        {
-            if let InputKind::ArrayField { len } = &inp.kind {
-                if *len > 0 {
-                    synthetic_exposes.push(format!("{}[{}]", inp.name, len - 1));
-                }
-            }
-        }
-        if synthetic_exposes.is_empty() {
-            if let Some(inp) = inputs.first() {
-                synthetic_exposes.push(inp.name.clone());
-            }
-        }
-    }
-    let all_exposes: Vec<&str> = emitter
-        .exposes
-        .iter()
-        .map(String::as_str)
-        .chain(synthetic_exposes.iter().map(String::as_str))
-        .collect();
+    let all_exposes: Vec<&str> = emitter.exposes.iter().map(String::as_str).collect();
     let n_exposes = all_exposes.len();
     if n_exposes == 0 {
         out.push_str(") {\n");
