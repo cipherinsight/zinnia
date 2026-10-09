@@ -38,7 +38,9 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         cumsum = Some(sum);
         let cssv = q.sub(ctx, sum, z_float);
         let quotient = if k == 0 { q.bound(ctx, cssv) } else { q.floor_div_const(ctx, cssv, k as u64 + 1).0 };
-        cond.push(q.lt(ctx, quotient, *uk));
+        let gap = q.sub(ctx, uk.cell, quotient.cell);
+        let gap = q.bound(ctx, gap);
+        cond.push(q.gt_const(ctx, gap, 0));
         quotients.push(quotient.cell);
     }
     // The one-hot of the last k with cond[k].

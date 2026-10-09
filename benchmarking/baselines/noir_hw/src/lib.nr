@@ -1190,7 +1190,8 @@ fn test_index_too_negative() {
 
 // Strict-comparison primitive APIs: share the frozen compiler's arithmetic
 // schedules/coefficients rather than the historical tolerance-only minimax fits.
-pub use noir_fpc::{qdiv as canonical_div_or_zero, qexp as canonical_exp, qlog as canonical_log, qtanh as canonical_tanh,
+pub use noir_fpc::{qlt as canonical_lt, qgt as canonical_gt, qle as canonical_le, qge as canonical_ge,
+    qdiv as canonical_div_or_zero, qexp as canonical_exp, qlog as canonical_log, qtanh as canonical_tanh,
     qsin as canonical_sin, qcos as canonical_cos, qarctan2 as canonical_arctan2};
 // The magnitude check follows the frozen Noir backend's own domain.
 // qdiv_nonzero_of's remainder constraints reject a zero divisor.

@@ -49,11 +49,9 @@ fn update(q: &Q32, ctx: &mut Ctx, field: &mut [Cell], beta: Cell, n: usize, m: u
     let de = q.gate.mul(ctx, half, Constant(Fr::from(2)));
     let de = q.bound(ctx, de);
     let non_positive = q.lt_const(ctx, de, 1);
-    // The source only evaluates exp in the positive-dE branch. Mask its
-    // argument to zero outside that branch to avoid dead-branch overflow.
+    // Frozen IR retains the original exp operand even in the inactive branch.
     let negative_de = q.neg(ctx, de.cell);
     let argument = q.gate.mul(ctx, negative_de, beta);
-    let argument = q.gate.select(ctx, Constant(Fr::ZERO), argument, non_positive);
     let argument = q.bound(ctx, argument);
     let exponential = q.canonical_exp(ctx, argument);
     let exp_test = q.gt_const(ctx, exponential, SCALE / 2);

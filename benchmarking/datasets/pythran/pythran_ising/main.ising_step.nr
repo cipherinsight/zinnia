@@ -2,7 +2,7 @@
 // np.float32 shares that format; no threshold or binary32-rounding rewrite.
 // @outputs: int[N * M]
 
-use noir_hw::{check_input, check_inputs, window, canonical_exp, SCALE};
+use noir_hw::{check_input, check_inputs, window, canonical_le, canonical_exp, SCALE};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global N: u32 = 2; // = field_0
@@ -35,8 +35,8 @@ fn main(field: [[Field; M]; N], beta: Field) -> pub [[Field; M]; N] {
                             }
                         }
                         let de = 2 * f[n][m] * total;
-                        let non_positive = window(de) <= window(0);
-                        let argument = if non_positive { 0 } else { -de * beta };
+                        let non_positive = canonical_le(de, 0);
+                        let argument = -de * beta;
                         let exponential = canonical_exp(argument);
                         let flip = non_positive | (window(exponential) > window(SCALE / 2));
                         if flip {

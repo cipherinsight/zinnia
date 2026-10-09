@@ -9,7 +9,7 @@ before its sizes are used in a same-arithmetic comparison.
 |---|---|---|
 | `pythran_fibo_seq__fibo` | 1024 bounded sequential `(a,b)=(a+b,a)` steps, conditional on private n | Source precondition 0<=n<=1024; no additional state range assertions beyond the frozen compiler. No n<=90 shortcut or matrix powers. |
 | `pythran_log_likelihood__log_likelihood` | Per-element square, divide, exp, density normalization divide, log, then sum | Common scalar denominator and sqrt(2*pi) constant reused; no log-density identity. |
-| `pythran_ising__ising_step` | Sequential site updates and literal `exp(-dE*beta)>0.5` predicate | Constant neighbor indices; inactive exp argument replaced by zero. No logarithmic threshold; float32 shares canonical Q32 as in the selected compiler. |
+| `pythran_ising__ising_step` | Sequential site updates and literal `exp(-dE*beta)>0.5` predicate | Constant neighbor indices; original inactive exp arguments retained as emitted by frozen IR. No logarithmic threshold; float32 shares canonical Q32 as in the selected compiler. |
 | `npbench_crc16_crc16__crc16` | Each byte's eight sequential conditional CRC shift/XOR steps | State carried as 64 Boolean bits, input bit decompositions reused, arithmetic right shift retains sign. No GF2 history/parity reformulation. |
 | `pythran_insertion_sort__insertion_sort` | Source insertion saves, comparisons, shifts, and final placement | While active, j=i-step by induction. Constant indices therefore replace dynamic addressing without changing compared pairs or loop order. |
 | `pythran_bubble_sort__bubble_sort` | Nested adjacent comparison/swap passes | The source sets swap_test=True unconditionally inside every nonempty pass, so its early break is unreachable. |

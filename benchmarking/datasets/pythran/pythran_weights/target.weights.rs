@@ -6,10 +6,8 @@
 //! discrete outcome depends on that rounding).
 //! The match count of rows `i` and `r` is symmetric and is `L` for `r = i`,
 //! so each unordered pair is counted once and the diagonal's comparison is
-//! made once. `count > threshold * L` compares an integer with a float
-//! whose Q32 code `L * threshold` can leave the window, so it is one
-//! `CMP_BITS`-bit comparison of `count * 2^32 + L * 2^63` with
-//! `L * (threshold + 2^63)`, both non-negative. `1 / total` is
+//! made once. The threshold-times-length comparison uses the frozen Halo2
+//! signed64 operand domain. `1 / total` is
 //! `floor(2^32 / total)`: `2^32 = q * total + r` with `total - r - 1` and
 //! `r` checked to `COUNT_BITS` bits and `q` to 33 bits, which pins `(q, r)`
 //! (`|q * total + r| < 2^40`, an integer identity; `r < total`) and leaves
@@ -20,7 +18,6 @@ use crate::prelude::*;
 // Sizes (hw_check.sizes): from fixture.json.
 const S: usize = 5; // = input_data_0
 const L: usize = 2; // = input_data_1
-const CMP_BITS: usize = 66; // = 64 + bits(input_data_1)
 const COUNT_BITS: usize = 3; // = bits(input_data_0)
 
 pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
@@ -31,13 +28,13 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
 
     let data = q.load_ints(ctx, &data);
     let threshold = q.load_float(ctx, threshold);
-    let half_window = 1i128 << 63;
-    // L * (threshold + 2^63): the right side of every comparison.
-    let bar = q.gate.mul_add(ctx, threshold, Constant(fe(L as i128)), Constant(fe(L as i128 * half_window)));
-    // count > threshold * L, for a count in [0, L]
+    let bar = q.gate.mul(ctx, threshold, Constant(fe(L as i128)));
+    let bar = q.bound(ctx, bar);
+    // The frozen Halo2 comparison constrains both Q32 operands to signed64.
     let exceeds = |ctx: &mut Ctx, count: QuantumCell<Fr>| {
-        let left = q.gate.mul_add(ctx, count, Constant(fe(SCALE)), Constant(fe(L as i128 * half_window)));
-        q.range.is_less_than(ctx, bar, left, CMP_BITS)
+        let left = q.gate.mul(ctx, count, Constant(fe(SCALE)));
+        let left = q.bound(ctx, left);
+        q.gt(ctx, left, bar)
     };
     let self_match = exceeds(ctx, Constant(fe(L as i128)));
     let mut over = vec![vec![self_match; S]; S];

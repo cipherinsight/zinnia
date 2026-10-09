@@ -17,11 +17,9 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     for (coordinates, flags) in coordinates.into_iter().zip(flags) {
         let c = q.load_floats(ctx, &coordinates?);
         let p = q.load_bools(ctx, &flags?)[0];
-        // Inactive scalar branch uses zero, avoiding dead-branch conversion
-        // overflow. Every enabled branch uses the original private L.
-        let enabled_l = q.gate.mul(ctx, p, l);
-        let l_float = q.int_to_float(ctx, enabled_l);
-        let half = q.gate.mul(ctx, enabled_l, Constant(fe(SCALE / 2)));
+        // Frozen IR evaluates L/2 and -L/2 before branch selections.
+        let l_float = q.int_to_float(ctx, l);
+        let half = q.gate.mul(ctx, l, Constant(fe(SCALE / 2)));
         let half = q.bound(ctx, half);
         let negative_half = q.neg(ctx, half.cell);
         let negative_half = q.bound(ctx, negative_half);
@@ -50,6 +48,8 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         let sz = q.mul(ctx, axes[2][at], axes[2][at]);
         let sum = q.add(ctx, sx.cell, sy.cell);
         let sum = q.add(ctx, sum, sz.cell);
+        // The source asserts sum >= 0 through Halo2 signed64 comparison.
+        let sum = q.bound(ctx, sum).cell;
         let root = q.sqrt(ctx, sum);
         let zero = q.gate.is_zero(ctx, root.cell);
         distances.push(q.gate.select(ctx, Constant(fe(-SCALE)), root.cell, zero));

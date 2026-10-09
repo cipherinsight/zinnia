@@ -13,7 +13,7 @@
 // must be 1.
 // @outputs: float[N]
 
-use noir_hw::{array_index, check_input, check_inputs, divmod_pos, window, SCALE};
+use noir_hw::{canonical_gt, array_index, check_input, check_inputs, divmod_pos, window, SCALE};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global N: u32 = 10; // = v_0
@@ -58,7 +58,6 @@ fn main(v: [Field; N], z: Field) -> pub [Field; N] {
     let order = unsafe { order_hint(v) };
     let shift = 2.pow_32(KEY_SHIFT as Field);
     let mut u: [Field; N] = [0; N];
-    let mut u_window: [u64; N] = [0; N];
     let mut previous: Field = 0;
     for k in 0..N {
         // `order[k]` in [0, N - 1] (`array_index`), so the key's index part
@@ -72,7 +71,6 @@ fn main(v: [Field; N], z: Field) -> pub [Field; N] {
         }
         previous = key;
         u[N - 1 - k] = value;
-        u_window[N - 1 - k] = w;
     }
     // cssv[k] / (k + 1) and cond[k]
     let z_float = z * SCALE;
@@ -89,7 +87,9 @@ fn main(v: [Field; N], z: Field) -> pub [Field; N] {
             quotient
         };
         quotients[k] = quotient;
-        cond[k] = (window(quotient) < u_window[k]) as Field;
+        // Every source DivF has a bounded quotient, including division by1.
+        check_input(quotient);
+        cond[k] = canonical_gt(u[k] - quotient, 0) as Field;
     }
     // theta: the quotient at the last k with cond[k].
     let mut none_after: Field = 1;
@@ -107,7 +107,7 @@ fn main(v: [Field; N], z: Field) -> pub [Field; N] {
     let mut w: [Field; N] = [0; N];
     for i in 0..N {
         let gap = v[i] - theta;
-        w[i] = if window(gap) > window(0) { gap } else { 0 };
+        w[i] = if canonical_gt(gap, 0) { gap } else { 0 };
     }
     w
 }
