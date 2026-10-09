@@ -1,41 +1,5 @@
-//! npbench_crc16_crc16__crc16 (NPBench crc16), halo2-base baseline: literal
-//! translation of kernel.py (LITERAL_BASELINES.md).
-//!
-//! Kernel:
-//!   crc = 65535
-//!   for b in data:
-//!       cur_byte = 255 & b
-//!       for _ in range(8):
-//!           if crc & 1 ^ cur_byte & 1: crc = crc >> 1 ^ poly
-//!           else: crc >>= 1
-//!           cur_byte >>= 1
-//!   crc = ~crc & 65535
-//!   crc = crc << 8 | crc >> 8 & 255
-//!   return crc & 65535
-//!
-//! Interpretations (L1-L6):
-//! - `crc`/`poly` are tracked as their 64 two's-complement bits (the int64
-//!   window), `cur_byte` as its low 8 bits, since the recurrence is
-//!   bit-level (shifts, XORs, a bit test) and the acceptance domain fits the
-//!   window; this is the direct bit simulation the source computes, not a
-//!   reformulation (no linear-GF2 parity-history shortcut).
-//! - `if crc & 1 ^ cur_byte & 1: crc = crc >> 1 ^ poly else: crc >>= 1` (L4):
-//!   both branches are computed bit by bit (the shift, and the shift XORed
-//!   with `poly`) and selected on the condition bit, exactly the source
-//!   if/else.
-//! - `crc >>= 1` / `cur_byte >>= 1`: arithmetic and logical right shift by
-//!   one bit on the fixed-width bit arrays (the top bit of `crc`'s shift
-//!   repeats its sign bit; `cur_byte` is always non-negative, so its shift
-//!   brings in a zero).
-//! - `crc = ~crc & 65535; crc = crc << 8 | crc >> 8 & 255; return crc &
-//!   65535`: one Python statement computing a fixed bit permutation of the
-//!   complemented low 16 bits, rendered as the one weighted sum that
-//!   permutation defines (not an identity rewrite of separate shifts: the
-//!   source already combines them in one expression).
-//! This case's optimized baseline is already this direct bit simulation
-//! (no shortcut to remove), so this literal baseline is structurally the
-//! same computation, independently written from kernel.py.
-
+//! npbench_crc16_crc16__crc16: literal translation of kernel.py (LITERAL_BASELINES.md).
+//! Bit arrays implement signed shifts, XOR and masks directly; standard bit decomposition only.
 use crate::prelude::*;
 
 // Sizes (hw_check.sizes): from fixture.json.
@@ -76,34 +40,28 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         }
     }
 
-    // crc = ~crc & 65535; crc = crc << 8 | crc >> 8 & 255; return crc & 65535.
-    let complemented: Vec<Cell> = crc[..OUT_BITS].iter().map(|bit| q.gate.not(ctx, *bit)).collect();
-    let weights = (0..OUT_BITS).map(|i| Constant(Fr::from(1u64 << ((i + 8) % OUT_BITS))));
-    let result = q.gate.inner_product(ctx, complemented, weights);
+    // crc = ~crc & 65535
+    let mut masked = vec![ctx.load_zero(); WORD];
+    for i in 0..WORD {
+        let complemented = q.gate.not(ctx,crc[i]);
+        masked[i] = if i < OUT_BITS { complemented } else { ctx.load_zero() };
+    }
+    // crc = crc << 8 | crc >> 8 & 255
+    let mut combined = vec![ctx.load_zero(); WORD];
+    for i in 0..WORD {
+        let left = if i >= 8 { masked[i-8] } else { ctx.load_zero() };
+        let right = if i < 8 { masked[i+8] } else { ctx.load_zero() };
+        combined[i] = q.gate.or(ctx,left,right);
+    }
+    // return crc & 65535
+    let result = q.gate.inner_product(ctx,combined[..OUT_BITS].iter().copied(),
+        (0..OUT_BITS).map(|i| Constant(Fr::from(1u64<<i))));
     out.int(result);
     Ok(())
 }
 
-/// The eight low bits of an int64 `b` (`255 & b`, two's complement): hinted
-/// bits `d_j` and `h`, pinned by `b + 2^63 = sum_j 2^j d_j + 256 h` with each
-/// `d_j` a bit and `h` in `[0, 2^56)` (the decomposition of a value in
-/// `[0, 2^64)` is unique; `2^63` is a multiple of 256, so the low bits are
-/// `b`'s).
 fn low_byte_bits(q: &Q32, ctx: &mut Ctx, b: Cell) -> Vec<Cell> {
-    let offset = q.add(ctx, b, Constant(Fr::from(1u64 << 63)));
-    let v = crate::q32::signed(offset.value());
-    // Hints, pinned as above.
-    let bits: Vec<Cell> = (0..8).map(|j| ctx.load_witness(fe((v >> j) & 1))).collect();
-    let high = ctx.load_witness(fe(v >> 8));
-    for bit in &bits {
-        q.gate.assert_bit(ctx, *bit);
-    }
-    q.range.range_check(ctx, high, WORD - 8);
-    let weights = (0..8).map(|j| Constant(Fr::from(1u64 << j)));
-    let low = q.gate.inner_product(ctx, bits.iter().map(|x| Existing(*x)), weights);
-    let recomposed = q.gate.mul_add(ctx, high, Constant(Fr::from(256)), low);
-    ctx.constrain_equal(&recomposed, &offset);
-    bits
+    twos_complement_bits(q, ctx, b)[..8].to_vec()
 }
 
 /// The 64 two's-complement bits of an int64 `x` (low first): the bits of
