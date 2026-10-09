@@ -1,5 +1,7 @@
 //! pythran_harris__harris: literal translation of kernel.py (LITERAL_BASELINES.md).
 //! Compute full differences before slicing, including discarded boundary values.
+//! Section 3: encode the discarded-only I[0,0] through shared integer input limbs,
+//! matching the optimized absence of a Q32 window without replacing its value.
 
 use crate::prelude::*;
 
@@ -12,7 +14,9 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    let pixels = q.load_floats(ctx, &image);
+    let pixels: Vec<Cell> = image.iter().enumerate().map(|(i, value)| {
+        if i == 0 { load_discarded_q32(&q, ctx, *value) } else { q.load_float(ctx, *value) }
+    }).collect();
     let mut horizontal = Vec::new();
     for i in 0..M - 1 {
         for j in 0..N {
@@ -50,4 +54,19 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         .collect();
     out.floats(&result);
     Ok(())
+}
+
+// Statement input encoding for a value used only by discarded source work.
+// Three bounded integer limbs reconstruct the full quantized i128 input without
+// imposing a signed64 window on it. Only shared input loaders are used (L6).
+fn load_discarded_q32(q: &Q32, ctx: &mut Ctx, value: f64) -> Cell {
+    let code = quantize(value);
+    let mask = (1i128 << 63) - 1;
+    let low = q.load_int(ctx, (code & mask) as i64);
+    let middle = q.load_int(ctx, ((code >> 63) & mask) as i64);
+    let high = q.load_int(ctx, (code >> 126) as i64);
+    let middle = q.mul_int(ctx, middle, Constant(fe(1i128 << 63)));
+    let high = q.mul_int(ctx, high, Constant(fe(1i128 << 126)));
+    let lower = q.add(ctx, low, middle);
+    q.add(ctx, lower, high)
 }

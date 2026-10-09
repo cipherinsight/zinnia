@@ -1,5 +1,6 @@
 // pythran_harris__harris: literal translation of kernel.py (LITERAL_BASELINES.md).
 // Compute full differences before slicing, including discarded boundary values.
+// Section 3: I[0][0] has no optimized domain check; its discarded subtractions still execute.
 
 // @outputs: float[(M - 1) * (N - 1)]
 
@@ -14,7 +15,7 @@ global K_Q: Field = 214748365; // round(0.05 * 2^32)
 fn main(I: [[Field; N]; M]) -> pub [[Field; N - 1]; M - 1] {
     for i in 0..M {
         for j in 0..N {
-            check_input(I[i][j]);
+            if (i != 0) | (j != 0) { check_input(I[i][j]); }
         }
     }
     let mut horizontal = [[0; N]; M - 1];
