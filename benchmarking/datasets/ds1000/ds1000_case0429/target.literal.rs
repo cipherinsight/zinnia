@@ -1,5 +1,5 @@
 //! DS-1000 case 0429: literal translation of kernel.py (LITERAL_BASELINES.md).
-//! Each mean/std occurrence is independent; std uses mean, full deviations, rounded squares, mean and sqrt.
+//! Each mean/std occurrence is independent; std uses mean, full deviations, raw squares, one rescale of their sum, mean and sqrt (optimized arithmetic).
 use crate::prelude::*;
 
 const N: usize = 30;
@@ -11,9 +11,10 @@ fn mean(q: &Q32, ctx: &mut Ctx, a: &[Cell]) -> Cell {
 fn std(q: &Q32, ctx: &mut Ctx, a: &[Cell]) -> Cell {
     let avg = mean(q, ctx, a);
     let dev: Vec<Cell> = a.iter().map(|x| q.sub(ctx, *x, avg)).collect();
-    let squares: Vec<Cell> = dev.iter().map(|x| q.mul(ctx, *x, *x).cell).collect();
+    let squares: Vec<Cell> = dev.iter().map(|x| q.gate.mul(ctx, *x, *x)).collect();
     let mut total = q.int_const(ctx, 0);
     for x in squares { total = q.add(ctx, total, x); }
+    let total = q.rescale(ctx, total).cell;
     let variance = q.floor_div_const(ctx, total, N as u64).0.cell;
     q.sqrt(ctx, variance).cell
 }

@@ -1,6 +1,6 @@
 //! DS-1000 case 0300: literal translation of kernel.py (LITERAL_BASELINES.md).
 //! Percentile: stable bubble sort (190 swaps), exact integer rank split,
-//! Q32 fractional weight, then the linear interpolation s_lo + weight * (s_hi-s_lo).
+//! Interpolation rounds once: s_lo + floor(rem * (s_hi-s_lo) / 100), as optimized.
 //! p is checked in [0,100]; endpoint hi is clamped to the last index.
 use crate::prelude::*;
 pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
@@ -31,10 +31,9 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let hi = q.min(ctx, next_b, last_b).cell;
     let s_lo = q.index(ctx, &s, lo.cell);
     let s_hi = q.index(ctx, &s, hi);
-    let rem_float = q.int_to_float(ctx, rem);
-    let weight = q.div_const(ctx, rem_float, 100.0).cell;
     let diff = q.sub(ctx, s_hi, s_lo);
-    let contribution = q.mul(ctx, weight, diff).cell;
+    let raw = q.gate.mul(ctx, rem, diff);
+    let contribution = q.floor_div_const(ctx, raw, 100).0.cell;
     let result = q.add(ctx, s_lo, contribution);
     out.float(result);
     Ok(())

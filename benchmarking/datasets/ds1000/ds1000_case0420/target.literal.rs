@@ -2,6 +2,7 @@
 //! Both where branches computed eagerly; powers computed independently; integer literals multiply Q32 exactly.
 //! L4: select zero for the polynomial operand when either clamp applies;
 //! otherwise unused powers can overflow Q32 for valid inputs (e.g. x=10000).
+//! L4 also guards the inner comparison: x_max need not fit Q32 when below is true.
 use crate::prelude::*;
 
 pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
@@ -17,7 +18,8 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let xb = q.bound(ctx, x);
     let lb = q.bound(ctx, lo_cmp);
     let below = q.lt(ctx, xb, lb);
-    let hi_cmp = q.int_to_float(ctx, hi);
+    let safe_hi = q.gate.select(ctx, Constant(fe(0)), hi, below);
+    let hi_cmp = q.int_to_float(ctx, safe_hi);
     let xb = q.bound(ctx, x);
     let hb = q.bound(ctx, hi_cmp);
     let above = q.gt(ctx, xb, hb);
