@@ -23,6 +23,8 @@ sizing, advice + lookup (total), and unpadded Noir gates, respectively.
 |---|---:|---:|---:|---:|---|
 | ds1000_case0291 | 0 + 0 (0) | 0 + 0 (0) | 34 | 34 | All A/B outputs, mocks/executes, counts pass; TOOL-BLOCKED domain-target discovery |
 
+| ds1000_case0349 | 0 + 0 (0) | 0 + 0 (0) | 34 | 34 | All A/B outputs, mocks/executes, counts pass; TOOL-BLOCKED domain-target discovery |
+
 ## Interpretations and per-case review
 
 - 0291: signature shape is [2,5,5,2]. Reads array metadata, not values;
@@ -30,3 +32,6 @@ sizing, advice + lookup (total), and unpadded Noir gates, respectively.
   in output layouts, omitted from public instances. Literal retains the source
   assignment. Equal optimized/literal counts are expected for metadata only.
   No twin reused. Evidence: 0291-opt.json and 0291-lit.json in the work directory.
+
+- 0349: metadata-only column count 6; same interpretation as 0291, equal sizes.
+  Reused 0291 plumbing with its own [8,6] signature and scalar output.
