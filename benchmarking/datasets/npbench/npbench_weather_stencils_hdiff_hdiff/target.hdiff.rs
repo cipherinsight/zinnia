@@ -8,14 +8,8 @@
 //! differences of `lap` set to 0 where `res * (difference of in_field) > 0`,
 //! and `out = in_field[2:I + 2, 2:J + 2] - coeff * (flx[1:] - flx[:-1] +
 //! fly[:, 1:] - fly[:, :-1])`.
-//! The test `res * diff > 0` is decided exactly, on the sign of the raw
-//! product (NumPy's float64 product has the exact sign): one 132-bit range
-//! check (`limit`) instead of a rescale and a 64-bit comparison. The rounded
-//! product `floor(res * diff / 2^32)` would be 0 for products in
-//! `(0, 2^-32)` and give outputs off by more than the tolerance there. `coeff * (...)` is
-//! rounded. Only the `lap` values the fluxes use are computed (its four
-//! corners are not), and only the `in_field` elements they and the output
-//! read are loaded.
+//! The branch tests the Q32-rounded product, as the frozen compiler does.
+//! Exact CSE of Laplacian values and elimination of unread corners is retained.
 
 use crate::prelude::*;
 
@@ -25,10 +19,6 @@ const J: usize = 11; // = out_field_1
 const K: usize = 10; // = out_field_2
 const IN_I: usize = I + 4;
 const IN_J: usize = J + 4;
-
-/// `|res * diff| < 2^131` (`|res| < 2^67`, `|diff| < 2^64` for inputs in the
-/// window): the comparison gaps below lie in `[0, 2^132)`.
-const PRODUCT_BITS: usize = 132;
 
 pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
     let in_field = inputs.floats("in_field", &[IN_I, IN_J, K])?;
@@ -77,24 +67,10 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     Ok(())
 }
 
-/// `np.where(res * diff > 0, 0, res)`. The outcome is a hinted bit pinned
-/// by one range check: `res * diff - 1` (outcome 1) or `-res * diff`
-/// (outcome 0) must lie in `[0, 2^132)`, which holds for the true outcome
-/// (`|res * diff| < 2^131`) and fails for the other, whose value is
-/// negative. (halo2-base's `is_less_than` at 132 bits: 418,860 advice cells
-/// for the circuit against 416,220, the same lookup cells.)
+/// Source predicate: multiply with Q32 rounding, then compare with zero.
 fn limit(q: &Q32, ctx: &mut Ctx, res: Cell, diff: Cell) -> Cell {
-    let product = q.gate.mul(ctx, res, diff);
-    let v = crate::q32::signed(product.value());
-    // Hint, pinned by the range check below.
-    let positive = ctx.load_witness(Fr::from((v > 0) as u64));
-    q.gate.assert_bit(ctx, positive);
-    // -product + positive * (2 product - 1) is the gap of the claimed outcome.
-    let below = q.gate.neg(ctx, product);
-    let swing = q.gate.mul_add(ctx, product, Constant(Fr::from(2)), Constant(-Fr::ONE));
-    let gap = q.gate.mul_add(ctx, positive, swing, below);
-    q.range.range_check(ctx, gap, PRODUCT_BITS);
-    // res if not positive: res - positive * res.
+    let product = q.mul(ctx, res, diff);
+    let positive = q.gt_const(ctx, product, 0);
     q.gate.sub_mul(ctx, res, positive, res)
 }
 

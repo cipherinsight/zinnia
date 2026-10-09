@@ -1,5 +1,9 @@
 # Handwritten circuit baselines: the rules
 
+> **NPBench/Pythran update (2026-10-09):** [NPB_FAIRNESS.md](NPB_FAIRNESS.md)
+> overrides conflicting rules below. Historical optimized baselines are not
+> certified as same-algorithm, same-arithmetic comparisons. No proving runs.
+
 This file is the rulebook for the handwritten circuit baselines of the DS-1000
 performance set: the halo2-base circuits (`datasets/ds1000/<case>/target.rs`,
 built by `baselines/halo2_hw`) and the Noir circuits (`datasets/ds1000/<case>/main.nr`,

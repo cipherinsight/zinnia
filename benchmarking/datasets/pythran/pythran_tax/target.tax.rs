@@ -2,15 +2,10 @@
 //! Kernel: progressive income tax of `d: Float[N]`: four masked selections
 //! by the constant thresholds 256303 > 54057 > 13769 > 8820, each mapped and
 //! summed, the total divided by `np.sum(d)`.
-//! Only the sums are output, so each income contributes its own segment's
-//! term to one sum (a masked element of the other segments contributes 0).
-//! The four segment terms have one shape, `s * (s * k + b) + e` with
-//! `s = d - t` (segments 1 and 2: `t = 0`, `k = 0`, `b` their rate), so
-//! every income evaluates it once, with its segment's constants selected by
-//! a one-hot of the segment: two rounded products per income, as NumPy
-//! rounds them in its own segment (`floor(d * 0) = 0`, exact). Below the
-//! lowest threshold every constant is 0 and the term is 0. The segment
-//! one-hot is a hint pinned by two range checks (`segment`).
+//! Preserve four source masks and separate compacted arrays, then evaluate
+//! each segment's own formula with its original Q32 multiplication boundaries.
+//! Padding contributes zero and does not enter the sums. No segment hint or
+//! selected-coefficient polynomial substitutes for the four source formulas.
 
 use crate::prelude::*;
 
@@ -36,68 +31,42 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let ctx = builder.main(0);
 
     let d = q.load_floats_bounded(ctx, &d);
-    let mut terms: Vec<Cell> = Vec::with_capacity(N);
-    for x in &d {
-        let hot = segment(&q, ctx, *x);
-        let mut pick = |values: &[f64; SEGMENTS]| -> Cell {
-            q.gate.inner_product(ctx, hot.iter().map(|h| Existing(*h)), values.iter().map(|v| Constant(fe(quantize(*v)))))
-        };
-        let (t, k, b, e) = (pick(&OFFSET), pick(&SLOPE), pick(&BASE), pick(&CONSTANT));
-        let s = q.sub(ctx, x.cell, t);
-        let slope = q.mul(ctx, s, k);
-        let p = q.add(ctx, slope.cell, b);
-        let product = q.mul(ctx, s, p);
-        terms.push(q.add(ctx, product.cell, e));
+    let inputs: Vec<Cell> = d.iter().map(|x| x.cell).collect();
+    let mut totals = Vec::with_capacity(SEGMENTS);
+    for segment in 0..SEGMENTS {
+        let keep: Vec<Cell> = d.iter().map(|x| {
+            let above = q.gt_const(ctx, *x, quantize(THRESHOLDS[segment] as f64));
+            if segment == 0 { above } else {
+                let upper = q.gt_const(ctx, *x, quantize(THRESHOLDS[segment - 1] as f64));
+                let below = q.gate.not(ctx, upper);
+                q.gate.and(ctx, above, below)
+            }
+        }).collect();
+        let (length, selected) = q.select_kept(ctx, &inputs, &keep);
+        let length = q.bound(ctx, length);
+        let mut terms = Vec::with_capacity(N);
+        for (i, x) in selected.iter().enumerate() {
+            let active = q.gt_const(ctx, length, i as i128);
+            let shifted = if segment < 2 { *x } else {
+                let offset = q.gate.mul(ctx, active, Constant(fe(quantize(OFFSET[segment]))));
+                q.sub(ctx, *x, offset)
+            };
+            let product = if segment < 2 {
+                q.mul(ctx, shifted, Constant(fe(quantize(BASE[segment])))).cell
+            } else {
+                let slope = q.mul(ctx, shifted, Constant(fe(quantize(SLOPE[segment])))).cell;
+                let prog = q.add(ctx, slope, Constant(fe(quantize(BASE[segment]))));
+                q.mul(ctx, shifted, prog).cell
+            };
+            let constant = q.gate.mul(ctx, active, Constant(fe(quantize(CONSTANT[segment]))));
+            terms.push(q.add(ctx, product, constant));
+        }
+        totals.push(q.sum(ctx, terms));
     }
-    let total = q.sum(ctx, terms);
-    let income = q.sum(ctx, d.iter().map(|x| x.cell));
+    let total = q.sum(ctx, totals);
+    let income = q.sum(ctx, inputs);
     let income = q.bound(ctx, income);
     let result = q.div(ctx, total, income);
     out.float(result.cell);
     Ok(())
-}
-
-/// The one-hot `[h1, h2, h3, h4]` of the segment of `x` (all zero below the
-/// lowest threshold), as a hint pinned by two range checks: with `h_s` bits
-/// summing to at most 1, the selected bounds `(lo, hi]` are one segment's
-/// (the window's ends for the open sides), and `lo < x <= hi` holds for
-/// exactly one segment, since they partition the window (`x` is in it).
-/// Measured against four comparisons `x > THRESHOLDS[s]`
-/// (3,938 / 671 advice / lookup cells against 4,458 / 911 for the circuit).
-fn segment(q: &Q32, ctx: &mut Ctx, x: I64) -> [Cell; SEGMENTS] {
-    let v = x.value();
-    let s = THRESHOLDS.iter().position(|t| v > (*t as i128) * SCALE);
-    let hot: Vec<Cell> = (0..SEGMENTS)
-        .map(|i| {
-            // Hint, pinned by the two range checks below.
-            let h = ctx.load_witness(Fr::from((s == Some(i)) as u64));
-            q.gate.assert_bit(ctx, h);
-            h
-        })
-        .collect();
-    let any = q.sum(ctx, hot.iter().copied());
-    q.gate.assert_bit(ctx, any);
-    // (lo, hi] per segment 0 to 4 as Q32 codes; segment 0 (no bit set) is
-    // the base each selection adds its steps to.
-    let window = 1i128 << 63;
-    let code = |t: i64| t as i128 * SCALE;
-    let mut bounds: Vec<(i128, i128)> = vec![(-window - 1, code(THRESHOLDS[SEGMENTS - 1]))];
-    for (i, t) in THRESHOLDS.iter().enumerate() {
-        let hi = if i == 0 { window - 1 } else { code(THRESHOLDS[i - 1]) };
-        bounds.push((code(*t), hi));
-    }
-    let mut select = |side: fn(&(i128, i128)) -> i128| {
-        let base = side(&bounds[0]);
-        let steps = bounds[1..].iter().map(|b| Constant(fe(side(b) - base)));
-        let picked = q.gate.inner_product(ctx, hot.iter().map(|h| Existing(*h)), steps);
-        q.add(ctx, picked, Constant(fe(base)))
-    };
-    let lo = select(|b| b.0);
-    let hi = select(|b| b.1);
-    let above = q.sub(ctx, x.cell, lo);
-    let above = q.sub(ctx, above, Constant(Fr::ONE));
-    q.range.range_check(ctx, above, 64);
-    let below = q.sub(ctx, hi, x.cell);
-    q.range.range_check(ctx, below, 64);
-    hot.try_into().expect("one bit per segment")
 }

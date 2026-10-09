@@ -8,16 +8,11 @@
 // 0 where res * (difference of in_field) > 0, and
 // out = in_field[2:I + 2, 2:J + 2] - coeff * (flx[1:] - flx[:-1] + fly[:, 1:]
 // - fly[:, :-1]).
-// The test res * diff > 0 is decided exactly, on the sign of the raw product
-// (NumPy's float64 product has the exact sign): a hinted outcome pinned by one
-// range check (`limit`) instead of a rescale and a comparison. The rounded
-// product floor(res * diff / 2^32) would be 0 for products in (0, 2^-32) and
-// give outputs off by more than the tolerance there. coeff * (...) is rounded. Only the in_field elements the used
-// lap values and the output read get a domain check (lap's four corners are
-// not used).
+// Test the Q32-rounded product before comparing with zero, as in Zinnia.
+// Only input elements that reach an output are domain-checked.
 // @outputs: float[I * J * K]
 
-use noir_hw::{check_inputs, mul};
+use noir_hw::{check_inputs, mul, gt};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global I: u32 = 11; // = out_field_0
@@ -26,27 +21,9 @@ global K: u32 = 10; // = out_field_2
 global IN_I: u32 = I + 4;
 global IN_J: u32 = J + 4;
 
-// |res * diff| < 2^131 (|res| < 2^67, |diff| < 2^64 for inputs in the
-// window); the comparison gaps are checked at ten 14-bit limbs.
-global GAP_BITS: u32 = 140;
-
-unconstrained fn positive_hint(product: Field) -> bool {
-    // product - 1 >= 0 for |product| < 2^131: its canonical representative is
-    // small.
-    (product - 1).lt(2.pow_32(200))
-}
-
-// np.where(res * diff > 0, 0, res). The outcome is a hinted bit; product - 1
-// (outcome true) or -product (false) must be a GAP_BITS-bit value, which
-// holds for the true outcome and fails for the other, whose value is negative
-// (p minus something below 2^132).
+// Source predicate: multiply with Q32 rounding, then compare with zero.
 fn limit(res: Field, diff: Field) -> Field {
-    let product = res * diff;
-    // Safety: pinned by the range check below.
-    let positive = unsafe { positive_hint(product) };
-    let gap = if positive { product - 1 } else { -product };
-    gap.assert_max_bit_size::<GAP_BITS>();
-    if positive { 0 } else { res }
+    if gt(mul(res, diff), 0) { 0 } else { res }
 }
 
 // lap[a][b] is used unless it is a corner (a in {0, I + 1} and b in {0, J + 1}).

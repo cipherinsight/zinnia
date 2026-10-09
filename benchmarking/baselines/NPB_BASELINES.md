@@ -1,5 +1,9 @@
 # Handwritten baselines for the NPBench/Pythran set
 
+> **NPBench/Pythran update (2026-10-09):** [NPB_FAIRNESS.md](NPB_FAIRNESS.md)
+> overrides conflicting rules below. Historical optimized baselines are not
+> certified as same-algorithm, same-arithmetic comparisons. No proving runs.
+
 This guide is for the authors of the handwritten halo2-base and Noir circuits of
 the NPBench/Pythran performance set. That set,
 `datasets/case_sets/npbench_pythran_perf.json`, has 79 entries with status

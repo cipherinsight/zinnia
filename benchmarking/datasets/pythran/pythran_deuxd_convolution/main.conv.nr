@@ -4,8 +4,7 @@
 // kernel's clamp r(i, ii) = min(max(0, i + ii - SW0 // 2), SW0) and the same
 // for columns, also clamped to SW0 (the kernel passes sw[0] for both). The
 // indices are loop constants. Each output accumulates its products into one
-// variable from 0, one reduction rescaled once (NPB_BASELINES.md section 5,
-// rule 3).
+// variable from 0, rounding each scalar product to Q32 before adding it.
 // Only x[:SW0 + 1, :SW0 + 1] is read, and only it is checked. From row
 // SW0 + SW0 // 2 on, every row index clamps to SW0, so those rows of result
 // repeat that row's computation, and the same holds for columns: each
@@ -13,7 +12,7 @@
 // wherever it occurs.
 // @outputs: float[SX0 * SX1]
 
-use noir_hw::{check_input, check_inputs, rescale};
+use noir_hw::{check_input, check_inputs, mul};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global SX0: u32 = 16; // = x_0
@@ -48,10 +47,10 @@ fn main(x: [[Field; SX1]; SX0], weights: [[Field; SW1]; SW0]) -> pub [[Field; SX
             let mut acc: Field = 0;
             for ii in 0..SW0 {
                 for jj in 0..SW1 {
-                    acc += x[clamp(i, ii)][clamp(j, jj)] * weights[ii][jj];
+                    acc += mul(x[clamp(i, ii)][clamp(j, jj)], weights[ii][jj]);
                 }
             }
-            kinds[i][j] = rescale(acc);
+            kinds[i][j] = acc;
         }
     }
     let mut result: [[Field; SX1]; SX0] = [[0; SX1]; SX0];

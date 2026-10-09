@@ -4,8 +4,8 @@
 //! the kernel's clamp `r(i, ii) = min(max(0, i + ii - SW0 // 2), SW0)` and the
 //! same for columns, also clamped to `SW0` (the kernel passes `sw[0]` for
 //! both). The indices are loop constants. Each output accumulates its
-//! products into one variable from 0, one reduction rescaled once (`q.dot`,
-//! NPB_BASELINES.md section 5, rule 3).
+//! products into one variable from 0, rounding each scalar product to Q32
+//! before adding it, as in the source loop.
 //! Only `x[:SW0 + 1, :SW0 + 1]` is read, and only it is loaded. From row
 //! `SW0 + SW0 // 2` on, every row index clamps to `SW0`, so those rows of
 //! `result` repeat that row's computation, and the same holds for columns:
@@ -47,7 +47,12 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         for j in 0..COL_KINDS {
             let window: Vec<Cell> =
                 (0..SW0).flat_map(|ii| (0..SW1).map(move |jj| (ii, jj))).map(|(ii, jj)| x[clamp(i, ii)][clamp(j, jj)]).collect();
-            kinds.push(q.dot(ctx, &window, &weights).cell);
+            let mut acc = q.int_const(ctx, 0);
+            for (x, w) in window.iter().zip(&weights) {
+                let product = q.mul(ctx, *x, *w).cell;
+                acc = q.add(ctx, acc, product);
+            }
+            kinds.push(acc);
         }
     }
     for i in 0..SX0 {
