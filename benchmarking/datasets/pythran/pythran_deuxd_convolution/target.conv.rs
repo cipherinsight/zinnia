@@ -43,14 +43,19 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         (0..=SW0).map(|r| (0..=SW0).map(|c| q.load_float(ctx, x[r * SX1 + c])).collect()).collect();
     let weights = q.load_floats(ctx, &weights);
     let mut kinds = Vec::with_capacity(ROW_KINDS * COL_KINDS);
+    // Exact local CSE: clamping repeats identical x/weight products across
+    // outputs. Reuse the rounded product without reassociation or fusion.
+    let mut products = std::collections::HashMap::new();
     for i in 0..ROW_KINDS {
         for j in 0..COL_KINDS {
-            let window: Vec<Cell> =
-                (0..SW0).flat_map(|ii| (0..SW1).map(move |jj| (ii, jj))).map(|(ii, jj)| x[clamp(i, ii)][clamp(j, jj)]).collect();
             let mut acc = q.int_const(ctx, 0);
-            for (x, w) in window.iter().zip(&weights) {
-                let product = q.mul(ctx, *x, *w).cell;
-                acc = q.add(ctx, acc, product);
+            for ii in 0..SW0 {
+                for jj in 0..SW1 {
+                    let key = (clamp(i, ii), clamp(j, jj), ii * SW1 + jj);
+                    let product = *products.entry(key).or_insert_with(||
+                        q.mul(ctx, x[key.0][key.1], weights[key.2]).cell);
+                    acc = q.add(ctx, acc, product);
+                }
             }
             kinds.push(acc);
         }

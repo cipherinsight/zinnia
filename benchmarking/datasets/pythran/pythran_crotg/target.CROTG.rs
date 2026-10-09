@@ -8,7 +8,8 @@
 //! Complex magnitude and division preserve the frozen Q32 primitive schedule.
 //! The branch tests rounded magnitude zero. Each complex product rounds all
 //! four signed real products individually; conjugation occurs before rounding.
-//! A neutral CA=1+0i is used only for evaluating the inactive else branch.
+//! Retain original inactive operands and products. Only primitive zero
+//! division is totalized; its nonzero source assertion is branch-guarded.
 
 use crate::prelude::*;
 
@@ -24,20 +25,27 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         let rr = q.mul(ctx, x[0], x[0]).cell;
         let ii = q.mul(ctx, x[1], x[1]).cell;
         let squared = q.add(ctx, rr, ii);
+        let squared = q.bound(ctx, squared).cell;
         q.sqrt(ctx, squared).cell
     };
-    let original_abs = magnitude(ctx, &ca);
-    let zero = q.gate.is_zero(ctx, original_abs);
-    let ca = [q.gate.select(ctx, Constant(fe(SCALE)), ca[0], zero),
-              q.gate.select(ctx, Constant(Fr::ZERO), ca[1], zero)];
-    let ca_abs = q.gate.select(ctx, Constant(fe(SCALE)), original_abs, zero);
+    let ca_abs = magnitude(ctx, &ca);
+    let zero = q.gate.is_zero(ctx, ca_abs);
+    let active = q.gate.not(ctx, zero);
     let cb_abs = magnitude(ctx, &cb);
+    let divide = |ctx: &mut Ctx, numerator: Cell, denominator: Cell| {
+        let dzero = q.eq(ctx, denominator, Constant(Fr::ZERO));
+        let invalid = q.gate.and(ctx, active, dzero);
+        q.gate.assert_is_const(ctx, &invalid, &Fr::ZERO);
+        let safe = q.add(ctx, denominator, dzero);
+        let masked = q.gate.mul_not(ctx, dzero, numerator);
+        q.div_by_abs(ctx, masked, safe, safe).cell
+    };
     // Complex/real division: rounded x*d / rounded d*d. No cancellation.
     let complex_div = |ctx: &mut Ctx, x: &[Cell], d: Cell| {
         let denominator = q.mul(ctx, d, d).cell;
         x.iter().map(|v| {
             let numerator = q.mul(ctx, *v, d).cell;
-            q.div_by_abs(ctx, numerator, denominator, denominator).cell
+            divide(ctx, numerator, denominator)
         }).collect::<Vec<_>>()
     };
     let scale = q.add(ctx, ca_abs, cb_abs);
@@ -52,7 +60,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let root = q.sqrt(ctx, sum);
     let norm = q.mul(ctx, scale, root).cell;
     let alpha = complex_div(ctx, &ca, ca_abs);
-    let c = q.div_by_abs(ctx, ca_abs, norm, norm).cell;
+    let c = divide(ctx, ca_abs, norm);
     // alpha * conj(cb) = (ar br + ai bi) + (ai br - ar bi) i
     let neg_bi = q.gate.neg(ctx, cb[1]);
     let ar_br = q.mul(ctx, alpha[0], cb[0]).cell;

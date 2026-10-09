@@ -5,7 +5,8 @@
 //! Canonical Q32 complex arithmetic: component squares round before sqrt.
 //! Complex/real division keeps the source lowering's rounded numerator x*d
 //! and rounded denominator d*d before division; cancellation changes rounding.
-//! Inactive divisions use the neutral real denominator 1.
+//! Keep inactive products, matching their range constraints. Only division
+//! maps a zero denominator to zero; its source nonzero assertion is guarded.
 
 use crate::prelude::*;
 
@@ -25,16 +26,24 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         let rr = q.mul(ctx, x[0], x[0]).cell;
         let ii = q.mul(ctx, x[1], x[1]).cell;
         let square = q.add(ctx, rr, ii);
+        // No emitted nonnegative guard proves a wider root input here.
+        let square = q.bound(ctx, square).cell;
         let magnitude = q.sqrt(ctx, square);
         let over = q.gt(ctx, magnitude, max);
         let tiny = q.lt_const(ctx, magnitude, quantize(1e-6));
-        let divisor = q.gate.select(ctx, Constant(fe(SCALE)), magnitude.cell, tiny);
-        let denominator = q.mul(ctx, divisor, divisor).cell;
+        let not_tiny = q.gate.not(ctx, tiny);
+        let active = q.gate.and(ctx, over, not_tiny);
+        let denominator = q.mul(ctx, magnitude.cell, magnitude.cell).cell;
+        let zero = q.eq(ctx, denominator, Constant(Fr::ZERO));
+        let invalid = q.gate.and(ctx, active, zero);
+        q.gate.assert_is_const(ctx, &invalid, &Fr::ZERO);
+        let safe_denominator = q.add(ctx, denominator, zero);
         for part in x {
-            let numerator = q.mul(ctx, *part, divisor).cell;
-            let unit = q.div_by_abs(ctx, numerator, denominator, denominator);
-            let limited = q.mul(ctx, unit, max);
-            let limited = q.gate.select(ctx, Constant(Fr::ZERO), limited.cell, tiny);
+            let numerator = q.mul(ctx, *part, magnitude.cell).cell;
+            let masked_numerator = q.gate.mul_not(ctx, zero, numerator);
+            let unit = q.div_by_abs(ctx, masked_numerator, safe_denominator, safe_denominator).cell;
+            let unit = q.gate.mul(ctx, active, unit);
+            let limited = q.mul(ctx, unit, max).cell;
             result.push(q.gate.select(ctx, limited, *part, over));
         }
     }

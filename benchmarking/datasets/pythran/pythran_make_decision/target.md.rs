@@ -31,6 +31,8 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
                 let rr = q.mul(ctx, dr, dr).cell;
                 let ii = q.mul(ctx, di, di).cell;
                 let norm2 = q.add(ctx, rr, ii);
+                // Frozen Halo2 sqrt falls back to signed64 sign handling here.
+                let norm2 = q.bound(ctx, norm2).cell;
                 let magnitude = q.sqrt(ctx, norm2).cell;
                 q.mul(ctx, magnitude, magnitude)
             })

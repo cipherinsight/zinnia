@@ -65,8 +65,11 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     }
     let total = q.sum(ctx, totals);
     let income = q.sum(ctx, inputs);
-    let income = q.bound(ctx, income);
-    let result = q.div(ctx, total, income);
+    // Source division asserts a nonzero denominator but does not narrow
+    // this sum of ten inputs to signed64 before division.
+    let zero = q.eq(ctx, income, Constant(Fr::ZERO));
+    q.gate.assert_is_const(ctx, &zero, &Fr::ZERO);
+    let result = q.canonical_div_or_zero(ctx, total, income);
     out.float(result.cell);
     Ok(())
 }

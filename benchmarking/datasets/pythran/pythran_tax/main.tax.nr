@@ -6,7 +6,7 @@
 // Each scalar product rounds at the source boundary; padding contributes zero.
 // @outputs: float[1]
 
-use noir_hw::{check_inputs, div, mul, gt, select_kept};
+use noir_hw::{check_inputs, canonical_div_or_zero, mul, gt, select_kept};
 
 // Sizes (hw_check.sizes): from fixture.json.
 global N: u32 = 10; // = d_0
@@ -50,5 +50,6 @@ fn main(d: [Field; N]) -> pub Field {
     }
     let mut income: Field = 0;
     for x in d { income += x; }
-    div(totals[0] + totals[1] + totals[2] + totals[3], income)
+    assert(income != 0, "source division by zero");
+    canonical_div_or_zero(totals[0] + totals[1] + totals[2] + totals[3], income)
 }

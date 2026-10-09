@@ -6,8 +6,10 @@ CONVENTIONS.md, NPB_BASELINES.md and historical implementation headers.
 
 ## Scope and historical results
 
-Original 1× shapes only; circuit sizes only. No proving, key generation,
-timing or scaling runs. The per-job ceiling is 64 GiB; local runs must also
+Original 1× shapes only; circuit sizes only. Compile first, then count.
+No local proving. Remote proving requires the user's explicit approval after
+all fairness corrections are complete. Until then no proving, key generation,
+timing or scaling runs; current follow-up validation is compile/count only. The per-job ceiling is 64 GiB; local runs must also
 respect the machine's smaller physical memory.
 
 The earlier 79-entry optimized-baseline measurements and passed fixture proofs
