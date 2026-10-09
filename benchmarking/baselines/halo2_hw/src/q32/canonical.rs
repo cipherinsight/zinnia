@@ -23,6 +23,15 @@ impl Q32 {
         let zero = self.gate.is_zero(ctx, b);
         let divisor = self.add(ctx, b, zero);
         let numerator = self.gate.mul_not(ctx, zero, a);
+        self.canonical_div_nonzero(ctx, numerator, divisor)
+    }
+
+    /// Dynamic division requiring a nonzero divisor. Remainder constraints
+    /// reject zero directly, without masking gates or an extra divisor bound.
+    pub fn canonical_div_nonzero(
+        &self, ctx: &mut Ctx, a: impl Into<QuantumCell<Fr>>, divisor: Cell,
+    ) -> I64 {
+        let numerator = a.into();
         let negative = ctx.load_witness(fe((signed(divisor.value()) < 0) as i128));
         self.gate.assert_bit(ctx, negative);
         let opposite = self.gate.neg(ctx, divisor);
@@ -45,7 +54,7 @@ impl Q32 {
         let quotient = Fr::from_u128(quotient) + if round { Fr::ONE } else { Fr::ZERO };
         let quotient = if neg_num != (signed(divisor.value()) < 0) { -quotient } else { quotient };
         let remainder = if round { den - remainder } else { remainder };
-        self.div_with(ctx, Existing(numerator), divisor, magnitude,
+        self.div_with(ctx, numerator, divisor, magnitude,
             quotient, Fr::from_u128(remainder))
     }
 
