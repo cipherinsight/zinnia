@@ -1,5 +1,6 @@
 // pythran_lapl3d__laplacien: literal translation of kernel.py (LITERAL_BASELINES.md).
 // Full array passes; integer 4 multiplication is exact; maximum scan then scalar maximum. Only unread corner inputs omitted.
+// The max+epsilon divisor may cross signed64, as allowed by optimized division.
 // @outputs: float[(H-2)*(W-2)*C]
 global H: u32 = 16; // = image_0
 global W: u32 = 16; // = image_1
@@ -64,7 +65,7 @@ fn main(image: [[[Field; C]; W]; H]) -> pub [Field; (H - 2) * (W - 2) * C] {
     }
     valmax = noir_hw::max(noir_hw::SCALE, valmax) + 4;
     for t in 0..(H - 2) * (W - 2) * C {
-        out_image[t] = noir_hw::div(out_image[t], valmax);
+        out_image[t] = noir_hw::canonical_div_nonzero(out_image[t], valmax);
     }
     out_image
 }

@@ -1,5 +1,5 @@
 // npbench_deep_learning_mlp_mlp__mlp: literal translation of kernel.py (LITERAL_BASELINES.md).
-// Matmuls rescale before separate bias arrays. ReLU/softmax are source helpers; max and sum scan in index order, canonical exp per element.
+// Matmuls use the optimized bias-shifted range, restore each dot, then form separate source bias arrays. ReLU/softmax are source helpers; max and sum scan in index order, canonical exp per element.
 // @outputs: float[N * S2]
 
 use noir_hw::{check_inputs, rescale};
@@ -16,6 +16,7 @@ global S2: u32 = 2; // = w3_1
 fn matmul<let R: u32, let K: u32, let C: u32>(
     x: [[Field; K]; R],
     w: [[Field; C]; K],
+    bias: [Field; C],
 ) -> [[Field; C]; R] {
     let mut result = [[0; C]; R];
     for r in 0..R {
@@ -24,7 +25,8 @@ fn matmul<let R: u32, let K: u32, let C: u32>(
             for k in 0..K {
                 acc += x[r][k] * w[k][c];
             }
-            result[r][c] = rescale(acc);
+            // Bias shifts only the rescale window; the returned value is still the dot.
+            result[r][c] = rescale(acc + bias[c] * noir_hw::SCALE) - bias[c];
         }
     }
     result
@@ -108,8 +110,8 @@ fn main(
         check_inputs(w3[k]);
     }
     check_inputs(b3);
-    let x = relu(bias(matmul(input, w1), b1));
-    let x = relu(bias(matmul(x, w2), b2));
-    let x = softmax(bias(matmul(x, w3), b3));
+    let x = relu(bias(matmul(input, w1, b1), b1));
+    let x = relu(bias(matmul(x, w2, b2), b2));
+    let x = softmax(bias(matmul(x, w3, b3), b3));
     x
 }

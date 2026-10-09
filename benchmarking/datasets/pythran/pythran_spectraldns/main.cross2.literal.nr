@@ -1,6 +1,6 @@
 // pythran_spectraldns__cross2: literal translation of kernel.py (LITERAL_BASELINES.md).
 // Materialize full complex arrays per expression, with no CSE or dead-write elimination.
-// Real-complex multiplication is two Q32 products; multiplication by 1j uses the complex definition.
+// Real-complex multiplication is two Q32 products; multiplication by 1j forms all four exact 0/1 products without extra range checks, as optimized.
 
 // @outputs: float[3 * 2 * POINTS]
 
@@ -24,8 +24,8 @@ fn main(a: [[Field; POINTS]; 3], b: [[[Field; 2]; POINTS]; 3]) -> pub [[[Field; 
     for k in 0..3 {
         for p in 0..POINTS {
             result[k][p] = [
-                mul(c[k][p][0], 0) - mul(c[k][p][1], noir_hw::SCALE),
-                mul(c[k][p][0], noir_hw::SCALE) + mul(c[k][p][1], 0),
+                c[k][p][0] * 0 - c[k][p][1] * 1,
+                c[k][p][0] * 1 + c[k][p][1] * 0,
             ];
         }
     }

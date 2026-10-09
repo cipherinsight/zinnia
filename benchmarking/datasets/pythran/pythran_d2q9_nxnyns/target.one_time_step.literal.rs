@@ -2,6 +2,7 @@
 // Helpers and all arithmetic follow source order, without shared products or strength reduction.
 // The first nine population assignments are fixed by the source; shape loops use NS/MS.
 // Overwritten input borders/interiors use placeholders until assigned (same L7 input plumbing).
+// Integer-valued moment coefficients use exact products without extra windows, as optimized.
 use crate::prelude::*;
 const NX: usize = 16; // = f1_0
 const NY: usize = 16; // = f1_1
@@ -175,30 +176,30 @@ fn f2m_loc(q: &Q32, ctx: &mut Ctx, f: &[Cell; NS], m: &mut [Cell; NS]) {
     let t18 = q.sub(ctx, t17, f[8]);
     m[2] = t18;
     // m[3] = -4.0 * f[0] - f[1] - f[2] - f[3] - f[4] + 2.0 * f[5] + 2.0 * f[6] + 2.0 * f[7] + 2.0 * f[8]
-    let t19 = q.neg(ctx, Constant(fe(quantize(4.0))));
-    let t20 = q.mul(ctx, t19, f[0]).cell;
+    let t19 = q.neg(ctx, Constant(fe(4)));
+    let t20 = q.mul_int(ctx, t19, f[0]);
     let t21 = q.sub(ctx, t20, f[1]);
     let t22 = q.sub(ctx, t21, f[2]);
     let t23 = q.sub(ctx, t22, f[3]);
     let t24 = q.sub(ctx, t23, f[4]);
-    let t25 = q.mul(ctx, Constant(fe(quantize(2.0))), f[5]).cell;
+    let t25 = q.mul_int(ctx, Constant(fe(2)), f[5]);
     let t26 = q.add(ctx, t24, t25);
-    let t27 = q.mul(ctx, Constant(fe(quantize(2.0))), f[6]).cell;
+    let t27 = q.mul_int(ctx, Constant(fe(2)), f[6]);
     let t28 = q.add(ctx, t26, t27);
-    let t29 = q.mul(ctx, Constant(fe(quantize(2.0))), f[7]).cell;
+    let t29 = q.mul_int(ctx, Constant(fe(2)), f[7]);
     let t30 = q.add(ctx, t28, t29);
-    let t31 = q.mul(ctx, Constant(fe(quantize(2.0))), f[8]).cell;
+    let t31 = q.mul_int(ctx, Constant(fe(2)), f[8]);
     let t32 = q.add(ctx, t30, t31);
     m[3] = t32;
     // m[4] = 4.0 * f[0] - 2.0 * f[1] - 2.0 * f[2] - 2.0 * f[3] - 2.0 * f[4] + f[5] + f[6] + f[7] + f[8]
-    let t33 = q.mul(ctx, Constant(fe(quantize(4.0))), f[0]).cell;
-    let t34 = q.mul(ctx, Constant(fe(quantize(2.0))), f[1]).cell;
+    let t33 = q.mul_int(ctx, Constant(fe(4)), f[0]);
+    let t34 = q.mul_int(ctx, Constant(fe(2)), f[1]);
     let t35 = q.sub(ctx, t33, t34);
-    let t36 = q.mul(ctx, Constant(fe(quantize(2.0))), f[2]).cell;
+    let t36 = q.mul_int(ctx, Constant(fe(2)), f[2]);
     let t37 = q.sub(ctx, t35, t36);
-    let t38 = q.mul(ctx, Constant(fe(quantize(2.0))), f[3]).cell;
+    let t38 = q.mul_int(ctx, Constant(fe(2)), f[3]);
     let t39 = q.sub(ctx, t37, t38);
-    let t40 = q.mul(ctx, Constant(fe(quantize(2.0))), f[4]).cell;
+    let t40 = q.mul_int(ctx, Constant(fe(2)), f[4]);
     let t41 = q.sub(ctx, t39, t40);
     let t42 = q.add(ctx, t41, f[5]);
     let t43 = q.add(ctx, t42, f[6]);
@@ -206,9 +207,9 @@ fn f2m_loc(q: &Q32, ctx: &mut Ctx, f: &[Cell; NS], m: &mut [Cell; NS]) {
     let t45 = q.add(ctx, t44, f[8]);
     m[4] = t45;
     // m[5] = -2.0 * f[1] + 2.0 * f[3] + f[5] - f[6] - f[7] + f[8]
-    let t46 = q.neg(ctx, Constant(fe(quantize(2.0))));
-    let t47 = q.mul(ctx, t46, f[1]).cell;
-    let t48 = q.mul(ctx, Constant(fe(quantize(2.0))), f[3]).cell;
+    let t46 = q.neg(ctx, Constant(fe(2)));
+    let t47 = q.mul_int(ctx, t46, f[1]);
+    let t48 = q.mul_int(ctx, Constant(fe(2)), f[3]);
     let t49 = q.add(ctx, t47, t48);
     let t50 = q.add(ctx, t49, f[5]);
     let t51 = q.sub(ctx, t50, f[6]);
@@ -216,9 +217,9 @@ fn f2m_loc(q: &Q32, ctx: &mut Ctx, f: &[Cell; NS], m: &mut [Cell; NS]) {
     let t53 = q.add(ctx, t52, f[8]);
     m[5] = t53;
     // m[6] = -2.0 * f[2] + 2.0 * f[4] + f[5] + f[6] - f[7] - f[8]
-    let t54 = q.neg(ctx, Constant(fe(quantize(2.0))));
-    let t55 = q.mul(ctx, t54, f[2]).cell;
-    let t56 = q.mul(ctx, Constant(fe(quantize(2.0))), f[4]).cell;
+    let t54 = q.neg(ctx, Constant(fe(2)));
+    let t55 = q.mul_int(ctx, t54, f[2]);
+    let t56 = q.mul_int(ctx, Constant(fe(2)), f[4]);
     let t57 = q.add(ctx, t55, t56);
     let t58 = q.add(ctx, t57, f[5]);
     let t59 = q.add(ctx, t58, f[6]);
