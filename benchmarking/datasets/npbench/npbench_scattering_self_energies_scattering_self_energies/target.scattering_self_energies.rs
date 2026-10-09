@@ -164,7 +164,8 @@ fn complex_matmul(q: &Q32, ctx: &mut Ctx, x: &[Complex], y: &[Complex], minus_im
 /// each rescaled once.
 fn complex_dot(q: &Q32, ctx: &mut Ctx, x: &[Complex], y: &[Complex], y_minus_im: &[Cell]) -> Complex {
     let xs = || x.iter().flat_map(|v| [Existing(v[0]), Existing(v[1])]);
-    let re = q.gate.inner_product(ctx, xs(), y.iter().zip(y_minus_im).flat_map(|(v, m)| [Existing(v[0]), Existing(*m)]));
+    let re =
+        q.gate.inner_product(ctx, xs(), y.iter().zip(y_minus_im).flat_map(|(v, m)| [Existing(v[0]), Existing(*m)]));
     let im = q.gate.inner_product(ctx, xs(), y.iter().flat_map(|v| [Existing(v[1]), Existing(v[0])]));
     [q.rescale(ctx, re).cell, q.rescale(ctx, im).cell]
 }

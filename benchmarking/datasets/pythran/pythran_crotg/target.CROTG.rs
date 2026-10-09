@@ -64,10 +64,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     // The `if` branch: CA = CB, C = 0, S = 1.
     let ca_out: Vec<Cell> = ca_out.iter().zip(&cb).map(|(v, b)| q.gate.select(ctx, *b, *v, zero)).collect();
     let c = q.gate.select(ctx, Constant(Fr::ZERO), c, zero);
-    let s = [
-        q.gate.select(ctx, Constant(fe(SCALE)), s[0], zero),
-        q.gate.select(ctx, Constant(Fr::ZERO), s[1], zero),
-    ];
+    let s = [q.gate.select(ctx, Constant(fe(SCALE)), s[0], zero), q.gate.select(ctx, Constant(Fr::ZERO), s[1], zero)];
     out.floats(&ca_out);
     out.floats(&cb);
     out.float(c);

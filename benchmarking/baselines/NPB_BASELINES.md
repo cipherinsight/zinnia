@@ -220,7 +220,16 @@ kernel's `@requires` precondition, each step conditional on the counter.
 **Gadgets.** Use the existing ones (`halo2_hw/src/q32.rs`,
 `noir_hw/src/lib.nr`; tables in CONVENTIONS section 5). The pilots added
 `q.sort` with `merge_exchange` (sorting network on window offsets),
-`q.div_by_abs` and `noir_hw::div_by_abs`. A new gadget is a new function with
+`q.div_by_abs` and `noir_hw::div_by_abs`. Batch 2 added, on both sides
+unless noted: `clip_const` (`np.clip` by constant bounds, region bits pinned
+by one 64-bit range check), `div_fraction` (`a / b` for `0 <= a < b`, a
+32-bit quotient check), `arctan2` and `arctan2_nonneg` (Q32 in and out,
+within 1e-8; `q.arctan2(ctx, y: I64, x: I64) -> Cell`,
+`q.arctan2_nonneg(ctx, y: Cell, x: Cell) -> Cell` for inputs proven in
+`[0, 2^63)`, `noir_hw::arctan2(y, x)`, `noir_hw::arctan2_nonneg(y, x)`),
+`q.index_hits` (the pinned one-hot of a NumPy index, reused by many gathers)
+and `noir_hw::floor_div_const::<D>` (floor division by a constant up to 256
+with 8-bit remainder checks). A new gadget is a new function with
 malicious-hint tests (`cargo test --lib`, `nargo test`); never change an
 existing function's circuit, because the DS-1000 and pilot baselines are
 measured with them. Before committing a gadget change, compare the DS-1000
@@ -284,6 +293,21 @@ gives NumPy's stable order (CONVENTIONS section 3).
    used without overflow checks except where a gadget needs a range anyway.
    Python integers do not overflow (`fibo` returns a Python `int`): a result
    outside int64 has no proof.
+8. **Inputs that reach no output.** An input element whose value reaches no
+   output is not loaded and gets no domain check, also where NumPy touches it
+   on the way: a slice that drops it after an elementwise operation
+   (`harris`'s `I[0, 0]`), a copy that is overwritten before it is read
+   (the border of `d2q9`'s `f1`, which `periodic_bc` overwrites with copies of
+   the interior). This is the rule for overwritten arguments (section 4)
+   applied element by element.
+9. **Magnitude of a complex value** (`clip`, `CROTG`): `abs(z)` is the exact
+   floor square root of `re^2 + im^2`, taken on the raw sum (scale 2^64), so
+   one rounding as NumPy rounds `hypot` once. A comparison of `abs(z) ** 2`
+   values (`make_decision`'s `argmin`) compares the exact raw sums, whose
+   order is the real one; NumPy's float64 order differs only between values
+   equal to within its rounding. The raw sums are range-checked as Q32
+   intermediates: a squared distance whose Q32 value leaves the window has no
+   proof.
 
 ## 6. The remaining 76 entries in 4 batches
 

@@ -59,15 +59,22 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
             }
         }
     }
-    let wrap = |v: usize, len: usize| if v == 0 { len - 2 } else if v == len - 1 { 1 } else { v };
+    let wrap = |v: usize, len: usize| {
+        if v == 0 {
+            len - 2
+        } else if v == len - 1 {
+            1
+        } else {
+            v
+        }
+    };
     let after_bc = |r: usize, c: usize, k: usize| interior[(wrap(r, NX) * NY + wrap(c, NY)) * 9 + k].expect("interior");
 
     let mut result: Vec<Option<Cell>> = vec![None; MX * MY * 9];
     for i in 1..NX - 1 {
         for j in 1..NY - 1 {
-            let streamed: Vec<Cell> = (0..9)
-                .map(|k| after_bc(i.wrapping_add_signed(DI[k]), j.wrapping_add_signed(DJ[k]), k))
-                .collect();
+            let streamed: Vec<Cell> =
+                (0..9).map(|k| after_bc(i.wrapping_add_signed(DI[k]), j.wrapping_add_signed(DJ[k]), k)).collect();
             let m: Vec<Cell> = MOMENTS.iter().map(|row| combine(&q, ctx, row, &streamed)).collect();
             let m = relaxation(&q, ctx, &m);
             for (k, value) in moments_to_populations(&q, ctx, &m).into_iter().enumerate() {
@@ -76,8 +83,11 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
         }
     }
     // Elements of f2 that no site writes are copies of the input.
-    let result: Vec<Cell> =
-        result.into_iter().zip(&f2).map(|(written, input)| written.unwrap_or_else(|| q.load_float(ctx, *input))).collect();
+    let result: Vec<Cell> = result
+        .into_iter()
+        .zip(&f2)
+        .map(|(written, input)| written.unwrap_or_else(|| q.load_float(ctx, *input)))
+        .collect();
     out.floats(&result);
     Ok(())
 }

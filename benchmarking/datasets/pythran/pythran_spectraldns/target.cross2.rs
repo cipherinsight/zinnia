@@ -27,7 +27,7 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
 
     let a = q.load_floats(ctx, &a);
     let b = q.load_floats(ctx, &b); // interleaved real and imaginary parts
-    // Component k of a and b at point p.
+                                    // Component k of a and b at point p.
     let a_at = |k: usize, p: usize| a[k * POINTS + p];
     let b_at = |k: usize, p: usize| [b[2 * (k * POINTS + p)], b[2 * (k * POINTS + p) + 1]];
     let mut c = vec![[None::<Cell>; 2]; 3 * POINTS];
