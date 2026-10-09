@@ -96,11 +96,11 @@ def compare(got: list, expected: list[tuple[str, object]], atol: float, rtol: fl
     problems = []
     for i, (g, (kind, e)) in enumerate(zip(got, expected)):
         if kind == "float":
-            if not isinstance(g, (int, float)) or isinstance(g, bool) or not math.isfinite(e) \
+            if not isinstance(g, (int, float)) or isinstance(g, bool) or not math.isfinite(g) or not math.isfinite(e) \
                     or abs(g - e) > atol + rtol * abs(e):
                 problems.append(f"[{i}] {g!r} != {e!r}")
         elif kind == "bool":
-            if bool(g) != bool(e) or not isinstance(g, (bool, int)):
+            if not isinstance(g, (bool, int)) or g not in (0, 1) or bool(g) != bool(e):
                 problems.append(f"[{i}] {g!r} != {e!r}")
         elif isinstance(g, bool) or g != e:
             problems.append(f"[{i}] {g!r} != {e!r}")
@@ -286,6 +286,8 @@ def main() -> int:
         entries = [resolve(c) for c in a.cases]
     atol_override = {case_name(k): float(v) for k, v in (t.split("=") for t in a.tol)}
     systems = a.systems.split(",")
+    if not systems or any(s not in ("halo2", "noir") for s in systems):
+        ap.error("--systems must contain halo2 and/or noir")
 
     results, failed = {}, 0
     for entry in entries:
@@ -293,6 +295,9 @@ def main() -> int:
         if a.fixture_root:
             entry = dataclasses.replace(entry, fixture=a.fixture_root / case / entry.fixture.name)
         result: dict = {}
+        for system, path in (("halo2", entry.target_rs), ("noir", entry.main_nr)):
+            if system in systems and not path.exists():
+                result[system] = {"verdict": "FAIL", "problems": [f"missing baseline: {path}"]}
         if not entry.fixture.exists():
             result["error"] = f"no fixture at {entry.fixture}"
         else:
