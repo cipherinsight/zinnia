@@ -15,7 +15,8 @@ A dimension is named `<parameter>_<axis>` (axis 0 first), the names of the
 scaling study's rewrite checker (`benchmarking/scaling/rewrite.py`). A formula
 may use dimensions, integer constants, `+ - * // % ** <<` and the functions
 `clog2` (ceil log2: the bits of an index into n positions), `bits` (the bit
-length of n), `cdiv`, `max` and `min`. Constants derived from other constants
+length of n), `cdiv`, `max`, `min` and `factorial` (the number of
+permutations of n items). Constants derived from other constants
 by the language itself (`const NN: usize = N * N;`, `global LAST: u32 = N - 1;`)
 need no formula. A Noir baseline's `// @outputs:` line names its counts by
 these constants too (`float[N * N]`; `hw_check.noir_driver` evaluates them).
@@ -65,7 +66,7 @@ def cdiv(a: int, b: int) -> int:
     return -(-a // b)
 
 
-FUNCTIONS = {"clog2": clog2, "bits": bits, "cdiv": cdiv, "max": max, "min": min}
+FUNCTIONS = {"clog2": clog2, "bits": bits, "cdiv": cdiv, "max": max, "min": min, "factorial": math.factorial}
 _OPERATORS = (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv, ast.Mod, ast.Pow, ast.LShift)
 
 

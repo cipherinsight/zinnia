@@ -142,7 +142,8 @@ The rule in detail:
 - A dimension is named `<parameter>_<axis>`, axis 0 first (`M_0`, `list2_0`),
   as in the scaling checker. A formula may use dimensions, integer constants,
   `+ - * // % ** <<` and `clog2` (the bits of an index into n positions),
-  `bits` (the bit length of n), `cdiv`, `max`, `min`.
+  `bits` (the bit length of n), `cdiv`, `max`, `min`, `factorial` (the
+  number of permutations of n items, `pythran_perm`).
 - A constant whose value is a literal carries `// = <formula>` on its line.
   A constant computed from other constants by the language
   (`global KEY_BITS: u32 = 64 + KEY_SHIFT;`) needs none.
