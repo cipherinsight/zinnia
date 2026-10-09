@@ -30,7 +30,8 @@ order, whose change changes NumPy's output on input B, else A;
 `prove --tamper-input`, the field value + 2^64); both systems must reject it
 (the same input untampered is accepted by the A/B steps). A case with no such
 element fails. The halo2 mock also reports `redundant_input_checks`, which
-must be 0 (each input checked once).
+must be 0 (each input checked once); literal baselines are exempt, since
+they re-check an operand at every comparison (LITERAL_BASELINES.md L5).
 
 Outputs are compared position by position against the kernel body run as
 plain NumPy (`hw_check.reference`): integers and booleans exactly, floats
@@ -217,7 +218,9 @@ class CaseCheck:
                     steps["verify_tampered"] = self._tamper(
                         lambda i: run_json([b, "verify", *case, *wd, "--tamper-index", str(i)]),
                         n, problems)
-        if steps["mock_B"].get("redundant_input_checks"):
+        # A literal baseline bounds each operand at every source comparison
+        # (LITERAL_BASELINES.md L5, L6), so repeated input checks are expected there.
+        if steps["mock_B"].get("redundant_input_checks") and VARIANT != "literal":
             problems.append(f"{steps['mock_B']['redundant_input_checks']} inputs checked twice")
         target = self.tamper_target()
         if target is None:
