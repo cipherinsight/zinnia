@@ -11,8 +11,12 @@ fn main(x: [Field; N], y: [bool; N]) -> pub ([Field; N], [bool; N]) {
     check_inputs(x);
     assert(N == 1);
     let mut twice = [0; N];
-    for i in 0..N { twice[i] = x[i] + x[i]; }
+    for i in 0..N {
+        twice[i] = x[i] + x[i];
+    }
     let mut result = [0; N];
-    for i in 0..N { result[i] = if y[0] { x[i] } else { twice[i] }; }
-    (result,y)
+    for i in 0..N {
+        result[i] = if y[0] { x[i] } else { twice[i] };
+    }
+    (result, y)
 }

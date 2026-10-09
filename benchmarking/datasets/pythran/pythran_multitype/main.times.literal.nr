@@ -13,6 +13,7 @@ fn assert_in_bound(x: Field) {
 }
 
 fn main(n: Field, m: Field) -> pub Field {
-    assert_in_bound(n); assert_in_bound(m);
+    assert_in_bound(n);
+    assert_in_bound(m);
     n * m
 }

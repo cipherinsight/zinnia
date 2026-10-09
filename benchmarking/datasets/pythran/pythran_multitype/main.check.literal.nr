@@ -11,8 +11,12 @@ fn main(x: [Field; N], y: Field) -> pub ([Field; N], Field) {
     check_inputs(x);
     check_input(y);
     let mut twice = [0; N];
-    for i in 0..N { twice[i] = x[i] + x[i]; }
+    for i in 0..N {
+        twice[i] = x[i] + x[i];
+    }
     let mut result = [0; N];
-    for i in 0..N { result[i] = if y != 0 { x[i] } else { twice[i] }; }
-    (result,y)
+    for i in 0..N {
+        result[i] = if y != 0 { x[i] } else { twice[i] };
+    }
+    (result, y)
 }

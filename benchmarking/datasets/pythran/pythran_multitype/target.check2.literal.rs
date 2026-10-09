@@ -10,13 +10,16 @@ const _: () = assert!(N == 1, "`if y` needs a one-element array");
 pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
     let x = inputs.floats("x", &[N])?;
     let y = inputs.bools("y", &[N])?;
-    let q = Q32::new(builder); let ctx = builder.main(0);
+    let q = Q32::new(builder);
+    let ctx = builder.main(0);
     let x = q.load_floats(ctx, &x);
-    let y = q.load_bools(ctx, &y); let truthy = y[0];
-    let result: Vec<Cell> = x.iter().map(|v| {
-        let twice = q.add(ctx, *v, *v);
-        q.gate.select(ctx, *v, twice, truthy)
-    }).collect();
-    out.floats(&result); out.bools(&y);
+    let y = q.load_bools(ctx, &y);
+    let truthy = y[0];
+    let twice: Vec<Cell> = x.iter().map(|v| q.add(ctx, *v, *v)).collect();
+    let result: Vec<Cell> = (0..N)
+        .map(|i| q.gate.select(ctx, x[i], twice[i], truthy))
+        .collect();
+    out.floats(&result);
+    out.bools(&y);
     Ok(())
 }

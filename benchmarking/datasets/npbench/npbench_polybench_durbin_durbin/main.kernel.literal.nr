@@ -16,11 +16,17 @@ fn main(r: [Field; N]) -> pub [Field; N] {
     for k in 1..N {
         beta = mul(beta, SCALE - mul(alpha, alpha));
         let mut acc = 0;
-        for j in 0..k { acc += r[k-1-j] * y[j]; }
+        for j in 0..k {
+            acc += r[k - 1 - j] * y[j];
+        }
         alpha = div(-(r[k] + rescale(acc)), beta);
         let mut products = [0; N];
-        for j in 0..k { products[j] = mul(alpha, y[k-1-j]); }
-        for j in 0..k { y[j] += products[j]; }
+        for j in 0..k {
+            products[j] = mul(alpha, y[k - 1 - j]);
+        }
+        for j in 0..k {
+            y[j] += products[j];
+        }
         y[k] = alpha;
     }
     y
