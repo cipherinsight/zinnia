@@ -196,13 +196,15 @@ impl Halo2BaseSynthesizer<'_> {
     /// range-checked to 64 bits, so `n - 1`, their sum, lies in `[0, 2^65)`
     /// over the integers: the check also proves `1 <= n <= 2^65`.
     pub(super) fn assert_below_cell(&mut self, x: &Halo2BaseCell, n: &Halo2BaseCell) {
-        self.range_check(x, 64);
+        let width = self.proven_range(n).filter(|r| r.lo >= 0 && r.hi > 0 && r.hi < 1i128 << 64)
+            .map(|r| self.lookup_aligned((128 - (r.hi - 1).leading_zeros()).max(1) as usize)).unwrap_or(64);
+        self.range_check(x, width);
         let gap = self.gate_cell(n.value - Fp::one() - x.value, |gate, ctx| {
             let n_minus_x = gate.sub(ctx, n.quantum(), x.quantum());
             gate.dec(ctx, n_minus_x)
         });
-        self.range_check(&gap, 64);
-        self.prove_range(n, Interval { lo: 1, hi: 1 << 65 });
+        self.range_check(&gap, width);
+        self.prove_range(n, Interval { lo: 1, hi: 1i128 << (width + 1) });
     }
 
 
@@ -302,6 +304,11 @@ impl Halo2BaseSynthesizer<'_> {
         divisor: Divisor,
         rounding: Rounding,
     ) -> Result<(Halo2BaseCell, Halo2BaseCell), ProvingError> {
+        self.div_rem_nonzero_bounded(a, divisor, rounding, None)
+    }
+
+    fn div_rem_nonzero_bounded(&mut self, a: &Halo2BaseCell, divisor: Divisor, rounding: Rounding,
+        quotient_bound: Option<Interval>) -> Result<(Halo2BaseCell, Halo2BaseCell), ProvingError> {
         let (b_fp, b_value, b_quantum) = match divisor {
             Divisor::Constant(c) => {
                 let fp = kernel::i128_to_fp(c);
@@ -318,7 +325,14 @@ impl Halo2BaseSynthesizer<'_> {
         let (q, r) = self.quotient_gate(a, b_quantum, b_fp, kernel::i128_to_fp(q_value));
         let implied = match divisor {
             Divisor::Constant(c) => self.proven_range(a).and_then(|range| quotient_range(range, c)),
-            _ => None,
+            Divisor::Positive(b) => quotient_bound.or_else(|| {
+                let ar = self.proven_range(a)?;
+                let br = self.proven_range(&b)?;
+                if ar.lo < 0 || br.hi <= 0 { return None; }
+                let lo = br.lo.max(1); // Nonzero positive divisor is constrained below.
+                Interval::new(ar.lo / br.hi, ar.hi / lo)
+            }),
+            _ => quotient_bound,
         };
         self.bound_quotient(&q, implied)?;
 
@@ -485,6 +499,9 @@ impl Halo2BaseSynthesizer<'_> {
     fn scaled_product(&mut self, x: &Halo2BaseCell, m: i128, s: u32) -> Result<Halo2BaseCell, ProvingError> {
         let precision_bits = self.params.precision_bits;
         let shift = precision_bits - s;
+        if shift > 0 && (m == 1 || m == -1) {
+            if let Some(out) = self.shared_dyadic(x, m < 0, shift)? { return Ok(out); }
+        }
         if shift == 0 {
             return self.mul_by_constant(x, m);
         }
@@ -494,6 +511,52 @@ impl Halo2BaseSynthesizer<'_> {
         }
         let raw = self.mul_by_constant(x, m << s)?;
         self.rescale_by(&raw, precision_bits)
+    }
+
+    /// Reuse floor decompositions, including the correction for negative
+    /// dividends: floor(-x/2^k) = -q - [r != 0]. The intermediate signed64
+    /// checks may disappear only when already-proven input bounds imply them.
+    fn shared_dyadic(&mut self, x: &Halo2BaseCell, negative: bool, shift: u32) -> Result<Option<Halo2BaseCell>, ProvingError> {
+        let (root, negative, shift) = match self.dyadic_origins.get(&x.id).copied() {
+            Some((root, sign, previous)) if !negative => (root, sign, previous + shift),
+            Some(_) => return Ok(None), // Negating an already-rounded value is not this identity.
+            None => (*x, negative, shift),
+        };
+        if shift >= 64 { return Ok(None); }
+        let Some(range) = self.proven_range(&root) else { return Ok(None) };
+        let positive_range = Interval { lo: range.lo >> shift, hi: range.hi >> shift };
+        let negative_range = Interval { lo: -range.hi >> shift, hi: -range.lo >> shift };
+        if !positive_range.within(&Interval::SIGNED64) || !negative_range.within(&Interval::SIGNED64) {
+            return Ok(None);
+        }
+        let output_range = if negative { negative_range } else { positive_range };
+        if self.plan.dyadic_links.get(&self.current_stmt).is_some_and(|extra| shift.saturating_add(*extra) < 64) {
+            // The only consumers apply another positive dyadic divisor, so
+            // floor(floor(z/2^a)/2^b) = floor(z/2^(a+b)). No intermediate
+            // domain restriction is lost: its full interval fits signed64.
+            let raw = kernel::fp_to_i128_wide(root.value).unwrap_or(0);
+            let value = (if negative { raw.checked_neg().unwrap_or(0) } else { raw }) >> shift;
+            let out = self.cellless(kernel::i128_to_fp(value));
+            self.prove_range(&out, output_range);
+            self.dyadic_origins.insert(out.id, (root, negative, shift));
+            return Ok(Some(out));
+        }
+        let (q, r) = match self.dyadic_splits.get(&(root.id, shift)).copied() {
+            Some(split) => split,
+            None => {
+                let split = self.rescale_with_remainder(&root, shift)?;
+                self.dyadic_splits.insert((root.id, shift), split);
+                split
+            }
+        };
+        let out = if negative {
+            let nonzero = self.is_nonzero_bit(&r);
+            let sum = self.add_i(&q, &nonzero)?;
+            self.negate(&sum)
+        } else { q };
+        self.prove_range(&out, output_range);
+        self.dyadic_origins.insert(out.id, (root, negative, shift));
+        Ok(Some(out))
     }
 
     /// Fused `floor(Σ a_i·b_i / 2^P)` (the kernel's
@@ -551,6 +614,15 @@ impl Halo2BaseSynthesizer<'_> {
     /// same zero mapping: `n = 0` exactly when the divisor is 0).
     pub(super) fn fixed_div(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
         let precision_bits = self.params.precision_bits;
+        if precision_bits < 63 && matches!(self.factor_of(b), Factor::Unknown)
+            && self.proven_range(a).is_some_and(|r| r.lo >= 0) && self.strictly_below(a, b) {
+            // Existing order constraints imply 0 <= a/b < 1, so its Q
+            // quotient fits P bits. Preserve both remainder checks and the
+            // same scaled numerator, rather than substituting a reciprocal.
+            let numerator = self.scaled_by_power_of_two(a, precision_bits)?;
+            let bound = Interval { lo: 0, hi: (1i128 << precision_bits) - 1 };
+            return Ok(self.div_rem_nonzero_bounded(&numerator, Divisor::Positive(*b), Rounding::Euclid, Some(bound))?.0);
+        }
         match self.factor_of(b) {
             Factor::Integer(n) => {
                 self.ensure_int64_divisor(&n)?;
@@ -718,6 +790,17 @@ impl Halo2BaseSynthesizer<'_> {
         if kernel::fp_pow(a.value, b.value, precision_bits).is_none() {
             let (x, y) = (kernel::dequantize_from_fp(a.value, precision_bits), kernel::dequantize_from_fp(b.value, precision_bits));
             self.note_unsat(move || format!("{x} ** {y} has no real value inside the fixed-point window"));
+        }
+        if self.is_const_cell(a) && kernel::fp_to_i128(a.value).is_some_and(|v| v > 0 && v < 1i128 << 63) {
+            if let Some(log_value) = kernel::fp_log(a.value, precision_bits) {
+                // Same canonical quantized log and rounded product as below.
+                // Keep the generic power's exponent window even though sign,
+                // fractional-exponent and zero-base routing are now constant.
+                self.ensure_signed64(b)?;
+                let log = self.const_cell(log_value);
+                let exponent = self.fixed_mul(b, &log)?;
+                return self.exp_f(&exponent);
+            }
         }
         let one = self.constant_float(1.0)?;
         let zero = self.constant_float(0.0)?;

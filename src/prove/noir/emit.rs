@@ -89,6 +89,11 @@ pub fn emit_circuit(
     emitter.wrapped_index_ranges = wrapped_index_ranges(ir);
     emitter.asserted_comparisons = asserted_comparisons(ir);
     emitter.implied_comparisons = implied_comparisons(ir, &emitter.asserted_comparisons);
+    emitter.threshold_plan = thresholds::plan(ir);
+    emitter.dyadic_plan = dyadic::plan(ir);
+    emitter.clip_plan = clip::plan(ir);
+    emitter.fraction_plan = fraction::plan(ir);
+    emitter.product_plan = products::plan(ir);
     emitter.multiplied = multiplied(ir);
     emitter.reads = reads(ir);
     emitter.root_guards = crate::prove::guards::root_guards(ir);
@@ -188,6 +193,15 @@ fn implied_comparisons(ir: &IRGraph, asserted: &HashSet<u32>) -> HashSet<u32> {
         _ => None,
     };
     let mut bounds: HashMap<u32, (i128, i128)> = HashMap::new();
+    // At Q32, qmul(x,x)'s signed64 quotient rejects raw x=-2^63:
+    // floor(2^126/2^32)=2^94. This proves the endpoint exclusion left by
+    // the precision-generic abs-square rewrite, without an inverse gate.
+    let squared: HashSet<u32> = ir.stmts.iter().filter_map(|s| match (&s.ir, s.arguments.as_slice()) {
+        (IR::MulF, [a, b]) if a == b
+            && matches!(ir.stmts.get(*a as usize).map(|s| &s.ir),
+                Some(IR::ReadFloat { .. })) => Some(*a),
+        _ => None,
+    }).collect();
     for stmt in &ir.stmts {
         if let (IR::AssertU128Lt, [x, hi]) = (&stmt.ir, stmt.arguments.as_slice()) {
             if let Some(hi) = constant(*hi).filter(|h| *h >= 1) {
@@ -202,6 +216,12 @@ fn implied_comparisons(ir: &IRGraph, asserted: &HashSet<u32>) -> HashSet<u32> {
             continue;
         }
         let [a, b] = stmt.arguments.as_slice() else { continue };
+        if matches!(stmt.ir, IR::NeI | IR::NeF)
+            && [(a, b), (b, a)].into_iter().any(|(x, c)| squared.contains(x) && constant(*c) == Some(-(1i128 << 63)))
+        {
+            implied.insert(stmt.stmt_id);
+            continue;
+        }
         let range = |id: u32| constant(id).map(|c| (c, c)).or_else(|| bounds.get(&id).copied());
         let (Some((al, ah)), Some((bl, bh))) = (range(*a), range(*b)) else { continue };
         let holds = match stmt.ir {
@@ -613,6 +633,13 @@ fn dce_body(body: &str, exposes: &[String]) -> String {
 /// The emitter never sees the witness: the circuit text is a function of the
 /// IR alone, so it cannot be specialized to one input. Public values are read
 /// back from the proof (`bb`'s public-inputs file), not recomputed here.
+mod dyadic;
+mod clip;
+mod fraction;
+mod products;
+mod bounded_division;
+mod thresholds;
+
 pub struct NoirEmitter<'a> {
     /// Structural-provenance table (derived once in the IRBuilder; see
     /// src/provenance.rs). Read LIVE for intervals / affine views /
@@ -664,6 +691,22 @@ pub struct NoirEmitter<'a> {
     /// (`asserted_compare` against a constant): every accepted witness lies
     /// in them, so they may decide later comparisons of the cell.
     proven_range: HashMap<String, (i128, i128)>,
+    /// Additional arithmetic consequences of already constrained operands.
+    /// Kept separate from the historical sign-specialization map: learning
+    /// positivity must not remove an existing sign_abs magnitude domain.
+    derived_range: HashMap<String, (i128, i128)>,
+    dyadic_plan: HashMap<u32, dyadic::Product>,
+    dyadic_splits: HashMap<String, (String, String)>,
+    used_dyadic_helper: bool,
+    clip_plan: HashMap<u32, clip::Plan>,
+    used_clip_helper: bool,
+    fraction_plan: HashSet<u32>,
+    used_fraction_helper: bool,
+    used_bounded_division_helper: bool,
+    threshold_plan: HashSet<u32>,
+    threshold_bits: HashMap<String, (String, u32)>,
+    product_plan: HashMap<u32, products::Product>,
+    raw_products: HashMap<(crate::types::ValueId, crate::types::ValueId), String>,
     /// Ranges of raw indices that every accepted witness satisfies, from
     /// NumPy's wrap-around lowering (see `wrapped_index_ranges`). Used only
     /// to size comparisons.
@@ -932,6 +975,7 @@ impl<'a> NoirEmitter<'a> {
     /// (`unsigned_compare`); anything else goes through the library's
     /// gap-pinned `qlt_bits` (`gap_compare`).
     fn compare(&mut self, a: &str, b: &str, cmp: Cmp) -> String {
+        if let Some(out) = self.clip_override(true) { return out; }
         if let Some(v) = self.compare_nonneg_with_zero(a, b, cmp) {
             return v;
         }
@@ -951,6 +995,7 @@ impl<'a> NoirEmitter<'a> {
             self.asserted_compare(a, b, cmp);
             return self.literal_int(1);
         }
+        if let Some(v) = self.shared_threshold_compare(a, b, cmp) { return v; }
         if let Some(v) = self.compare_in_checked_window(a, b, cmp) {
             return v;
         }
@@ -1144,6 +1189,9 @@ impl<'a> NoirEmitter<'a> {
     fn bind_flag(&mut self, expr: &str) -> String {
         let v = self.bind(expr);
         self.set_bound(&v, 1);
+        // This fact comes from the emitted Boolean expression, not the
+        // unchecked bound analysis used to select alternative lowerings.
+        self.derived_range.insert(v.clone(), (0, 1));
         v
     }
 
@@ -1253,7 +1301,26 @@ impl<'a> NoirEmitter<'a> {
 
     /// The range of a constant or of a cell whose range an emitted check proves.
     fn known_range(&self, cell: &str) -> Option<(i128, i128)> {
-        self.raw_constant(cell).map(|c| (c, c)).or_else(|| self.proven_range.get(cell).copied())
+        self.raw_constant(cell).map(|c| (c, c))
+            .or_else(|| self.proven_range.get(cell).copied())
+            .or_else(|| self.derived_range.get(cell).copied())
+    }
+
+    fn derive_arithmetic_range(&mut self, out: &str, a: &str, b: &str, op: char) {
+        let (Some((al, ah)), Some((bl, bh))) = (self.known_range(a), self.known_range(b)) else { return };
+        let bounds = match op {
+            '+' => al.checked_add(bl).zip(ah.checked_add(bh)),
+            '-' => al.checked_sub(bh).zip(ah.checked_sub(bl)),
+            '*' => al.checked_mul(bl).zip(al.checked_mul(bh))
+                .zip(ah.checked_mul(bl).zip(ah.checked_mul(bh)))
+                .map(|((a, b), (c, d))| (a.min(b).min(c).min(d), a.max(b).max(c).max(d))),
+            _ => None,
+        };
+        if let Some((lo, hi)) = bounds {
+            if lo > -(1i128 << 120) && hi < 1i128 << 120 {
+                self.derived_range.insert(out.to_string(), (lo, hi));
+            }
+        }
     }
 
     fn record_signed64(&mut self, cell: &str) {
@@ -1347,6 +1414,9 @@ impl<'a> NoirEmitter<'a> {
         let asserted = self.current_stmt.is_some_and(|id| self.asserted_comparisons.contains(&id));
         if !asserted {
             return None;
+        }
+        if self.current_stmt.is_some_and(|id| self.implied_comparisons.contains(&id)) {
+            return Some(self.literal_int(1));
         }
         // `d != 0` before a division by `d` (`crate::prove::guards`): the
         // division of a divisor in `nonzero` bounds its remainder by `|d|`
@@ -1748,6 +1818,9 @@ impl<'a> NoirEmitter<'a> {
             let _ = writeln!(self.body, "    assert(1 == 0);");
             return;
         }
+        if hi < 1i128 << 120 {
+            self.narrow_proven_range(cell, 0, hi - 1);
+        }
         let bits = (128 - ((hi - 1) as u128).leading_zeros()).max(1);
         let t = self.fresh();
         let _ = writeln!(self.body, "    let {}: Field = {};", t, cell);
@@ -1814,6 +1887,11 @@ impl<'a> NoirEmitter<'a> {
     /// `addr` as a checked `u32` index into an array of `len >= 1` elements
     /// (library `array_index`), once per (addr, len).
     fn array_index(&mut self, addr: &str, len: u64) -> String {
+        if self.known_range(addr).is_some_and(|(lo, hi)| lo >= 0 && hi < len as i128 && hi < 1i128 << 32) {
+            // Keep the explicit cast-range annotation: a bare cast loses
+            // useful range information in Noir/BB despite being sound here.
+            return self.to_uint(addr, UintWidth::U32);
+        }
         self.use_lib("array_index");
         let af = addr;
         let last = len - 1;
@@ -1870,6 +1948,19 @@ impl<'a> NoirEmitter<'a> {
             implied_comparisons: HashSet::new(),
             current_stmt: None,
             proven_range: HashMap::new(),
+            derived_range: HashMap::new(),
+            dyadic_plan: HashMap::new(),
+            dyadic_splits: HashMap::new(),
+            used_dyadic_helper: false,
+            clip_plan: HashMap::new(),
+            used_clip_helper: false,
+            fraction_plan: HashSet::new(),
+            used_fraction_helper: false,
+            used_bounded_division_helper: false,
+            threshold_plan: HashSet::new(),
+            threshold_bits: HashMap::new(),
+            product_plan: HashMap::new(),
+            raw_products: HashMap::new(),
             roms: HashMap::new(),
             rams: HashMap::new(),
             hint_arrays: HashMap::new(),
@@ -2149,6 +2240,7 @@ impl Synthesizer for NoirEmitter<'_> {
 
     fn add_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let out = self.integer_arith(a, b, '+');
+        self.derive_arithmetic_range(&out, a, b, '+');
         // The sum of two values with proven ranges (integers far below p/2)
         // is the integer sum: its range is the sum of the ranges.
         if let (Some((al, ah)), Some((bl, bh))) =
@@ -2169,11 +2261,15 @@ impl Synthesizer for NoirEmitter<'_> {
     }
 
     fn sub_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        Ok(self.integer_arith(a, b, '-'))
+        let out = self.integer_arith(a, b, '-');
+        self.derive_arithmetic_range(&out, a, b, '-');
+        Ok(out)
     }
 
     fn mul_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        Ok(self.integer_arith(a, b, '*'))
+        let out = self.integer_arith(a, b, '*');
+        self.derive_arithmetic_range(&out, a, b, '*');
+        Ok(out)
     }
 
     fn div_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
@@ -2328,6 +2424,7 @@ impl Synthesizer for NoirEmitter<'_> {
         let v = self.bind(&format!("qadd({}, {})", a, b));
         self.record_sum(&v, a, b);
         self.track_linear(&v, a, b);
+        self.derive_arithmetic_range(&v, a, b, '+');
         Ok(v)
     }
     fn sub_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
@@ -2335,15 +2432,53 @@ impl Synthesizer for NoirEmitter<'_> {
         self.witness_shared_summands(a, b);
         let v = self.bind(&format!("qsub({}, {})", a, b));
         self.track_linear(&v, a, b);
+        self.derive_arithmetic_range(&v, a, b, '-');
         Ok(v)
     }
     fn mul_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         if let Some(exact) = self.exact_product(a, b) {
             return Ok(self.bind(&exact));
         }
-        self.use_lib("qmul");
-        let v = self.bind(&format!("qmul({}, {})", a, b));
+        if let Some(shared) = self.shared_dyadic_product() {
+            return Ok(shared);
+        }
+        // Cancel powers of two in a Q32 constant before rescaling. The
+        // signed64 quotient window is unchanged; only the remainder shrinks.
+        if let Some((x, c)) = self.raw_constant(a).map(|c| (b, c))
+            .or_else(|| self.raw_constant(b).map(|c| (a, c)))
+            .filter(|(x, c)| *c != 0 && c.unsigned_abs() < 1u128 << 63
+                && self.known_range(x).is_some_and(|(lo, hi)| {
+                    [lo, hi].into_iter().all(|v| v.checked_mul(*c)
+                        .is_some_and(|p| p > -(1i128 << 126) && p < (1i128 << 126)))
+                }))
+        {
+            let shift = c.trailing_zeros().min(Q_BITS);
+            if shift > 0 && shift < Q_BITS {
+                let odd = c >> shift;
+                let numerator = if odd == 1 { x.clone() }
+                    else { self.bind(&format!("{x} * {}", signed_to_field_decimal(odd))) };
+                let quotient = self.divide_by_positive_constant(&numerator, 1i128 << (Q_BITS - shift)).0;
+                self.record_signed64(&quotient);
+                return Ok(quotient);
+            }
+        }
+        let v = if let Some(shared) = self.shared_raw_product() { shared } else {
+            self.use_lib("qmul");
+            self.bind(&format!("qmul({}, {})", a, b))
+        };
         self.record_signed64(&v);
+        if let (Some((al, ah)), Some((bl, bh))) = (self.known_range(a), self.known_range(b)) {
+            let products: Option<Vec<i128>> = [al, ah].into_iter()
+                .flat_map(|x| [bl, bh].into_iter().map(move |y| x.checked_mul(y)))
+                .collect();
+            if let Some(products) = products.filter(|ps| ps.iter().all(|p| p.unsigned_abs() < 1u128 << 127)) {
+                let lower = if a == b { 0 } else { *products.iter().min().unwrap() };
+                let upper = *products.iter().max().unwrap();
+                let lo = lower.div_euclid(1i128 << Q_BITS).max(-(1i128 << 63));
+                let hi = upper.div_euclid(1i128 << Q_BITS).min((1i128 << 63) - 1);
+                if lo <= hi { self.proven_range.insert(v.clone(), (lo, hi)); }
+            }
+        }
         Ok(v)
     }
     fn product_sum_f(&mut self, pairs: &[(CellRef, CellRef)]) -> Result<CellRef, ProvingError> {
@@ -2377,6 +2512,7 @@ impl Synthesizer for NoirEmitter<'_> {
         Ok(self.bind_sum(&exact))
     }
     fn div_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some(out) = self.fraction_division(a, b) { return Ok(out); }
         if let Some(c) = self.raw_constant(b) {
             if c.unsigned_abs() < 1u128 << 100 {
                 return Ok(self.div_f_by_constant(a, c));
@@ -2398,15 +2534,33 @@ impl Synthesizer for NoirEmitter<'_> {
                 None => (format!("{a} * {Q_U64}"), b.clone()),
             };
             if self.known_non_negative(&divisor) {
+                if let Some(out) = self.bounded_positive_division(&numerator, &divisor) {
+                    return Ok(out);
+                }
                 self.use_lib("divmod_by_positive");
-                return Ok(self.bind(&format!("divmod_by_positive::<64>({numerator}, {divisor}).0")));
+                let out = self.bind(&format!("divmod_by_positive::<64>({numerator}, {divisor}).0"));
+                self.record_signed64(&out);
+                return Ok(out);
+            }
+            if self.known_range(b).is_some_and(|(lo, _)| lo >= 0) {
+                // Newly derived positivity may describe a very wide sum.
+                // Retain exactly the old sign_abs positive magnitude domain
+                // and its useful range annotation, omitting only the sign.
+                let _ = writeln!(self.body, "    {b}.assert_max_bit_size::<64>();");
+                self.use_lib("qdiv_nonzero_of");
+                let out = self.bind(&format!("qdiv_nonzero_of({a}, {b}, {b})"));
+                self.record_signed64(&out);
+                return Ok(out);
             }
             let (_, mag) = self.sign_abs(b);
             self.use_lib("qdiv_nonzero_of");
-            return Ok(self.bind(&format!("qdiv_nonzero_of({a}, {b}, {mag})")));
+            let out = self.bind(&format!("qdiv_nonzero_of({a}, {b}, {mag})"));
+            self.record_signed64(&out);
+            return Ok(out);
         }
         self.use_lib("qdiv");
         let v = self.bind(&format!("qdiv({}, {})", a, b));
+        self.record_signed64(&v);
         Ok(v)
     }
     fn floor_div_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
@@ -2422,6 +2576,20 @@ impl Synthesizer for NoirEmitter<'_> {
         Ok(r)
     }
     fn pow_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some(base) = self.raw_constant(a).filter(|x| *x > 0 && *x < 1i128 << 64) {
+            if let Some(log) = crate::prove::kernel::fp_log(crate::prove::kernel::i128_to_fp(base), Q_BITS)
+                .and_then(crate::prove::kernel::fp_to_i128)
+            {
+                // qpow also checks the exponent through sign_abs even for
+                // a positive base. Preserve that domain unless already known.
+                if !self.known_range(b).is_some_and(|(lo, hi)| lo >= -(1i128 << 64) && hi < 1i128 << 64) {
+                    self.sign_abs(b);
+                }
+                self.use_lib("qmul");
+                self.use_lib("qexp");
+                return Ok(self.bind(&format!("qexp(qmul({b}, {}))", signed_to_field_decimal(log))));
+            }
+        }
         self.use_lib("qpow");
         let v = self.bind(&format!("qpow({}, {})", a, b));
         Ok(v)
@@ -2662,6 +2830,9 @@ impl Synthesizer for NoirEmitter<'_> {
     fn exp_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qexp");
         let v = self.bind(&format!("qexp({})", a));
+        // qexp's positive Horner coefficients, positive power of two, and
+        // zero-underflow mask imply nonnegativity; its quotient is signed64.
+        self.derived_range.insert(v.clone(), (0, (1i128 << 63) - 1));
         Ok(v)
     }
     fn log_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
@@ -2734,6 +2905,7 @@ impl Synthesizer for NoirEmitter<'_> {
         if_true: &CellRef,
         if_false: &CellRef,
     ) -> Result<CellRef, ProvingError> {
+        if let Some(out) = self.clip_override(false) { return Ok(out); }
         // `f - c * f + c * t` picks a branch only for c in {0, 1}; any
         // other condition is reduced to 0/1 first (Python truthiness, as the
         // mock). When `f == 0` (the common dyn-slice / mask-then-default-zero
@@ -2781,6 +2953,9 @@ impl Synthesizer for NoirEmitter<'_> {
             if let Some(cv) = self.literal_vals.get(picked).cloned() {
                 self.literal_vals.insert(v.clone(), cv);
             }
+        }
+        if let (Some((al, ah)), Some((bl, bh))) = (self.known_range(if_true), self.known_range(if_false)) {
+            self.derived_range.insert(v.clone(), (al.min(bl), ah.max(bh)));
         }
         // Interval propagation (hulls, min/max recognition) comes from the
         // provenance table's SelectI records.
@@ -3377,6 +3552,10 @@ fn wide_library_functions() -> &'static Vec<String> {
 fn render_main_nr(inputs: &[EmittedInput], emitter: &NoirEmitter) -> String {
     let mut out = String::new();
     out.push_str(&emitter.render_use_decls());
+    if emitter.used_dyadic_helper { out.push_str(dyadic::HELPERS); }
+    if emitter.used_clip_helper { out.push_str(clip::HELPERS); }
+    if emitter.used_fraction_helper { out.push_str(fraction::HELPERS); }
+    if emitter.used_bounded_division_helper { out.push_str(bounded_division::HELPERS); }
     out.push_str("fn main(");
     let mut first = true;
     for inp in inputs {
@@ -3714,6 +3893,115 @@ mod tests {
         assert_eq!(em.logical_and(&and, &and).unwrap(), and);
         assert_eq!(em.logical_or(&or, &or).unwrap(), or);
         assert_eq!(em.body, before);
+    }
+
+    #[test]
+    fn parity_emitter_dyadic_products_preserve_quotient_windows() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        let x = "x".to_string();
+        em.record_signed64(&x);
+        let quarter = em.constant_float(0.25).unwrap();
+        let one_half = em.constant_float(1.5).unwrap();
+        let q = em.mul_f(&x, &quarter).unwrap();
+        em.mul_f(&one_half, &x).unwrap();
+        assert!(em.body.contains("divmod_by_pow2::<2>(x)"), "{}", em.body);
+        assert!(em.body.contains("divmod_by_pow2::<1>"), "{}", em.body);
+        assert!(em.body.contains("x * 3"), "{}", em.body);
+        assert_eq!(em.known_range(&q), Some((-(1i128 << 63), (1i128 << 63) - 1)));
+        assert!(!em.body.contains("qmul("));
+    }
+
+    #[test]
+    fn parity_emitter_dyadic_unbounded_operand_keeps_field_relation() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        let quarter = em.constant_float(0.25).unwrap();
+        em.mul_f(&"unbounded".to_string(), &quarter).unwrap();
+        assert!(em.body.contains("qmul(unbounded,"), "{}", em.body);
+        assert!(!em.body.contains("divmod_by_pow2"));
+    }
+
+    #[test]
+    fn parity_emitter_square_endpoint_guard_requires_rounded_input() {
+        use crate::ir::IRStatement;
+        use crate::ir_defs::IR;
+        use crate::types::ValueId;
+        let graph = |input| {
+            let specs = vec![
+                (input, vec![]),
+                (IR::ConstantInt { value: i64::MIN }, vec![]),
+                (IR::NeI, vec![0, 1]),
+                (IR::MulF, vec![0, 0]),
+            ];
+            IRGraph::new(specs.into_iter().enumerate().map(|(i, (ir, args))| {
+                let values = args.iter().map(|a| ValueId(*a as u64)).collect();
+                IRStatement::new(i as u32, ValueId(i as u64), ir, args, values, None)
+            }).collect())
+        };
+        let asserted = HashSet::from([2]);
+        let reads = graph(IR::ReadFloat {
+            path: crate::circuit_input::InputPath::new("x", vec![]), is_public: false,
+        });
+        assert!(implied_comparisons(&reads, &asserted).contains(&2));
+        assert!(!implied_comparisons(&graph(IR::FloatCast), &asserted).contains(&2));
+        assert!(!implied_comparisons(&graph(IR::AddF), &asserted).contains(&2));
+    }
+
+    #[test]
+    fn parity_emitter_affine_address_reuses_only_checked_bounds() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        em.interval_of.insert("unchecked".to_string(), (0, 5));
+        em.array_index("unchecked", 432);
+        assert!(em.body.contains("array_index::<28>(unchecked, 431)"));
+        em.assert_index_in_range("axis", 6);
+        let stride = em.constant_int(9).unwrap();
+        let address = em.mul_i(&"axis".to_string(), &stride).unwrap();
+        em.array_index(&address, 432);
+        assert!(em.body.contains(&format!("checked_u32({address})")), "{}", em.body);
+        assert_eq!(em.known_range(&address), Some((0, 45)));
+    }
+
+    #[test]
+    fn parity_emitter_positive_sum_keeps_divisor_magnitude_domain() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        let x = em.exp_f(&"x".to_string()).unwrap();
+        let y = em.exp_f(&"y".to_string()).unwrap();
+        let z = em.exp_f(&"z".to_string()).unwrap();
+        let xy = em.add_f(&x, &y).unwrap();
+        let total = em.add_f(&xy, &z).unwrap();
+        assert!(em.known_range(&total).unwrap().1 >= 1i128 << 64);
+        em.nonzero.insert(total.clone());
+        em.div_f(&x, &total).unwrap();
+        assert!(em.body.contains(&format!("{total}.assert_max_bit_size::<64>()")));
+        assert!(em.body.contains(&format!("zinnia_fraction_div::<33>({x}, {total})")));
+        assert!(!em.body.contains("sign_abs"));
+    }
+
+    #[test]
+    fn parity_emitter_dynamic_division_quotient_window_proves_square_positive() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        let q = em.div_f(&"a".into(), &"b".into()).unwrap();
+        assert_eq!(em.known_range(&q), Some((-(1i128 << 63), (1i128 << 63) - 1)));
+        let square = em.mul_f(&q, &q).unwrap();
+        assert_eq!(em.known_range(&square), Some((0, (1i128 << 63) - 1)));
+    }
+
+    #[test]
+    fn parity_emitter_constant_power_preserves_exponent_domain() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        let two = em.constant_float(2.0).unwrap();
+        em.pow_f(&two, &"unknown".to_string()).unwrap();
+        assert!(em.body.contains("sign_abs(unknown)"));
+        assert!(em.body.contains("qexp(qmul(unknown, 2977044472))"));
+        em.record_signed64("checked");
+        em.pow_f(&two, &"checked".to_string()).unwrap();
+        assert!(!em.body.contains("sign_abs(checked)"));
+        assert!(!em.body.contains("qpow("));
     }
 
     // Bitwise ops with constant masks read the low bits of the operand once;

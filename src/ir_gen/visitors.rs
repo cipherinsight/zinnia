@@ -31,6 +31,41 @@ fn dyn_scalar_at(builder: &mut crate::builder::IRBuilder, value: &Value, index: 
     crate::helpers::array_ops::dyn_subscript(builder, data, &[SliceIndex::Single(idx)])
 }
 
+/// `sources[mask][-1]` is the last source whose mask is true. Call only
+/// after the ordinary subscript has emitted its checks: those checks
+/// retain the rejection of empty masks and every original index domain.
+/// The identity checks exclude sliced/reversed/reshaped or mutated views.
+pub(super) fn last_masked_source(
+    b: &mut crate::builder::IRBuilder,
+    data: &crate::types::DynamicNDArrayData,
+    indices: &[SliceIndex],
+) -> Option<Value> {
+    let [SliceIndex::Single(index)] = indices else { return None };
+    if index.int_val() != Some(-1) || data.envelope.rank() != 1 {
+        return None;
+    }
+    let n = data.envelope.total_bound;
+    if data.meta.logical_offset != 0
+        || data.meta.runtime_offset.static_val != Some(0)
+        || data.meta.logical_shape.as_slice() != [n]
+        || data.meta.logical_strides.as_slice() != [1]
+        || data.meta.runtime_length.stmt_id.is_none()
+    {
+        return None;
+    }
+    let view = b.provenance.mask_read_view(data.segment_id)?.clone();
+    if view.count_stmt != data.meta.runtime_length.stmt_id
+        || view.sources.len() != n || view.mask_cells.len() != n
+    {
+        return None;
+    }
+    let mut selected = view.sources.first()?.clone();
+    for (keep, source) in view.mask_cells.iter().zip(&view.sources).skip(1) {
+        selected = crate::helpers::value_ops::select_value(b, keep, source, &selected);
+    }
+    Some(selected)
+}
+
 fn dynamic_array_to_unpackable_list(
     builder: &mut crate::builder::IRBuilder,
     value: &Value,
@@ -623,7 +658,15 @@ impl IRGenerator {
             return self.visit(node);
         }
 
+        // The positive-counter test itself is on the current active path,
+        // just like the right operand and body. Do not read the merged
+        // loop-exit counter here: on iteration k it is exactly i-k.
+        let mut lhs_ctx = base_ctx.clone();
+        lhs_ctx.positive_guard = false;
+        lhs_ctx.record_guard_read = false;
+        self.loop_index_bound_contexts.push(lhs_ctx);
         let lhs = self.visit(&bin.lhs);
+        self.loop_index_bound_contexts.pop();
         let lhs_bool = crate::helpers::value_ops::to_scalar_bool(&mut self.builder, &lhs);
         let mut rhs_ctx = base_ctx.clone();
         rhs_ctx.guard_condition = Some(lhs_bool.clone());
@@ -631,6 +674,13 @@ impl IRGenerator {
         self.loop_index_bound_contexts.push(rhs_ctx);
         let rhs = self.visit(&bin.rhs);
         self.loop_index_bound_contexts.pop();
+        // Preserve the original RHS emission, including any explicit
+        // checks: only its pure value is unused when the left side is
+        // statically false. Do not turn implicit evaluation restrictions
+        // into newly surviving assertions or erase existing assertions.
+        if lhs_bool.bool_val() == Some(false) {
+            return lhs_bool;
+        }
         let rhs_bool = crate::helpers::value_ops::to_scalar_bool(&mut self.builder, &rhs);
         self.builder.ir_logical_and(&lhs_bool, &rhs_bool)
     }
@@ -1585,7 +1635,16 @@ impl IRGenerator {
         self.check_bound(&n.name);
         let value = self.resolve_different_shapes(value);
         self.check_not_stale(&n.name, &value);
-        value
+        // A structurally matched decreasing while counter is pre-merged
+        // after each assignment so its exit value remains available. On
+        // a still-active iteration, previous assignment guards hold, so
+        // read their true branches (usually a compile-time j = i - step).
+        // Keep the context binding itself merged for reads after the loop.
+        if self.loop_index_bound_contexts.last().is_some_and(|ctx| ctx.var_name == n.name) {
+            self.value_on_current_path(&value)
+        } else {
+            value
+        }
     }
 
     pub(crate) fn visit_subscript(&mut self, n: &ASTSubscriptExp) -> Value {
@@ -1746,6 +1805,7 @@ impl IRGenerator {
             }
             Value::DynamicNDArray(d) => {
                 let out = crate::helpers::array_ops::dyn_subscript(&mut self.builder, d, &slice_values);
+                let out = last_masked_source(&mut self.builder, d, &slice_values).unwrap_or(out);
                 self.record_subscript_copy(&val, &slice_values, &out);
                 out
             }

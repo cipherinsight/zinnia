@@ -129,6 +129,9 @@ impl Halo2BaseSynthesizer<'_> {
 
     /// `a & b`.
     pub(super) fn bit_and(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        if let Some(out) = self.vector_binary(a, b, super::vector::BitOp::And)? { return Ok(out); }
+        let (a, b) = (self.materialize(a), self.materialize(b));
+        let (a, b) = (&a, &b);
         match (self.int_constant(a), self.int_constant(b)) {
             (Some(x), Some(y)) => self.constant_int(x & y),
             (Some(c), None) => self.and_constant(b, c),
@@ -139,6 +142,9 @@ impl Halo2BaseSynthesizer<'_> {
 
     /// `a | b = a + b - (a & b)`.
     pub(super) fn bit_or(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        if let Some(out) = self.vector_binary(a, b, super::vector::BitOp::Or)? { return Ok(out); }
+        let (a, b) = (self.materialize(a), self.materialize(b));
+        let (a, b) = (&a, &b);
         let both = self.bit_and(a, b)?;
         let sum = self.add_i(a, b)?;
         self.sub_i(&sum, &both)
@@ -146,6 +152,9 @@ impl Halo2BaseSynthesizer<'_> {
 
     /// `a ^ b = a + b - 2·(a & b)`.
     pub(super) fn bit_xor(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        if let Some(out) = self.vector_binary(a, b, super::vector::BitOp::Xor)? { return Ok(out); }
+        let (a, b) = (self.materialize(a), self.materialize(b));
+        let (a, b) = (&a, &b);
         let both = self.bit_and(a, b)?;
         let twice = self.add_i(&both, &both)?;
         let sum = self.add_i(a, b)?;
@@ -154,6 +163,8 @@ impl Halo2BaseSynthesizer<'_> {
 
     /// `~a = -a - 1`.
     pub(super) fn bit_not(&mut self, a: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        if let Some(out) = self.vector_not(a)? { return Ok(out); }
+        let a = self.materialize(a); let a = &a;
         let minus_one = self.constant_int(-1)?;
         self.sub_i(&minus_one, a)
     }
@@ -171,6 +182,9 @@ impl Halo2BaseSynthesizer<'_> {
     /// pinned quotient in the window, remainder in `[0, 2^c)`). So the result
     /// is a function of `(a, b)`.
     pub(super) fn shift_right(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        if let Some(out) = self.vector_shift(a, b, false)? { return Ok(out); }
+        let (a, b) = (self.materialize(a), self.materialize(b));
+        let (a, b) = (&a, &b);
         if let (Some(x), Some(y)) = (self.int_constant(a), self.int_constant(b)) {
             return self.constant_int(kernel::int64_shr(x, y));
         }
@@ -195,6 +209,9 @@ impl Halo2BaseSynthesizer<'_> {
     /// is multiplied by the in-range bit. Both are gates on pinned cells, and
     /// [`Self::wrap_int64`] pins the wrapped value.
     pub(super) fn shift_left(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        if let Some(out) = self.vector_shift(a, b, true)? { return Ok(out); }
+        let (a, b) = (self.materialize(a), self.materialize(b));
+        let (a, b) = (&a, &b);
         if let (Some(x), Some(y)) = (self.int_constant(a), self.int_constant(b)) {
             return self.constant_int(kernel::int64_shl(x, y));
         }

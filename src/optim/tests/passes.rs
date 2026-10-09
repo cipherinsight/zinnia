@@ -297,6 +297,52 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_code_elimination_commutes_equality_without_merging_kinds() {
+        let mut nodes = vec![
+            (IR::ConstantInt { value: 2 }, vec![]),
+            (IR::ConstantInt { value: 3 }, vec![]),
+        ];
+        for ir in [IR::EqI, IR::NeI, IR::EqF, IR::NeF] {
+            nodes.push((ir.clone(), vec![0, 1]));
+            nodes.push((ir, vec![1, 0]));
+        }
+        let graph = IRGraph::new(nodes.into_iter().enumerate().map(|(id, (ir, args))| {
+            IRStatement::new(id as _, crate::types::ValueId::next(), ir, args, vec![], None)
+        }).collect());
+        let result = DuplicateCodeElimination.exec(graph);
+        assert_eq!(result.len(), 6);
+        for ir in [IR::EqI, IR::NeI, IR::EqF, IR::NeF] {
+            assert_eq!(result.stmts.iter().filter(|s| s.ir == ir).count(), 1);
+        }
+    }
+
+    #[test]
+    fn duplicate_code_elimination_commutes_dot_factors_and_cascades() {
+        let nodes = vec![
+            (IR::ConstantInt { value: 2 }, vec![]),
+            (IR::ConstantInt { value: 3 }, vec![]),
+            (IR::ConstantInt { value: 4 }, vec![]),
+            (IR::ProductSumF { len: 2 }, vec![0, 1, 1, 2]), // 3
+            (IR::ProductSumF { len: 2 }, vec![1, 0, 2, 1]), // 4: same
+            (IR::ProductSumF { len: 2 }, vec![1, 2, 0, 1]), // 5: reordered pairs
+            (IR::ProductSumF { len: 1 }, vec![0, 1]),       // 6: different schedule
+            (IR::DivF, vec![3, 2]),                      // 7
+            (IR::DivF, vec![4, 2]),                      // 8: same consumer
+            (IR::ExposePublicF, vec![7]),
+            (IR::ExposePublicF, vec![8]),
+        ];
+        let graph = IRGraph::new(nodes.into_iter().enumerate().map(|(id, (ir, args))| {
+            IRStatement::new(id as _, crate::types::ValueId::next(), ir, args, vec![], None)
+        }).collect());
+        let result = DuplicateCodeElimination.exec(graph);
+        assert_eq!(result.stmts.iter().filter(|s| matches!(s.ir, IR::ProductSumF { .. })).count(), 3);
+        assert_eq!(result.stmts.iter().filter(|s| matches!(s.ir, IR::DivF)).count(), 1);
+        let outputs: Vec<_> = result.stmts.iter().filter(|s| matches!(s.ir, IR::ExposePublicF)).collect();
+        assert_eq!(outputs.len(), 2, "public output slots must retain multiplicity");
+        assert_eq!(outputs[0].arguments, outputs[1].arguments);
+    }
+
+    #[test]
     fn duplicate_code_elimination_replaces_duplicates_after_many_unrelated_keys() {
         let stmts = vec![
             IRStatement::new(

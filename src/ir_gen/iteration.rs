@@ -308,11 +308,40 @@ impl IRGenerator {
     /// current execution condition implies `c` (its conjuncts include all of
     /// `c`'s), that select equals `new`.
     pub(crate) fn value_on_current_path(&mut self, v: &Value) -> Value {
+        let current = self.ctx.get_condition_value(&mut self.builder);
+        let mut budget = 128;
+        self.integer_on_path(v, &current, &mut budget)
+    }
+
+    fn integer_on_path(&mut self, v: &Value, current: &Value, budget: &mut usize) -> Value {
         use crate::ir_defs::IR;
+        if *budget == 0 || v.int_val().is_some() {
+            return v.clone();
+        }
+        *budget -= 1;
         let Some(stmt) = v.stmt_id().and_then(|id| self.builder.stmts.get(id as usize)).cloned()
         else {
             return v.clone();
         };
+        // Reconstructing a ValueId drops the builder's cached constant
+        // value of arithmetic producers. Recover exact counter arithmetic
+        // through earlier guarded assignments, refusing signed overflow.
+        if matches!(stmt.ir, IR::AddI | IR::SubI) && stmt.arg_values.len() == 2 {
+            if let (Some(a), Some(b)) = (
+                self.builder.value_of_vid(stmt.arg_values[0]),
+                self.builder.value_of_vid(stmt.arg_values[1]),
+            ) {
+                let a = self.integer_on_path(&a, current, budget).int_val();
+                let b = self.integer_on_path(&b, current, budget).int_val();
+                if let (Some(a), Some(b)) = (a, b) {
+                    let folded = if matches!(stmt.ir, IR::AddI) { a.checked_add(b) } else { a.checked_sub(b) };
+                    if let Some(value) = folded {
+                        return self.builder.ir_constant_int(value);
+                    }
+                }
+            }
+            return v.clone();
+        }
         if !matches!(stmt.ir, IR::SelectI | IR::SelectBitI) || stmt.arg_values.len() != 3 {
             return v.clone();
         }
@@ -322,31 +351,11 @@ impl IRGenerator {
         ) else {
             return v.clone();
         };
-        let current = self.ctx.get_condition_value(&mut self.builder);
-        let required = self.conjuncts(&select_cond);
-        let holding = self.conjuncts(&current);
-        if required.is_subset(&holding) {
-            self.value_on_current_path(&then_value)
+        if self.builder.predicate_implies(current, &select_cond) {
+            self.integer_on_path(&then_value, current, budget)
         } else {
             v.clone()
         }
-    }
-
-    /// Statement ids of the conjuncts of a Boolean (`a & b & ...`).
-    fn conjuncts(&self, condition: &Value) -> std::collections::BTreeSet<crate::types::StmtId> {
-        use crate::ir_defs::IR;
-        let mut out = std::collections::BTreeSet::new();
-        let mut stack: Vec<crate::types::StmtId> = condition.stmt_id().into_iter().collect();
-        while let Some(id) = stack.pop() {
-            match self.builder.stmts.get(id as usize) {
-                Some(stmt) if matches!(stmt.ir, IR::LogicalAnd) => stack.extend(stmt.arguments.iter().copied()),
-                Some(stmt) if matches!(stmt.ir, IR::ConstantBool { value: true }) => {}
-                _ => {
-                    out.insert(id);
-                }
-            }
-        }
-        out
     }
 
     /// Split `range` arguments into integer (start, stop, step) values.

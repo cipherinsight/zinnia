@@ -35,12 +35,24 @@ fn fast_dce_key(ir: &IR, args: &[StmtId]) -> Option<FastDceKey> {
     match ir {
         IR::ConstantInt { value } => Some(FastDceKey::ConstantInt(*value)),
         IR::ConstantBool { value } => Some(FastDceKey::ConstantBool(*value)),
-        IR::AddI | IR::MulI | IR::BitAndI | IR::BitOrI | IR::AddF | IR::MulF => {
+        IR::AddI | IR::MulI | IR::BitAndI | IR::BitOrI | IR::AddF | IR::MulF
+        | IR::EqI | IR::NeI | IR::EqF | IR::NeF => {
             let (a, b) = commutative_args(args)?;
             Some(FastDceKey::Commutative(discriminant(ir), a, b))
         }
         IR::SumF { len } => Some(FastDceKey::SumF(*len, args.to_vec())),
-        IR::ProductSumF { len } => Some(FastDceKey::ProductSumF(*len, args.to_vec())),
+        IR::ProductSumF { len } if args.len() == 2 * (*len as usize) => {
+            // Commuting the factors of each raw product preserves the
+            // reduction schedule and its single final rescale. Do not
+            // reorder pairs or merge independently rounded products.
+            let mut pairs = args.to_vec();
+            for pair in pairs.chunks_exact_mut(2) {
+                if pair[0] > pair[1] {
+                    pair.swap(0, 1);
+                }
+            }
+            Some(FastDceKey::ProductSumF(*len, pairs))
+        }
         IR::ReadInteger { path, is_public } => {
             Some(FastDceKey::ReadInteger(path.clone(), *is_public))
         }

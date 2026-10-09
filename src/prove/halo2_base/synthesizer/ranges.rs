@@ -569,6 +569,11 @@ impl Halo2BaseSynthesizer<'_> {
             let width = self.lookup_aligned(bits_above(gap_range.hi).max(1));
             self.range_check(&gap, width);
         }
+        if let (Operand::Cell(x), Operand::Cell(y)) = (a, b) {
+            self.lower_bounds.entry(y.id).or_default().push((x, strict));
+            if let Some(r) = Interval::new(ra.lo, ra.hi.min(rb.hi - slack)) { self.prove_range(&x, r); }
+            if let Some(r) = Interval::new(rb.lo.max(ra.lo + slack), rb.hi) { self.prove_range(&y, r); }
+        }
         // a < b (or <=) now holds: narrow a cell compared with a constant.
         match (a, b) {
             (Operand::Cell(x), Operand::Constant(c)) => {
@@ -758,5 +763,47 @@ impl Halo2BaseSynthesizer<'_> {
             self.prove_range(a, r);
         }
         Ok(())
+    }
+}
+
+impl Halo2BaseSynthesizer<'_> {
+    /// Retain the order proved by select([f < t], t, f). The comparisons
+    /// themselves retain all original domains; this only reuses their facts.
+    pub(super) fn record_maximum(&mut self, out: &Halo2BaseCell, condition: &Halo2BaseCell,
+        t: &Halo2BaseCell, f: &Halo2BaseCell) {
+        let cell_order = self.orders.get(&(f.id, t.id)).is_some_and(|bit| bit.id == condition.id);
+        let constant_order = self.comparisons.get(&condition.id).is_some_and(|comparison| {
+            (!comparison.x_below && comparison.x.id == t.id && self.is_const_cell(f)
+                && kernel::fp_to_i128(f.value) == Some(comparison.bound))
+                || (comparison.x_below && comparison.x.id == f.id && self.is_const_cell(t)
+                    && kernel::fp_to_i128(t.value) == Some(comparison.bound))
+        });
+        if cell_order || constant_order {
+            self.lower_bounds.entry(out.id).or_default().extend([(*t, false), (*f, false)]);
+            if let Some((tr, fr)) = self.proven_range(t).zip(self.proven_range(f)) {
+                if let Some(range) = Interval::new(tr.lo.max(fr.lo), tr.hi.max(fr.hi)) { self.prove_range(out, range); }
+            }
+        }
+    }
+
+    /// Whether constrained comparisons, maxima, and nonnegative offsets
+    /// establish lower < upper. Facts are cell identities, never witness values.
+    pub(super) fn strictly_below(&self, lower: &Halo2BaseCell, upper: &Halo2BaseCell) -> bool {
+        let mut pending = vec![(*upper, false)];
+        let mut seen = std::collections::HashSet::new();
+        while let Some((current, strict)) = pending.pop() {
+            if !seen.insert((current.id, strict)) { continue; }
+            if current.id == lower.id && strict { return true; }
+            if let Some((lr, ur)) = self.proven_range(lower).zip(self.proven_range(&current)) {
+                if lr.hi < ur.lo || (strict && lr.hi <= ur.lo) { return true; }
+            }
+            if let Some((base, offset)) = self.offsets.get(&current.id).copied() {
+                if offset >= 0 { pending.push((base, strict || offset > 0)); }
+            }
+            if let Some(bounds) = self.lower_bounds.get(&current.id) {
+                pending.extend(bounds.iter().map(|(cell, edge_strict)| (*cell, strict || *edge_strict)));
+            }
+        }
+        false
     }
 }
