@@ -17,7 +17,7 @@ Evidence and staged packages: `/home/zhantong/Projects/zinnia-project/eval-redo/
 The repository has no fixtures for these duplicates. Fixtures are generated
 outside the repository in `fixtures/`, using `perf_fixtures.build_fixture`
 and the case's own kernel and deterministic seeds. Missing DRAWS registrations
-are supplied in memory from the listed twin (0365/0363, 0356/0355, etc.);
+are supplied in memory for 0356 from 0355, 0365 from 0363, and 0370 from 0368;
 no shared tools or repository fixtures are modified. Checks use `--fixture-root`.
 
 | Case | Optimized Halo2 advice + lookup = total | Literal Halo2 advice + lookup = total | Optimized Noir gates | Literal Noir gates | Four checks |
@@ -30,6 +30,7 @@ no shared tools or repository fixtures are modified. Checks use `--fixture-root`
 | 0365 | 5194 + 824 = 6018 | 15117 + 3376 = 18493 | 3891 | 4804 | pass/pass/pass/pass |
 | 0387 | 540000 + 160000 = 700000 | 540000 + 160000 = 700000 | 127816 | 127816 | pass/pass/pass/pass |
 | 0392 | 1200 + 360 = 1560 | 1200 + 360 = 1560 | 3004 | 3004 | pass/pass/pass/pass |
+| 0393 | 1620 + 480 = 2100 | 1620 + 480 = 2100 | 3191 | 3191 | pass/pass/pass/pass |
 
 ## Case notes
 
@@ -52,3 +53,5 @@ no shared tools or repository fixtures are modified. Checks use `--fixture-root`
 - **0387 (twin 0385):** Removed transpose(1,0,2,3); patches are in row-block-first order i*100+j. Literal code materializes reshape and swapaxes wire arrays, then the final reshape. Optimized code directly traverses blocks in that order. Equal sizes are expected because reshapes/permutations need no arithmetic beyond the same 20000 input checks.
 
 - **0392 (twin 0340):** Reused the 30-cell copy plumbing but changed X integer[5,6] to a float[20,10], selected rows 4:7 (30 floats), and changed both output declarations to float[30]. Only read rows are loaded/range-checked. Literal source constants and nested slice traversal remain explicit. Equal sizes are expected: both forms expose the same 30 checked wires.
+
+- **0393 (twin 0391):** Reused column slice 4:7, with literal min(high,a.shape[1]) represented as a compile-time min(7,10). Optimized code folds this constant. Only the 60 selected cells are read and checked. Equal sizes are expected because the additional statement is compile-time arithmetic.
