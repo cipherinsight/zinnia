@@ -1,0 +1,33 @@
+// DS-1000 case 0456, optimized Noir baseline.
+// Compute each unordered pair once. One sum-of-squares rescale, then sqrt.
+// The rescaled squared norm is in the Q32 window in both variants.
+// Diagonal zeros are compile-time outputs, not public instances.
+// @outputs: const float[1] = 0; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; const float[1] = 0; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; const float[1] = 0; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; const float[1] = 0; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; const float[1] = 0; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; const float[1] = 0; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; const float[1] = 0; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; float[1]; const float[1] = 0
+fn main(a: [Field; 24]) -> pub [Field; 56] {
+    noir_hw::check_inputs(a);
+    let mut distance = [0; 64];
+    for i in 0..8 {
+        for j in i + 1..8 {
+            let mut sum: Field = 0;
+            for k in 0..3 {
+                let d = a[j * 3 + k] - a[i * 3 + k];
+                sum += d * d;
+            }
+            let squared = noir_hw::rescale(sum);
+            let norm = noir_hw::sqrt(squared);
+            distance[i * 8 + j] = norm;
+            distance[j * 8 + i] = norm;
+        }
+    }
+    let mut result = [0; 56];
+    let mut at = 0;
+    for i in 0..8 {
+        for j in 0..8 {
+            if i != j {
+                result[at] = distance[i * 8 + j];
+                at += 1;
+            }
+        }
+    }
+    result
+}
