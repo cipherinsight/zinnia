@@ -5,7 +5,7 @@
 //!   z = x_new + y_new
 //! `np.array(...)` on an array is a copy (no-op on the values); `+` is
 //! elementwise addition, one gadget call per element (L5). The kernel has no
-//! library call, no control flow and no repeated subexpression, so there is
+//! computational library call, no control flow and no repeated subexpression, so there is
 //! no room for a literal/optimized difference here: this file is the same as
 //! the optimized baseline.
 
@@ -17,7 +17,9 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let ctx = builder.main(0);
 
     let (x, y) = (q.load_floats(ctx, &x), q.load_floats(ctx, &y));
-    let z: Vec<Cell> = x.iter().zip(&y).map(|(a, b)| q.add(ctx, *a, *b)).collect();
+    let x_new = x.clone(); // np.array(x)
+    let y_new = y.clone(); // np.array(y)
+    let z: Vec<Cell> = x_new.iter().zip(&y_new).map(|(a, b)| q.add(ctx, *a, *b)).collect();
     out.floats(&z);
     Ok(())
 }

@@ -1,37 +1,37 @@
-//! DS-1000 case 0403, halo2-base LITERAL baseline (LITERAL_BASELINES.md).
-//! Literal translation of kernel.py:
-//!   dims = np.array([8, 9, 8, 8, 8])
-//!   result = np.ravel_multi_index(index, dims=dims, order='C')
-//! `np.ravel_multi_index` has no source to copy (L5): the textbook definition
-//! is the defining sum `flat = sum_k index[k] * stride[k]` with the C-order
-//! strides (4608, 512, 64, 8, 1), accumulated term by term in index order
-//! k = 0..5 (not reversed, unlike the optimized baseline, which reorders to
-//! save a cell on the leading stride-1 term: L3 forbids that reordering).
-//! Inputs use the standard loader; dimension bounds enforce NumPy index semantics.
-//! `a` (the `Float[8,9,8,8,8]` parameter) is never read by the kernel, so it
-//! is not loaded and gets no check (CONVENTIONS.md 1.6, L7 plumbing).
-
+//! DS-1000 case 0403: literal translation of kernel.py (LITERAL_BASELINES.md).
+//! ravel_multi_index is the C-stride defining sum in index order.
+//! The standard inner-product gadget loads the five private input operands;
+//! these are input plumbing, not computed hints. Dimension checks copied under
+//! L7 imply their input domain (CONVENTIONS.md 1.6); a is never read.
 use crate::prelude::*;
-
-const DIMS: [u64; 5] = [8, 9, 8, 8, 8];
-const STRIDES: [u64; 5] = [4608, 512, 64, 8, 1];
 
 pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
     let index = inputs.ints("index", &[5])?;
     let q = Q32::new(builder);
     let ctx = builder.main(0);
-
-    // flat = sum_k index[k] * stride[k], each term added as it is formed,
-    // in source (index) order; 0 <= index[k] < dims[k] checked at the same
-    // point, once per element.
-    let index = q.load_ints(ctx, &index);
-    let mut flat = q.int_const(ctx, 0);
-    for k in 0..5 {
-        let x = index[k];
-        q.range.check_less_than_safe(ctx, x, DIMS[k]);
-        let term = q.gate.mul(ctx, x, Constant(Fr::from(STRIDES[k])));
-        flat = q.gate.add(ctx, flat, term);
-    }
-    out.int(flat);
+    let dims = [8u64, 9, 8, 8, 8];
+    let strides: Vec<u64> = (0..5).map(|k| dims[k + 1..].iter().product()).collect();
+    let (result, operands) = q.gate.inner_product_left(
+        ctx,
+        index.iter().map(|v| Witness(fe(*v as i128))),
+        strides.iter().map(|v| Constant(Fr::from(*v))),
+    );
+    for k in 0..5 { assert_below(&q, ctx, operands[k], dims[k]); }
+    out.int(result);
     Ok(())
+}
+
+// Same input-domain/dimension checks as the optimized baseline (L7).
+fn assert_below(q: &Q32, ctx: &mut Ctx, x: Cell, d: u64) {
+    let bits = q.range.lookup_bits();
+    let table = 1u64 << bits;
+    if d > table {
+        q.range.check_less_than_safe(ctx, x, d);
+        return;
+    }
+    q.range.range_check(ctx, x, bits);
+    if d < table {
+        let shifted = q.gate.add(ctx, x, Constant(Fr::from(table - d)));
+        q.range.range_check(ctx, shifted, bits);
+    }
 }
