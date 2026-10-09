@@ -158,6 +158,31 @@ compiler's own optimizations (Noir's SSA passes) are part of the toolchain.
 
 ## 3. Semantics must match
 
+**Arithmetic follows the optimized baseline (author's decision, 2026-10-09).** Where the
+literal structure (L1-L5) and the optimized baseline's arithmetic would give a different
+Q32 statement or acceptance domain, the arithmetic of the optimized baseline wins; the
+structure stays literal. Concretely, for every value the source computes:
+
+- the rounding points are those of the optimized baseline: if it rescales a reduction once
+  (a fused product sum, a sum of squared deviations, a percentile interpolation, a complex
+  dot product), the literal baseline does the same for that reduction, while still
+  forming every term in source order and computing each source call separately (`np.std`
+  called twice is computed twice, each with the optimized rounding);
+- constants are quantized as in the optimized baseline (one Q32 constant `Q(360/pi)`, not
+  `2 * Q(180/pi)`);
+- range guards that define the acceptance domain (a radicand kept in the signed 64-bit
+  window, an int64 output check or its absence, a covariance formula's intermediate
+  ranges) are those of the optimized baseline, so both accept exactly the same inputs;
+- a power uses the gadget or method the optimized baseline uses, if that changes the
+  rounding.
+
+This is not an optimization permit: it fixes *where values are rounded and which inputs
+are accepted*, never *what is computed or how often*. A literal baseline that copies a
+cheaper algorithm, merges source calls or skips source work is still wrong. Where the
+optimized baseline itself rejects a valid input (an inactive branch that overflows), fix
+the literal baseline under L4 and report the optimized baseline's defect; do not copy it.
+
+
 Literal does not relax correctness: the same outputs as the NumPy reference on inputs A
 and B within the case set's tolerance, the same rejection of out-of-domain inputs, the
 same tie-breaking (`argmax` first occurrence, stable sorts), the same behaviour where
