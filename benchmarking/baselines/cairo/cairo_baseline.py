@@ -121,6 +121,18 @@ def encode_args(fixture: dict, input_name: str, unused: list[str]) -> list[int]:
         if param["name"] in unused:
             continue
         value = values[param["name"]]
+        if param["dtype"] == "complex":
+            # A complex scalar is a (real, imaginary) Q32 pair. Array
+            # lengths count complex elements, not their component felts.
+            leaves = flatten(value)
+            if len(leaves) % 2:
+                raise Failure("complex input must contain real/imaginary pairs")
+            if param["kind"] == "array":
+                felts.append(len(leaves) // 2)
+            elif len(leaves) != 2:
+                raise Failure("complex scalar must contain one real/imaginary pair")
+            felts.extend(encode_scalar(v, "float") for v in leaves)
+            continue
         if param["kind"] == "array":
             leaves = flatten(value)
             felts.append(len(leaves))
