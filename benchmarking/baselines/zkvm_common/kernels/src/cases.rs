@@ -26,6 +26,7 @@ programs! {
         ds1000_case0327 => "../../../../datasets/ds1000/ds1000_case0327/zkvm.rs";
         ds1000_case0328 => "../../../../datasets/ds1000/ds1000_case0328/zkvm.rs";
         ds1000_case0329 => "../../../../datasets/ds1000/ds1000_case0329/zkvm.rs";
+        ds1000_case0330 => "../../../../datasets/ds1000/ds1000_case0330/zkvm.rs";
         ds1000_case0334 => "../../../../datasets/ds1000/ds1000_case0334/zkvm.rs";
         ds1000_case0335 => "../../../../datasets/ds1000/ds1000_case0335/zkvm.rs";
         ds1000_case0336 => "../../../../datasets/ds1000/ds1000_case0336/zkvm.rs";
@@ -53,6 +54,7 @@ programs! {
         ds1000_case0365 => "../../../../datasets/ds1000/ds1000_case0365/zkvm.rs";
         ds1000_case0368 => "../../../../datasets/ds1000/ds1000_case0368/zkvm.rs";
         ds1000_case0369 => "../../../../datasets/ds1000/ds1000_case0369/zkvm.rs";
+        ds1000_case0370 => "../../../../datasets/ds1000/ds1000_case0370/zkvm.rs";
         ds1000_case0374 => "../../../../datasets/ds1000/ds1000_case0374/zkvm.rs";
         ds1000_case0375 => "../../../../datasets/ds1000/ds1000_case0375/zkvm.rs";
         ds1000_case0381 => "../../../../datasets/ds1000/ds1000_case0381/zkvm.rs";
@@ -74,6 +76,7 @@ programs! {
         ds1000_case0403 => "../../../../datasets/ds1000/ds1000_case0403/zkvm.rs";
         ds1000_case0409 => "../../../../datasets/ds1000/ds1000_case0409/zkvm.rs";
         ds1000_case0412 => "../../../../datasets/ds1000/ds1000_case0412/zkvm.rs";
+        ds1000_case0413 => "../../../../datasets/ds1000/ds1000_case0413/zkvm.rs";
         ds1000_case0414 => "../../../../datasets/ds1000/ds1000_case0414/zkvm.rs";
         ds1000_case0415 => "../../../../datasets/ds1000/ds1000_case0415/zkvm.rs";
         ds1000_case0416 => "../../../../datasets/ds1000/ds1000_case0416/zkvm.rs";
@@ -107,6 +110,9 @@ programs! {
         ds1000_case0452 => "../../../../datasets/ds1000/ds1000_case0452/zkvm.rs";
         ds1000_case0453 => "../../../../datasets/ds1000/ds1000_case0453/zkvm.rs";
         ds1000_case0454 => "../../../../datasets/ds1000/ds1000_case0454/zkvm.rs";
+        ds1000_case0456 => "../../../../datasets/ds1000/ds1000_case0456/zkvm.rs";
+        ds1000_case0457 => "../../../../datasets/ds1000/ds1000_case0457/zkvm.rs";
+        ds1000_case0458 => "../../../../datasets/ds1000/ds1000_case0458/zkvm.rs";
         ds1000_case0462 => "../../../../datasets/ds1000/ds1000_case0462/zkvm.rs";
         ds1000_case0463 => "../../../../datasets/ds1000/ds1000_case0463/zkvm.rs";
         ds1000_case0471 => "../../../../datasets/ds1000/ds1000_case0471/zkvm.rs";
@@ -318,6 +324,7 @@ programs! {
         ds1000_case0327;
         ds1000_case0328;
         ds1000_case0329;
+        ds1000_case0330;
         ds1000_case0334;
         ds1000_case0335;
         ds1000_case0336;
@@ -345,6 +352,7 @@ programs! {
         ds1000_case0365;
         ds1000_case0368;
         ds1000_case0369;
+        ds1000_case0370;
         ds1000_case0374;
         ds1000_case0375;
         ds1000_case0381;
@@ -366,6 +374,7 @@ programs! {
         ds1000_case0403 [unused "a"];
         ds1000_case0409;
         ds1000_case0412;
+        ds1000_case0413;
         ds1000_case0414;
         ds1000_case0415;
         ds1000_case0416;
@@ -399,6 +408,9 @@ programs! {
         ds1000_case0452;
         ds1000_case0453;
         ds1000_case0454;
+        ds1000_case0456;
+        ds1000_case0457;
+        ds1000_case0458;
         ds1000_case0462;
         ds1000_case0463;
         ds1000_case0471;
