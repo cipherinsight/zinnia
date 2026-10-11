@@ -1,0 +1,1 @@
+../../../../datasets/npbench/npbench_weather_stencils_hdiff_hdiff/cairo/hdiff.cairo

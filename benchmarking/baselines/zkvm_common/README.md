@@ -2,7 +2,7 @@
 
 Handwritten baselines on two RISC-V zkVMs (SP1, RISC Zero) and on Cairo, for
 the DS-1000 performance set (all three) and the NPBench/Pythran acceptance
-programs (SP1 and RISC Zero). Every program computes what its `kernel.py`
+programs (SP1, RISC Zero, and the Cairo entries with a source file). Every program computes what its `kernel.py`
 computes, in Q32 fixed-point integers like Zinnia (author decision 2026-10-06),
 reads every input privately and makes every output public.
 
@@ -12,7 +12,8 @@ reads every input privately and makes every output public.
 |---|---|
 | `datasets/ds1000/<case>/zkvm.rs` | the case's Rust program, shared by SP1 and RISC Zero (fixed shapes) |
 | `datasets/{npbench,pythran}/<program>/zkvm.rs` | the program's Rust entry functions, shape-generic (one case per entry function, `<program>/<function>`) |
-| `datasets/ds1000/<case>/main.cairo` | the case's Cairo program |
+| `datasets/ds1000/<case>/main.cairo` | the fixed-shape Cairo program |
+| `datasets/{npbench,pythran}/<program>/cairo/<function>.cairo` | one shape-generic Cairo entry, target `<program>__<function>` |
 | `baselines/zkvm_common/q32/` | Q32 arithmetic (`no_std`, no floating point) |
 | `baselines/zkvm_common/kernels/` | crate `zkvm-kernels`: includes every `zkvm.rs` as a module; inputs (`src/io.rs`: `Input`, `Args`, `Element`), outputs (`src/publics.rs`), NumPy behaviours shared by several cases (`src/np.rs`), fixture loading, the shared host CLI/report, and the native runner `kernels-native` |
 | `baselines/zkvm_common/check_outputs.py` | output check against NumPy |
@@ -179,6 +180,137 @@ is specific to NPBench/Pythran.
   products: `np::matmul`, `np::matvec`, `np::vecmat`, `np::inner` (fused dot
   products). Follow NumPy's evaluation order (`alpha * A @ B` is
   `(alpha * A) @ B`).
+
+### Shape-generic Cairo entries
+
+Write **one `cairo/<function>.cairo` file**, then run `sync_cases.py`. The
+function must already be an entry in the folder's `zkvm.rs`. Sync generates
+its symlink, `cases.cairo` module and Scarb executable target
+`<program>__<function>`. Fixed DS-1000 `main.cairo` files keep their original
+signature, encoding and output declarations. No Rust file or case set needs
+to change to add a Cairo entry.
+
+Each shaped Cairo executable takes `Array<Array<i64>>` and returns
+`Array<i64>`. Use `crate::io::{ArgsTrait, Word, tensor, vector}`:
+
+```cairo
+// output: tensor<1,q32>
+use crate::io::{ArgsTrait, tensor};
+use crate::q32::Q32;
+
+#[executable]
+fn main(inputs: Array<Array<i64>>) -> Array<i64> {
+    let mut args = ArgsTrait::new(inputs);
+    let values: Array<Q32> = args.array1();
+    // Read every other parameter, then compute the result here.
+    let mut out = args.output();
+    tensor(ref out, array![values.len()].span(), values.span());
+    out
+}
+```
+
+* Parameters travel in signature order, tuple items expanded recursively.
+  `args.scalar::<T>()` reads one scalar, `args.array1::<T>()` an array;
+  `array2` returns `(rows, cols, values)`, `array3`/`array4` similarly return
+  extents followed by values. `args.array(rank)` returns `(dims, values)`.
+  Supported elements are `i64`, `bool`, `Q32`, and `C32`.
+* The driver writes Rust's parameter words: array elements first, dimensions
+  last, with Cairo Serde lengths around the buffers. It infers dimensions
+  from rectangular fixture values and checks the fixture's shape metadata.
+  The guest validates dimensions, element counts, scalar lengths and booleans.
+  Derive bounds from those dimensions, never from annotation or fixture sizes.
+* `args.output()` rejects unread parameters and starts the output with
+  `[number_of_input_dimensions, input_dimensions...]`, exactly the Rust guest's
+  shape-vector commitment. Append outputs **after** this prefix. The returned
+  Cairo array adds one Serde length around the full word buffer; after removing
+  that envelope, `public_words` is bit-identical to Rust. Negative words travel
+  as signed felts in Cairo, and signed little-endian i64 words in Rust.
+* `Word::write(value, ref out)` appends a scalar; `tensor(ref out, dims, values)`
+  appends dimensions and elements without a redundant data length; `vector`
+  appends a Rust `Vec` (length, elements). A rank-one ndarray also encodes
+  length then elements, but declares `tensor<1,T>`.
+* Declare the **result only** on `// output:`: `q32`, `i64`, `bool`, `c32`,
+  `tensor<1,q32>` through rank 4, `[T]` for a Rust `Vec`, `(T,U,...)` for a
+  tuple, `()` for unit, and `option<T>` for Rust `Option` (append 0 for None
+  or 1 followed by T for Some; do not use Cairo Option's enum tags).
+  The driver strips input shapes before decoding result values. `input_shapes`
+  and `public_words` are separate report fields; tensor dimensions are also
+  reported in `output_shape`.
+* Copy each Rust entry's `// unused parameters: a, b` and
+  `// outputs: mutated A, B` declarations into its Cairo file. Sync checks
+  unused declarations against Rust. The output checker checks mutated
+  declarations and compares NumPy's written arguments in that order.
+* Cairo arrays are append-only. Use ordinary arrays/spans for reads and
+  sequential outputs; use `Felt252Dict<felt252>` for genuine mutations (see
+  bubble sort). `Felt252Dict<i64>` is not supported by Cairo's dictionary
+  value trait; store the signed integer as a felt and convert on reads.
+* Fused contractions are `np::inner(a,b)`, `matmul(a,b,rows,inner,cols)`,
+  `matvec(a,b,rows,cols)` and `vecmat(a,b,rows,cols)`, on flattened Q32 spans.
+  They accumulate `i128` raw products and rescale once. Preserve Rust's
+  evaluation order and broadcasting: GEMM scales A before matmul and
+  broadcasts the product to C as `ndarray::zip_mut_with` does.
+* `Q32Trait` includes `exp`, `ln`, `tanh`, `atan`, `atan2`, `powi`, `powf`,
+  and `floor`, in addition to the existing operations. `powi` multiplies
+  sequentially, not by exponentiation by squaring. `C32Trait` provides
+  `new`, `from_real`, `conj`, `norm_sqr`, `abs`, `exp`, `scale(Q32)` and
+  `div_real(Q32)`; `C32` supports `+ - * /` and unary `-`. Constants in
+  `q32` include `C_ZERO`, `C_ONE`, `I`, `HALF`, `LN_2`, `LOG2_E`.
+
+Build only the entries being ported (Scarb 2.20.1 supports `--target-names`):
+
+```sh
+# From the repository root. Put the Scarb distribution's bin on PATH too:
+# scarb discovers scarb-execute and scarb-cairo-test there.
+export PATH="$HOME/.local/share/scarb/scarb-v2.20.1-x86_64-unknown-linux-gnu/bin:$PATH"
+.venv/bin/python benchmarking/baselines/zkvm_common/sync_cases.py
+MEMRUN_MAX=8G /home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh \
+  scarb --manifest-path benchmarking/baselines/cairo/Scarb.toml build \
+  --target-names npbench_crc16_crc16__crc16,npbench_polybench_gemm_gemm__kernel
+# SCARB_TARGET_NAMES accepts the same comma-separated list. Driver --mode setup
+# also builds only its selected case.
+```
+
+For validation on this machine, point `SCARB` at a wrapper that exports
+`MEMRUN_MAX=8G` and calls `memrun.sh scarb "$@"`; this caps each driver execution.
+The phase-1 wrapper is `eval-redo/cairo-work/p1/scarb-mem`. Execute only:
+
+```sh
+export SCARB=/home/zhantong/Projects/zinnia-project/eval-redo/cairo-work/p1/scarb-mem
+.venv/bin/python benchmarking/baselines/zkvm_common/check_outputs.py \
+  --systems native,cairo --cases npbench_crc16_crc16/crc16 --input A
+.venv/bin/python benchmarking/baselines/zkvm_common/check_outputs.py \
+  --systems native,cairo --cases npbench_crc16_crc16/crc16 --input B
+.venv/bin/python benchmarking/baselines/cairo/cairo_baseline.py \
+  --case-dir benchmarking/datasets/npbench/npbench_crc16_crc16 \
+  --function crc16 --input B --mode execute
+# Stronger check: all committed i64 words, including input and result shapes,
+# against the unchanged native Rust program, on both A and B:
+.venv/bin/python benchmarking/baselines/cairo/tests/check_public_words.py \
+  --cases npbench_crc16_crc16/crc16
+```
+
+`check_outputs.py` accepts both `program/function` and `program__function`;
+`check_public_words.py` uses `program/function` and accepts `--fixtures-dir`
+for scratch fixtures. Build `kernels-native` first as above; the word checker
+links a read-only oracle to its existing Rust library. The harness locates
+`cairo/<function>.cairo` using the case set's `shape_generic` and `function`
+fields and passes `--function` automatically. No harness run is needed for
+local validation, and **never prove locally** for the Cairo porting work.
+
+Library checks (execute tests, no proofs):
+
+```sh
+.venv/bin/python benchmarking/baselines/cairo/tests/generate_q32_vectors.py
+(cd benchmarking/baselines/cairo && "$SCARB" test)
+```
+
+The generator compiles the unchanged `zkvm_common/q32/src/lib.rs` with rustc
+and writes exact integer expectations to `src/q32/rust_vectors.cairo`.
+Tests cover argument-reduction boundaries, underflow, powers of two, tiny
+positive logarithm inputs, quadrants, repeated powers, complex rounding and
+invalid domains. Phase 2 should keep case-specific helpers in its own file;
+report any further shared-library helper needed rather than editing the
+phase-1-owned `q32.cairo` or `np.cairo` concurrently.
 
 ### How the Rust guests move data
 

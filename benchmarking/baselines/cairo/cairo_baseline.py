@@ -6,7 +6,7 @@ case folder, the fixture, the input name and a mode; prints one JSON object
 non-zero on failure.
 
 Modes:
-  setup    compile the package (`scarb build`, every case's executable). Cairo
+  setup    compile this case (`scarb build --target-names <case>`). Cairo
            has no per-program key generation.
   execute  `scarb execute` on the bootloader target: public output and the
            execution resources (steps, builtins).
@@ -33,12 +33,21 @@ Encoding: floats are Q32 integers (`round(v * 2^32)`), integers as is,
 booleans 0/1; arrays are `[len, elements...]` in row-major order (Cairo Serde
 of `Array<T>`); negative values are encoded modulo the Stark prime.
 
-The output layout of each case is declared in its `main.cairo` by a line
+Shape-generic entries live in `cairo/<function>.cairo` and take
+`Array<Array<i64>>` raw parameter buffers. Each array buffer ends with its
+dimensions. They return `Array<i64>` containing exactly the Rust committed
+words: the input-shape vector first, then the output. Cairo Serde adds the
+outer array length. Reports expose the inner words as `public_words`.
+
+The output layout of each case is declared in its source by a line
 `// output: <type>` where <type> is `q32`, `i64`, `bool`, `[<type>]` (an
 array: length then elements) or `(<type>, ...)` (a tuple). `dim` is an extent
 of a data-dependent output shape: committed like an `i64` but reported as
 `output_shape`, apart from the values compared with NumPy (e.g. `([dim], [q32])`
-for a 2-D crop whose rows and columns depend on the data).
+for a 2-D crop whose rows and columns depend on the data). Shape-generic
+layouts additionally support `tensor<rank,T>` (dimensions then elements, no
+data length), `c32`, `option<T>` (0 for None, 1 then T for Some), and `()`.
+The layout describes only the result, not the input-shape prefix.
 """
 
 from __future__ import annotations
@@ -98,13 +107,17 @@ def flatten(value) -> list:
     return [value]
 
 
-def unused_params(case_dir: Path) -> list[str]:
+def source_path(case_dir: Path, function: str | None = None) -> Path:
+    return case_dir / "cairo" / f"{function}.cairo" if function else case_dir / "main.cairo"
+
+
+def unused_params(case_dir: Path, function: str | None = None) -> list[str]:
     """Parameters the program declares it never reads (`// unused parameters: a, b`).
 
     Zinnia removes such inputs from the circuit, so the program does not take
     them either and they are left out of its arguments.
     """
-    match = re.search(r"^//\s*unused parameters:\s*(.+?)\s*$", (case_dir / "main.cairo").read_text(), re.M)
+    match = re.search(r"^//\s*unused parameters:\s*(.+?)\s*$", source_path(case_dir, function).read_text(), re.M)
     return [name.strip() for name in match.group(1).split(",")] if match else []
 
 
@@ -142,14 +155,69 @@ def encode_args(fixture: dict, input_name: str, unused: list[str]) -> list[int]:
     return felts
 
 
+def encode_shaped_args(fixture: dict, input_name: str, unused: list[str]) -> tuple[list[int], list[int]]:
+    """Rust raw word buffers wrapped in Cairo Array<Array<i64>> Serde.
+
+    Dimensions come from actual rectangular input values, checked against the
+    fixture metadata just as Rust does. Complex leaves are real/imaginary pairs.
+    """
+    values = fixture["inputs"][input_name]
+    names = [p["name"] for p in fixture["parameters"]]
+    if any(n not in names for n in unused):
+        raise Failure("unknown unused parameter")
+    buffers, shapes = [], []
+
+    def visit(param, value):
+        if param["kind"] == "tuple":
+            if len(value) != len(param["items"]):
+                raise Failure("tuple length mismatch")
+            for item, v in zip(param["items"], value):
+                visit(item, v)
+            return
+        dtype = param["dtype"]
+
+        def walk(v):
+            if isinstance(v, list):
+                children = [walk(item) for item in v]
+                dims = children[0][0] if children else []
+                if any(d != dims for d, _ in children):
+                    raise Failure("ragged array")
+                return [len(v), *dims], [w for _, ws in children for w in ws]
+            return [], [encode_scalar(v, "float" if dtype == "complex" else dtype)]
+
+        dims, words = walk(value)
+        if dtype == "complex":
+            if not dims or dims[-1] != 2:
+                raise Failure("complex value must be a real/imaginary pair")
+            dims.pop()
+        if param["kind"] == "scalar":
+            if dims:
+                raise Failure("scalar given as an array")
+        elif param["kind"] == "array":
+            if not dims or (param.get("shape") is not None and dims != param["shape"]):
+                raise Failure(f"array shape {dims} differs from {param.get('shape')}")
+            shapes.extend(dims)
+            words += dims
+        else:
+            raise Failure("unknown parameter kind")
+        if any(not -(2**63) <= w < 2**63 for w in words):
+            raise Failure("input outside signed 64-bit range")
+        buffers.append(words)
+
+    for param in fixture["parameters"]:
+        if param["name"] not in unused:
+            visit(param, values[param["name"]])
+    return [len(buffers), *[w for buf in buffers for w in [len(buf), *buf]]], shapes
+
+
 # --------------------------------------------------------------------------
 # Outputs: felts -> publics
 # --------------------------------------------------------------------------
 
-def output_schema(case_dir: Path):
-    match = re.search(r"^//\s*output:\s*(.+?)\s*$", (case_dir / "main.cairo").read_text(), re.M)
+def output_schema(case_dir: Path, function: str | None = None):
+    match = re.search(r"^//\s*output:\s*(.+?)\s*$", source_path(case_dir, function).read_text(), re.M)
     if not match:
-        raise Failure("main.cairo declares no `// output:` layout")
+        raise Failure(f"{source_path(case_dir, function)} declares no `// output:` layout")
     schema, rest = parse_type(match.group(1).replace(" ", ""))
     if rest:
         raise Failure(f"cannot parse output layout {match.group(1)!r}")
@@ -157,6 +225,21 @@ def output_schema(case_dir: Path):
 
 
 def parse_type(text: str):
+    if text.startswith("tensor<"):
+        rank, rest = text[7:].split(",", 1)
+        inner, rest = parse_type(rest)
+        if not rest.startswith(">") or not rank.isdigit() or not 1 <= int(rank) <= 4:
+            raise Failure("invalid tensor layout")
+        return ("tensor", (int(rank), inner)), rest[1:]
+    if text.startswith("option<"):
+        inner, rest = parse_type(text[7:])
+        if not rest.startswith(">"):
+            raise Failure("invalid option layout")
+        return ("option", inner), rest[1:]
+    if text.startswith("()"):
+        return ("tuple", []), text[2:]
+    if text.startswith("c32"):
+        return ("tuple", ["q32", "q32"]), text[3:]
     if text.startswith("["):
         inner, rest = parse_type(text[1:])
         if not rest.startswith("]"):
@@ -185,6 +268,17 @@ def signed(felt: int) -> int:
 
 def decode_output(report: dict, schema, felts: list[int]) -> None:
     """Sets `publics` (and `output_shape` for `dim` entries) from the output felts."""
+    if isinstance(schema, tuple) and schema[0] == "shaped":
+        # Cairo Serde's outer Array envelope; its contents are Rust's exact words.
+        if not felts or felts[0] != len(felts) - 1:
+            raise Failure("invalid public word envelope")
+        words = [signed(v) for v in felts[1:]]
+        if not words or not 0 <= words[0] < len(words):
+            raise Failure("invalid input shape commitment")
+        report["public_words"] = words
+        report["input_shapes"] = words[1:1 + words[0]]
+        felts = felts[2 + words[0]:]
+        schema = schema[1]
     publics: list = []
     shape: list = []
     pos = decode_into(schema, felts, 0, publics, shape)
@@ -196,6 +290,8 @@ def decode_output(report: dict, schema, felts: list[int]) -> None:
 
 
 def decode_into(schema, felts: list[int], pos: int, out: list, shape: list) -> int:
+    if pos >= len(felts) and schema != ("tuple", []):
+        raise Failure("truncated public output")
     if schema == "dim":
         shape.append(signed(felts[pos]))
         return pos + 1
@@ -211,6 +307,26 @@ def decode_into(schema, felts: list[int], pos: int, out: list, shape: list) -> i
         out.append(bool(felts[pos]))
         return pos + 1
     kind, inner = schema
+    if kind == "option":
+        tag = felts[pos]
+        if tag not in (0, 1):
+            raise Failure("invalid option tag")
+        return decode_into(inner, felts, pos + 1, out, shape) if tag else pos + 1
+    if kind == "tensor":
+        rank, element = inner
+        dims = [signed(v) for v in felts[pos:pos + rank]]
+        if len(dims) != rank or any(d < 0 for d in dims):
+            raise Failure("invalid tensor dimensions")
+        length = 1
+        for dim in dims:
+            length *= dim
+        if length > len(felts) - pos - rank:
+            raise Failure("truncated tensor")
+        shape.extend(dims)
+        pos += rank
+        for _ in range(length):
+            pos = decode_into(element, felts, pos, out, shape)
+        return pos
     if kind == "array":
         length = felts[pos]
         pos += 1
@@ -287,7 +403,7 @@ def report_proof(report: dict, binary_proof_path: Path, proof_path: Path) -> Non
 
 def run(args: argparse.Namespace, report: dict) -> None:
     case_dir = args.case_dir.resolve()
-    case = case_dir.name
+    case = case_dir.name + (f"__{args.function}" if args.function else "")
     report["case"] = case
     work = (args.work_dir or PACKAGE_DIR / "work" / case).resolve()
     work.mkdir(parents=True, exist_ok=True)
@@ -295,16 +411,29 @@ def run(args: argparse.Namespace, report: dict) -> None:
     binary_proof_path = work / f"proof-stwo-{args.input}.bin"
 
     if args.mode == "setup":
-        scarb(report, "build", "build")
+        scarb(report, "build", "build", "--target-names", case)
         return
 
-    schema = output_schema(case_dir)
+    schema = output_schema(case_dir, args.function)
+    if args.function:
+        schema = ("shaped", schema)
+    expected_shapes = None
+    if args.mode in ("execute", "prove") or args.function:
+        candidates = ([case_dir / f"fixture.{args.function}.json", case_dir / f"fixture_{args.function}.json"]
+                      if args.function else []) + [case_dir / "fixture.json"]
+        fixture_path = args.fixture or next((p for p in candidates if p.exists()), candidates[-1])
+        fixture = json.loads(fixture_path.read_text())
+        unused = unused_params(case_dir, args.function)
+        if args.function:
+            felts, expected_shapes = encode_shaped_args(fixture, args.input, unused)
+        else:
+            felts = encode_args(fixture, args.input, unused)
     if args.mode in ("execute", "prove"):
-        fixture = json.loads((args.fixture or case_dir / "fixture.json").read_text())
         args_path = work / f"args-{args.input}.json"
-        felts = encode_args(fixture, args.input, unused_params(case_dir))
         args_path.write_text(json.dumps([hex(v % STARK_PRIME) for v in felts]))
         execution_dir = execute(report, case, case_dir, args_path, schema)
+        if args.function and report.get("input_shapes") != expected_shapes:
+            raise Failure("committed input shapes differ from fixture")
         if args.mode == "execute":
             shutil.rmtree(execution_dir, ignore_errors=True)
             return
@@ -323,6 +452,8 @@ def run(args: argparse.Namespace, report: dict) -> None:
     proof = json.loads(proof_path.read_text())
     report_proof(report, binary_proof_path, proof_path)
     decode_output(report, schema, program_output(proof_output(proof)))
+    if args.function and report.get("input_shapes") != expected_shapes:
+        raise Failure("committed input shapes differ from fixture")
     target = proof_path
     if args.tamper:
         proof["claim"]["public_data"]["public_memory"]["output"][-1][1][0] ^= 1
@@ -348,6 +479,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--case-dir", type=Path, required=True)
     parser.add_argument("--fixture", type=Path)
+    parser.add_argument("--function", help="shape-generic entry function (cairo/<function>.cairo)")
     parser.add_argument("--input", default="B")
     parser.add_argument("--mode", choices=["setup", "execute", "prove", "verify"], required=True)
     parser.add_argument("--proof-mode", choices=["stwo"], default="stwo")

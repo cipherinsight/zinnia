@@ -1,0 +1,1 @@
+../../../../datasets/pythran/pythran_reverse_cumsum/cairo/reverse_cumsum.cairo

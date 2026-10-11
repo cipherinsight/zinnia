@@ -167,17 +167,21 @@ class ContractProgramAdapter(Adapter):
         self.description = program.description
         self.windows = program.windows
 
+    def case_source(self, case: PerfCase) -> Path:
+        if self.name == "cairo" and case.shape_generic:
+            return case.directory / "cairo" / f"{case.function}.cairo"
+        return self.program.case_file_path(case)
+
     def missing_program(self, case: PerfCase) -> str | None:
         entry = Path(self.program.argv()[-1])
         if not entry.exists():
             return f"no program {paths.relative_to_repo(entry)} (not built?)"
-        case_file = self.program.case_file_path(case)
-        if not case_file.exists():
-            return f"no {case_file.name} in the case folder"
+        if not self.case_source(case).exists():
+            return f"no {self.case_source(case).relative_to(case.directory)} in the case folder"
         return None
 
     def program_files(self, case: PerfCase) -> list[Path]:
-        return [self.program.case_file_path(case), Path(self.program.argv()[-1])]
+        return [self.case_source(case), Path(self.program.argv()[-1])]
 
     # -- invoking the program -------------------------------------------------
 

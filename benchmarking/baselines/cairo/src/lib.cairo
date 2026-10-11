@@ -1,6 +1,6 @@
-//! The DS-1000 performance-set kernels as Cairo programs over Q32 integers.
-//! Each case is `datasets/ds1000/<case>/main.cairo`, linked in as
-//! `src/cases/<case>.cairo`, with one executable target per case.
+//! Fixed DS-1000 and shape-generic NPBench/Pythran programs over Q32 integers.
+//! sync_cases.py links each source under src/cases with one executable target.
 pub mod cases;
 pub mod np;
 pub mod q32;
+pub mod io;
