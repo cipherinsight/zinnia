@@ -30,6 +30,7 @@ pub use always_satisfied_elimination::AlwaysSatisfiedElimination;
 pub use assert_subsumption::AssertSubsumption;
 pub use asserted_equality_const_prop::AssertedEqualityConstantPropagation;
 pub use constant_fold::ConstantFold;
+pub(crate) use constant_fold::exact_zero_product_sum;
 pub use constant_selector_queries::ConstantSelectorQueries;
 pub use dead_code_elimination::DeadCodeElimination;
 pub use double_not_elimination::DoubleNotElimination;

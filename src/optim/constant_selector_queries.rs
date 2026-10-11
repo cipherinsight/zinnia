@@ -33,7 +33,7 @@ fn computed_live(stmts: &[IRStatement]) -> Vec<bool> {
 /// Only these operations are known total over their operands' field values.
 /// Conservatively retain every other live producer, including checked
 /// arithmetic hidden underneath a BoolCast/equality or ordering predicate.
-fn total_for_erasure(ir: &IR) -> bool {
+pub(super) fn total_for_erasure(ir: &IR) -> bool {
     matches!(
         ir,
         IR::ConstantInt { .. }
