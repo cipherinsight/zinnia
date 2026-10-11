@@ -1,0 +1,137 @@
+{
+  "program": "case0303",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:12-13: A[:col] and reshape (-1,ncol) have private dimensions. At most 23 retained elements; output packs row/column metadata and 23 padded elements.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 23719,
+    "rewrites": [
+      "Keep ncol private; pad flattened output to 23 elements with public row and column counts.",
+      "Determine row count by scanning 1..23 and comparing k*ncol to 23, avoiding native field remainder backend crash without narrowing ncol."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "numpy_shape": [
+        4,
+        5
+      ],
+      "compared_values": 20,
+      "max_absolute_error": 1.1396994459289544e-10,
+      "actual": [
+        0.8623015724588186,
+        0.8299503582529724,
+        0.7599906520918012,
+        0.7957204685080796,
+        0.7608183186966926,
+        0.14512095041573048,
+        0.614151832414791,
+        0.8587227121461183,
+        0.3123426050879061,
+        0.713537686271593,
+        0.8454132105689496,
+        0.5638272159267217,
+        0.49306546174921095,
+        0.14411450223997235,
+        0.6153785367496312,
+        0.6308780000545084,
+        0.9277874887920916,
+        0.7719644501339644,
+        0.237161120865494,
+        0.021411859896034002
+      ],
+      "expected": [
+        0.8623015725010982,
+        0.8299503582371296,
+        0.7599906521940369,
+        0.7957204685353314,
+        0.7608183186840491,
+        0.14512095051736862,
+        0.6141518323787998,
+        0.8587227120376881,
+        0.31234260504515643,
+        0.7135376863528735,
+        0.8454132105670917,
+        0.5638272160406916,
+        0.49306546163661524,
+        0.1441145023131083,
+        0.6153785368168129,
+        0.6308780000131561,
+        0.9277874889014913,
+        0.7719644500852342,
+        0.23716112086229824,
+        0.02141185986644789
+      ]
+    },
+    "B": {
+      "status": "pass",
+      "numpy_shape": [
+        4,
+        5
+      ],
+      "compared_values": 20,
+      "max_absolute_error": 1.1334122529405022e-10,
+      "actual": [
+        0.2154779804404825,
+        0.4740601619705558,
+        0.2313385191373527,
+        0.08598790992982686,
+        0.4193096957169473,
+        0.6347427975852042,
+        0.557530258782208,
+        0.040667400462552905,
+        0.5840142178349197,
+        0.665591630153358,
+        0.5255135383922607,
+        0.2034980128519237,
+        0.8593740244396031,
+        0.6827008763793856,
+        0.13213315815664828,
+        0.05951463244855404,
+        0.6908002032432705,
+        0.3407301693223417,
+        0.17298867274075747,
+        0.862287305528298
+      ],
+      "expected": [
+        0.21547798036470667,
+        0.47406016186609456,
+        0.231338519141857,
+        0.08598790986183291,
+        0.41930969577708,
+        0.634742797534719,
+        0.5575302588608084,
+        0.04066740050329809,
+        0.5840142177542594,
+        0.6655916301908565,
+        0.5255135382830868,
+        0.20349801274243984,
+        0.8593740244747031,
+        0.6827008764927268,
+        0.1321331581823323,
+        0.059514632450890725,
+        0.6908002032166799,
+        0.3407301692272171,
+        0.17298867263841444,
+        0.862287305591329
+      ]
+    }
+  },
+  "notes": "kernel.py:12-13: A[:col] and reshape (-1,ncol) have private dimensions. At most 23 retained elements; output packs row/column metadata and 23 padded elements.\nPad at 23 elements; public reshape dimensions, private ncol retained.",
+  "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0303/kernel.py",
+  "numeric_encoding": {
+    "modulus": "52435875175126190479447740508185965837690552500527637822603658699938581184513",
+    "real_scale": 4294967296,
+    "signed_encoding": "centered field residues; no unsigned-only interpretation of negative fixtures",
+    "validation_tolerance": {
+      "rtol": 1e-06,
+      "atol": 1e-06
+    }
+  }
+}

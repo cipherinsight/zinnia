@@ -1,0 +1,490 @@
+{
+ "schema": 1,
+ "system": "zinnia_halo2",
+ "case": "ds1000_case0334",
+ "description": "Zinnia -> halo2-base backend (IPA/BN254, Blake2b transcript)",
+ "windows": {
+  "setup": "compile + parameter choice + witness-free keygen (ParamsIPA::new, keygen_vk, keygen_pk) + writing params/pk/vk to the key directory",
+  "prove_core": "prove_s: create_proof + transcript finalize (halo2_hw's prove_s covers the same calls)",
+  "end_to_end": "preprocess_s (IR evaluation resolving external calls) + witness_s (synthesis into the builder pinned to keygen's layout) + prove_s; params and proving key read from files beforehand, untimed (load_params_s, load_pk_s), as halo2_hw",
+  "verify": "verify_s: transcript + verify_proof against the verifying key read from the key directory (load_params_s, load_vk_s untimed), as halo2_hw"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/ds1000/ds1000_case0334/kernel.py": "9b4afa0d4bba61d0424578ca46ab18e7055520088502eeae6da40cef76e5f8af",
+  "benchmarking/datasets/ds1000/ds1000_case0334/fixture.json": "7ebe6e3837c43d13e96a6b9296607b4acb87c34514433ecd40fc75001e30f58e"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-09T08:28:27+0000",
+  "loadavg": [
+   14.36279296875,
+   13.82275390625,
+   11.7392578125
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "compile": 0.03073632624000311,
+    "keygen_s": 0.325755794,
+    "write_s": 0.003108433447778225
+   },
+   "details": {
+    "params": {
+     "k": 9,
+     "lookup_bits": 8,
+     "precision_bits": 32
+    },
+    "params_source": "Zinnia estimate_params",
+    "cells": "advice=[6101] lookup=[1700, 0, 0] fixed=11 instances=50 second_phase=PhaseShape { advice: 0, constants: 0 }",
+    "key_file_bytes": {
+     "keys.json": 389,
+     "params.bin": 32836,
+     "pk.bin": 3444023,
+     "vk.bin": 2951
+    },
+    "exposed_outputs": 50,
+    "elided_outputs": 0,
+    "ir_sha256": "b3cc96c7f9381f5cc998fe2f20bf33b4fea08ac5a563d2cdee3917346d57b05d"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 0.5125331226736307,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 49545216,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   14.17333984375,
+   13.79248046875,
+   11.74072265625
+  ],
+  "child": {
+   "wall_s": 0.40293510910123587,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 53174272,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 0.225609962,
+   "end_to_end_s": 0.229700761,
+   "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-ds-s5/work/zinnia_halo2/ds1000_case0334/proofs/warmup/proof.bin",
+   "proof_bytes": 6720,
+   "timings_s": {
+    "load_params_s": 0.016895237,
+    "load_pk_s": 0.003158229,
+    "parse_inputs_s": 1.8438e-05,
+    "preprocess_s": 0.000461243,
+    "witness_s": 0.003629556,
+    "thread_pool_s": 0.000457261,
+    "prove_s": 0.225609962,
+    "prove_call_s": 0.23364763148128986
+   },
+   "details": {
+    "k": 9
+   },
+   "proof_sha256": "2ebe3105b27e76a2e4a5418ac7746b9a11d3300a682112c75f8c66677ac9ed3b"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 50 elements differ",
+   "expected_count": 50,
+   "actual_count": 50,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "1933f3f6080b34c9684b58b900bb27cb6e34c1a98f5e3f9923d25978681383f5",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    0.7255964018404484,
+    0.2937905974686146,
+    0.6595053996425122,
+    0.7127384645864367,
+    0.16206506872549653,
+    0.7151784263551235,
+    0.47514395974576473,
+    0.10431483294814825,
+    0.5926974271424115,
+    0.41839822637848556,
+    0.5988990839105099,
+    0.15821464895270765,
+    0.4328281534835696,
+    0.9155021978076547,
+    0.7375554859172553,
+    0.8488700487650931,
+    0.5916659524664283,
+    0.6850836910307407,
+    0.28016005363315344,
+    0.43993534171022475,
+    0.45688483701087534,
+    0.5927430291194469,
+    0.6250294300261885,
+    0.30277338437736034,
+    0.4232877541799098,
+    0.42145324661396444,
+    0.27662617107853293,
+    0.0971299724187702,
+    0.4700746580492705,
+    0.6384073118679225,
+    0.432777930283919,
+    0.48951503401622176,
+    0.3641144132707268,
+    0.7683125189505517,
+    0.5793953188695014,
+    0.5696039048489183,
+    0.6488093226216733,
+    0.7399071755353361,
+    0.3416788075119257,
+    0.3709304730873555,
+    0.762742098653689,
+    0.6271751199383289,
+    0.6178437233902514,
+    0.3401012218091637,
+    0.5583077862393111,
+    0.3005447993054986,
+    0.49362941179424524,
+    0.42701087216846645,
+    0.3225679616443813,
+    0.45374548877589405
+   ],
+   "elided": [],
+   "shapes": [
+    [
+     50
+    ]
+   ]
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    14.17333984375,
+    13.79248046875,
+    11.74072265625
+   ],
+   "child": {
+    "wall_s": 0.40289482939988375,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 54099968,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.226577607,
+    "end_to_end_s": 0.230660551,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-ds-s5/work/zinnia_halo2/ds1000_case0334/proofs/sample-1/proof.bin",
+    "proof_bytes": 6720,
+    "timings_s": {
+     "load_params_s": 0.016900368,
+     "load_pk_s": 0.003183437,
+     "parse_inputs_s": 1.7605e-05,
+     "preprocess_s": 0.000464755,
+     "witness_s": 0.003618189,
+     "thread_pool_s": 0.000468099,
+     "prove_s": 0.226577607,
+     "prove_call_s": 0.23466512095183134
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "ba843d2db1e63c30137463f2c81f9506198161c665db2fec2248344297585cd4"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 50 elements differ",
+    "expected_count": 50,
+    "actual_count": 50,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "1933f3f6080b34c9684b58b900bb27cb6e34c1a98f5e3f9923d25978681383f5",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     0.7255964018404484,
+     0.2937905974686146,
+     0.6595053996425122,
+     0.7127384645864367,
+     0.16206506872549653,
+     0.7151784263551235,
+     0.47514395974576473,
+     0.10431483294814825,
+     0.5926974271424115,
+     0.41839822637848556,
+     0.5988990839105099,
+     0.15821464895270765,
+     0.4328281534835696,
+     0.9155021978076547,
+     0.7375554859172553,
+     0.8488700487650931,
+     0.5916659524664283,
+     0.6850836910307407,
+     0.28016005363315344,
+     0.43993534171022475,
+     0.45688483701087534,
+     0.5927430291194469,
+     0.6250294300261885,
+     0.30277338437736034,
+     0.4232877541799098,
+     0.42145324661396444,
+     0.27662617107853293,
+     0.0971299724187702,
+     0.4700746580492705,
+     0.6384073118679225,
+     0.432777930283919,
+     0.48951503401622176,
+     0.3641144132707268,
+     0.7683125189505517,
+     0.5793953188695014,
+     0.5696039048489183,
+     0.6488093226216733,
+     0.7399071755353361,
+     0.3416788075119257,
+     0.3709304730873555,
+     0.762742098653689,
+     0.6271751199383289,
+     0.6178437233902514,
+     0.3401012218091637,
+     0.5583077862393111,
+     0.3005447993054986,
+     0.49362941179424524,
+     0.42701087216846645,
+     0.3225679616443813,
+     0.45374548877589405
+    ],
+    "elided": [],
+    "shapes": [
+     [
+      50
+     ]
+    ]
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.014516218,
+     "not_applicable": null,
+     "timings_s": {
+      "load_vk_s": 0.000272027,
+      "load_params_s": 0.016945184,
+      "verify_call_s": 0.014598947018384933,
+      "verify_s": 0.014516218
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.16443936992436647,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 36294656,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-2",
+   "loadavg_before": [
+    15.04052734375,
+    13.97900390625,
+    11.81201171875
+   ],
+   "child": {
+    "wall_s": 0.40274865832179785,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 53977088,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.216541725,
+    "end_to_end_s": 0.220636707,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-ds-s5/work/zinnia_halo2/ds1000_case0334/proofs/sample-2/proof.bin",
+    "proof_bytes": 6720,
+    "timings_s": {
+     "load_pk_s": 0.00317437,
+     "load_params_s": 0.016981753,
+     "parse_inputs_s": 1.8743e-05,
+     "preprocess_s": 0.000459581,
+     "witness_s": 0.003635401,
+     "thread_pool_s": 0.000441562,
+     "prove_s": 0.216541725,
+     "prove_call_s": 0.224661766551435
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "273ba1836ae323c10ff415fa04571c48b45a7fc65775949b337f88f01bb6a29d"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 50 elements differ",
+    "expected_count": 50,
+    "actual_count": 50,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "1933f3f6080b34c9684b58b900bb27cb6e34c1a98f5e3f9923d25978681383f5",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.013895081,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.016933669,
+      "load_vk_s": 0.000257424,
+      "verify_call_s": 0.013964894227683544,
+      "verify_s": 0.013895081
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.13240114320069551,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 36356096,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-3",
+   "loadavg_before": [
+    15.43798828125,
+    14.0791015625,
+    11.8564453125
+   ],
+   "child": {
+    "wall_s": 0.4024991849437356,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 53927936,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.238374624,
+    "end_to_end_s": 0.24243759,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-ds-s5/work/zinnia_halo2/ds1000_case0334/proofs/sample-3/proof.bin",
+    "proof_bytes": 6720,
+    "timings_s": {
+     "load_pk_s": 0.003154531,
+     "load_params_s": 0.016856522,
+     "parse_inputs_s": 1.634e-05,
+     "preprocess_s": 0.000457066,
+     "witness_s": 0.0036059,
+     "thread_pool_s": 0.000428285,
+     "prove_s": 0.238374624,
+     "prove_call_s": 0.2464733188971877
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "34eb3cdfc0740539e857621072be0bbcdd8fd469972eb9fbe670f129e977993f"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 50 elements differ",
+    "expected_count": 50,
+    "actual_count": 50,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "1933f3f6080b34c9684b58b900bb27cb6e34c1a98f5e3f9923d25978681383f5",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.011811056,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.016843937,
+      "load_vk_s": 0.00025258,
+      "verify_call_s": 0.011881652288138866,
+      "verify_s": 0.011811056
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.1329189222306013,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 36417536,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 0.011074634,
+    "not_applicable": null,
+    "timings_s": {
+     "load_params_s": 0.016855929,
+     "load_vk_s": 0.000250063,
+     "verify_call_s": 0.011141079477965832,
+     "verify_s": 0.011074634
+    },
+    "details": {
+     "error": "halo2-base verify_proof failed: ConstraintSystemFailure"
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.13235606346279383,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 39419904,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

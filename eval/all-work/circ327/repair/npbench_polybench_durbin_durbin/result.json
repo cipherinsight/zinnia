@@ -1,0 +1,87 @@
+{
+  "program": "npbench_polybench_durbin_durbin",
+  "function": "kernel",
+  "category": "accepted_as_written",
+  "as_written": {
+    "status": "accepted",
+    "constraints": 317211,
+    "error": null,
+    "seconds": 4.116287652999745,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_polybench_durbin_durbin/as_written.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "source_file": "npbench_polybench_durbin_durbin/as_written.zok",
+    "artifact_sha256": "99343b91eb86580e9fadf218d8d48b8a70f10098fb3e542afb61cca9df63cbcb"
+  },
+  "rewrite": null,
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "expected_elements": 16,
+      "actual_elements": 16,
+      "max_abs_error": 5.4193802501156796e-08,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_polybench_durbin_durbin/as_written.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_polybench_durbin_durbin/A.pin"
+      ]
+    },
+    "B": {
+      "status": "pass",
+      "expected_elements": 16,
+      "actual_elements": 16,
+      "max_abs_error": 1.5895512106567367e-07,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_polybench_durbin_durbin/as_written.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_polybench_durbin_durbin/B.pin"
+      ]
+    }
+  },
+  "notes": "Native u64 Q32 arithmetic with explicit signs, wide product parts, and quotient/remainder digits; all source outputs retained.",
+  "source": {
+    "program": "npbench_polybench_durbin_durbin",
+    "dataset": "npbench",
+    "kernel": "benchmarking/datasets/npbench/npbench_polybench_durbin_durbin/kernel.py",
+    "function": "kernel",
+    "sha256": "001d7b597471dc96a45f803cd4768cdc38d9185fd1b58e823d5fd8f6bfc8319f"
+  },
+  "numeric_encoding": {
+    "real_scale": 4294967296,
+    "rtol": 1e-06,
+    "atol": 1e-06,
+    "representation": "signed two-complement u64 with native wide products",
+    "helper": {
+      "file": "native.zok",
+      "sha256": "230210f08577e08c6d8067d12af2de953bb0d8a1227875d2288459a4e80ac9ab"
+    }
+  },
+  "old_category": "needs_gadget: division",
+  "old_result": "batch3/npbench_polybench_durbin_durbin/result.json",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+    "tmpdir": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/tmp"
+  },
+  "fixture": {
+    "path": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/npbench/npbench_polybench_durbin_durbin/fixture.json",
+    "sha256": "4eb650d857768d9fbb9f2cd4d5b3788a142023f88ddcbe49a85fb659c6f22530"
+  },
+  "reason": "Native signed Q32 arithmetic compiles; both fixtures pass."
+}

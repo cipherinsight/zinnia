@@ -1,0 +1,16 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[5][2] input_data, private u64 threshold) -> u64[5]:
+    u64[5] weights = [0u64; 5]
+    for u32 i in 0..5 do
+        u64 total = 0u64
+        for u32 j in 0..5 do
+            u64 count = 0u64
+            for u32 k in 0..2 do
+                count = count + if input_data[i][k] == input_data[j][k] then 1u64 else 0u64 fi
+            endfor
+            total = total + if lt(threshold*2u64,count*4294967296u64) then 1u64 else 0u64 fi
+        endfor
+        weights[i] = 4294967296u64/total
+    endfor
+    return weights

@@ -1,0 +1,14 @@
+def main(private integer[13][16] A, private integer[16] x) -> integer[16]:
+    integer[13] tmp = [0; 13]
+    for u32 i in 0..13 do
+        for u32 j in 0..16 do
+            tmp[i] = tmp[i] + A[i][j]*x[j]/4294967296
+        endfor
+    endfor
+    integer[16] result = [0; 16]
+    for u32 j in 0..16 do
+        for u32 i in 0..13 do
+            result[j] = result[j] + tmp[i]*A[i][j]/4294967296
+        endfor
+    endfor
+    return result

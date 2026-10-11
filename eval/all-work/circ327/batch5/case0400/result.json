@@ -1,0 +1,66 @@
+{
+  "program": "case0400",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "rejected",
+    "error": "Running frontend\n\nthread 'main' (150702) panicked at src/front/zsharp/term.rs:1234:18:\ncalled `Result::unwrap()` on an `Err` value: \"Empty array\"\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    "constraints": null,
+    "seconds": 0.018744945526123047,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch5/case0400/as_written.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ]
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 1,
+    "seconds": 0.006848573684692383,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch5/case0400/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Encode the empty output by one zero padding slot; logical length is statically zero."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "elements": 0,
+      "actual_elements": 0,
+      "max_abs_error": null
+    },
+    "B": {
+      "status": "pass",
+      "elements": 0,
+      "actual_elements": 0,
+      "max_abs_error": null
+    }
+  },
+  "notes": "Original zero-length array is rejected by CirC (Empty array); padding has a known, zero logical length.",
+  "source": {
+    "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0400/kernel.py",
+    "function": "kernel",
+    "sha256": "640a83e0d9405b2713f440e4b9a1761cff74ce6878d457b372db2de6630c3835"
+  },
+  "encoding": "Private inputs; public return value. Real numbers are rounded to scale 2^32. Native u64 values use signed two-complement interpretation; integer arithmetic is used for candidate full-width Q32 products to avoid truncating them to 64 bits before rescaling.",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/ds1000_numpy/generated/case0400/fixture.json",
+  "reason": "CirC rejects empty arrays; use a padding slot with known zero logical length."
+}

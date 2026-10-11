@@ -1,0 +1,22 @@
+{
+  "program": "case0348",
+  "category": "needs_gadget: matrix_rank",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:12-20 LI and tmp are value-dependent lists.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "needs_gadget",
+    "error": "kernel.py:18 np.linalg.matrix_rank requires numerical rank/SVD machinery.",
+    "constraints": null,
+    "rewrites": [
+      "At most 5 independent rows (tmp capacity 6); pad lists and guard by length. Numerical rank remains required."
+    ]
+  },
+  "correctness": {
+    "A": null,
+    "B": null
+  },
+  "notes": "kernel.py:18 np.linalg.matrix_rank requires numerical rank/SVD machinery."
+}

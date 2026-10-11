@@ -1,0 +1,282 @@
+{
+ "schema": 1,
+ "system": "sp1_groth16",
+ "case": "pythran_vibr_energy__calculate_vibr_energy",
+ "description": "SP1 6.8.1, Groth16-wrapped proof, Q32 guest",
+ "windows": {
+  "prove_core": "client.prove in groth16 mode (prove); SP1's SDK proves from the program and its input, so execution happens inside the prove call and cannot be excluded",
+  "end_to_end": "client.prove (prove), which includes execution",
+  "verify": "client.verify (verify)"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/pythran/pythran_vibr_energy/kernel.py": "db54012657f3f673993dd200bd84c9dec2c6abaa9ffca9c88512b0f144a908a8",
+  "benchmarking/datasets/pythran/pythran_vibr_energy/fixture.json": "e5b21731006c40589b33f2090b0fd04b0a1d69ec34b6464549cabd9f00709a46",
+  "benchmarking/datasets/pythran/pythran_vibr_energy/zkvm.rs": "618eb5a5a85ef886b30c14ce129e7d8d3ec5a3bd8d62f9a7ffc2d1b59b5f2136",
+  "benchmarking/baselines/sp1/target/release/sp1-baseline": "65e77c96da5e2637bd23b4f3d28c164da7810e2ae644c55443537c04888efd01"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-10T21:21:40+0000",
+  "loadavg": [
+   59.38525390625,
+   62.068359375,
+   61.9921875
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "client_init": 23.638582722,
+    "setup": 2.04203061,
+    "process_wall": 26.01968665793538
+   },
+   "details": {
+    "case": "pythran_vibr_energy/calculate_vibr_energy",
+    "input": "A",
+    "mode": "setup",
+    "peak_rss_mib": 7145.0,
+    "proof_path": null,
+    "sdk_version": "6.8.1",
+    "system": "sp1",
+    "vk_hash": "0x00b33eac6f7e4994dca4e222f74b482e6fcfea784be4813e53f805b303eceebf",
+    "vk_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s1/work/sp1_groth16/pythran_vibr_energy__calculate_vibr_energy/program/vk.bin"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 26.14181758183986,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 7516934144,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   55.83984375,
+   60.966796875,
+   61.6259765625
+  ],
+  "child": {
+   "wall_s": 379.2235962515697,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 29043597312,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 351.768922216,
+   "end_to_end_s": 351.768922216,
+   "proof_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s1/work/sp1_groth16/pythran_vibr_energy__calculate_vibr_energy/proofs/warmup/program/proof-groth16-B.bin",
+   "proof_bytes": 1863,
+   "timings_s": {
+    "client_init": 25.640758475,
+    "execute": 0.012044164,
+    "prove": 351.768922216,
+    "process_wall": 379.0967935845256
+   },
+   "details": {
+    "case": "pythran_vibr_energy/calculate_vibr_energy",
+    "cycles": 10976,
+    "gas": 14835,
+    "input": "B",
+    "input_shapes": [
+     16,
+     16,
+     16
+    ],
+    "mode": "prove",
+    "peak_rss_mib": 27667.0,
+    "proof_mode": "groth16",
+    "proof_size_bytes": 1863,
+    "sdk_version": "6.8.1",
+    "syscalls": 6,
+    "system": "sp1"
+   },
+   "proof_sha256": "b193bd3beaaba7d12dbb8497ee5a1d00e0e2855f30677a46f9f292f50c4556a9"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 16 elements differ",
+   "expected_count": 16,
+   "actual_count": 16,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "92f34f188c52ca390b0d2cb1a908a10d3015b4ed9c80115a1fc970571f5a79b8",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    0.9033938203938305,
+    0.0032466277480125427,
+    0.20053054532036185,
+    0.0021974944975227118,
+    0.002996973693370819,
+    3.026798367500305e-09,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "elided": [],
+   "shapes": null
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    62.64697265625,
+    60.9208984375,
+    61.3349609375
+   ],
+   "child": {
+    "wall_s": 427.1598008964211,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 28199481344,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 393.292163477,
+    "end_to_end_s": 393.292163477,
+    "proof_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s1/work/sp1_groth16/pythran_vibr_energy__calculate_vibr_energy/proofs/sample-1/program/proof-groth16-B.bin",
+    "proof_bytes": 1863,
+    "timings_s": {
+     "client_init": 32.201739335,
+     "execute": 0.014637482,
+     "prove": 393.292163477,
+     "process_wall": 427.0392712811008
+    },
+    "details": {
+     "case": "pythran_vibr_energy/calculate_vibr_energy",
+     "cycles": 10976,
+     "gas": 14835,
+     "input": "B",
+     "input_shapes": [
+      16,
+      16,
+      16
+     ],
+     "mode": "prove",
+     "peak_rss_mib": 26862.0,
+     "proof_mode": "groth16",
+     "proof_size_bytes": 1863,
+     "sdk_version": "6.8.1",
+     "syscalls": 6,
+     "system": "sp1"
+    },
+    "proof_sha256": "72243139acdd5f69b0f3fd556152e07058c17a4ba388a0e590814bda4be98366"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 16 elements differ",
+    "expected_count": 16,
+    "actual_count": 16,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "92f34f188c52ca390b0d2cb1a908a10d3015b4ed9c80115a1fc970571f5a79b8",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     0.9033938203938305,
+     0.0032466277480125427,
+     0.20053054532036185,
+     0.0021974944975227118,
+     0.002996973693370819,
+     3.026798367500305e-09,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "elided": [],
+    "shapes": null
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.341011527,
+     "not_applicable": null,
+     "timings_s": {
+      "client_init": 0.470014422,
+      "verify": 0.341011527,
+      "process_wall": 0.820374907925725
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.9710341868922114,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 89071616,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 1.653e-05,
+    "not_applicable": null,
+    "timings_s": {
+     "client_init": 0.478527196,
+     "verify": 1.653e-05,
+     "process_wall": 0.4888734184205532
+    },
+    "details": {
+     "error": null
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.6034030374139547,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 78974976,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

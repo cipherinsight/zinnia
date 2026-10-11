@@ -1,0 +1,54 @@
+{
+  "program": "pythran_caxpy",
+  "function": "CAXPY",
+  "category": "timeout_or_oom",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:16,25: loops have runtime N; line 17/26 multiplies private complex values.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "out_of_memory",
+    "constraints": null,
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend",
+    "seconds": 26.731047350000154,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_caxpy/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Guard 1024 source iterations by the explicit 0<=N<=1024 contract, normalize negative valid indices, and expose a return-presence tag for early None returns. Test abs(CA)==0 by both components equaling zero."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "not_run",
+      "reason": "No accepted compilation"
+    },
+    "B": {
+      "status": "not_run",
+      "reason": "No accepted compilation"
+    }
+  },
+  "notes": "Native u64 Q32 arithmetic with explicit signs, wide product parts, and quotient/remainder digits; all source outputs retained.",
+  "source": {
+    "program": "pythran_caxpy",
+    "dataset": "pythran",
+    "kernel": "benchmarking/datasets/pythran/pythran_caxpy/kernel.py",
+    "function": "CAXPY"
+  },
+  "numeric_encoding": {
+    "real_scale": 4294967296,
+    "signed": "two-complement u64",
+    "rtol": 1e-06,
+    "atol": 1e-06
+  }
+}

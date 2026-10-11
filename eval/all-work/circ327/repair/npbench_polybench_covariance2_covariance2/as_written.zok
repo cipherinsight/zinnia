@@ -1,0 +1,26 @@
+from "../native_v1" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64 M, private u64 float_n, private u64[16][14] data) -> u64[14][14]:
+    u64[14] mean = [0u64;14]
+    for u32 j in 0..14 do
+        for u32 i in 0..16 do
+            mean[j] = (mean[j] + data[i][j])
+        endfor
+        mean[j] = divc(mean[j], 16u64)
+    endfor
+    u64[16][14] centered = data
+    for u32 i in 0..16 do
+        for u32 j in 0..14 do
+            centered[i][j] = (data[i][j] - mean[j])
+        endfor
+    endfor
+    u64[14][14] out = [[0u64;14];14]
+    for u32 i in 0..14 do
+        for u32 j in 0..14 do
+            for u32 k in 0..16 do
+                out[i][j] = (out[i][j] + mulq(centered[k][i], centered[k][j]))
+            endfor
+            out[i][j] = divc(out[i][j], 15u64)
+        endfor
+    endfor
+    return out

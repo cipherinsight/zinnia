@@ -1,0 +1,46 @@
+{
+  "program": "pythran_d2q9_nxnyns",
+  "category": "needs_gadget: fixed-point multiplication/rescaling",
+  "as_written": {
+    "status": "rejected",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\n\nthread 'main' (150496) panicked at src/target/r1cs/trans.rs:387:18:\ninternal error: entered unreachable code: Unhandled variable operator return.0.0.0\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    "constraints": null,
+    "seconds": 1.1582712210001773,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch2/pythran_d2q9_nxnyns/as_written.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ]
+  },
+  "rewrite": {
+    "status": "needs gadget",
+    "error": "fixed-point multiplication/rescaling",
+    "constraints": null,
+    "rewrites": []
+  },
+  "correctness": {
+    "A": "not run: no accepted translation",
+    "B": "not run: no accepted translation"
+  },
+  "notes": "Source periodic boundaries, directional gathers, f2m/relaxation/m2f formulas and transposed setf are retained; Q32 native integer arithmetic.",
+  "source": "benchmarking/datasets/pythran/pythran_d2q9_nxnyns/kernel.py",
+  "function": "one_time_step",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/pythran/pythran_d2q9_nxnyns/fixture.json",
+  "source_sha256": "917879783e36527f1b0e95b78dc645b33748413dc1ddd6c81cc8142233cdec5e",
+  "encoding": "Real and complex components rounded to nearest integer at scale 2^32; centered field residues for field translations; native arbitrary-precision integers for integer translations. Public return includes all logical output values; padded returns include shape/presence metadata.",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh"
+  },
+  "translation_sha256": {
+    "as_written": "aa634280f25fa64605457ac29d3165b96198f08607d4da493a0c5ca43343be09"
+  }
+}

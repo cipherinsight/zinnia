@@ -1,0 +1,23 @@
+from "EMBED" import int_to_bits, u32_from_bits, field_to_integer, u32_to_field
+
+def ui(integer x) -> u32:
+    return u32_from_bits(int_to_bits::<32>(x))
+
+def it(u32 x) -> integer:
+    return field_to_integer(u32_to_field(x))
+
+def mul(integer x, integer y) -> integer:
+    return (x*y)/4294967296
+
+def main(private integer alpha, private integer beta, private integer[16][16] A, private integer[16][16] B, private integer[16] x) -> integer[16]:
+    integer[16] result = [0; 16]
+    for u32 i in 0..16 do
+        integer left = 0
+        integer right = 0
+        for u32 j in 0..16 do
+            left = left+mul(mul(alpha,A[i][j]),x[j])
+            right = right+mul(mul(beta,B[i][j]),x[j])
+        endfor
+        result[i] = left+right
+    endfor
+    return result

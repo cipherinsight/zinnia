@@ -1,0 +1,15 @@
+struct Output {
+    field[20] values
+    field length
+}
+def main(private field[20] a) -> Output:
+    field[20] result = [0; 20]
+    field count = 0
+    for field i in 0..20 do
+        bool changed = if i == 0 then true else a[i] != a[if i == 0 then 0 else i-1 fi] fi
+        bool keep = changed && a[i] != 0
+        field ix = if count < 20 then count else 0 fi
+        result[ix] = if keep then a[i] else result[ix] fi
+        count = count + if keep then 1 else 0 fi
+    endfor
+    return Output {values: result, length: count}

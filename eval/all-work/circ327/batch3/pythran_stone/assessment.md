@@ -1,0 +1,1 @@
+kernel.py:18,37: N2=12*loopstart and range(1,N2+1) have no declared upper bound. Replacing the full kernel with its final KIP expression would discard source statements; transcendental calls at lines 70-71,94 additionally need gadgets.

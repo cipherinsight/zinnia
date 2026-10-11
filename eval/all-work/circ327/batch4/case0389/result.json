@@ -1,0 +1,31 @@
+{
+  "program": "case0389",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:12 private-dependent reshape dimensions.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 92543,
+    "elapsed_seconds": 1.153,
+    "exit_code": 0,
+    "rewrites": [
+      "Use a fixed 72-element buffer with logical output dimensions and compute the reshape/swapaxes address; reshapes preserve all 6*3*4 elements. Infer w=-1 as NumPy does.",
+      "Pack the buffer and logical dimensions into one public return array (Z# permits one return value)."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "max_absolute_error": 1.1526368748349114e-10
+    },
+    "B": {
+      "status": "pass",
+      "max_absolute_error": 1.1518286324729843e-10
+    }
+  },
+  "notes": "kernel.py:12 private-dependent reshape dimensions."
+}

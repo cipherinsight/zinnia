@@ -1,0 +1,2010 @@
+Reading additional input from stdin...
+OpenAI Codex v0.162.0
+--------
+workdir: /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C
+model: gpt-6-astra
+provider: proxy
+approval: never
+sandbox: danger-full-access
+reasoning effort: medium
+reasoning summaries: none
+session id: 01a12078-bf75-7db2-83d9-170db84e05e5
+--------
+user
+# Common rules for paper-number tasks (2026-10-09)
+
+You compute numbers for the evaluation section of a paper about Zinnia, a compiler from NumPy
+programs to zk-SNARK circuits (halo2-base and Noir backends).
+
+- Final compiler: commit 3ebe0558, built in the worktree /home/zhantong/Projects/zinnia-project/wt/npb-hw
+  (use its `.venv/bin/python`; `from zinnia import ZKCircuit`; `ZKCircuit(name, source).compile()` where
+  `source` is the function text WITHOUT import lines, as the harness passes it; see
+  benchmarking/harness for how the harness compiles kernels and reads fixtures, and reuse that code).
+- Benchmarks: wt/npb-hw/benchmarking/datasets (ds1000, ds1000_numpy, npbench, pythran, case_sets/).
+  The acceptance account of the paper (214 of 327 accepted, compiler 4115cecb, remote run):
+  /home/zhantong/Projects/zinnia-project/eval-redo/final-analysis/fin/remote/post-freeze/data-fin/accept_final/results.json
+- NEVER generate proofs or keys, never run timing. Compile, mock-run and count only. Cap memory: run heavy
+  Python under `systemd-run --user --scope -q -p MemoryMax=16G ...`, at most 8 parallel processes.
+- Do not edit anything in wt/ or zinnia-paper/. Write scripts and outputs only under your task folder
+  /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/<task>/.
+- Every number you report must be reproducible by a script in your folder. Report in
+  <task>/REPORT.md: the definition you used, the numbers, the per-program list behind each count,
+  caveats, and the command to reproduce. Be precise; do not guess. If a definition is ambiguous,
+  pick the most natural one, state it, and give the alternative's number too.
+
+Task C (folder C/): SMT statistics for the appendix.
+
+The paper's appendix wants "compile times and the number of queries that exhaust their step budget,
+per corpus". Compile times (remote, compiler 4115cecb) are in
+/home/zhantong/Projects/zinnia-project/eval-redo/compile-timing/remote/ct_fin.jsonl (config default;
+set perf/acceptance; derive the corpus from the name). Compute per corpus (DS-1000, NPBench, Pythran) over
+the accepted programs: median, p90, max compile time, and the SMT share (resolver_smt_s / compile_s).
+Then, with the final compiler 3ebe0558 locally, count per corpus: the number of SMT queries issued and the
+number that exhaust their step budget (find the telemetry the compiler exposes, e.g. env vars or debug
+counters in src/ for the resolver / SMT tier; if none exists say so precisely). Local counts are fine for
+query counts (they are deterministic); do not report local times.
+
+Your task folder: /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C/. Finish with REPORT.md there.
+codex
+I’ll check the accepted-program records, remote timings, and compiler telemetry, then produce a reproducible per-corpus report in `C/` without running proofs, keys, or local timing benchmarks.
+exec
+/usr/bin/zsh -lc "pwd; rg --files -g AGENTS.md -g '*ct_fin*' -g '*results.json' /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers /home/zhantong/Projects/zinnia-project/wt/npb-hw | head -60" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C
+ succeeded in 0ms:
+/home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/studies/user_study/adversarial/smooth/baseline-results.json
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/studies/user_study/adversarial/background/baseline-results.json
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/archive/2026-03-submission/results.json
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/archive/2026-06-agent-sweeps/hw_halo2_results.json
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/archive/2026-06-agent-sweeps/noir_baseline_results.json
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/archive/2026-06-agent-sweeps/zinnia_halo2_results.json
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/archive/2026-06-agent-sweeps/zinnia_noir_results.json
+
+exec
+/usr/bin/zsh -lc 'ls -la; for p in /home/zhantong/Projects/zinnia-project/AGENTS.md /home/zhantong/Projects/zinnia-project/eval-redo/AGENTS.md /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/AGENTS.md; do if test -f "$p"; then cat "$p"; fi; done' in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C
+ succeeded in 0ms:
+total 12
+drwxr-xr-x 2 zhantong zhantong   23 Oct  9 19:42 .
+drwxr-xr-x 6 zhantong zhantong 4096 Oct  9 19:42 ..
+-rw-r--r-- 1 zhantong zhantong 4457 Oct  9 19:42 codex.log
+
+exec
+/usr/bin/zsh -lc 'head -3 /home/zhantong/Projects/zinnia-project/eval-redo/compile-timing/remote/ct_fin.jsonl; head -70 /home/zhantong/Projects/zinnia-project/eval-redo/final-analysis/fin/remote/post-freeze/data-fin/accept_final/results.json' in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C
+ succeeded in 0ms:
+{"set": "perf", "name": "ds1000_case0310", "kernel": "/home/zhantong/zinnia-eval-run/zinnia-post/benchmarking/datasets/ds1000/ds1000_case0310/kernel.py", "function": "kernel", "config": "no_facts", "cpu": "14", "wall_s": 0.1367808384820819, "rc": 0, "ok": true, "compile_s": 0.0661232816055417, "phases": {"IRGen": 0.001, "PatternMatchOptim": 0.0, "DoubleNotElimination": 0.0, "AssertedEqualityConstantPropagation": 0.0, "ConstantFold": 0.0, "DeadCodeElimination": 0.0, "AlwaysSatisfiedElimination": 0.0, "DuplicateCodeElimination": 0.0, "SelectChainForwarding": 0.0, "SortCountQueries": 0.0, "ArgmaxQueries": 0.0, "ConstantTableReads": 0.0, "ArrayLowering": 0.015, "PredicatedSimplification": 0.0, "SelectMerge": 0.0, "AssertSubsumption": 0.0}, "resolver_smt_s": 0.0, "resolver_range_s": 0.0}
+{"set": "perf", "name": "ds1000_case0301", "kernel": "/home/zhantong/zinnia-eval-run/zinnia-post/benchmarking/datasets/ds1000/ds1000_case0301/kernel.py", "function": "kernel", "config": "no_smt", "cpu": "7", "wall_s": 0.14341868739575148, "rc": 0, "ok": true, "compile_s": 0.052097851410508156, "phases": {"IRGen": 0.0, "PatternMatchOptim": 0.0, "DoubleNotElimination": 0.0, "AssertedEqualityConstantPropagation": 0.0, "ConstantFold": 0.0, "DeadCodeElimination": 0.0, "AlwaysSatisfiedElimination": 0.0, "DuplicateCodeElimination": 0.0, "SelectChainForwarding": 0.0, "SortCountQueries": 0.0, "ArgmaxQueries": 0.0, "ConstantTableReads": 0.0, "ArrayLowering": 0.0, "PredicatedSimplification": 0.0, "SelectMerge": 0.0, "AssertSubsumption": 0.0}, "resolver_smt_s": 0.0, "resolver_range_s": 0.0}
+{"set": "perf", "name": "ds1000_case0301", "kernel": "/home/zhantong/zinnia-eval-run/zinnia-post/benchmarking/datasets/ds1000/ds1000_case0301/kernel.py", "function": "kernel", "config": "no_facts", "cpu": "8", "wall_s": 0.1446589296683669, "rc": 0, "ok": true, "compile_s": 0.05292958300560713, "phases": {"IRGen": 0.0, "PatternMatchOptim": 0.0, "DoubleNotElimination": 0.0, "AssertedEqualityConstantPropagation": 0.0, "ConstantFold": 0.0, "DeadCodeElimination": 0.0, "AlwaysSatisfiedElimination": 0.0, "DuplicateCodeElimination": 0.0, "SelectChainForwarding": 0.0, "SortCountQueries": 0.0, "ArgmaxQueries": 0.0, "ConstantTableReads": 0.0, "ArrayLowering": 0.0, "PredicatedSimplification": 0.0, "SelectMerge": 0.0, "AssertSubsumption": 0.0}, "resolver_smt_s": 0.0, "resolver_range_s": 0.0}
+{
+ "exit_codes": [
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0
+ ],
+ "cpus": [
+  "16",
+  "17",
+  "18",
+  "19",
+  "20",
+  "21",
+  "22",
+  "23"
+ ],
+ "results": [
+  {
+   "program": "case0291",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0291/kernel.py",
+   "function": "kernel",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 4 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.01871404889971018,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 4 elements differ",
+     "expected_count": 4,
+     "actual_count": 4,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "case0302",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0302/kernel.py",
+   "function": "kernel",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 20 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.055966172367334366,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 20 elements differ",
+     "expected_count": 20,
+     "actual_count": 20,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+
+exec
+/usr/bin/zsh -lc "rg -n 'SMT|smt|step_budget|step budget' src | head -160; rg -n 'ZKCircuit|fixture|source' benchmarking/harness | head -100; git rev-parse HEAD" in /home/zhantong/Projects/zinnia-project/wt/npb-hw
+ succeeded in 0ms:
+src/prove/interpreter.rs:279:            // The IR carries the precondition payload for the SMT layer;
+src/prove/interpreter.rs:288:            // carries only the compile-time fact for the SMT layer.
+src/phase0/mod.rs:25://! | [`term`] | the hash-consed term language of §3.1, with evaluation, pretty, SMT-LIB and JSON printers |
+src/phase0/export.rs:24://!   "smtlib":      "..."                              // Φ as SMT-LIB 2 text
+src/phase0/export.rs:96://! information and the SMT-LIB text names every node once. They are written
+src/phase0/export.rs:103://! "provenance": str}`. They are deliberately absent from `smtlib`, which
+src/phase0/export.rs:104://! stays in linear integer arithmetic; the SMT text names them in a trailing
+src/phase0/export.rs:196:        "smtlib": smtlib(result),
+src/phase0/export.rs:320:/// $\Phi$ as SMT-LIB 2 text: the variables, every term of the arena as a
+src/phase0/export.rs:324:fn smtlib(result: &Phase0Result) -> String {
+src/phase0/export.rs:331:    let mut text = result.terms.to_smtlib(&asserts);
+src/ir.rs:34:/// elimination, etc.) and the SMT walker can keep using direct
+src/ir.rs:164:    /// P0 SMT-resolver seam: the active [`Resolver`] for "must be a
+src/ir.rs:176:    /// `StaticOnlyResolver` default with `smt_enable=false`).
+src/ir.rs:247:    /// optim passes use when they need full-power SMT discharge.
+src/builder/array_facts.rs:57:    /// from the layered resolver so asking it never reaches SMT. Behind a
+src/phase1/oracle/arena.rs:6://! `div` / `mod` rewrites `src/phase0/term/print.rs` states: SMT-LIB's and
+src/phase1/oracle/arena.rs:195:/// (`print.rs::smt_floor_div`): the two agree for `k > 0`; for `k < 0`,
+src/phase1/oracle/arena.rs:205:/// Python's `%` in Z3 (`print.rs::smt_floor_mod`).
+src/builder/bound_queries.rs:22://! counter-model instead of searching for an optimum until its step budget
+src/helpers/dtype.rs:337:        // and discharging that against every visible fact (an SMT query per
+src/helpers/dtype.rs:354:/// and its min/max structure prove: `IRBuilder::ask_bounds` without the SMT
+src/phase0/term/print.rs:1://! Rendering a term: the pretty form, the SMT-LIB 2 text and the JSON DAG.
+src/phase0/term/print.rs:11://! | [`TermArena::to_smtlib`] | the consistency harness (`acceptance.md` §3) | linear: one `define-fun` per node |
+src/phase0/term/print.rs:29:/// itself and [`TermArena::to_smtlib`] names every node once.
+src/phase0/term/print.rs:146:// SMT-LIB 2 printer
+src/phase0/term/print.rs:150:    /// SMT-LIB 2 text: one `declare-const` per variable, one `define-fun`
+src/phase0/term/print.rs:155:    pub fn to_smtlib(&self, asserts: &[(BoolId, String)]) -> String {
+src/phase0/term/print.rs:162:                decl.sort.smt(),
+src/phase0/term/print.rs:168:            let (sort, body) = self.smt_node(i);
+src/phase0/term/print.rs:177:    fn smt_node(&self, i: usize) -> (&'static str, String) {
+src/phase0/term/print.rs:180:            Node::Const(n) => ("Int", smt_int_literal(n)),
+src/phase0/term/print.rs:184:            Node::Mul(k, t) => ("Int", format!("(* {} {})", smt_int_literal(k), s(t.0))),
+src/phase0/term/print.rs:185:            Node::Div(t, k) => ("Int", smt_floor_div(&s(t.0), k)),
+src/phase0/term/print.rs:186:            Node::Mod(t, k) => ("Int", smt_floor_mod(&s(t.0), k)),
+src/phase0/term/print.rs:187:            // SMT-LIB has no min/max; both are one `ite`.
+src/phase0/term/print.rs:204:/// SMT-LIB 2 has no negative numerals: `-3` is `(- 3)`.
+src/phase0/term/print.rs:205:fn smt_int_literal(n: i128) -> String {
+src/phase0/term/print.rs:213:/// Python's floor division rendered in SMT-LIB 2, whose `div` is
+src/phase0/term/print.rs:221:fn smt_floor_div(child: &str, k: i128) -> String {
+src/phase0/term/print.rs:229:/// Python's `%` in SMT-LIB 2. For `k > 0` it is SMT-LIB's `mod`. For `k < 0`
+src/phase0/term/print.rs:231:/// the same rewrite as [`smt_floor_div`].
+src/phase0/term/print.rs:232:fn smt_floor_mod(child: &str, k: i128) -> String {
+src/builder.rs:181:    /// P0 SMT-resolver seam: the [`Resolver`] every "must be a compile-time
+src/builder.rs:377:    /// required because P1's SMT resolver memoises per-ptr query results.
+src/builder.rs:384:    /// methods route through this so the SMT resolver can walk the IR
+src/builder.rs:441:        // SMT-optimizer path returns (Some(0), Some(0)) for unbounded
+src/builder.rs:1642:    /// Interval bounds via input facts (call-site-fact, no SMT).
+src/builder.rs:1690:    /// Interval bounds via input facts (call-site-fact, no SMT).
+src/builder.rs:1738:    /// Interval bounds via input facts (call-site-fact, no SMT).
+src/builder.rs:1923:    /// Interval bounds via input facts (call-site-fact, no SMT).
+src/builder.rs:1958:    /// Interval bounds via input facts (call-site-fact, no SMT).
+src/builder.rs:1978:    /// SMT). A factor that is an integer in float form is multiplied
+src/ops/static_ndarray_ops/tests.rs:72:    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+src/ops/static_ndarray_ops/tests.rs:96:    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+src/ops/static_ndarray_ops/tests.rs:127:    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+src/ops/static_ndarray_ops/tests.rs:140:    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+src/ops/static_ndarray_ops/tests.rs:158:    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+src/ops/static_ndarray_ops/tests.rs:239:    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+src/ops/static_ndarray_ops/tests.rs:273:    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+src/ops/static_ndarray_ops/tests.rs:310:    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+src/ops/static_ndarray_ops/tests.rs:344:    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+src/ops/static_ndarray_ops/tests.rs:669:    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+src/ops/static_ndarray_ops/tests.rs:700:    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+src/ops/static_ndarray_ops/tests.rs:734:    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+src/phase0/term/mod.rs:60:    /// The SMT-LIB 2 sort name used by [`TermArena::to_smtlib`].
+src/phase0/term/mod.rs:61:    pub fn smt(self) -> &'static str {
+src/phase0/term/mod.rs:246:/// because every printer (pretty, SMT-LIB, JSON) needs names and sorts.
+src/optim/z3_budget.rs:30:/// Steps for one resolver query during IR generation (`optim::resolver::smt`,
+src/optim/z3_budget.rs:31:/// `IRGenConfig::smt_query_rlimit`, and the shape-parameter bounds of
+src/optim/z3_budget.rs:45:/// (`LayeredResolver::range_then_smt`); it replaced a 500 ms timeout.
+src/optim/z3_budget.rs:60:/// under [`smt_ablated`]: the callers' fallbacks (intervals, a check emitted in
+src/optim/z3_budget.rs:64:/// on every run. Override with `ZINNIA_SMT_TOTAL_RLIMIT` (measurement).
+src/optim/z3_budget.rs:93:/// Measurement only: `ZINNIA_ABLATE_SMT=1` turns off SMT reasoning
+src/optim/z3_budget.rs:102:pub fn smt_ablated() -> bool {
+src/optim/z3_budget.rs:104:    *ABLATED.get_or_init(|| std::env::var("ZINNIA_ABLATE_SMT").is_ok_and(|v| v.trim() == "1"))
+src/optim/z3_budget.rs:110:        std::env::var("ZINNIA_SMT_TOTAL_RLIMIT").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(TOTAL_REASONING_RLIMIT)
+src/optim/z3_budget.rs:120:/// [`smt_ablated`] or once this compilation's [`TOTAL_REASONING_RLIMIT`] is
+src/optim/z3_budget.rs:123:    if smt_ablated() {
+src/optim/z3_budget.rs:140:/// `solver.check()`, traced (see [`traced`]); `Unknown` under [`smt_ablated`]
+src/optim/z3_budget.rs:147:/// `Unknown` under [`smt_ablated`] or once the compilation's reasoning budget
+src/optim/z3_budget.rs:154:/// [`traced`]); `Unknown` under [`smt_ablated`] or once the compilation's
+src/optim/z3_budget.rs:161:/// (see [`traced`]). Not reasoning about values, so [`smt_ablated`] leaves it on.
+src/helpers/array_ops/indexing.rs:451:    // resolves to a compile-time constant (the SMT resolver folds
+src/ops/static_ndarray_ops/indexing.rs:1791:    // SMT-Optimize path which doesn't always pick up scalar precondi-
+src/ops/static_ndarray_ops/indexing.rs:1793:    // outward-doubling prove probe over the SMT-Solver path which does
+src/phase0/tests/mod.rs:415:fn smtlib_expresses_floor_division() {
+src/phase0/tests/mod.rs:419:    // A positive constant divisor: SMT-LIB's Euclidean `div` already floors.
+src/phase0/tests/mod.rs:424:    let text = a.to_smtlib(&[]);
+src/phase0/tests/mod.rs:442:    // min and max become one `ite`, which SMT-LIB does have.
+src/phase0/tests/mod.rs:444:    let text = a.to_smtlib(&[]);
+src/phase0/tests/mod.rs:860:    assert!(json["smtlib"]
+src/ops/static_ndarray_ops/constructors.rs:99:            // or SMT-bounded `k` (e.g., `@requires(lambda x, k: nnz(x) ==
+src/lib.rs:310:    // SMT resolver knobs. **Default: enabled** — `LayeredResolver::range_then_smt`,
+src/lib.rs:312:    // analysis → SMT in that order. P5 round 1 (commit 427a913) re-measured
+src/lib.rs:316:    // process-pool contention artifact, not real SMT cost. The defensive
+src/lib.rs:317:    // mitigations (a per-query Z3 step budget, 4096-statement formula cap from
+src/lib.rs:318:    // c75f3fb) bound the future worst case if a consumer reaches the SMT
+src/lib.rs:319:    // layer with a hard formula. `ZINNIA_SMT_ENABLE=0` (or `smt_enable: false`
+src/lib.rs:322:    let smt_enable_env = std::env::var("ZINNIA_SMT_ENABLE").ok().map(|s| {
+src/lib.rs:326:    let smt_enable = smt_enable_env.unwrap_or_else(|| {
+src/lib.rs:328:            .get("smt_enable")
+src/lib.rs:332:    // Z3 steps per resolver query (`optim::z3_budget`: a step budget, not a
+src/lib.rs:334:    let smt_query_rlimit = std::env::var("ZINNIA_SMT_QUERY_RLIMIT")
+src/lib.rs:339:                .get("smt_query_rlimit")
+src/lib.rs:344:    let smt_max_formula_size = std::env::var("ZINNIA_SMT_MAX_FORMULA_SIZE")
+src/lib.rs:349:                .get("smt_max_formula_size")
+src/lib.rs:354:    // P5: opt-in stderr dump of the SMT-pipeline telemetry summary at the
+src/lib.rs:356:    let smt_log_telemetry = std::env::var("ZINNIA_SMT_LOG_TELEMETRY")
+src/lib.rs:364:                .get("smt_log_telemetry")
+src/lib.rs:402:        smt_enable,
+src/lib.rs:403:        smt_query_rlimit,
+src/lib.rs:404:        smt_max_formula_size,
+src/lib.rs:405:        smt_log_telemetry,
+src/lib.rs:541:    if smt_log_telemetry {
+src/lib.rs:543:            "[zinnia-smt] log_enabled=true smt_enable={} rlimit={}",
+src/lib.rs:544:            smt_enable, smt_query_rlimit
+src/lib.rs:547:            Some(t) => eprintln!("[zinnia-smt] AST→IR phase {}", t.summary()),
+src/lib.rs:548:            None => eprintln!("[zinnia-smt] AST→IR phase: no telemetry handle"),
+src/lib.rs:553:                eprintln!("[zinnia-smt] optim phase {}", t.summary());
+src/lib.rs:555:            None => eprintln!("[zinnia-smt] optim phase: no telemetry handle (default)"),
+src/optim/telemetry.rs:8://! * Did SMT resolve (we paid Z3 to learn something)?
+src/optim/telemetry.rs:9://! * Did SMT return unknown (we paid Z3 to learn nothing — bad)?
+src/optim/telemetry.rs:11://!   queries that exhaust their step budget, or cheap-and-frequent queries?
+src/optim/telemetry.rs:29:/// Number of histogram buckets for SMT query durations.
+src/optim/telemetry.rs:58:    pub queries_smt_resolved: AtomicUsize,
+src/optim/telemetry.rs:61:    pub queries_smt_unknown: AtomicUsize,
+src/optim/telemetry.rs:65:    /// `smt_enable=false` short-circuit path.
+src/optim/telemetry.rs:77:    pub total_time_in_smt_ns: AtomicU64,
+src/optim/telemetry.rs:80:    // -- Duration histogram (SMT layer only) --------------------------
+src/optim/telemetry.rs:81:    pub smt_duration_buckets: [AtomicUsize; NUM_DURATION_BUCKETS],
+src/optim/telemetry.rs:94:    /// `assert(cond)` removed because the resolver (range / SMT)
+src/optim/telemetry.rs:118:    // -- Per-chokepoint telemetry (item #7 of smt-invocation-load-bearing) -
+src/optim/telemetry.rs:122:    /// reached the SMT layer (i.e. the global `queries_smt_resolved` or
+src/optim/telemetry.rs:123:    /// `queries_smt_unknown` counter was bumped while the chokepoint was
+src/optim/telemetry.rs:125:    /// hot, and which of those actually engage SMT.
+src/optim/telemetry.rs:127:    pub chokepoint_smt_engagements: Mutex<HashMap<&'static str, u64>>,
+src/optim/telemetry.rs:138:    /// Record an SMT-layer query duration into the histogram.
+src/optim/telemetry.rs:139:    pub fn record_smt_duration(&self, dur: Duration) {
+src/optim/telemetry.rs:141:        self.total_time_in_smt_ns.fetch_add(ns, Ordering::Relaxed);
+src/optim/telemetry.rs:143:        self.smt_duration_buckets[bucket].fetch_add(1, Ordering::Relaxed);
+src/optim/telemetry.rs:164:    /// Item #7 of the smt-invocation-load-bearing card.
+src/optim/telemetry.rs:170:    /// Record that the chokepoint reached the SMT layer (the delta in
+src/optim/telemetry.rs:171:    /// `queries_smt_resolved + queries_smt_unknown` was > 0). Called by
+src/optim/telemetry.rs:174:    pub fn record_chokepoint_smt_engagement(&self, site_name: &'static str) {
+src/optim/telemetry.rs:175:        let mut map = self.chokepoint_smt_engagements.lock().unwrap();
+src/optim/telemetry.rs:180:    /// layer — static_val / range / SMT). Bumped when the resolver
+src/optim/telemetry.rs:192:        let smt_ok = self.queries_smt_resolved.load(Ordering::Relaxed);
+src/optim/telemetry.rs:193:        let smt_unk = self.queries_smt_unknown.load(Ordering::Relaxed);
+src/optim/telemetry.rs:198:        let smt_ns = self.total_time_in_smt_ns.load(Ordering::Relaxed);
+src/optim/telemetry.rs:226:        s.push_str(&format!("  queries_smt_resolved         = {}\n", smt_ok));
+src/optim/telemetry.rs:227:        s.push_str(&format!("  queries_smt_unknown          = {}\n", smt_unk));
+src/optim/telemetry.rs:239:            "  total_time_in_smt_ms         = {:.1}\n",
+src/optim/telemetry.rs:240:            smt_ns as f64 / 1e6
+src/optim/telemetry.rs:277:        s.push_str("  smt_duration_histogram:\n");
+src/optim/telemetry.rs:289:            let n = self.smt_duration_buckets[i].load(Ordering::Relaxed);
+src/optim/telemetry.rs:295:        let total_smt: usize = (0..NUM_DURATION_BUCKETS)
+src/optim/telemetry.rs:296:            .map(|i| self.smt_duration_buckets[i].load(Ordering::Relaxed))
+src/optim/telemetry.rs:298:        if total_smt > 0 {
+src/optim/telemetry.rs:299:            let cutoff = (total_smt as f64 * 0.05).ceil() as usize;
+benchmarking/harness/toolchains.py:219:    if (record.get("source") or {}).get("dirty") is not False:
+benchmarking/harness/tests/test_hw_check.py:29:    fixture = tmp_path / "fixture.json"
+benchmarking/harness/tests/test_hw_check.py:30:    fixture.write_text("{}")
+benchmarking/harness/tests/test_hw_check.py:31:    entry = Entry("example__kernel", tmp_path, "kernel", fixture, status="perf")
+benchmarking/harness/tests/test_zinnia_noir_inputs.py:41:def stage_with_backend(tmp_path, monkeypatch, args, source=KERNEL):
+benchmarking/harness/tests/test_zinnia_noir_inputs.py:45:    kernel.write_text(source)
+benchmarking/harness/tests/test_zinnia_noir_inputs.py:68:@pytest.mark.parametrize("source, args", [
+benchmarking/harness/tests/test_zinnia_noir_inputs.py:72:def test_prover_toml_and_main_nr_match_the_backend(tmp_path, monkeypatch, source, args):
+benchmarking/harness/tests/test_zinnia_noir_inputs.py:73:    compiled, staged = stage_with_backend(tmp_path, monkeypatch, args, source)
+benchmarking/harness/tests/test_zinnia_halo2_keys.py:19:@pytest.fixture(scope="module")
+benchmarking/harness/tests/test_small_units.py:1:"""Statistics, fixtures, the scope rule and the rejection classifier."""
+benchmarking/harness/tests/test_small_units.py:11:from benchmarking.harness.acceptance.classify import classify_compile_error, resource_rejection
+benchmarking/harness/tests/test_small_units.py:13:from benchmarking.harness.fixtures import FixtureError, load_fixture
+benchmarking/harness/tests/test_small_units.py:33:def write_fixture(path, a_value, b_value, shape=(2,)):
+benchmarking/harness/tests/test_small_units.py:42:def test_fixture_arguments_follow_the_signature(tmp_path):
+benchmarking/harness/tests/test_small_units.py:43:    fixture = load_fixture(write_fixture(tmp_path / "f.json", [1, 2], [3.5, 4]))
+benchmarking/harness/tests/test_small_units.py:44:    x, n = fixture.arguments("B")
+benchmarking/harness/tests/test_small_units.py:47:    assert len(fixture.sha256) == 64
+benchmarking/harness/tests/test_small_units.py:50:def test_fixture_inputs_must_differ_and_match_shapes(tmp_path):
+benchmarking/harness/tests/test_small_units.py:52:        load_fixture(write_fixture(tmp_path / "same.json", [1, 2], [1, 2]))
+benchmarking/harness/tests/test_small_units.py:54:        load_fixture(write_fixture(tmp_path / "shape.json", [1, 2, 3], [1, 2, 3]))
+benchmarking/harness/tests/test_small_units.py:57:def test_complex_fixture_values_are_real_imaginary_pairs(tmp_path):
+benchmarking/harness/tests/test_small_units.py:65:    z, c = load_fixture(path).arguments("B")
+benchmarking/harness/tests/test_small_units.py:70:        load_fixture(path)
+benchmarking/harness/tests/test_small_units.py:77:    assert load_fixture(path).arguments("B") == []
+benchmarking/harness/tests/test_small_units.py:91:    ("ZinniaException: Only supported NumPy imports are allowed in circuit source",
+benchmarking/harness/tests/test_small_units.py:125:def test_resource_rejections_name_the_limit():
+benchmarking/harness/tests/test_small_units.py:126:    assert resource_rejection("timeout after 301s", 300.0, "8G").construct == \
+benchmarking/harness/tests/test_small_units.py:128:    assert resource_rejection("out of memory after 12s", 300.0, "8G").construct == \
+benchmarking/harness/tests/test_shape_generic_cases.py:39:    fixture = {"case": name, "function": "scale",
+benchmarking/harness/tests/test_shape_generic_cases.py:42:    (case_dir / "fixture.scale.json").write_text(json.dumps(fixture))
+benchmarking/harness/tests/test_shape_generic_cases.py:43:    case = PerfCase(case=name, directory=case_dir, fixture_path=case_dir / "fixture.scale.json",
+benchmarking/harness/tests/test_shape_generic_cases.py:114:         "function": "factorMatrix0", "fixture": "fixture.factorMatrix0.json",
+benchmarking/harness/tests/test_shape_generic_cases.py:121:    assert lu.fixture_path == lu.directory / "fixture.factorMatrix0.json"
+benchmarking/harness/tests/test_shape_generic_cases.py:131:        return PerfCase(case=name, directory=Path(name), fixture_path=Path(name),
+benchmarking/harness/tests/test_protocol.py:44:    fixture = {"case": "toy_case", "function": "kernel",
+benchmarking/harness/tests/test_protocol.py:47:    (case_dir / "fixture.json").write_text(json.dumps(fixture))
+benchmarking/harness/tests/test_protocol.py:48:    return PerfCase(case="toy_case", directory=case_dir, fixture_path=case_dir / "fixture.json",
+benchmarking/harness/tests/test_protocol.py:64:@pytest.fixture
+benchmarking/harness/tests/test_outputs.py:15:TIGHT = Tolerance(abs=1e-9, rel=0.0, source="test")
+benchmarking/harness/tests/test_outputs.py:70:    loose = Tolerance(abs=1e-6, rel=1e-3, source="test")
+benchmarking/harness/tests/test_noir_execute.py:49:@pytest.fixture
+benchmarking/harness/tests/test_noir_execute.py:57:              "source": {"dirty": False}}
+benchmarking/harness/tests/test_noir_execute.py:86:def test_a_dirty_source_is_refused(recorded_build):
+benchmarking/harness/tests/test_noir_execute.py:88:    record_path.write_text(json.dumps({**record, "source": {"dirty": True}}))
+benchmarking/harness/tests/test_compile_determinism.py:3:Noir source (`benchmarking/determinism.py`).
+benchmarking/harness/tests/fake_program.py:32:    for flag in ("--case", "--case-dir", "--function", "--fixture", "--input", "--mode",
+benchmarking/harness/tests/fake_program.py:68:        fixture = json.loads(Path(args.fixture).read_text())
+benchmarking/harness/tests/fake_program.py:69:        publics = [2.0 * v for v in fixture["inputs"][args.input]["a"]]
+benchmarking/harness/run.py:55:    re-elaborates the package's source (and its libraries) before running the
+benchmarking/harness/run.py:95:        {"source": str(case_set) if case_set else None,
+benchmarking/harness/reference.py:45:    source = kernel_path.read_text()
+benchmarking/harness/reference.py:47:    source = source.replace("from zinnia import *", "")
+benchmarking/harness/reference.py:49:    exec(compile(source, str(kernel_path), "exec"), namespace)  # noqa: S102 - our own datasets
+benchmarking/harness/protocol.py:184:    files = [case.kernel_path, case.fixture_path, *adapter.program_files(case)]
+benchmarking/harness/protocol.py:250:                  "files": _file_hashes([case.kernel_path, case.fixture_path])}
+benchmarking/harness/kernels.py:79:    from zinnia import ZKCircuit
+benchmarking/harness/kernels.py:83:    circuit = ZKCircuit.from_method(getattr(module, function), config=ZinniaConfig(backend=backend))
+benchmarking/harness/gitstate.py:1:"""The source state of a git checkout: commit, uncommitted diff, untracked files."""
+benchmarking/harness/gitstate.py:9:#: Untracked paths under these prefixes are outputs, not sources.
+benchmarking/harness/fixtures.py:1:"""`fixture.json`: the inputs of one case (schema in `eval-redo/BRIEF.md`).
+benchmarking/harness/fixtures.py:33:    """A fixture that does not satisfy the schema."""
+benchmarking/harness/fixtures.py:83:    """A complex fixture value: each number is the pair `[real, imag]` (JSON
+benchmarking/harness/fixtures.py:105:def load_fixture(path: Path) -> Fixture:
+benchmarking/harness/fixtures.py:106:    """Load and validate one fixture file."""
+benchmarking/harness/fixtures.py:112:        fixture = Fixture(case=str(raw["case"]), function=str(raw.get("function", "kernel")),
+benchmarking/harness/fixtures.py:117:    _validate(fixture)
+benchmarking/harness/fixtures.py:118:    return fixture
+benchmarking/harness/fixtures.py:121:def _validate(fixture: Fixture) -> None:
+benchmarking/harness/fixtures.py:123:        values = fixture.values(name)
+benchmarking/harness/fixtures.py:124:        missing = [p.name for p in fixture.parameters if p.name not in values]
+benchmarking/harness/fixtures.py:126:            raise FixtureError(f"{fixture.path}: input {name} lacks {missing}")
+benchmarking/harness/fixtures.py:127:        fixture.arguments(name)  # checks shapes and dtypes
+benchmarking/harness/fixtures.py:129:    if fixture.parameters and fixture.values(SETUP_INPUT) == fixture.values(PROVE_INPUT):
+benchmarking/harness/fixtures.py:130:        raise FixtureError(f"{fixture.path}: inputs A and B must differ")
+benchmarking/harness/costs_halo2.py:9:* **halo2_hw**: `halo2_hw stats` with input `A` of the case's fixture (the
+benchmarking/harness/costs_halo2.py:99:def fixture_path(case: str, entries: dict[str, dict]) -> Path | None:
+benchmarking/harness/costs_halo2.py:100:    """The case's fixture, or that of the case it duplicates (same signature)."""
+benchmarking/harness/costs_halo2.py:101:    own = paths.DS1000_PERF / case / "fixture.json"
+benchmarking/harness/costs_halo2.py:106:        theirs = paths.DS1000_PERF / original / "fixture.json"
+benchmarking/harness/costs_halo2.py:173:    from benchmarking.harness.fixtures import PROVE_INPUT, load_fixture
+benchmarking/harness/costs_halo2.py:181:    fixture = load_fixture(fixture_path(case, entries))
+benchmarking/harness/costs_halo2.py:183:    args = fixture.arguments(PROVE_INPUT)
+benchmarking/harness/costs_halo2.py:200:    reference = run_kernel_as_numpy(kernel, "kernel", fixture.arguments(PROVE_INPUT))
+benchmarking/harness/costs_halo2.py:252:def halo2_hw_stats(case: str, fixture: Path | None, binary: Path, timeout: float,
+benchmarking/harness/costs_halo2.py:255:    if fixture is None:
+benchmarking/harness/costs_halo2.py:256:        return {"error": "no fixture"}
+benchmarking/harness/costs_halo2.py:258:           "--fixture", str(fixture), "--input", "A"]
+benchmarking/harness/costs_halo2.py:306:def common_width(zinnia: dict, hw: dict, case: str, fixture: Path | None, binary: Path,
+benchmarking/harness/costs_halo2.py:321:        wider = halo2_hw_stats(case, fixture, binary, timeout, lookup_bits=width)
+benchmarking/harness/costs_halo2.py:468:        fixture = fixture_path(case, entries)
+benchmarking/harness/costs_halo2.py:472:            hw = halo2_hw_stats(case, fixture, args.halo2_bin, args.timeout)
+benchmarking/harness/costs_halo2.py:474:        common = common_width(zinnia, hw, case, fixture, args.halo2_bin, args.timeout,
+benchmarking/harness/case_sets.py:7:            "fixture": "fixture.json", "data_movement_only": false,
+benchmarking/harness/case_sets.py:13:recorded. `fixture` is relative to the case folder. `float_tolerance` applies to
+benchmarking/harness/case_sets.py:37:              "fixture": "pythran/pythran_cronbach/fixture.json",
+benchmarking/harness/case_sets.py:42:functions and out-of-scope programs are not. Kernel and fixture paths are
+benchmarking/harness/case_sets.py:65:    source: str
+benchmarking/harness/case_sets.py:72:DEFAULT_TOLERANCE = Tolerance(abs=1e-6, rel=1e-6, source="harness default")
+benchmarking/harness/case_sets.py:75:def parse_tolerance(raw: Any, source: str) -> Tolerance:
+3ebe0558f25592a0c1f8b6cf9bf7ad09f3ddb1d1
+
+exec
+/usr/bin/zsh -lc "cat src/optim/z3_budget.rs; cat benchmarking/harness/kernels.py; sed -n '35,85p' src/optim/telemetry.rs" in /home/zhantong/Projects/zinnia-project/wt/npb-hw
+ succeeded in 0ms:
+//! Deterministic Z3 budgets: every Z3 query on the compile path is bounded by
+//! a *resource limit* (Z3's `rlimit`), never by a wall-clock timeout.
+//!
+//! The compiler acts on Z3's answers (a bound proved or not, an assert kept or
+//! dropped, a construction selected or not). Under a wall-clock timeout the
+//! answer to a hard query depends on how busy the machine is, so the same
+//! source could compile to different circuits on different runs. The `rlimit`
+//! counts Z3's internal steps instead: the same sequence of queries uses the
+//! same steps on every run and every machine, so it gets the same answers.
+//!
+//! The steps a query takes also depend on the queries before it in the same
+//! Z3 context (Z3 keeps state between queries). Every compilation runs on its
+//! own thread (`lib.rs`, `compile_circuit`), hence with a fresh thread-local
+//! context, and issues its queries in a deterministic order, so this holds.
+//! Z3's other sources of variation are off by default and stay off: its
+//! random seeds default to 0 and parallel solving is disabled.
+//!
+//! Each limit below was calibrated against the timeout it replaces (see
+//! [`trace`]). On this machine Z3 takes roughly 1 to 20 million steps per
+//! second depending on the query, so each limit is about the old time budget
+//! at 10 million steps per second; on the performance set every query takes
+//! at most a ninth of its limit, and all are answered as they were under the
+//! timeouts on an idle machine.
+
+use std::time::Instant;
+
+use z3::ast::Bool;
+use z3::{Optimize, Params, SatResult, Solver, Statistics};
+
+/// Steps for one resolver query during IR generation (`optim::resolver::smt`,
+/// `IRGenConfig::smt_query_rlimit`, and the shape-parameter bounds of
+/// `optim::prove`); it replaced a 100 ms timeout. On the performance set the
+/// costliest such query takes about 1,200 steps.
+pub const RESOLVER_RLIMIT: u32 = 1_000_000;
+
+/// Steps for a decision query that only tries to tighten a bound a cheaper
+/// tier already gives (`optim::resolver::Effort::Tighten`): `v >= 0` asked of
+/// a `v` the intervals put in `[-1, 8]`. Such a check is speculative, so it
+/// gets a tenth of [`RESOLVER_RLIMIT`]. The tightenings that succeed on the
+/// corpora take at most a few thousand steps; one that fails would otherwise
+/// spend the full budget on a formula a loop has made hard.
+pub const TIGHTEN_RLIMIT: u32 = 100_000;
+
+/// Steps for one resolver query of the optimizer
+/// (`LayeredResolver::range_then_smt`); it replaced a 500 ms timeout.
+pub const OPTIMIZER_RESOLVER_RLIMIT: u32 = 5_000_000;
+
+/// Steps for one entailment query (`optim::prove::prove`); it replaced a
+/// 500 ms timeout. On the performance set the costliest takes about 1.1
+/// million steps (0.1–0.25 s on an idle machine).
+pub const PROVE_RLIMIT: u32 = 10_000_000;
+
+/// Steps for all value-reasoning queries of one compilation together (every
+/// query except the construction selection). Each query is bounded by its own
+/// limit above, but a program can issue thousands of them: Pythran `ccopy`
+/// issues ~1,000 bound queries during IR generation, two thirds of which use
+/// their whole million steps and answer `Unknown`, so the compilation spent
+/// minutes learning nothing. Once a compilation has used this many steps, every
+/// further reasoning query answers `Unknown` without calling Z3, exactly as
+/// under [`smt_ablated`]: the callers' fallbacks (intervals, a check emitted in
+/// the circuit) take over, so the circuit stays sound and the compilation's
+/// cost is bounded. The count is per compilation thread and the queries come in
+/// a deterministic order, so whether and where the budget runs out is the same
+/// on every run. Override with `ZINNIA_SMT_TOTAL_RLIMIT` (measurement).
+pub const TOTAL_REASONING_RLIMIT: u64 = 200_000_000;
+
+/// Steps for one construction-selection problem (`lower::select`); it
+/// replaced a 10 s timeout. On the performance set the costliest takes about
+/// 5.8 million steps (0.3–0.5 s).
+pub const SELECT_RLIMIT: u32 = 100_000_000;
+
+/// Solver parameters that bound each `check` by `rlimit` Z3 steps.
+pub fn params(rlimit: u32) -> Params {
+    let mut params = Params::new();
+    params.set_u32("rlimit", rlimit);
+    params
+}
+
+/// A solver whose every `check` is bounded by `rlimit` steps.
+pub fn solver(rlimit: u32) -> Solver {
+    let solver = Solver::new();
+    solver.set_params(&params(rlimit));
+    solver
+}
+
+/// An optimizer whose every `check` is bounded by `rlimit` steps.
+pub fn optimize(rlimit: u32) -> Optimize {
+    let opt = Optimize::new();
+    opt.set_params(&params(rlimit));
+    opt
+}
+
+/// Measurement only: `ZINNIA_ABLATE_SMT=1` turns off SMT reasoning
+/// everywhere on the compile path. Every reasoning query below then answers
+/// `Unknown` without calling Z3, which each caller already treats as "no
+/// information" (the soundness rule of `optim::prove`): the resolvers fall
+/// back to their interval layer, `prove` to its interval fast paths, and a
+/// precondition nothing else proves is checked in the circuit. The
+/// construction selection ([`check_selection`]) is an optimization problem,
+/// not reasoning about values, and is not affected. Unset (the default), it
+/// has no effect. Read once per process.
+pub fn smt_ablated() -> bool {
+    static ABLATED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ABLATED.get_or_init(|| std::env::var("ZINNIA_ABLATE_SMT").is_ok_and(|v| v.trim() == "1"))
+}
+
+fn total_reasoning_rlimit() -> u64 {
+    static LIMIT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *LIMIT.get_or_init(|| {
+        std::env::var("ZINNIA_SMT_TOTAL_RLIMIT").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(TOTAL_REASONING_RLIMIT)
+    })
+}
+
+thread_local! {
+    /// Steps the reasoning queries of this thread's compilation have used.
+    static REASONING_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Run a value-reasoning query: `Unknown` without calling Z3 under
+/// [`smt_ablated`] or once this compilation's [`TOTAL_REASONING_RLIMIT`] is
+/// spent; otherwise the query (traced), with its steps charged to the budget.
+fn reasoning(site: &str, stats: impl Fn() -> Statistics, check: impl FnOnce() -> SatResult) -> SatResult {
+    if smt_ablated() {
+        return SatResult::Unknown;
+    }
+    let spent = REASONING_STEPS.with(|s| s.get());
+    if spent >= total_reasoning_rlimit() {
+        if std::env::var_os("ZINNIA_Z3_TRACE").is_some() {
+            eprintln!("[zinnia-z3] site={site} result=Unknown rlimit=0 ms=0 (compilation budget spent)");
+        }
+        return SatResult::Unknown;
+    }
+    let before = step_count(&stats());
+    let result = traced(site, &stats, check);
+    let used = step_count(&stats()).saturating_sub(before);
+    REASONING_STEPS.with(|s| s.set(spent.saturating_add(used)));
+    result
+}
+
+/// `solver.check()`, traced (see [`traced`]); `Unknown` under [`smt_ablated`]
+/// or once the compilation's reasoning budget is spent.
+pub fn check(site: &str, solver: &Solver) -> SatResult {
+    reasoning(site, || solver.get_statistics(), || solver.check())
+}
+
+/// `solver.check_assumptions(assumptions)`, traced (see [`traced`]);
+/// `Unknown` under [`smt_ablated`] or once the compilation's reasoning budget
+/// is spent.
+pub fn check_assuming(site: &str, solver: &Solver, assumptions: &[Bool]) -> SatResult {
+    reasoning(site, || solver.get_statistics(), || solver.check_assumptions(assumptions))
+}
+
+/// `opt.check(&[])` for a bound query (the extreme of a value), traced (see
+/// [`traced`]); `Unknown` under [`smt_ablated`] or once the compilation's
+/// reasoning budget is spent.
+pub fn check_optimize(site: &str, opt: &Optimize) -> SatResult {
+    reasoning(site, || opt.get_statistics(), || opt.check(&[]))
+}
+
+/// `opt.check(&[])` for the construction selection (`lower::select`), traced
+/// (see [`traced`]). Not reasoning about values, so [`smt_ablated`] leaves it on.
+pub fn check_selection(site: &str, opt: &Optimize) -> SatResult {
+    traced(site, &|| opt.get_statistics(), || opt.check(&[]))
+}
+
+/// Run `check`. With `ZINNIA_Z3_TRACE` set, also print one stderr line: the
+/// call site, the answer, the steps the check used and its wall time. This is
+/// how the limits above are calibrated; it has no effect on the answers.
+fn traced(site: &str, stats: &impl Fn() -> Statistics, check: impl FnOnce() -> SatResult) -> SatResult {
+    if std::env::var_os("ZINNIA_Z3_TRACE").is_none() {
+        return check();
+    }
+    let before = step_count(&stats());
+    let started = Instant::now();
+    let result = check();
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1e3;
+    let used = step_count(&stats()).saturating_sub(before);
+    let caller = if std::env::var_os("ZINNIA_Z3_TRACE_CALLER").is_some() { caller_frames() } else { String::new() };
+    eprintln!("[zinnia-z3] site={site} result={result:?} rlimit={used} ms={elapsed_ms:.3}{caller}");
+    result
+}
+
+/// Measurement only (`ZINNIA_Z3_TRACE_CALLER`): the first compiler frames
+/// outside the reasoning modules that led to a query, as ` caller=a<b<c`.
+fn caller_frames() -> String {
+    let bt = std::backtrace::Backtrace::force_capture().to_string();
+    let frames: Vec<String> = bt
+        .lines()
+        .filter_map(|l| l.trim().split_once(": ").map(|(_, f)| f.to_string()))
+        .filter(|f| f.starts_with("_zinnia_core::"))
+        .filter(|f| !["optim::resolver", "optim::z3_budget", "optim::prove", "builder::IRBuilder>::ask_bounds", "optim::range"].iter().any(|m| f.contains(m)))
+        .map(|f| f.trim_start_matches("_zinnia_core::").split("::h").next().unwrap_or("").to_string())
+        .take(3)
+        .collect();
+    format!(" caller={}", frames.join("<"))
+}
+
+/// The Z3 context's step count so far.
+fn step_count(stats: &Statistics) -> u64 {
+    match stats.value("rlimit count") {
+        Some(z3::StatisticsValue::UInt(n)) => n as u64,
+        Some(z3::StatisticsValue::Double(x)) => x as u64,
+        None => 0,
+    }
+}
+"""Loading, classifying and compiling `kernel.py` files, and the scope rule."""
+
+from __future__ import annotations
+
+import ast
+import importlib.util
+import sys
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+#: The scope rule (author's decision, applied to every dataset): a kernel that
+#: imports any module other than `numpy` (and its submodules) and `math` is out
+#: of scope. `zinnia` is the language's own import and is always allowed.
+ALLOWED_TOP_LEVEL_MODULES = frozenset({"numpy", "math", "zinnia"})
+
+
+def imported_modules(path: Path) -> list[str]:
+    """Top-level module names of every import statement in the file."""
+    tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+    names: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.extend(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:  # relative import: a sibling module, never in scope
+                names.append("." * node.level + (node.module or ""))
+            elif node.module:
+                names.append(node.module.split(".")[0])
+    return names
+
+
+def out_of_scope_imports(path: Path) -> list[str]:
+    """The imports that put this kernel out of scope (empty = in scope)."""
+    return sorted({n for n in imported_modules(path) if n not in ALLOWED_TOP_LEVEL_MODULES})
+
+
+def function_roles(path: Path) -> dict[str, str]:
+    """`circuit`, `chip` or `plain` for every top-level function of the file."""
+    tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+    roles: dict[str, str] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        decorators = {ast.unparse(dec) for dec in node.decorator_list}
+        if any(d == "zk_circuit" or d.startswith("zk_circuit(") for d in decorators):
+            roles[node.name] = "circuit"
+        elif any(d == "zk_chip" or d.startswith("zk_chip(") for d in decorators):
+            roles[node.name] = "chip"
+        else:
+            roles[node.name] = "plain"
+    return roles
+
+
+def load_kernel_module(path: Path) -> ModuleType:
+    """Import a kernel file under a module name derived from its folder.
+
+    The module is registered in `sys.modules` so that chips and helpers
+    defined in the same file resolve during compilation.
+    """
+    module_name = "zinnia_benchmark_" + path.parent.name
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load module spec for {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def compile_kernel(path: Path, function: str, backend: str = "halo2") -> Any:
+    """Compile one `@zk_circuit` function for `backend` (`ZinniaConfig.backend`:
+    `halo2` or `noir`); returns a `ZKCompiledProgram`.
+
+    The backend is the compile target. Where Zinnia has several equivalent
+    lowerings (sorts: a sorting network or pinned prover hints) it picks the one
+    cheaper on that backend; the program proves on every backend either way.
+    """
+    from zinnia import ZKCircuit
+    from zinnia.config.zinnia_config import ZinniaConfig
+
+    module = load_kernel_module(path)
+    circuit = ZKCircuit.from_method(getattr(module, function), config=ZinniaConfig(backend=backend))
+    return circuit.compile()
+const BUCKET_EDGES_NS: [u64; NUM_DURATION_BUCKETS - 1] = [
+    1_000,         // 1µs
+    10_000,        // 10µs
+    100_000,       // 100µs
+    1_000_000,     // 1ms
+    10_000_000,    // 10ms
+    100_000_000,   // 100ms
+    1_000_000_000, // 1s
+];
+
+/// All resolver-pipeline counters, lock-free. Accumulated across the
+/// lifetime of a single compilation; reset implicitly when a fresh
+/// `IRGenerator` / `IRGraph` builds a new telemetry instance.
+#[derive(Debug, Default)]
+pub struct SmtTelemetry {
+    // -- Counters ------------------------------------------------------
+    pub queries_total: AtomicUsize,
+    /// Resolved by the static_val fast-path inside `SmtResolver` /
+    /// `RangeResolver` (no walk, no Z3).
+    pub queries_static_val_hit: AtomicUsize,
+    /// Resolved by the range layer (interval collapsed to a point).
+    pub queries_range_hit: AtomicUsize,
+    /// Resolved by Z3 (returned `Some`).
+    pub queries_smt_resolved: AtomicUsize,
+    /// Z3 returned `unknown` / non-unique / `Sat` with an alternate model.
+    /// "Paid Z3 to learn nothing."
+    pub queries_smt_unknown: AtomicUsize,
+    /// Resolved from the per-ptr cache (no walk, no Z3 — cheapest case
+    /// after static_val).
+    pub queries_cache_hit: AtomicUsize,
+    /// `smt_enable=false` short-circuit path.
+    pub queries_skipped_disabled: AtomicUsize,
+    /// Formula-size budget exceeded (P5 commit 3 — only bumped when the
+    /// reverse-reachability walk aborts early).
+    pub queries_skipped_oversized: AtomicUsize,
+    /// AST→IR while-guard adaptive throttle skipped a resolver call after
+    /// the loop had already produced repeated unresolved guard queries.
+    /// Distinct from unknown/oversized: this is a deliberate fail-open
+    /// compile-time cost guard, not a resolver result.
+    pub queries_skipped_while_throttle: AtomicUsize,
+
+    // -- Timing (nanos) -----------------------------------------------
+    pub total_time_in_smt_ns: AtomicU64,
+    pub total_time_in_range_ns: AtomicU64,
+
+    // -- Duration histogram (SMT layer only) --------------------------
+    pub smt_duration_buckets: [AtomicUsize; NUM_DURATION_BUCKETS],
+
+    // -- Misc ---------------------------------------------------------
+    /// Largest formula encountered, in IR statements (count of nodes
+    /// visited by the reverse-reachability walk for one query).
+
+exec
+/usr/bin/zsh -lc "rg -n 'source|compile|import' /home/zhantong/Projects/zinnia-project/eval-redo/compile-timing -g '*.py' | head -100; rg -n 'unknown|check\\(|z3_budget' src/optim/resolver/smt.rs | head -100; rg -n 'Z3_TRACE|TRACE|reason_unknown' src/optim" in /home/zhantong/Projects/zinnia-project/wt/npb-hw
+ succeeded in 0ms:
+/home/zhantong/Projects/zinnia-project/eval-redo/compile-timing/tools/summarize.py:2:"""Summary of a compile_timing_remote.py run: per set (perf, acceptance) and configuration, the
+/home/zhantong/Projects/zinnia-project/eval-redo/compile-timing/tools/summarize.py:3:programs compiled, timeouts, median / p90 / max / total compile time of the compiled ones, and the
+/home/zhantong/Projects/zinnia-project/eval-redo/compile-timing/tools/summarize.py:4:SMT share ((default - no SMT) / default over the programs compiled under both).
+/home/zhantong/Projects/zinnia-project/eval-redo/compile-timing/tools/summarize.py:8:import json
+/home/zhantong/Projects/zinnia-project/eval-redo/compile-timing/tools/summarize.py:9:import statistics
+/home/zhantong/Projects/zinnia-project/eval-redo/compile-timing/tools/summarize.py:10:import sys
+/home/zhantong/Projects/zinnia-project/eval-redo/compile-timing/tools/summarize.py:27:            ok = [r["compile_s"] for r in recs.values() if r.get("ok")]
+/home/zhantong/Projects/zinnia-project/eval-redo/compile-timing/tools/summarize.py:30:            print(f" {group:<10} {config:<8} compiled={len(ok)} timeouts={timeouts} "
+/home/zhantong/Projects/zinnia-project/eval-redo/compile-timing/tools/summarize.py:35:        shares = [(default[n]["compile_s"] - no_smt[n]["compile_s"]) / default[n]["compile_s"] for n in both]
+/home/zhantong/Projects/zinnia-project/eval-redo/compile-timing/tools/summarize.py:36:        total_d = sum(default[n]["compile_s"] for n in both)
+/home/zhantong/Projects/zinnia-project/eval-redo/compile-timing/tools/summarize.py:37:        total_n = sum(no_smt[n]["compile_s"] for n in both)
+17://!   Z3's count of internal steps; see `optim::z3_budget`), never by wall
+19://!   `z3_budget::RESOLVER_RLIMIT`; configurable via
+20://!   `SmtResolver::with_rlimit`). On Z3 `unknown` we cache `Unknown` and
+71:use crate::optim::z3_budget;
+108:    /// Z3 steps per query (`optim::z3_budget`).
+134:    /// Build a resolver with default knobs (`z3_budget::RESOLVER_RLIMIT`
+140:            rlimit: z3_budget::RESOLVER_RLIMIT,
+271:                        .queries_smt_unknown
+401:                .queries_smt_unknown
+459:                .queries_smt_unknown
+506:            super::Effort::Tighten => self.rlimit.min(z3_budget::TIGHTEN_RLIMIT),
+525:            self.telemetry.queries_smt_unknown.fetch_add(1, Ordering::Relaxed);
+604:    let solver = z3_budget::solver(rlimit);
+618:    let resolved = match z3_budget::check("resolver.value", &solver) {
+628:                        if z3_budget::check("resolver.unique", &solver) == z3::SatResult::Unsat {
+642:                        if z3_budget::check("resolver.unique", &solver) == z3::SatResult::Unsat {
+652:                        if z3_budget::check("resolver.unique", &solver) == z3::SatResult::Unsat {
+718:            Int::fresh_const(&format!("sp_unknown_{name}_"))
+769:    let solver = z3_budget::solver(rlimit);
+783:    let proved = z3_budget::check("resolver.decide", &solver) == z3::SatResult::Unsat;
+812:    let opt = z3_budget::optimize(rlimit);
+846:    let candidate = match z3_budget::check_optimize("resolver.extreme", &opt) {
+871:        let verifier = z3_budget::solver(rlimit);
+906:            match z3_budget::check("resolver.extreme_verify", &verifier) {
+src/optim/z3_budget.rs:128:        if std::env::var_os("ZINNIA_Z3_TRACE").is_some() {
+src/optim/z3_budget.rs:166:/// Run `check`. With `ZINNIA_Z3_TRACE` set, also print one stderr line: the
+src/optim/z3_budget.rs:170:    if std::env::var_os("ZINNIA_Z3_TRACE").is_none() {
+src/optim/z3_budget.rs:178:    let caller = if std::env::var_os("ZINNIA_Z3_TRACE_CALLER").is_some() { caller_frames() } else { String::new() };
+src/optim/z3_budget.rs:183:/// Measurement only (`ZINNIA_Z3_TRACE_CALLER`): the first compiler frames
+
+codex
+The compiler exposes per-query Z3 traces and resolver counters. The resolver’s `unknown` counter also includes non-unique answers, so it is not a budget-exhaustion count. I’ll use the query traces to count actual solver calls and check what they reveal about exhausted budgets.
+exec
+/usr/bin/zsh -lc "sed -n '1,180p' zinnia/api/zk_circuit.py; rg --files zinnia | head; rg -n 'from_method|inspect.getsource' zinnia; rg -n 'z3_budget::check|\\.check\\(' src/optim src/lower | head -80; ls .venv/lib/python*/site-packages/*zinnia*" in /home/zhantong/Projects/zinnia-project/wt/npb-hw
+ succeeded in 0ms:
+import functools
+import inspect
+from dataclasses import dataclass
+from typing import List, Any, Dict, Tuple
+
+from zinnia import ZKChip, ZKExternalFunc
+from zinnia.api.zk_compiled_program import ZKCompiledProgram
+from zinnia.compile.lowering import read_decorated_circuit
+from zinnia.compile.zinnia_compiler import ZinniaCompiler
+from zinnia.config.zinnia_config import ZinniaConfig
+from zinnia.debug.exception import InternalZinniaException
+from zinnia.debug.prettifier import prettify_exception
+
+
+class ZKCircuit:
+    name: str
+    source: str
+    chips: Dict[str, ZKChip]
+    externals: Dict[str, ZKExternalFunc]
+    config: ZinniaConfig
+    program: ZKCompiledProgram | None
+
+    def __init__(
+            self,
+            name: str,
+            source: str,
+            chips: List[Any] = None,
+            externals: List[Any] = None,
+            config: ZinniaConfig = ZinniaConfig()
+    ):
+        if name == 'main':
+            raise ValueError('Circuit name cannot be `main`, please use another name.')
+        self.name = name
+        self.source = source
+        self.chips = ZKCircuit.__parse_chips(chips)
+        self.externals = ZKCircuit.__parse_externals(externals)
+        self.config = config
+        self.program = None
+
+    @staticmethod
+    def __parse_chips(chips: List[Any] | None) -> Dict[str, ZKChip]:
+        if chips is None:
+            return {}
+        result = {}
+        for chip in chips:
+            if isinstance(chip, ZKChip):
+                result[chip.name] = chip
+            else:
+                chip_instance = ZKChip.from_method(chip)
+                result[chip_instance.name] = chip_instance
+        return result
+
+    @staticmethod
+    def __parse_externals(externals: List[Any] | None) -> Dict[str, ZKExternalFunc]:
+        if externals is None:
+            return {}
+        result = {}
+        for ext in externals:
+            if isinstance(ext, ZKExternalFunc):
+                result[ext.name] = ext
+            else:
+                ext_instance = ZKExternalFunc.from_method(ext)
+                result[ext_instance.name] = ext_instance
+        return result
+
+    @staticmethod
+    def from_source(
+            name: str,
+            source: str,
+            chips: List[Any] = None,
+            externals: List[Any] = None,
+            config: ZinniaConfig = ZinniaConfig()
+    ) -> 'ZKCircuit':
+        return ZKCircuit(name, source, chips, externals, config)
+
+    @staticmethod
+    def from_method(
+            method,
+            chips: List[Any] = None,
+            externals: List[Any] = None,
+            config: ZinniaConfig = ZinniaConfig()
+    ) -> 'ZKCircuit':
+        """A circuit from a ``@zk_circuit`` function or a plain function.
+
+        For a decorated function the circuit uses the source the decorator
+        prepared, the chips it lifted, and every chip and external function
+        defined in the function's module, after the ``chips`` and
+        ``externals`` given here. A plain function is compiled from its
+        source as written, with only the given chips and externals.
+        """
+        decorated = getattr(method, _DECORATED_CIRCUIT, None)
+        if decorated is None:
+            return ZKCircuit(method.__name__, inspect.getsource(method), chips, externals, config)
+        chips, externals = _with_registered_functions(
+            list(chips or []), list(externals or []), [decorated.module_globals])
+        chips += [ZKChip.from_source(name, source) for name, source in decorated.lifted_chips]
+        return ZKCircuit(decorated.name, decorated.source, chips, externals or None, config)
+
+    def compile(self) -> ZKCompiledProgram:
+        from zinnia.debug.exception.base import ZinniaException
+        try:
+            self.program = ZinniaCompiler(self.config).compile(
+                self.source, self.name,
+                {k: v.to_internal_object() for k, v in self.chips.items()},
+                {k: v.to_internal_object() for k, v in self.externals.items()},
+            )
+        except InternalZinniaException as e:
+            raise prettify_exception(e)
+        except (ValueError, RuntimeError) as e:
+            # Rust core may raise ValueError/RuntimeError for compilation errors
+            raise ZinniaException(str(e))
+        except BaseException as e:
+            # PyO3 PanicException inherits from BaseException
+            if type(e).__name__ == 'PanicException':
+                raise ZinniaException(str(e))
+            raise
+        return self.program
+
+    def analyze_shapes(self, pretty: bool = True) -> Dict[str, Any]:
+        """Run phase 0 (array-level shape analysis) on this circuit.
+
+        Mirrors :meth:`compile` — same chips, same externals, same config —
+        but stops after phase 0 and returns its record instead of a compiled
+        program. The result is either the phase-0 JSON document or
+        ``{"rejected": {"reason": ..., "detail": ...}}``.
+
+        ``pretty`` writes the ``*_pretty`` fields of the record; without them
+        the document is smaller and carries the same terms.
+        """
+        return ZinniaCompiler(self.config).analyze_shapes(
+            self.source, self.name,
+            {k: v.to_internal_object() for k, v in self.chips.items()},
+            {k: v.to_internal_object() for k, v in self.externals.items()},
+            pretty,
+        )
+
+    def build_candidates(
+        self,
+        query_timeout_ms: int = 3000,
+        program_timeout_ms: int = 60000,
+    ) -> Dict[str, Any]:
+        """Run phase 0 and then phase 1 on this circuit.
+
+        Mirrors :meth:`analyze_shapes` — same chips, same externals, same
+        config — but continues into phase 1 and returns its candidate graph,
+        answer record and statistics, or the rejection of whichever phase
+        refused the program.
+        """
+        return ZinniaCompiler(self.config).build_candidates(
+            self.source, self.name,
+            {k: v.to_internal_object() for k, v in self.chips.items()},
+            {k: v.to_internal_object() for k, v in self.externals.items()},
+            query_timeout_ms, program_timeout_ms,
+        )
+
+    def __call__(self, *args):
+        """Execute the circuit using the mock backend (default).
+
+        Equivalent to `self.prove(*args, backend="mock")`, but returns
+        a ZKExecResult for backward compatibility.
+        """
+        proof_result = self.prove(*args, backend="mock")
+        from zinnia.exec.exec_result import ZKExecResult
+        satisfied = proof_result.proof_bytes_hex == "mock_satisfied"
+        return ZKExecResult(satisfied, proof=proof_result)
+
+    def mock(self, *args):
+        """Mock execution (alias for __call__)."""
+        return self(*args)
+
+    def prove(self, *args, backend="mock", params=None):
+        """Compile (if needed), preprocess, and prove.
+
+        Args:
+            *args: Positional arguments matching the circuit inputs.
+            backend: "mock" (default, fast), "halo2-base" or "noir" (real ZK
+                proof). The legacy "halo2" backend is retired (an error).
+            params: Optional dict with proving parameters.
+
+        Returns:
+zinnia/spec/predicates.py
+zinnia/spec/_decorator.py
+zinnia/spec/__init__.py
+zinnia/lang/typing.py
+zinnia/lang/type.py
+zinnia/lang/poseidon_params.py
+zinnia/lang/operator.py
+zinnia/lang/namespace.py
+zinnia/lang/metatype.py
+zinnia/lang/__init__.py
+zinnia/api/zk_external_func.py:26:    def from_method(method) -> 'ZKExternalFunc':
+zinnia/api/zk_external_func.py:33:        source_code = inspect.getsource(method)
+zinnia/api/zk_external_func.py:45:    source_code = inspect.getsource(method)
+zinnia/api/zk_circuit.py:49:                chip_instance = ZKChip.from_method(chip)
+zinnia/api/zk_circuit.py:62:                ext_instance = ZKExternalFunc.from_method(ext)
+zinnia/api/zk_circuit.py:77:    def from_method(
+zinnia/api/zk_circuit.py:93:            return ZKCircuit(method.__name__, inspect.getsource(method), chips, externals, config)
+zinnia/api/zk_chip.py:24:    def from_method(method) -> 'ZKChip':
+zinnia/compile/lowering/syntax.py:18:    ``inspect.getsource`` of a method or of a function defined inside a test
+zinnia/compile/lowering/module_constants.py:3:The compiler sees only the source ``inspect.getsource`` returns for the
+zinnia/compile/lowering/imports.py:12:  ``inspect.getsource`` gives the compiler only the function itself).
+zinnia/compile/lowering/__init__.py:7:**Decorator stage** (``@zk_circuit``, ``@zk_chip``, ``ZKChip.from_method``),
+zinnia/compile/lowering/__init__.py:70:    raw_source = inspect.getsource(method)
+src/optim/z3_budget.rs:140:/// `solver.check()`, traced (see [`traced`]); `Unknown` under [`smt_ablated`]
+src/optim/z3_budget.rs:143:    reasoning(site, || solver.get_statistics(), || solver.check())
+src/optim/z3_budget.rs:153:/// `opt.check(&[])` for a bound query (the extreme of a value), traced (see
+src/optim/z3_budget.rs:157:    reasoning(site, || opt.get_statistics(), || opt.check(&[]))
+src/optim/z3_budget.rs:160:/// `opt.check(&[])` for the construction selection (`lower::select`), traced
+src/optim/z3_budget.rs:163:    traced(site, &|| opt.get_statistics(), || opt.check(&[]))
+src/optim/smt_encoding.rs:553:        assert_eq!(solver.check(), SatResult::Unsat);
+src/optim/smt_encoding.rs:568:        assert_eq!(solver.check(), SatResult::Unsat);
+src/optim/smt_encoding.rs:585:        assert_eq!(solver.check(), SatResult::Unsat);
+src/optim/smt_encoding.rs:600:                assert_eq!(solver.check(), SatResult::Unsat, "{a} {what} {b} != {expected}");
+src/optim/smt_encoding.rs:618:        assert_eq!(solver.check(), SatResult::Unsat);
+src/lower/select.rs:124:    if z3_budget::check_selection("lower.select", &opt) != SatResult::Sat {
+src/optim/resolver/smt.rs:618:    let resolved = match z3_budget::check("resolver.value", &solver) {
+src/optim/resolver/smt.rs:628:                        if z3_budget::check("resolver.unique", &solver) == z3::SatResult::Unsat {
+src/optim/resolver/smt.rs:642:                        if z3_budget::check("resolver.unique", &solver) == z3::SatResult::Unsat {
+src/optim/resolver/smt.rs:652:                        if z3_budget::check("resolver.unique", &solver) == z3::SatResult::Unsat {
+src/optim/resolver/smt.rs:783:    let proved = z3_budget::check("resolver.decide", &solver) == z3::SatResult::Unsat;
+src/optim/resolver/smt.rs:846:    let candidate = match z3_budget::check_optimize("resolver.extreme", &opt) {
+src/optim/resolver/smt.rs:906:            match z3_budget::check("resolver.extreme_verify", &verifier) {
+src/optim/prove.rs:617:    let outcome = if z3_budget::check_assuming("prove.entails", &solver, &[entails]) == z3::SatResult::Unsat {
+src/optim/prove.rs:619:    } else if z3_budget::check_assuming("prove.entails", &solver, &[contradicts]) == z3::SatResult::Unsat {
+src/optim/prove.rs:624:    if z3_budget::check("prove.facts_sat", &solver) != z3::SatResult::Sat {
+src/optim/prove.rs:662:    match z3_budget::check_optimize("prove.shape_param", &opt) {
+src/optim/predicates/tests/formula_tests.rs:26:    assert_eq!(solver.check(), z3::SatResult::Sat);
+src/optim/predicates/tests/formula_tests.rs:50:    assert_eq!(solver.check(), z3::SatResult::Unsat);
+src/optim/predicates/tests/formula_tests.rs:56:    assert_eq!(solver.check(), z3::SatResult::Unsat);
+src/optim/predicates/tests/formula_tests.rs:62:    assert_eq!(solver.check(), z3::SatResult::Sat);
+src/optim/predicates/tests/formula_tests.rs:89:    assert_eq!(solver.check(), z3::SatResult::Sat);
+src/optim/predicates/tests/discharge_tests.rs:187:    assert_eq!(solver.check(), z3::SatResult::Sat);
+src/optim/predicates/tests/discharge_tests.rs:317:        solver.check(),
+src/optim/predicates/tests/discharge_tests.rs:327:        solver.check(),
+src/optim/predicates/tests/discharge_tests.rs:337:        solver.check(),
+src/optim/predicates/formula.rs:645:        assert_eq!(solver.check(), SatResult::Sat);
+src/optim/predicates/formula.rs:650:        assert_eq!(solver.check(), SatResult::Unsat);
+src/optim/predicates/formula.rs:661:        assert_eq!(solver.check(), SatResult::Unsat);
+src/optim/predicates/formula.rs:695:        assert_eq!(solver.check(), SatResult::Unsat);
+.venv/lib/python3.14/site-packages/zinnia.pth
+
+.venv/lib/python3.14/site-packages/zinnia-0.0.1.dist-info:
+INSTALLER
+METADATA
+RECORD
+REQUESTED
+WHEEL
+direct_url.json
+sboms
+uv_cache.json
+
+exec
+/usr/bin/zsh -lc "python - <<'PY'
+import json,collections
+from pathlib import Path
+p=Path('/home/zhantong/Projects/zinnia-project/eval-redo')
+a=json.load(open(p/'final-analysis/fin/remote/post-freeze/data-fin/accept_final/results.json'))['results']
+print('accept',collections.Counter((r['dataset'],r['outcome']) for r in a))
+for d in sorted({r['dataset'] for r in a}):
+ print(d,[{k:r[k] for k in ['program','kernel','function']} for r in a if r['dataset']==d and r['outcome']=='accepted_correct'][:3])
+t=[json.loads(l) for l in open(p/'compile-timing/remote/ct_fin.jsonl')]; t=[r for r in t if r['config']=='default']
+print('timing',collections.Counter((r['set'],r['name'].split('_')[0],r['ok']) for r in t))
+for s in ['perf','acceptance']: print(s,[(r['name'],r['kernel'],r['function']) for r in t if r['set']==s][:8])
+PY" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C
+ succeeded in 0ms:
+accept Counter({('ds1000_numpy', 'accepted_correct'): 132, ('pythran', 'accepted_correct'): 50, ('npbench', 'accepted_correct'): 32, ('pythran', 'rejected_no_provable_bound'): 26, ('ds1000_numpy', 'rejected_no_provable_bound'): 19, ('npbench', 'rejected_no_provable_bound'): 14, ('pythran', 'rejected_compiler_limitation'): 12, ('pythran', 'rejected_unsupported_construct'): 11, ('pythran', 'rejected_resource_limit'): 8, ('ds1000_numpy', 'rejected_unsupported_construct'): 7, ('npbench', 'rejected_compiler_limitation'): 5, ('ds1000_numpy', 'rejected_compiler_limitation'): 4, ('pythran', 'rejected_unclassified'): 3, ('npbench', 'rejected_unsupported_construct'): 2, ('ds1000_numpy', 'rejected_resource_limit'): 1, ('npbench', 'rejected_resource_limit'): 1})
+ds1000_numpy [{'program': 'case0291', 'kernel': 'benchmarking/datasets/ds1000_numpy/generated/case0291/kernel.py', 'function': 'kernel'}, {'program': 'case0302', 'kernel': 'benchmarking/datasets/ds1000_numpy/generated/case0302/kernel.py', 'function': 'kernel'}, {'program': 'case0314', 'kernel': 'benchmarking/datasets/ds1000_numpy/generated/case0314/kernel.py', 'function': 'kernel'}]
+npbench [{'program': 'npbench_polybench_gemm_gemm', 'kernel': 'benchmarking/datasets/npbench/npbench_polybench_gemm_gemm/kernel.py', 'function': 'kernel'}, {'program': 'npbench_polybench_k3mm_k3mm', 'kernel': 'benchmarking/datasets/npbench/npbench_polybench_k3mm_k3mm/kernel.py', 'function': 'kernel'}, {'program': 'npbench_polybench_syrk_syrk', 'kernel': 'benchmarking/datasets/npbench/npbench_polybench_syrk_syrk/kernel.py', 'function': 'kernel'}]
+pythran [{'program': 'pythran_clip', 'kernel': 'benchmarking/datasets/pythran/pythran_clip/kernel.py', 'function': 'clip'}, {'program': 'pythran_crotg', 'kernel': 'benchmarking/datasets/pythran/pythran_crotg/kernel.py', 'function': 'CROTG'}, {'program': 'pythran_goodexpomeasure', 'kernel': 'benchmarking/datasets/pythran/pythran_goodexpomeasure/kernel.py', 'function': 'goodExpoMeasure'}]
+timing Counter({('perf', 'ds1000', True): 100, ('acceptance:pythran', 'pythran', False): 60, ('acceptance:pythran', 'pythran', True): 50, ('acceptance:npbench', 'npbench', True): 32, ('acceptance:npbench', 'npbench', False): 22, ('acceptance:ds1000_numpy', 'case0291::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0298::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0295::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0296::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0300::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0301::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0302::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0297::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0303::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0309::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0304::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0310::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0311::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0312::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0313::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0314::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0317::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0320::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0321::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0318::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0322::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0323::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0324::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0325::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0299::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0326::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0327::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0328::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0331::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0332::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0319::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0334::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0336::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0337::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0329::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0338::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0330::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0339::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0340::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0341::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0342::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0343::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0345::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0348::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0349::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0346::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0347::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0335::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0358::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0353::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0355::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0359::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0360::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0357::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0354::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0361::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0362::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0363::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0356::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0365::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0366::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0368::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0369::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0370::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0373::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0375::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0374::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0382::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0383::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0381::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0384::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0364::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0389::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0391::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0392::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0393::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0398::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0385::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0399::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0400::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0401::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0387::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0386::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0405::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0407::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0402::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0403::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0409::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0411::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0412::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0413::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0414::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0415::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0417::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0416::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0418::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0420::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0419::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0422::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0425::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0426::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0427::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0428::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0429::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0430::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0431::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0433::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0434::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0435::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0436::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0437::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0438::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0439::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0441::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0442::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0440::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0443::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0444::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0448::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0449::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0451::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0450::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0452::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0453::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0454::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0456::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0457::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0462::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0458::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0463::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0467::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0468::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0406::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0471::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0472::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0477::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0478::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0480::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0481::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0482::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0483::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0485::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0491::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0490::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0495::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0496::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0497::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0498::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0499::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0500::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0408::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0501::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0502::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0507::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0504::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0508::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0503::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0509::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0510::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0505::kernel', True): 1, ('acceptance:ds1000_numpy', 'case0489::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0388::kernel', False): 1, ('acceptance:ds1000_numpy', 'case0390::kernel', False): 1})
+perf [('ds1000_case0309', '/home/zhantong/zinnia-eval-run/zinnia-post/benchmarking/datasets/ds1000/ds1000_case0309/kernel.py', 'kernel'), ('ds1000_case0310', '/home/zhantong/zinnia-eval-run/zinnia-post/benchmarking/datasets/ds1000/ds1000_case0310/kernel.py', 'kernel'), ('ds1000_case0300', '/home/zhantong/zinnia-eval-run/zinnia-post/benchmarking/datasets/ds1000/ds1000_case0300/kernel.py', 'kernel'), ('ds1000_case0301', '/home/zhantong/zinnia-eval-run/zinnia-post/benchmarking/datasets/ds1000/ds1000_case0301/kernel.py', 'kernel'), ('ds1000_case0311', '/home/zhantong/zinnia-eval-run/zinnia-post/benchmarking/datasets/ds1000/ds1000_case0311/kernel.py', 'kernel'), ('ds1000_case0298', '/home/zhantong/zinnia-eval-run/zinnia-post/benchmarking/datasets/ds1000/ds1000_case0298/kernel.py', 'kernel'), ('ds1000_case0312', '/home/zhantong/zinnia-eval-run/zinnia-post/benchmarking/datasets/ds1000/ds1000_case0312/kernel.py', 'kernel'), ('ds1000_case0314', '/home/zhantong/zinnia-eval-run/zinnia-post/benchmarking/datasets/ds1000/ds1000_case0314/kernel.py', 'kernel')]
+acceptance []
+
+exec
+/usr/bin/zsh -lc "rg --files -g '*.so' -g '*compile*remote*' . /home/zhantong/Projects/zinnia-project/eval-redo | head -35; cat benchmarking/datasets/pythran/pythran_clip/kernel.py; sed -n '50,95p' zinnia/compile/lowering/__init__.py; systemd-run --user --scope -q -p MemoryMax=16G .venv/bin/python -B -c 'import zinnia; import zinnia._zinnia_core as c; print(c.__file__)'" in /home/zhantong/Projects/zinnia-project/wt/npb-hw
+ succeeded in 0ms:
+./zinnia/_zinnia_core.cpython-314-x86_64-linux-gnu.so
+/home/zhantong/Projects/zinnia-project/eval-redo/post-freeze/scripts/compile_timing_remote.py
+/home/zhantong/Projects/zinnia-project/eval-redo/bigwins-data/h2bench/target/release/deps/libthiserror_impl-06963b3b2f0ae936.so
+/home/zhantong/Projects/zinnia-project/eval-redo/bigwins-data/h2bench/target/release/deps/libgetset-c5fd1c9f38bcab70.so
+/home/zhantong/Projects/zinnia-project/eval-redo/bigwins-data/h2bench/target/release/deps/libproc_macro_error_attr2-7e3a3c6bc38f2ea7.so
+/home/zhantong/Projects/zinnia-project/eval-redo/bigwins-data/h2bench/target/release/deps/libpaste-c9bd0e88b1442c39.so
+/home/zhantong/Projects/zinnia-project/eval-redo/bigwins-data/h2bench/target/release/deps/libtracing_attributes-63e88bb1f4ce937a.so
+/home/zhantong/Projects/zinnia-project/eval-redo/bigwins-data/h2bench/target/release/deps/libserde_derive-e675c74954965160.so
+/home/zhantong/Projects/zinnia-project/eval-redo/literal-work/arith-npb/before/target-literal/dev-fast/deps/libtracing_attributes-14734dd74d5588fc.so
+/home/zhantong/Projects/zinnia-project/eval-redo/literal-work/arith-npb/before/target-literal/dev-fast/deps/libgetset-a8b4ad7601c9ea32.so
+/home/zhantong/Projects/zinnia-project/eval-redo/literal-work/arith-npb/before/target-literal/dev-fast/deps/libthiserror_impl-b771ae3668245a55.so
+/home/zhantong/Projects/zinnia-project/eval-redo/literal-work/arith-npb/before/target-literal/dev-fast/deps/libproc_macro_error_attr2-1454f187eaf01f97.so
+/home/zhantong/Projects/zinnia-project/eval-redo/literal-work/arith-npb/before/target-literal/dev-fast/deps/libpaste-35c30f78442b3ef9.so
+/home/zhantong/Projects/zinnia-project/eval-redo/literal-work/arith-npb/before/target-literal/dev-fast/deps/libserde_derive-138ce9dc38f66057.so
+/home/zhantong/Projects/zinnia-project/eval-redo/npb-hw/compiler-fixes/frozen_zinnia_core.so
+# pythran program clip.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_chip
+def limit1(x, epsilon=1e-06):
+    if abs(x) < epsilon:
+        return 0
+    else:
+        return x / abs(x)
+
+@zk_circuit
+def clip(z: Complex[Array, '2'], _max: Float):
+    out = np.empty(z.shape, dtype=z.dtype)
+    for i in range(len(z)):
+        if abs(z[i]) > _max:
+            out[i] = limit1(z[i]) * _max
+        else:
+            out[i] = z[i]
+    return out
+from zinnia.compile.lowering.iterators import desugar_for_iterator
+from zinnia.compile.lowering.module_constants import inline_module_constants, module_constants
+from zinnia.compile.lowering.nested_defs import lift_self_contained_defs
+from zinnia.compile.lowering.syntax import FunctionLoweringError, dedent_source
+
+__all__ = [
+    "ALLOWED_IMPORT_ROOTS",
+    "FunctionLoweringError",
+    "OutOfScopeImportError",
+    "check_import_statement",
+    "dedent_source",
+    "desugar_for_iterator",
+    "lower_circuit_source",
+    "read_decorated_circuit",
+    "read_decorated_function",
+]
+
+
+def read_decorated_function(method) -> str:
+    """The source of a decorated function after the decorator stage (steps 1-2)."""
+    raw_source = inspect.getsource(method)
+    check_module_level_imports(method, raw_source)
+    source = resolve_module_level_imports(method, raw_source)
+    return inline_module_constants(source, module_constants(method))
+
+
+def read_decorated_circuit(method) -> Tuple[str, List[Tuple[str, str]]]:
+    """The source of a ``@zk_circuit`` function after the decorator stage
+    (steps 1-3), and the chips lifted from it as ``(name, source)`` pairs."""
+    source = read_decorated_function(method)
+    module_globals: Dict[str, Any] = getattr(method, "__globals__", {}) or {}
+    return lift_self_contained_defs(source, module_globals)
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/zinnia/_zinnia_core.cpython-314-x86_64-linux-gnu.so
+
+exec
+/usr/bin/zsh -lc 'cat /home/zhantong/Projects/zinnia-project/eval-redo/post-freeze/scripts/compile_timing_remote.py' in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C
+ succeeded in 0ms:
+#!/usr/bin/env python3
+"""Compile-time cost of the fact layer: compile every program under several configurations.
+
+Remote port of eval-redo/tools/compile_timing.py: the memory cap is capped.py (the harness's RSS
+watchdog; the container has no systemd) instead of memrun.sh, and every compile is pinned to one
+CPU of --cpus (a free CPU is taken for each compile, so no two compiles share a core).
+
+Programs: the DS-1000 perf set (status `perf`) and every in-scope acceptance entry function.
+Configurations (environment variables; see docs/ablations.md in the compiler):
+  default     nothing set
+  no_smt      ZINNIA_ABLATE_SMT=1                      (no Z3 anywhere; intervals stay)
+  no_facts    ZINNIA_ABLATE_SMT=1 ZINNIA_SMT_ENABLE=0  (no Z3, and the IR generator's resolver
+                                                         is constants-only: close to "no facts
+                                                         for bounding"; the passes keep intervals)
+Each compile runs in its own process (fresh hash seeds, no shared caches) with a memory cap and a
+timeout, and records: outcome, wall-clock compile time, the per-phase trace
+(ZINNIA_COMPILE_PHASE_TRACE=1) and the resolver's SMT/interval time
+(ZINNIA_SMT_LOG_TELEMETRY=1). Target: halo2 (the halo2-base compile target).
+
+Usage: compile_timing.py --repo <zinnia worktree> --out results.jsonl [--configs a,b] [--jobs N]
+       [--timeout S] [--only perf|acceptance]
+"""
+import argparse
+import concurrent.futures as cf
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+CONFIGS = {
+    "default": {},
+    "no_smt": {"ZINNIA_ABLATE_SMT": "1"},
+    "no_facts": {"ZINNIA_ABLATE_SMT": "1", "ZINNIA_SMT_ENABLE": "0"},
+}
+CAPPED = Path(__file__).resolve().parent / "capped.py"
+
+CHILD = r"""
+import json, sys, time
+from pathlib import Path
+sys.path.insert(0, sys.argv[3])
+from benchmarking.harness.kernels import compile_kernel
+t = time.perf_counter()
+try:
+    compile_kernel(Path(sys.argv[1]), sys.argv[2], backend="halo2")
+    out = {"ok": True}
+except BaseException as exc:
+    out = {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:400]}
+out["compile_s"] = time.perf_counter() - t
+print("@@RESULT@@" + json.dumps(out), flush=True)
+"""
+
+PHASE = re.compile(r"\[zinnia-compile-phase\] phase=(\S+) elapsed_s=([0-9.]+)")
+MS = re.compile(r"(total_time_in_(?:smt|range)_ms)\s*=\s*([0-9.]+)")
+
+
+def programs(repo: Path, only: str | None) -> list[dict]:
+    sys.path.insert(0, str(repo))
+    from benchmarking.harness.case_sets import load_acceptance_programs
+    out = []
+    if only in (None, "perf"):
+        raw = json.loads((repo / "benchmarking/datasets/case_sets/ds1000_perf.json").read_text())
+        for c in raw["cases"]:
+            if c["status"] == "perf":
+                out.append({"set": "perf", "name": c["case"], "kernel":
+                            str(repo / "benchmarking/datasets/ds1000" / c["case"] / "kernel.py"), "function": "kernel"})
+    if only in (None, "acceptance"):
+        for p in load_acceptance_programs(repo / "benchmarking/datasets/case_sets/acceptance.json"):
+            out.append({"set": f"acceptance:{p.dataset}", "name": f"{p.program}::{p.function}",
+                        "kernel": str(p.kernel_path), "function": p.function})
+    return out
+
+
+def run_one(repo: Path, prog: dict, config: str, timeout: float, mem: str, cpus) -> dict:
+    env = dict(os.environ, ZINNIA_COMPILE_PHASE_TRACE="1", ZINNIA_SMT_LOG_TELEMETRY="1", ZWT=str(repo),
+               PYTHONHASHSEED="0")
+    for k in ("ZINNIA_ABLATE_SMT", "ZINNIA_SMT_ENABLE"):
+        env.pop(k, None)
+    env.update(CONFIGS[config])
+    cpu = cpus.get()
+    cmd = ["taskset", "-c", cpu, str(repo / ".venv/bin/python"), str(CAPPED), mem, str(timeout),
+           str(repo / ".venv/bin/python"), "-c", CHILD, prog["kernel"], prog["function"], str(repo)]
+    started = time.perf_counter()
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 60, cwd=repo, env=env)
+        stdout, stderr, rc = proc.stdout, proc.stderr, proc.returncode
+        if rc == 124:  # capped.py killed the session at the timeout
+            rc = "timeout"
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout.decode() if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        stderr = exc.stderr.decode() if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        rc = "timeout"
+    finally:
+        cpus.put(cpu)
+    rec = {**prog, "config": config, "cpu": cpu, "wall_s": time.perf_counter() - started, "rc": rc}
+    m = [l for l in stdout.splitlines() if l.startswith("@@RESULT@@")]
+    if m:
+        rec.update(json.loads(m[-1][len("@@RESULT@@"):]))
+    else:
+        rec.update({"ok": False, "error": "timeout" if rc == "timeout" else f"no result (rc {rc})",
+                    "compile_s": None})
+    phases: dict[str, float] = {}
+    for name, secs in PHASE.findall(stderr):
+        phases[name] = phases.get(name, 0.0) + float(secs)
+    rec["phases"] = phases
+    ms: dict[str, float] = {}
+    for key, val in MS.findall(stderr):  # one summary per resolver phase; summed
+        ms[key] = ms.get(key, 0.0) + float(val)
+    # Only the IR generator's resolver reports these; prove() and the passes' Z3 use are not
+    # included (their cost shows in the difference between configurations).
+    rec["resolver_smt_s"] = ms.get("total_time_in_smt_ms", 0.0) / 1e3
+    rec["resolver_range_s"] = ms.get("total_time_in_range_ms", 0.0) / 1e3
+    return rec
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--repo", type=Path, required=True)
+    ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--configs", default="default,no_smt,no_facts")
+    ap.add_argument("--jobs", type=int, default=4)
+    ap.add_argument("--timeout", type=float, default=300)
+    ap.add_argument("--mem", default="8G")
+    ap.add_argument("--only", choices=["perf", "acceptance"])
+    ap.add_argument("--cpus", required=True, help="CPU ids or ranges; one compile per CPU at a time")
+    args = ap.parse_args()
+    import queue
+    cpus: "queue.Queue[str]" = queue.Queue()
+    for part in args.cpus.split(","):
+        lo, _, hi = part.partition("-")
+        for c in range(int(lo), int(hi or lo) + 1):
+            cpus.put(str(c))
+    args.jobs = min(args.jobs, cpus.qsize())
+    progs = programs(args.repo.resolve(), args.only)
+    configs = args.configs.split(",")
+    jobs = [(p, c) for p in progs for c in configs]  # interleaved: the configs of one program run together
+    print(f"{len(progs)} programs x {len(configs)} configs = {len(jobs)} compiles", file=sys.stderr)
+    with args.out.open("w") as fh, cf.ThreadPoolExecutor(args.jobs) as pool:
+        futs = [pool.submit(run_one, args.repo.resolve(), p, c, args.timeout, args.mem, cpus) for p, c in jobs]
+        for i, f in enumerate(cf.as_completed(futs), 1):
+            rec = f.result()
+            fh.write(json.dumps(rec) + "\n")
+            fh.flush()
+            if i % 50 == 0:
+                print(f"{i}/{len(jobs)}", file=sys.stderr, flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+exec
+/usr/bin/zsh -lc "ldd zinnia/_zinnia_core.cpython-314-x86_64-linux-gnu.so; nm -D zinnia/_zinnia_core.cpython-314-x86_64-linux-gnu.so | rg 'Z3_solver_check|Z3_optimize_check'" in /home/zhantong/Projects/zinnia-project/wt/npb-hw
+ succeeded in 0ms:
+	linux-vdso.so.1 (0x00007f35173c1000)
+	libz3.so.4.16 => /home/zhantong/Projects/zinnia-project/wt/npb-hw/.venv/lib/python3.14/site-packages/z3/lib/libz3.so.4.16 (0x00007f3515400000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007f3517361000)
+	libm.so.6 => /usr/lib/libm.so.6 (0x00007f35152c9000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007f3515000000)
+	/usr/lib64/ld-linux-x86-64.so.2 (0x00007f35173c3000)
+	libstdc++.so.6 => /usr/lib/libstdc++.so.6 (0x00007f3514c00000)
+	libpthread.so.0 => /usr/lib/libpthread.so.0 (0x00007f351735a000)
+                 U Z3_optimize_check
+                 U Z3_solver_check
+                 U Z3_solver_check_assumptions
+
+exec
+/usr/bin/zsh -lc "cat > z3_observer.c <<'EOF'
+/* Read-only observation of Z3 check results; no parameters or results changed. */
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <stdio.h>
+#include <stdlib.h>
+static void *symbol(const char *name) {
+    void *h = dlopen(getenv(\"TASK_C_Z3_LIB\"), RTLD_NOW | RTLD_LOCAL);
+    if ("'!h) { fprintf(stderr, "observer dlopen failed: %s'"\\n\", dlerror()); abort(); }
+    void *p = dlsym(h, name);
+    if ("'!p) abort();
+    return p;
+}
+static void record(void *ctx, void *obj, int result, int optimize) {
+    const char *reason = "";
+    if (!result) {
+        const char *(*get_reason)(void *, void *) = symbol(optimize ? "Z3_optimize_get_reason_unknown" : "Z3_solver_get_reason_unknown");
+        reason = get_reason(ctx, obj);
+    }
+    fprintf(stderr, "[task-c-z3] result=%d reason=%s'"\\n\", result, reason ? reason : \"\");
+}
+int Z3_solver_check(void *ctx, void *solver) {
+    int (*real)(void *, void *) = symbol(\"Z3_solver_check\");
+    int result = real(ctx, solver); record(ctx, solver, result, 0); return result;
+}
+int Z3_solver_check_assumptions(void *ctx, void *solver, unsigned n, void *const *args) {
+    int (*real)(void *, void *, unsigned, void *const *) = symbol(\"Z3_solver_check_assumptions\");
+    int result = real(ctx, solver, n, args); record(ctx, solver, result, 0); return result;
+}
+int Z3_optimize_check(void *ctx, void *opt, unsigned n, void *const *args) {
+    int (*real)(void *, void *, unsigned, void *const *) = symbol(\"Z3_optimize_check\");
+    int result = real(ctx, opt, n, args); record(ctx, opt, result, 1); return result;
+}
+EOF
+cat > collect.py <<'PY'
+#"'!/usr/bin/env python3
+"""Compile only, collecting deterministic SMT counters; never measures local times."""
+import argparse, concurrent.futures, hashlib, json, os, re, subprocess, sys
+from pathlib import Path
+HERE = Path(__file__).resolve().parent
+ROOT = Path('"'/home/zhantong/Projects/zinnia-project')
+REPO = ROOT / 'wt/npb-hw'
+ACCEPT = ROOT / 'eval-redo/final-analysis/fin/remote/post-freeze/data-fin/accept_final/results.json'
+TIMES = ROOT / 'eval-redo/compile-timing/remote/ct_fin.jsonl'
+CORPUS = {'ds1000_numpy':'DS-1000', 'npbench':'NPBench', 'pythran':'Pythran'}
+def manifest():
+    accepted = [r for r in json.loads(ACCEPT.read_text())['results'] if r['outcome']=='accepted_correct']
+    rows = [dict(id='acceptance:'+r['dataset']+':'+r['program']+'::'+r['function'], group='acceptance', corpus=CORPUS[r['dataset']], name=r['program']+'::'+r['function'], kernel=r['kernel'], function=r['function']) for r in accepted]
+    keys = {(r['program'],r['function']) for r in accepted}
+    for r in map(json.loads,TIMES.read_text().splitlines()):
+        if r['config']=='default' and r['set']=='perf':
+            rows.append(dict(id='perf:'+r['name'],group='perf',corpus='DS-1000', name=r['name'], kernel='benchmarking/'+r['kernel'].split('/benchmarking/')[1], function=r['function'], acceptance_match=(r['name'].removeprefix('ds1000_'),r['function']) in keys))
+    assert len({r['id'] for r in rows})==len(rows)
+    return sorted(rows,key=lambda r:r['id'])
+def child(index):
+    sys.path.insert(0,str(REPO))
+    from benchmarking.harness.kernels import compile_kernel
+    row=manifest()[index]
+    try:
+        compile_kernel(REPO/row['kernel'],row['function'],backend='halo2')
+        result={'ok':True}
+    except BaseException as e:
+        result={'ok':False,'error':f'{type(e).__name__}: {e}'}
+    print('@@RESULT@@'+json.dumps(result),flush=True)
+def run_one(i,row,observe=True):
+    env={k:v for k,v in os.environ.items() if not k.startswith('ZINNIA_') and k"'!='"'LD_PRELOAD'}
+    env.update(PYTHONDONTWRITEBYTECODE='1',PYTHONHASHSEED='0',ZINNIA_Z3_TRACE='1',ZINNIA_SMT_LOG_TELEMETRY='1')
+    if observe:
+        env.update(LD_PRELOAD=str(HERE/'z3_observer.so'),TASK_C_Z3_LIB=str(next((REPO/'.venv/lib').glob('python*/site-packages/z3/lib/libz3.so.4.16'))))
+    p=subprocess.run([str(REPO/'.venv/bin/python'),'-B',str(HERE/'collect.py'),'--child',str(i)],cwd=HERE,env=env,capture_output=True,text=True)
+    result=[json.loads(l.removeprefix('@@RESULT@@')) for l in p.stdout.splitlines() if l.startswith('@@RESULT@@')]
+    out=dict(row,rc=p.returncode,**(result[-1] if result else {'ok':False,'error':'no result'}))
+    queries=[]; pending=None; counters={}
+    for line in p.stderr.splitlines():
+        m=re.match(r'\\[task-c-z3\\] result=(-?\\d+) reason=(.*)',line)
+        if m:
+            assert pending is None
+            pending={'z3_result':int(m[1]),'reason_unknown':m[2]}
+        m=re.match(r'\\[zinnia-z3\\] site=(\\S+) result=(\\S+) rlimit=(\\d+) ms=\\S+(.*)',line)
+        if m:
+            q=dict(site=m[1],result=m[2],steps=int(m[3]),skipped='compilation budget spent' in m[4])
+            if observe and not q['skipped']:
+                assert pending is not None, line
+                q.update(pending); pending=None
+            queries.append(q)
+        m=re.match(r'\\s*(queries_\\w+)\\s*=\\s*(\\d+)',line)
+        if m: counters[m[1]]=counters.get(m[1],0)+int(m[2])
+    assert pending is None
+    out.update(queries=queries,resolver_counters=counters,kernel_sha256=hashlib.sha256((REPO/row['kernel']).read_bytes()).hexdigest())
+    # Deliberately do not persist stdout/stderr: compiler telemetry contains local durations.
+    return out
+if __name__=='__main__':
+    ap=argparse.ArgumentParser(); ap.add_argument('--child',type=int); ap.add_argument('--jobs',type=int,default=4); ap.add_argument('--verify',action='store_true'); args=ap.parse_args()
+    if args.child is not None: child(args.child); sys.exit()
+    assert 1<=args.jobs<=8
+    assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=REPO,text=True).strip()=='3ebe0558f25592a0c1f8b6cf9bf7ad09f3ddb1d1'
+    rows=manifest(); (HERE/'manifest.json').write_text(json.dumps(rows,indent=2)+'\\n')
+    if args.verify:
+        old=[json.loads(l) for l in (HERE/'local_counts.jsonl').read_text().splitlines()]
+        # For each corpus, repeat the program with most actual Unknowns without observer.
+        chosen=[max((r for r in old if r['corpus']==c and r['group']=='acceptance'),key=lambda r:sum(q['result']=='Unknown' and not q['skipped'] for q in r['queries'])) for c in CORPUS.values()]
+        checks=[]
+        for r in chosen:
+            i=next(i for i,v in enumerate(rows) if v['id']==r['id']); new=run_one(i,rows[i],False)
+            old_queries=[{k:v for k,v in q.items() if k not in ('z3_result','reason_unknown')} for q in r['queries']]
+            assert old_queries==new['queries'] and r['ok']==new['ok'] and r['resolver_counters']==new['resolver_counters']
+            checks.append({'id':r['id'],'identical':True})
+        (HERE/'verification.json').write_text(json.dumps(checks,indent=2)+'\\n')
+    else:
+        subprocess.run(['cc','-shared','-fPIC','-O2','-o',str(HERE/'z3_observer.so'),str(HERE/'z3_observer.c'),'-ldl'],check=True)
+        with (HERE/'local_counts.jsonl').open('w') as f, concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
+            futures=[pool.submit(run_one,i,r) for i,r in enumerate(rows)]
+            for n,future in enumerate(concurrent.futures.as_completed(futures),1):
+                r=future.result(); f.write(json.dumps(r)+'\\n'); f.flush()
+                if n%20==0 or not r['ok']: print(n,'/',len(rows),r['id'],'ok=',r['ok'],flush=True)
+PY
+systemd-run --user --scope -q -p MemoryMax=16G /home/zhantong/Projects/zinnia-project/wt/npb-hw/.venv/bin/python -B collect.py --jobs 4" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C
+codex
+The remote timing file has separate DS-1000 performance and acceptance sets. I’ll use the 214 accepted programs as the primary population and report the performance-set alternative separately.
+
+Local counting is underway under a shared 16 GiB memory cap. The compiler trace omits Z3’s reason for `Unknown`, so I added a read-only observer in `C/` to capture that reason without changing solver parameters or results.
+exec
+/usr/bin/zsh -lc "python - <<'PY'
+import json,collections
+r=[json.loads(l) for l in open('local_counts.jsonl')]
+print('completed',len(r),'failures',[(x['id'],x.get('error')) for x in r if not x['ok']])
+print('unknowns',collections.Counter((q['site'],q.get('reason_unknown'),q['steps']) for x in r for q in x['queries'] if q['result']=='Unknown').most_common(20))
+print('perf acceptance match',collections.Counter(x.get('acceptance_match') for x in json.load(open('manifest.json')) if x['group']=='perf'))
+PY" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C
+ succeeded in 0ms:
+completed 154 failures []
+unknowns []
+perf acceptance match Counter({True: 92, False: 8})
+
+exec
+/usr/bin/zsh -lc "git status --short; rg -n 'set_timeout|\"timeout\"|set_u32\\(\"rlimit\"|z3_budget::' src/optim/prove.rs src/optim/resolver/smt.rs src/lower/select.rs; sed -n '92,130p' src/lower/select.rs; cat .venv/lib/python3.14/site-packages/zinnia-0.0.1.dist-info/direct_url.json" in /home/zhantong/Projects/zinnia-project/wt/npb-hw
+ succeeded in 0ms:
+src/lower/select.rs:95:/// (and with them whether it fits `z3_budget::SELECT_RLIMIT`) depend on the
+src/lower/select.rs:117:    let opt = z3_budget::optimize(z3_budget::SELECT_RLIMIT);
+src/lower/select.rs:124:    if z3_budget::check_selection("lower.select", &opt) != SatResult::Sat {
+src/optim/resolver/smt.rs:19://!   `z3_budget::RESOLVER_RLIMIT`; configurable via
+src/optim/resolver/smt.rs:134:    /// Build a resolver with default knobs (`z3_budget::RESOLVER_RLIMIT`
+src/optim/resolver/smt.rs:140:            rlimit: z3_budget::RESOLVER_RLIMIT,
+src/optim/resolver/smt.rs:506:            super::Effort::Tighten => self.rlimit.min(z3_budget::TIGHTEN_RLIMIT),
+src/optim/resolver/smt.rs:604:    let solver = z3_budget::solver(rlimit);
+src/optim/resolver/smt.rs:618:    let resolved = match z3_budget::check("resolver.value", &solver) {
+src/optim/resolver/smt.rs:628:                        if z3_budget::check("resolver.unique", &solver) == z3::SatResult::Unsat {
+src/optim/resolver/smt.rs:642:                        if z3_budget::check("resolver.unique", &solver) == z3::SatResult::Unsat {
+src/optim/resolver/smt.rs:652:                        if z3_budget::check("resolver.unique", &solver) == z3::SatResult::Unsat {
+src/optim/resolver/smt.rs:769:    let solver = z3_budget::solver(rlimit);
+src/optim/resolver/smt.rs:783:    let proved = z3_budget::check("resolver.decide", &solver) == z3::SatResult::Unsat;
+src/optim/resolver/smt.rs:812:    let opt = z3_budget::optimize(rlimit);
+src/optim/resolver/smt.rs:846:    let candidate = match z3_budget::check_optimize("resolver.extreme", &opt) {
+src/optim/resolver/smt.rs:871:        let verifier = z3_budget::solver(rlimit);
+src/optim/resolver/smt.rs:906:            match z3_budget::check("resolver.extreme_verify", &verifier) {
+src/optim/prove.rs:90:/// defaults to `z3_budget::PROVE_RLIMIT` (a step budget, not a timeout, so
+src/optim/prove.rs:332:        .unwrap_or(z3_budget::PROVE_RLIMIT);
+src/optim/prove.rs:594:    let solver = z3_budget::solver(rlimit);
+src/optim/prove.rs:617:    let outcome = if z3_budget::check_assuming("prove.entails", &solver, &[entails]) == z3::SatResult::Unsat {
+src/optim/prove.rs:619:    } else if z3_budget::check_assuming("prove.entails", &solver, &[contradicts]) == z3::SatResult::Unsat {
+src/optim/prove.rs:624:    if z3_budget::check("prove.facts_sat", &solver) != z3::SatResult::Sat {
+src/optim/prove.rs:642:    let opt = z3_budget::optimize(rlimit);
+src/optim/prove.rs:662:    match z3_budget::check_optimize("prove.shape_param", &opt) {
+src/optim/prove.rs:863:        assert_eq!(minimize_shape_param("N", &facts, 1, z3_budget::RESOLVER_RLIMIT), Some(1));
+src/optim/prove.rs:864:        assert_eq!(maximize_shape_param("N", &facts, 1, z3_budget::RESOLVER_RLIMIT), Some(5000));
+src/optim/prove.rs:870:        assert_eq!(maximize_shape_param("N", &facts, 1, z3_budget::RESOLVER_RLIMIT), None);
+/// `None` when no selection exists or the solver gives up.
+///
+/// The problem is solved in a Z3 context of its own, so the steps it takes
+/// (and with them whether it fits `z3_budget::SELECT_RLIMIT`) depend on the
+/// problem alone, not on the queries the compilation made before.
+pub fn select_exact(problem: &Problem) -> Option<Selection> {
+    z3::with_z3_config(&z3::Config::new(), || select_exact_in_context(problem))
+}
+
+fn select_exact_in_context(problem: &Problem) -> Option<Selection> {
+    let n = problem.nodes.len();
+    if n == 0 {
+        return problem.roots.is_empty().then(|| Selection { nodes: Vec::new(), cost: 0 });
+    }
+    let chosen: Vec<Bool> = (0..n).map(|i| Bool::new_const(format!("x{i}"))).collect();
+    let rank: Vec<Int> = (0..n).map(|i| Int::new_const(format!("r{i}"))).collect();
+    let constraints = justification(problem, &chosen, &rank);
+    let weighted = |weight: &dyn Fn(usize) -> Int| -> Int {
+        let terms: Vec<Int> = (0..n).map(|i| chosen[i].ite(&weight(i), &Int::from_u64(0))).collect();
+        Int::add(&terms)
+    };
+    let cost = weighted(&|i| Int::from_u64(problem.nodes[i].cost));
+    let positions = weighted(&|i| Int::from_u64(i as u64 + 1));
+    let highest_first = weighted(&power_of_two);
+
+    let opt = z3_budget::optimize(z3_budget::SELECT_RLIMIT);
+    for c in &constraints {
+        opt.assert(c);
+    }
+    opt.minimize(&cost);
+    opt.minimize(&positions);
+    opt.minimize(&highest_first);
+    if z3_budget::check_selection("lower.select", &opt) != SatResult::Sat {
+        return None;
+    }
+    let model = opt.get_model()?;
+
+    let mut selected: Vec<(i64, usize)> = (0..n)
+        .filter(|&i| is_chosen(&model, &chosen[i]))
+{"dir_info": {"editable": true}, "url": "file:///home/zhantong/Projects/zinnia-project/wt/npb-hw"}
+exec
+/usr/bin/zsh -lc "python - <<'PY'
+import json,collections
+r=[json.loads(l) for l in open('local_counts.jsonl')]
+print('completed',len(r)); print('unknowns',collections.Counter((q['site'],q.get('reason_unknown'),q['steps']) for x in r for q in x['queries'] if q['result']=='Unknown').most_common(25))
+print('sites',collections.Counter(q['site'] for x in r for q in x['queries']))
+PY" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C
+ succeeded in 0ms:
+completed 170
+unknowns []
+sites Counter({'resolver.value': 2291, 'resolver.unique': 2291, 'resolver.decide': 1669, 'lower.select': 1323, 'prove.entails': 896, 'prove.facts_sat': 254, 'resolver.extreme': 22, 'resolver.extreme_verify': 22})
+
+ succeeded in 77900ms:
+20 / 314 acceptance:ds1000_numpy:case0325::kernel ok= True
+40 / 314 acceptance:ds1000_numpy:case0353::kernel ok= True
+60 / 314 acceptance:ds1000_numpy:case0389::kernel ok= True
+80 / 314 acceptance:ds1000_numpy:case0420::kernel ok= True
+100 / 314 acceptance:ds1000_numpy:case0451::kernel ok= True
+120 / 314 acceptance:ds1000_numpy:case0471::kernel ok= True
+140 / 314 acceptance:npbench:npbench_polybench_cholesky_cholesky::kernel ok= True
+160 / 314 acceptance:npbench:npbench_polybench_trmm_trmm::kernel ok= True
+180 / 314 acceptance:pythran:pythran_ising::ising_step ok= True
+200 / 314 acceptance:pythran:pythran_reverse_cumsum::reverse_cumsum ok= True
+220 / 314 perf:ds1000_case0317 ok= True
+240 / 314 perf:ds1000_case0346 ok= True
+260 / 314 perf:ds1000_case0399 ok= True
+280 / 314 perf:ds1000_case0437 ok= True
+300 / 314 perf:ds1000_case0495 ok= True
+
+exec
+/usr/bin/zsh -lc "cat > summarize.py <<'PY'
+#"'!/usr/bin/env python3
+"""Rebuild all paper tables and per-program evidence from stored observations."""
+import collections, csv, hashlib, json, math, statistics, subprocess
+from pathlib import Path
+from collect import HERE, ROOT, REPO, ACCEPT, TIMES, manifest
+
+def pct(values,p):
+    v=sorted(values); x=(len(v)-1)*p; lo=math.floor(x); hi=math.ceil(x)
+    return v[lo]+(v[hi]-v[lo])*(x-lo)
+def budget(q):
+    # Z3 uses '"'canceled' for Optimize's resource-limit cancellation.
+    return not q['skipped'] and q['result']=='Unknown' and q['reason_unknown'] in {'canceled','max. resource limit exceeded','resource limits reached'}
+def counts(r,prefix=''):
+    qs=[q for q in r['queries'] if q['site'].startswith(prefix)]
+    return dict(issued=sum(not q['skipped'] for q in qs), exhausted=sum(budget(q) for q in qs), skipped=sum(q['skipped'] for q in qs), unknown=sum(q['result']=='Unknown' and not q['skipped'] for q in qs))
+def table(headers,rows):
+    return '\\n'.join(['| '+' | '.join(headers)+' |','|'+'|'.join(['---']*len(headers))+'|']+['| '+' | '.join(map(str,r))+' |' for r in rows])
+def main():
+    local={r['id']:r for r in map(json.loads,(HERE/'local_counts.jsonl').read_text().splitlines())}
+    expected=manifest(); assert set(local)=={r['id'] for r in expected}
+    assert all(r['ok'] for r in local.values()), [(r['id'],r.get('error')) for r in local.values() if not r['ok']]
+    remote={}
+    for r in map(json.loads,TIMES.read_text().splitlines()):
+        if r['config']"'!='"'default': continue
+        key=r['set']+':'+r['name']; assert key not in remote; remote[key]=r
+    rows=[]
+    for p in expected:
+        r=remote[p['id']]; l=local[p['id']]
+        assert r['ok'] and r['compile_s'] is not None
+        assert r['function']==p['function'] and r['kernel'].endswith(p['kernel'])
+        rows.append(dict(id=p['id'],corpus=p['corpus'],group=p['group'],acceptance_match=p.get('acceptance_match',True),compile_s=r['compile_s'],resolver_smt_s=r['resolver_smt_s'],smt_share=r['resolver_smt_s']/r['compile_s'],**counts(l),resolver_issued=counts(l,'resolver.')['issued'],resolver_exhausted=counts(l,'resolver.')['exhausted'],selection_issued=counts(l,'lower.select')['issued'],selection_exhausted=counts(l,'lower.select')['exhausted'],kernel=p['kernel'],function=p['function']))
+    with (HERE/'per_program.csv').open('w') as f:
+        w=csv.DictWriter(f,fieldnames=list(rows[0]));w.writeheader();w.writerows(rows)
+    corpora=['DS-1000','NPBench','Pythran']
+    groups=[(c,[r for r in rows if r['group']=='acceptance' and r['corpus']==c]) for c in corpora]
+    alternatives=[('DS-1000 perf, acceptance-matched',[r for r in rows if r['group']=='perf' and r['acceptance_match']]),('DS-1000 perf, all successful',[r for r in rows if r['group']=='perf']),('DS-1000 acceptance + matched perf records',[r for r in rows if r['corpus']=='DS-1000' and r['acceptance_match']])]
+    def stats(rs):
+        ts=[r['compile_s'] for r in rs];ss=[r['smt_share'] for r in rs]
+        return dict(n=len(rs),median_s=statistics.median(ts),p90_s=pct(ts,.9),max_s=max(ts),smt_share_weighted=sum(r['resolver_smt_s'] for r in rs)/sum(ts),smt_share_mean=statistics.mean(ss),smt_share_median=statistics.median(ss),smt_share_p90=pct(ss,.9),smt_share_max=max(ss),p90_nearest_rank_s=sorted(ts)[math.ceil(.9*len(ts))-1])
+    summary={name:dict(stats(rs),**{k:sum(r[k] for r in rs) for k in ['issued','exhausted','skipped','unknown','resolver_issued','resolver_exhausted','selection_issued','selection_exhausted']}) for name,rs in groups+alternatives}
+    (HERE/'summary.json').write_text(json.dumps(summary,indent=2)+'\\n')
+    def timing_table(gs):
+        return table(['Corpus / population','n','Median (s)','p90 (s)','Max (s)','SMT share, weighted','Mean share','Median share','p90 share','Max share'],[[name,s['n'],*[f\"{s[k]:.6f}\" for k in ['median_s','p90_s','max_s']],*[f\"{100*s[k]:.4f}%\" for k in ['smt_share_weighted','smt_share_mean','smt_share_median','smt_share_p90','smt_share_max']]] for name,_ in gs for s in [summary[name]]])
+    def count_table(gs):
+        return table(['Corpus / population','Programs','All Z3 calls','Exhausted','Skipped: total budget','Other actual Unknown','Resolver calls','Resolver exhausted','Reasoning calls','Selection calls'],[[name,len(rs),sum(r['issued'] for r in rs),sum(r['exhausted'] for r in rs),sum(r['skipped'] for r in rs),sum(r['unknown']-r['exhausted'] for r in rs),sum(r['resolver_issued'] for r in rs),sum(r['resolver_exhausted'] for r in rs),sum(r['issued']-r['selection_issued'] for r in rs),sum(r['selection_issued'] for r in rs)] for name,rs in gs])
+    lines=['# Task C: compile times and SMT query budgets','',
+    'Generated by "'`summarize.py`. Remote times use compiler **4115cecb** (as identified in the task); local deterministic query counts use **3ebe0558f25592a0c1f8b6cf9bf7ad09f3ddb1d1**. No local times, proofs, or keys are reported or generated.'"','',
+    '## Population and definitions','',
+    'Primary population: exactly the **214 "'`accepted_correct` program/function entries** in the supplied acceptance account: DS-1000 132, NPBench 32, Pythran 50. Join `program::function` to default-config `acceptance:<dataset>` timing rows. Corpus follows the name (`case*`/`ds1000_*`, `npbench_*`, `pythran_*`), checked against the acceptance dataset. All primary entries have successful remote timings and successful final-compiler local compilations. No rejected programs enter the tables.'"','',
+    'Compile time is the recorded "'`compile_s`, not `wall_s`. The remote driver starts its clock before the harness `compile_kernel` call, so it includes module loading and compilation. Median is the ordinary sample median; p90 uses linear interpolation at index `(n−1)×0.9` (NumPy default / type 7). The alternative nearest-rank p90 is given below. There is one default timing record per set/program/function, not a distribution of repeated trials.'"','',
+    'Each program’s SMT share is exactly "'`resolver_smt_s / compile_s`. The primary corpus share is compile-time-weighted, `sum(resolver_smt_s) / sum(compile_s)`. The table also gives the unweighted mean, median, p90, and max of the per-program ratios to resolve aggregation ambiguity.'"','',
+    '## Remote compile-time results','',timing_table(groups),'',
+    'Nearest-rank p90 alternative (seconds): '+', '.join(f\"{c}: {summary[c]['p90_nearest_rank_s']:.6f}\" for c in corpora)+'.','',
+    '## Local SMT query counts','',
+    'Primary definition of an issued query: one actual Z3 "'`Solver.check`, `Solver.check_assumptions`, or `Optimize.check` on the compile path. A value query and its uniqueness check count separately; a bounds query can issue multiple checks. Include resolver, entailment/shape reasoning, and construction selection. Cache hits, interval/static answers, formula-size skips, and calls short-circuited after the compilation budget are not issued queries. Narrower resolver-only and value-reasoning-only alternatives are included in the table.'"','',
+    'Budget exhaustion means an actual check returned "'`Unknown` with a resource-limit reason (`max. resource limit exceeded`, `resource limits reached`, or Optimize’s `canceled`). The default compile path sets deterministic step limits, no wall-clock solver timeout; this collector does not interrupt calls. Calls skipped after the total reasoning budget are reported separately: they do not consume a new query budget.'"','',count_table(groups),'',
+    '## Telemetry and validation','',
+    '- "'`src/optim/z3_budget.rs`: `ZINNIA_Z3_TRACE=1` emits site, result, consumed resource steps, and a separate `(compilation budget spent)` marker. The trace field named `rlimit` is **steps consumed**, not the configured limit. Local duration fields are discarded and never written to these result files.'"',
+    '- "'`src/optim/telemetry.rs` and `src/lib.rs`: `ZINNIA_SMT_LOG_TELEMETRY=1` exposes resolver counters. `queries_smt_unknown` includes non-unique values and alternate satisfying models; it is **not** an exhaustion counter. These counters are retained for audit, not substituted for actual check counts.'"',
+    '- The compiler has **no exact unknown-reason / budget-exhaustion counter**. "'`z3_observer.c` adds observation externally using `LD_PRELOAD`: each wrapper calls the original linked Z3 function once, returns its result unchanged, and reads `Z3_*_get_reason_unknown` only for `Unknown`. It does not alter compiler files, formulas, limits, or solver results. Each actual compiler trace must pair with exactly one observer record; skipped queries must not have one.'"',
+    '- Default limits ("'`src/optim/z3_budget.rs`): resolver 1,000,000 steps; speculative tightening 100,000; optimizer resolver 5,000,000; entailment 10,000,000; construction selection 100,000,000. A compilation has a separate 200,000,000-step reasoning cap. The last issued check can overshoot the remaining total cap; subsequent checks are skipped.'"',
+    '- "'`collect.py` reuses `benchmarking.harness.kernels.compile_kernel`, the same helper as the remote timing script. This supplies function source without module import lines via `ZKCircuit.from_method` and retains registered helper chips and decorator lowering. Backend is the default halo2 compile target. Fixture inputs are not needed or read: compilation does not specialize on fixture values.'"',
+    '- Every compilation uses a fresh process and the specified worktree "'`.venv/bin/python`, with `PYTHONHASHSEED=0`. Inherited `ZINNIA_*` variables and `LD_PRELOAD` are cleared; only observational telemetry is enabled. `-B` prevents writes to worktree bytecode caches. Four workers share one systemd scope with `MemoryMax=16G`.'"',
+    '- "'`verification.json` repeats one program per corpus without the observer, choosing the program with the most actual Unknowns (first in stored order on ties). It checks identical success, query sequence, answers, step counts, total-budget skips, and resolver counters. This verifies the observer does not perturb those representative runs.'"','',
+    '## Performance-set and pooling alternatives','',
+    'The remote file also contains 100 successful DS-1000 "'`perf` variants. Only 92 names match the fixed acceptance account; 8 do not. These are distinct kernel variants, so the primary table uses acceptance records alone and does not double-weight overlapping programs. Below are both the acceptance-matched performance alternative and the all-successful-performance interpretation, plus literal pooling of acceptance and matched performance records (224 records, not 224 unique source problems). NPBench and Pythran have no separate perf rows in this file.'"','',timing_table(alternatives),'',count_table(alternatives),'',
+    'Perf rows not in the accepted account: '+', '.join('"'`'"'+r['id']+'"'`'"' for r in rows if r['group']=='perf' and not r['acceptance_match'])+'.','',
+    '## Caveats','',
+    'Remote "'`resolver_smt_s` measures the exposed resolver phases only. It excludes direct `prove()` and construction-selection Z3 cost, so its ratio is **resolver SMT share**, not all SMT time. The source timing collector explicitly documents this limitation. Resolver times were parsed from millisecond summaries printed with one decimal place; zeros can mean rounding below that precision. These are historical remote observations, not times for the final compiler. Local final-compiler counts should not be interpreted as the exact query workload that produced the older remote times. Counts are deterministic for the fixed compiler, Z3 build, configuration, and sources; different compiler/Z3 versions can change them.'"','',
+    '## Reproduce','',
+    'From this directory (all generated files remain here):','',
+    '"'```sh'"',
+    'systemd-run --user --scope -q -p MemoryMax=16G /home/zhantong/Projects/zinnia-project/wt/npb-hw/.venv/bin/python -B collect.py --jobs 4',
+    'systemd-run --user --scope -q -p MemoryMax=16G /home/zhantong/Projects/zinnia-project/wt/npb-hw/.venv/bin/python -B collect.py --verify',
+    'python -B summarize.py',
+    '"'```'"','',
+    'For tables alone, run "'`python -B summarize.py` against the stored `local_counts.jsonl`. `manifest.json` lists kernel paths/functions; `local_counts.jsonl` contains every query’s site, result, consumed steps, skip flag, and unknown reason (no local times); `per_program.csv` gives every timing and count; `summary.json` contains unrounded aggregate values.'"','',
+    '## Input provenance','']
+    inputs=[ACCEPT,TIMES,REPO/'zinnia/_zinnia_core.cpython-314-x86_64-linux-gnu.so',next((REPO/'.venv/lib').glob('python*/site-packages/z3/lib/libz3.so.4.16'))]
+    provenance={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
+    (HERE/'provenance.json').write_text(json.dumps(provenance,indent=2)+'\\n')
+    lines.extend([table(['Input','SHA-256'],provenance.items()),'', 'Per-kernel SHA-256 hashes are stored in "'`local_counts.jsonl`.'"','', '## Per-program evidence','',
+    'All times below are remote seconds; share is a percentage. "'`Z3` includes selection; `Exhausted` excludes total-budget skips. Acceptance membership is fixed by the supplied account. These rows enumerate every program behind every aggregate above.'"',''])
+    for label,rs in groups+[('DS-1000 performance variants',[r for r in rows if r['group']=='perf'])]:
+        lines.extend(['### '+label,'',table(['Record','Accepted account','Compile s','Resolver SMT s','Share %','Z3','Exhausted','Skipped','Resolver Z3','Selection Z3'],[[r['id'],r['acceptance_match'],f\"{r['compile_s']:.9f}\",f\"{r['resolver_smt_s']:.7f}\",f\"{100*r['smt_share']:.6f}\",r['issued'],r['exhausted'],r['skipped'],r['resolver_issued'],r['selection_issued']] for r in rs]),''])
+    lines.extend(['## Budget-exhausted or skipped-query programs',''])
+    affected=[r for r in rows if r['exhausted'] or r['skipped'] or r['unknown']]
+    lines.append(table(['Record','Issued','Exhausted','Skipped','Actual Unknown'],[[r['id'],r['issued'],r['exhausted'],r['skipped'],r['unknown']] for r in affected]) if affected else 'None.')
+    reasons=collections.Counter(q.get('reason_unknown','<total-budget skip>') for r in local.values() for q in r['queries'] if q['result']=='Unknown')
+    lines.extend(['','Actual Unknown reason frequencies and total-budget skips across all stored variants: "'`'"'+json.dumps(reasons,sort_keys=True)+'"'`.'"',''])
+    (HERE/'REPORT.md').write_text('\\n'.join(lines))
+    print(json.dumps(summary,indent=2))
+if __name__=='__main__': main()
+PY" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C
+ succeeded in 0ms:
+exec
+/usr/bin/zsh -lc "python - <<'PY'
+import json,collections
+rs=[json.loads(l) for l in open('local_counts.jsonl')]
+print('completed',len(rs));print('failures',[(r['id'],r.get('error')) for r in rs if not r['ok']]); print('unknown reasons',collections.Counter(q.get('reason_unknown','skipped') for r in rs for q in r['queries'] if q['result']=='Unknown'))
+print('missing',[r['id'] for r in json.load(open('manifest.json')) if r['id'] not in {x['id'] for x in rs}][:12])
+PY" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C
+ succeeded in 0ms:
+completed 314
+failures []
+unknown reasons Counter({'skipped': 4505, 'max. resource limit exceeded': 175, 'canceled': 3})
+missing []
+
+codex
+All 214 accepted programs and 100 performance variants compiled successfully. The traces show both queries that exhausted their individual step budgets and later calls skipped because the compilation-wide budget was spent; the report will count these separately. I’m now verifying representative runs without the observer and checking the final tables.
+exec
+/usr/bin/zsh -lc 'systemd-run --user --scope -q -p MemoryMax=16G /home/zhantong/Projects/zinnia-project/wt/npb-hw/.venv/bin/python -B collect.py --verify' in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C
+exec
+/usr/bin/zsh -lc 'python -B summarize.py' in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C
+ succeeded in 92ms:
+{
+  "DS-1000": {
+    "n": 132,
+    "median_s": 0.10591860674321651,
+    "p90_s": 0.6628959719091655,
+    "max_s": 6.683124400675297,
+    "smt_share_weighted": 0.14691489497773974,
+    "smt_share_mean": 0.07932274030065356,
+    "smt_share_median": 0.0,
+    "smt_share_p90": 0.31767455041189274,
+    "smt_share_max": 0.6736443186954864,
+    "p90_nearest_rank_s": 0.6656109374016523,
+    "issued": 4193,
+    "exhausted": 0,
+    "skipped": 0,
+    "unknown": 0,
+    "resolver_issued": 2430,
+    "resolver_exhausted": 0,
+    "selection_issued": 1161,
+    "selection_exhausted": 0
+  },
+  "NPBench": {
+    "n": 32,
+    "median_s": 0.24008971778675914,
+    "p90_s": 12.207486939802784,
+    "max_s": 277.4304744247347,
+    "smt_share_weighted": 0.011467000773242534,
+    "smt_share_mean": 0.030823047428157377,
+    "smt_share_median": 0.0,
+    "smt_share_p90": 0.0,
+    "smt_share_max": 0.9706514684707843,
+    "p90_nearest_rank_s": 13.029765740036964,
+    "issued": 33541,
+    "exhausted": 0,
+    "skipped": 0,
+    "unknown": 0,
+    "resolver_issued": 22401,
+    "resolver_exhausted": 0,
+    "selection_issued": 162,
+    "selection_exhausted": 0
+  },
+  "Pythran": {
+    "n": 50,
+    "median_s": 0.12868332490324974,
+    "p90_s": 3.923954119160772,
+    "max_s": 82.32530045695603,
+    "smt_share_weighted": 0.2756655477633629,
+    "smt_share_mean": 0.023663401712041485,
+    "smt_share_median": 0.0,
+    "smt_share_p90": 0.0,
+    "smt_share_max": 0.5103874479264014,
+    "p90_nearest_rank_s": 3.863597138784826,
+    "issued": 5216,
+    "exhausted": 178,
+    "skipped": 4505,
+    "unknown": 178,
+    "resolver_issued": 2965,
+    "resolver_exhausted": 178,
+    "selection_issued": 45,
+    "selection_exhausted": 0
+  },
+  "DS-1000 perf, acceptance-matched": {
+    "n": 92,
+    "median_s": 0.0866627530194819,
+    "p90_s": 0.9653394693508752,
+    "max_s": 7.293915156275034,
+    "smt_share_weighted": 0.1177636318026733,
+    "smt_share_mean": 0.05669959780234847,
+    "smt_share_median": 0.0,
+    "smt_share_p90": 0.3423451768485387,
+    "smt_share_max": 0.4567858225947672,
+    "p90_nearest_rank_s": 0.9787094630300999,
+    "issued": 2360,
+    "exhausted": 0,
+    "skipped": 0,
+    "unknown": 0,
+    "resolver_issued": 1056,
+    "resolver_exhausted": 0,
+    "selection_issued": 918,
+    "selection_exhausted": 0
+  },
+  "DS-1000 perf, all successful": {
+    "n": 100,
+    "median_s": 0.08429267629981041,
+    "p90_s": 0.858379519917072,
+    "max_s": 7.293915156275034,
+    "smt_share_weighted": 0.1204730763855494,
+    "smt_share_mean": 0.06515766711391051,
+    "smt_share_median": 0.0,
+    "smt_share_p90": 0.3470645658818807,
+    "smt_share_max": 0.656923588020318,
+    "p90_nearest_rank_s": 0.8450095262378454,
+    "issued": 2400,
+    "exhausted": 0,
+    "skipped": 0,
+    "unknown": 0,
+    "resolver_issued": 1096,
+    "resolver_exhausted": 0,
+    "selection_issued": 918,
+    "selection_exhausted": 0
+  },
+  "DS-1000 acceptance + matched perf records": {
+    "n": 224,
+    "median_s": 0.09841068834066391,
+    "p90_s": 0.8306249957531698,
+    "max_s": 7.293915156275034,
+    "smt_share_weighted": 0.1354162599637543,
+    "smt_share_mean": 0.07003109248884969,
+    "smt_share_median": 0.0,
+    "smt_share_p90": 0.32714139351798577,
+    "smt_share_max": 0.6736443186954864,
+    "p90_nearest_rank_s": 0.8450095262378454,
+    "issued": 6553,
+    "exhausted": 0,
+    "skipped": 0,
+    "unknown": 0,
+    "resolver_issued": 3486,
+    "resolver_exhausted": 0,
+    "selection_issued": 2079,
+    "selection_exhausted": 0
+  }
+}
+
+exec
+/usr/bin/zsh -lc "tail -15 REPORT.md; python - <<'PY'
+import json,collections
+rs=[json.loads(l) for l in open('local_counts.jsonl')]
+for r in rs:
+ qs=[q for q in r['queries'] if q.get('reason_unknown')=='canceled']
+ if qs: print(r['id'],qs)
+print('unexpected result mismatches',[(r['id'],q) for r in rs for q in r['queries'] if not q['skipped'] and {'Sat':1,'Unsat':-1,'Unknown':0}[q['result']]"'!=q['"'z3_result']])
+PY" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C
+ succeeded in 0ms:
+| perf:ds1000_case0503 | True | 3.066508824 | 1.0798000 | 35.212682 | 338 | 0 | 0 | 169 | 169 |
+| perf:ds1000_case0504 | True | 3.011448806 | 1.0688000 | 35.491223 | 338 | 0 | 0 | 169 | 169 |
+| perf:ds1000_case0505 | True | 3.395934291 | 1.4003000 | 41.234602 | 338 | 0 | 0 | 169 | 169 |
+| perf:ds1000_case0507 | True | 0.262344068 | 0.0415000 | 15.818921 | 27 | 0 | 0 | 10 | 1 |
+| perf:ds1000_case0508 | True | 0.639131256 | 0.0359000 | 5.617000 | 22 | 0 | 0 | 5 | 1 |
+| perf:ds1000_case0509 | True | 0.212991119 | 0.0372000 | 17.465517 | 27 | 0 | 0 | 10 | 1 |
+| perf:ds1000_case0510 | True | 0.303174837 | 0.0638000 | 21.043963 | 27 | 0 | 0 | 10 | 1 |
+
+## Budget-exhausted or skipped-query programs
+
+| Record | Issued | Exhausted | Skipped | Actual Unknown |
+|---|---|---|---|---|
+| acceptance:pythran:pythran_ccopy::CCOPY | 263 | 178 | 4505 | 178 |
+
+Actual Unknown reason frequencies and total-budget skips across all stored variants: `{"<total-budget skip>": 4505, "canceled": 3, "max. resource limit exceeded": 175}`.
+acceptance:pythran:pythran_ccopy::CCOPY [{'site': 'resolver.decide', 'result': 'Unknown', 'steps': 1000000, 'skipped': False, 'z3_result': 0, 'reason_unknown': 'canceled'}, {'site': 'resolver.decide', 'result': 'Unknown', 'steps': 1000000, 'skipped': False, 'z3_result': 0, 'reason_unknown': 'canceled'}, {'site': 'resolver.decide', 'result': 'Unknown', 'steps': 1000000, 'skipped': False, 'z3_result': 0, 'reason_unknown': 'canceled'}]
+unexpected result mismatches []
+
+exec
+/usr/bin/zsh -lc "python - <<'PY'
+import json,collections
+rs=[json.loads(l) for l in open('local_counts.jsonl')]
+print(collections.Counter((q['site'],q['steps'],q.get('reason_unknown')) for r in rs for q in r['queries'] if q['result']=='Unknown' and not q['skipped']))
+PY" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C
+ succeeded in 0ms:
+Counter({('resolver.decide', 1000000, 'max. resource limit exceeded'): 175, ('resolver.decide', 1000000, 'canceled'): 3})
+
+exec
+/usr/bin/zsh -lc "python - <<'PY'
+p='summarize.py'
+s=open(p).read().replace(\"# Z3 uses 'canceled' for Optimize's resource-limit cancellation.\",\"# Z3 can report resource-limit cancellation as 'canceled'.\")
+s=s.replace(\"or Optimize’s "'`canceled`", "or `canceled` with consumed steps reaching the configured per-query limit")
+s=s.replace("return not q['"'skipped'] and q['result']=='Unknown' and q['reason_unknown'] in {'canceled','max. resource limit exceeded','resource limits reached'}\", \"return not q['skipped'] and q['result']=='Unknown' and (q['reason_unknown'] in {'max. resource limit exceeded','resource limits reached'} or (q['reason_unknown']=='canceled' and q['site']=='resolver.decide' and q['steps']==1_000_000))\")
+s=s.replace(\"Counts are deterministic for the fixed compiler\", \"All three observed "'`canceled` answers were `resolver.decide` checks consuming exactly 1,000,000 steps (the default IR-generation query limit); the other 175 exhausted checks explicitly reported `max. resource limit exceeded`. All exhaustion and total-budget skips occurred in `pythran_ccopy::CCOPY`. Counts are deterministic for the fixed compiler")
+open(p,'"'w').write(s)
+PY" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C
+ succeeded in 0ms:
+exec
+/usr/bin/zsh -lc "ls -lh; sed -n '1,90p' REPORT.md" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C
+ succeeded in 0ms:
+total 6.0M
+-rw-r--r-- 1 zhantong zhantong  45K Oct  9 19:46 REPORT.md
+-rw-r--r-- 1 zhantong zhantong 130K Oct  9 19:47 codex.log
+-rw-r--r-- 1 zhantong zhantong 5.6K Oct  9 19:44 collect.py
+-rw-r--r-- 1 zhantong zhantong 5.5M Oct  9 19:45 local_counts.jsonl
+-rw-r--r-- 1 zhantong zhantong  80K Oct  9 19:46 manifest.json
+-rw-r--r-- 1 zhantong zhantong  56K Oct  9 19:46 per_program.csv
+-rw-r--r-- 1 zhantong zhantong  707 Oct  9 19:46 provenance.json
+-rw-r--r-- 1 zhantong zhantong  15K Oct  9 19:47 summarize.py
+-rw-r--r-- 1 zhantong zhantong 3.5K Oct  9 19:46 summary.json
+-rw-r--r-- 1 zhantong zhantong 1.6K Oct  9 19:44 z3_observer.c
+-rwxr-xr-x 1 zhantong zhantong  16K Oct  9 19:44 z3_observer.so
+# Task C: compile times and SMT query budgets
+
+Generated by `summarize.py`. Remote times use compiler **4115cecb** (as identified in the task); local deterministic query counts use **3ebe0558f25592a0c1f8b6cf9bf7ad09f3ddb1d1**. No local times, proofs, or keys are reported or generated.
+
+## Population and definitions
+
+Primary population: exactly the **214 `accepted_correct` program/function entries** in the supplied acceptance account: DS-1000 132, NPBench 32, Pythran 50. Join `program::function` to default-config `acceptance:<dataset>` timing rows. Corpus follows the name (`case*`/`ds1000_*`, `npbench_*`, `pythran_*`), checked against the acceptance dataset. All primary entries have successful remote timings and successful final-compiler local compilations. No rejected programs enter the tables.
+
+Compile time is the recorded `compile_s`, not `wall_s`. The remote driver starts its clock before the harness `compile_kernel` call, so it includes module loading and compilation. Median is the ordinary sample median; p90 uses linear interpolation at index `(n−1)×0.9` (NumPy default / type 7). The alternative nearest-rank p90 is given below. There is one default timing record per set/program/function, not a distribution of repeated trials.
+
+Each program’s SMT share is exactly `resolver_smt_s / compile_s`. The primary corpus share is compile-time-weighted, `sum(resolver_smt_s) / sum(compile_s)`. The table also gives the unweighted mean, median, p90, and max of the per-program ratios to resolve aggregation ambiguity.
+
+## Remote compile-time results
+
+| Corpus / population | n | Median (s) | p90 (s) | Max (s) | SMT share, weighted | Mean share | Median share | p90 share | Max share |
+|---|---|---|---|---|---|---|---|---|---|
+| DS-1000 | 132 | 0.105919 | 0.662896 | 6.683124 | 14.6915% | 7.9323% | 0.0000% | 31.7675% | 67.3644% |
+| NPBench | 32 | 0.240090 | 12.207487 | 277.430474 | 1.1467% | 3.0823% | 0.0000% | 0.0000% | 97.0651% |
+| Pythran | 50 | 0.128683 | 3.923954 | 82.325300 | 27.5666% | 2.3663% | 0.0000% | 0.0000% | 51.0387% |
+
+Nearest-rank p90 alternative (seconds): DS-1000: 0.665611, NPBench: 13.029766, Pythran: 3.863597.
+
+## Local SMT query counts
+
+Primary definition of an issued query: one actual Z3 `Solver.check`, `Solver.check_assumptions`, or `Optimize.check` on the compile path. A value query and its uniqueness check count separately; a bounds query can issue multiple checks. Include resolver, entailment/shape reasoning, and construction selection. Cache hits, interval/static answers, formula-size skips, and calls short-circuited after the compilation budget are not issued queries. Narrower resolver-only and value-reasoning-only alternatives are included in the table.
+
+Budget exhaustion means an actual check returned `Unknown` with a resource-limit reason (`max. resource limit exceeded`, `resource limits reached`, or Optimize’s `canceled`). The default compile path sets deterministic step limits, no wall-clock solver timeout; this collector does not interrupt calls. Calls skipped after the total reasoning budget are reported separately: they do not consume a new query budget.
+
+| Corpus / population | Programs | All Z3 calls | Exhausted | Skipped: total budget | Other actual Unknown | Resolver calls | Resolver exhausted | Reasoning calls | Selection calls |
+|---|---|---|---|---|---|---|---|---|---|
+| DS-1000 | 132 | 4193 | 0 | 0 | 0 | 2430 | 0 | 3032 | 1161 |
+| NPBench | 32 | 33541 | 0 | 0 | 0 | 22401 | 0 | 33379 | 162 |
+| Pythran | 50 | 5216 | 178 | 4505 | 0 | 2965 | 178 | 5171 | 45 |
+
+## Telemetry and validation
+
+- `src/optim/z3_budget.rs`: `ZINNIA_Z3_TRACE=1` emits site, result, consumed resource steps, and a separate `(compilation budget spent)` marker. The trace field named `rlimit` is **steps consumed**, not the configured limit. Local duration fields are discarded and never written to these result files.
+- `src/optim/telemetry.rs` and `src/lib.rs`: `ZINNIA_SMT_LOG_TELEMETRY=1` exposes resolver counters. `queries_smt_unknown` includes non-unique values and alternate satisfying models; it is **not** an exhaustion counter. These counters are retained for audit, not substituted for actual check counts.
+- The compiler has **no exact unknown-reason / budget-exhaustion counter**. `z3_observer.c` adds observation externally using `LD_PRELOAD`: each wrapper calls the original linked Z3 function once, returns its result unchanged, and reads `Z3_*_get_reason_unknown` only for `Unknown`. It does not alter compiler files, formulas, limits, or solver results. Each actual compiler trace must pair with exactly one observer record; skipped queries must not have one.
+- Default limits (`src/optim/z3_budget.rs`): resolver 1,000,000 steps; speculative tightening 100,000; optimizer resolver 5,000,000; entailment 10,000,000; construction selection 100,000,000. A compilation has a separate 200,000,000-step reasoning cap. The last issued check can overshoot the remaining total cap; subsequent checks are skipped.
+- `collect.py` reuses `benchmarking.harness.kernels.compile_kernel`, the same helper as the remote timing script. This supplies function source without module import lines via `ZKCircuit.from_method` and retains registered helper chips and decorator lowering. Backend is the default halo2 compile target. Fixture inputs are not needed or read: compilation does not specialize on fixture values.
+- Every compilation uses a fresh process and the specified worktree `.venv/bin/python`, with `PYTHONHASHSEED=0`. Inherited `ZINNIA_*` variables and `LD_PRELOAD` are cleared; only observational telemetry is enabled. `-B` prevents writes to worktree bytecode caches. Four workers share one systemd scope with `MemoryMax=16G`.
+- `verification.json` repeats one program per corpus without the observer, choosing the program with the most actual Unknowns (first in stored order on ties). It checks identical success, query sequence, answers, step counts, total-budget skips, and resolver counters. This verifies the observer does not perturb those representative runs.
+
+## Performance-set and pooling alternatives
+
+The remote file also contains 100 successful DS-1000 `perf` variants. Only 92 names match the fixed acceptance account; 8 do not. These are distinct kernel variants, so the primary table uses acceptance records alone and does not double-weight overlapping programs. Below are both the acceptance-matched performance alternative and the all-successful-performance interpretation, plus literal pooling of acceptance and matched performance records (224 records, not 224 unique source problems). NPBench and Pythran have no separate perf rows in this file.
+
+| Corpus / population | n | Median (s) | p90 (s) | Max (s) | SMT share, weighted | Mean share | Median share | p90 share | Max share |
+|---|---|---|---|---|---|---|---|---|---|
+| DS-1000 perf, acceptance-matched | 92 | 0.086663 | 0.965339 | 7.293915 | 11.7764% | 5.6700% | 0.0000% | 34.2345% | 45.6786% |
+| DS-1000 perf, all successful | 100 | 0.084293 | 0.858380 | 7.293915 | 12.0473% | 6.5158% | 0.0000% | 34.7065% | 65.6924% |
+| DS-1000 acceptance + matched perf records | 224 | 0.098411 | 0.830625 | 7.293915 | 13.5416% | 7.0031% | 0.0000% | 32.7141% | 67.3644% |
+
+| Corpus / population | Programs | All Z3 calls | Exhausted | Skipped: total budget | Other actual Unknown | Resolver calls | Resolver exhausted | Reasoning calls | Selection calls |
+|---|---|---|---|---|---|---|---|---|---|
+| DS-1000 perf, acceptance-matched | 92 | 2360 | 0 | 0 | 0 | 1056 | 0 | 1442 | 918 |
+| DS-1000 perf, all successful | 100 | 2400 | 0 | 0 | 0 | 1096 | 0 | 1482 | 918 |
+| DS-1000 acceptance + matched perf records | 224 | 6553 | 0 | 0 | 0 | 3486 | 0 | 4474 | 2079 |
+
+Perf rows not in the accepted account: `perf:ds1000_case0327`, `perf:ds1000_case0328`, `perf:ds1000_case0362`, `perf:ds1000_case0425`, `perf:ds1000_case0426`, `perf:ds1000_case0495`, `perf:ds1000_case0496`, `perf:ds1000_case0497`.
+
+## Caveats
+
+Remote `resolver_smt_s` measures the exposed resolver phases only. It excludes direct `prove()` and construction-selection Z3 cost, so its ratio is **resolver SMT share**, not all SMT time. The source timing collector explicitly documents this limitation. Resolver times were parsed from millisecond summaries printed with one decimal place; zeros can mean rounding below that precision. These are historical remote observations, not times for the final compiler. Local final-compiler counts should not be interpreted as the exact query workload that produced the older remote times. Counts are deterministic for the fixed compiler, Z3 build, configuration, and sources; different compiler/Z3 versions can change them.
+
+## Reproduce
+
+From this directory (all generated files remain here):
+
+```sh
+systemd-run --user --scope -q -p MemoryMax=16G /home/zhantong/Projects/zinnia-project/wt/npb-hw/.venv/bin/python -B collect.py --jobs 4
+systemd-run --user --scope -q -p MemoryMax=16G /home/zhantong/Projects/zinnia-project/wt/npb-hw/.venv/bin/python -B collect.py --verify
+python -B summarize.py
+```
+
+For tables alone, run `python -B summarize.py` against the stored `local_counts.jsonl`. `manifest.json` lists kernel paths/functions; `local_counts.jsonl` contains every query’s site, result, consumed steps, skip flag, and unknown reason (no local times); `per_program.csv` gives every timing and count; `summary.json` contains unrounded aggregate values.
+
+## Input provenance
+
+| Input | SHA-256 |
+|---|---|
+| /home/zhantong/Projects/zinnia-project/eval-redo/final-analysis/fin/remote/post-freeze/data-fin/accept_final/results.json | 09cf241b383999d96f77cd396158b501a2690a76a9f3a63cc756e6291d66230c |
+| /home/zhantong/Projects/zinnia-project/eval-redo/compile-timing/remote/ct_fin.jsonl | be725a7ebc391f215ed2758426a655ed1847374e051e79927bd828861d980b4e |
+| /home/zhantong/Projects/zinnia-project/wt/npb-hw/zinnia/_zinnia_core.cpython-314-x86_64-linux-gnu.so | d875244a20393b38375fe7ad7fa6e347409c78445fdaddfd223276802ba875c6 |
+| /home/zhantong/Projects/zinnia-project/wt/npb-hw/.venv/lib/python3.14/site-packages/z3/lib/libz3.so.4.16 | 7d8507589c3f5cd194c156d70bfcdc935a713784f7df36553c8f0b8d22347fc8 |
+
+Per-kernel SHA-256 hashes are stored in `local_counts.jsonl`.
+
+## Per-program evidence
+
+ succeeded in 49274ms:
+exec
+/usr/bin/zsh -lc "python - <<'PY'
+p='summarize.py';s=open(p).read();s=s.replace(\"r=remote[p['id']]; l=local[p['id']]\", \"r=remote[p['id']]; l=local[p['id']]\\n        derived = 'DS-1000' if p['name'].startswith(('case','ds1000_')) else 'NPBench' if p['name'].startswith('npbench_') else 'Pythran' if p['name'].startswith('pythran_') else None\\n        assert derived == p['corpus']\")
+s=s.replace(\"assert r['function']==p['function']\", \"assert r['function']==p['function']\")
+open(p,'w').write(s)
+PY
+python -B summarize.py > summary.stdout.json" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C
+ succeeded in 4ms:
+codex
+Verification passed. For the accepted population, the final compiler issued 4,193 Z3 queries for DS-1000, 33,541 for NPBench, and 5,216 for Pythran. All 178 budget-exhausted queries occurred in Pythran’s `CCOPY`; that program also skipped 4,505 later calls after spending its compilation-wide budget. The report includes the remote timing statistics, alternative definitions, and per-program evidence.
+exec
+/usr/bin/zsh -lc "cat verification.json; rg -n 'canceled|All three' REPORT.md; git status --short" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C
+ exited 128 in 0ms:
+[
+  {
+    "id": "acceptance:ds1000_numpy:case0291::kernel",
+    "identical": true
+  },
+  {
+    "id": "acceptance:npbench:npbench_compute_compute::compute",
+    "identical": true
+  },
+  {
+    "id": "acceptance:pythran:pythran_ccopy::CCOPY",
+    "identical": true
+  }
+]
+27:Budget exhaustion means an actual check returned `Unknown` with a resource-limit reason (`max. resource limit exceeded`, `resource limits reached`, or `canceled` with consumed steps reaching the configured per-query limit). The default compile path sets deterministic step limits, no wall-clock solver timeout; this collector does not interrupt calls. Calls skipped after the total reasoning budget are reported separately: they do not consume a new query budget.
+65:Remote `resolver_smt_s` measures the exposed resolver phases only. It excludes direct `prove()` and construction-selection Z3 cost, so its ratio is **resolver SMT share**, not all SMT time. The source timing collector explicitly documents this limitation. Resolver times were parsed from millisecond summaries printed with one decimal place; zeros can mean rounding below that precision. These are historical remote observations, not times for the final compiler. Local final-compiler counts should not be interpreted as the exact query workload that produced the older remote times. All three observed `canceled` answers were `resolver.decide` checks consuming exactly 1,000,000 steps (the default IR-generation query limit); the other 175 exhausted checks explicitly reported `max. resource limit exceeded`. All exhaustion and total-budget skips occurred in `pythran_ccopy::CCOPY`. Counts are deterministic for the fixed compiler, Z3 build, configuration, and sources; different compiler/Z3 versions can change them.
+434:Actual Unknown reason frequencies and total-budget skips across all stored variants: `{"<total-budget skip>": 4505, "canceled": 3, "max. resource limit exceeded": 175}`.
+fatal: not a git repository (or any of the parent directories): .git
+
+exec
+/usr/bin/zsh -lc 'git status --short' in /home/zhantong/Projects/zinnia-project/wt/npb-hw
+ succeeded in 0ms:
+codex
+Completed [REPORT.md](/home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C/REPORT.md), including remote timing statistics, SMT shares, per-program evidence, caveats, and reproduction scripts.
+
+| Corpus | SMT queries | Budget exhausted |
+|---|---:|---:|
+| DS-1000 | 4,193 | 0 |
+| NPBench | 33,541 | 0 |
+| Pythran | 5,216 | 178 |
+
+All exhaustion occurred in `CCOPY`, with another 4,505 calls skipped after its compilation-wide budget was spent. Observer verification passed; no proofs, keys, or local timing benchmarks were run.
+tokens used
+63,154
+Completed [REPORT.md](/home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/C/REPORT.md), including remote timing statistics, SMT shares, per-program evidence, caveats, and reproduction scripts.
+
+| Corpus | SMT queries | Budget exhausted |
+|---|---:|---:|
+| DS-1000 | 4,193 | 0 |
+| NPBench | 33,541 | 0 |
+| Pythran | 5,216 | 178 |
+
+All exhaustion occurred in `CCOPY`, with another 4,505 calls skipped after its compilation-wide budget was spent. Observer verification passed; no proofs, keys, or local timing benchmarks were run.

@@ -1,0 +1,262 @@
+{
+ "schema": 1,
+ "system": "sp1_groth16",
+ "case": "pythran_euclidean_distance_square__euclidean_distance_square",
+ "description": "SP1 6.8.1, Groth16-wrapped proof, Q32 guest",
+ "windows": {
+  "prove_core": "client.prove in groth16 mode (prove); SP1's SDK proves from the program and its input, so execution happens inside the prove call and cannot be excluded",
+  "end_to_end": "client.prove (prove), which includes execution",
+  "verify": "client.verify (verify)"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/pythran/pythran_euclidean_distance_square/kernel.py": "fab1d977003452ea2231e3a56a92df40b6a59866c776bec09a51fc46f9977893",
+  "benchmarking/datasets/pythran/pythran_euclidean_distance_square/fixture.json": "0aab613722f31b67fa828e828d01204407d80c1cd9385fdb010d2a15e21b0827",
+  "benchmarking/datasets/pythran/pythran_euclidean_distance_square/zkvm.rs": "19c40f84030dd66bf5e7beb3fe392d6330b555fe9388b3c4617d7dd1f4423d04",
+  "benchmarking/baselines/sp1/target/release/sp1-baseline": "65e77c96da5e2637bd23b4f3d28c164da7810e2ae644c55443537c04888efd01"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-11T01:14:29+0000",
+  "loadavg": [
+   62.19580078125,
+   61.126953125,
+   61.09130859375
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "client_init": 27.278155933,
+    "setup": 2.165517729,
+    "process_wall": 29.753869647160172
+   },
+   "details": {
+    "case": "pythran_euclidean_distance_square/euclidean_distance_square",
+    "input": "A",
+    "mode": "setup",
+    "peak_rss_mib": 7141.0,
+    "proof_path": null,
+    "sdk_version": "6.8.1",
+    "system": "sp1",
+    "vk_hash": "0x0079a82d46a63c4d7021c1e19cdfcb993ae44bbaca9222ba796d579ab23a7638",
+    "vk_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s0/work/sp1_groth16/pythran_euclidean_distance_square__euclidean_distance_square/program/vk.bin"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 29.859666388481855,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 7521390592,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   58.1259765625,
+   60.27685546875,
+   60.81005859375
+  ],
+  "child": {
+   "wall_s": 347.0193242384121,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 28580945920,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 319.368433377,
+   "end_to_end_s": 319.368433377,
+   "proof_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s0/work/sp1_groth16/pythran_euclidean_distance_square__euclidean_distance_square/proofs/warmup/program/proof-groth16-B.bin",
+   "proof_bytes": 1790,
+   "timings_s": {
+    "client_init": 26.424473872,
+    "execute": 0.013106911,
+    "prove": 319.368433377,
+    "process_wall": 346.87170525826514
+   },
+   "details": {
+    "case": "pythran_euclidean_distance_square/euclidean_distance_square",
+    "cycles": 9610,
+    "gas": 12272,
+    "input": "B",
+    "input_shapes": [
+     1,
+     3,
+     5,
+     3
+    ],
+    "mode": "prove",
+    "peak_rss_mib": 27225.0,
+    "proof_mode": "groth16",
+    "proof_size_bytes": 1790,
+    "sdk_version": "6.8.1",
+    "syscalls": 4,
+    "system": "sp1"
+   },
+   "proof_sha256": "8d7782b21e919e855a695efc674fc8f3282ccb8eb7bc2ea3d842a7ba45171d68"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 5 elements differ",
+   "expected_count": 5,
+   "actual_count": 5,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "b676d1a033d1df1e8b4958828b8ba18585ac8ce78d700e83333de805eef81d94",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    0.8150695862714201,
+    2.5049087768420577,
+    15.802505487110466,
+    47.5241283478681,
+    37.78825265285559
+   ],
+   "elided": [],
+   "shapes": null
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    64.78955078125,
+    61.84912109375,
+    61.0986328125
+   ],
+   "child": {
+    "wall_s": 366.19135773926973,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 28620742656,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 339.100760684,
+    "end_to_end_s": 339.100760684,
+    "proof_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s0/work/sp1_groth16/pythran_euclidean_distance_square__euclidean_distance_square/proofs/sample-1/program/proof-groth16-B.bin",
+    "proof_bytes": 1790,
+    "timings_s": {
+     "client_init": 25.803695135,
+     "execute": 0.013099386,
+     "prove": 339.100760684,
+     "process_wall": 366.0563988890499
+    },
+    "details": {
+     "case": "pythran_euclidean_distance_square/euclidean_distance_square",
+     "cycles": 9610,
+     "gas": 12272,
+     "input": "B",
+     "input_shapes": [
+      1,
+      3,
+      5,
+      3
+     ],
+     "mode": "prove",
+     "peak_rss_mib": 27263.0,
+     "proof_mode": "groth16",
+     "proof_size_bytes": 1790,
+     "sdk_version": "6.8.1",
+     "syscalls": 4,
+     "system": "sp1"
+    },
+    "proof_sha256": "081752641229cd037c0cb4f37689e6e608b144050e173b06fc25976528165ad6"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 5 elements differ",
+    "expected_count": 5,
+    "actual_count": 5,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "b676d1a033d1df1e8b4958828b8ba18585ac8ce78d700e83333de805eef81d94",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     0.8150695862714201,
+     2.5049087768420577,
+     15.802505487110466,
+     47.5241283478681,
+     37.78825265285559
+    ],
+    "elided": [],
+    "shapes": null
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.391107638,
+     "not_applicable": null,
+     "timings_s": {
+      "client_init": 0.462786892,
+      "verify": 0.391107638,
+      "process_wall": 0.8635576823726296
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 1.0046430425718427,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 88973312,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 1.4518e-05,
+    "not_applicable": null,
+    "timings_s": {
+     "client_init": 0.463195025,
+     "verify": 1.4518e-05,
+     "process_wall": 0.4724791934713721
+    },
+    "details": {
+     "error": null
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.6028374908491969,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 80486400,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

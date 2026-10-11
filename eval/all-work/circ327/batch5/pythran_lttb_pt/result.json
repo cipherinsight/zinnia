@@ -1,0 +1,26 @@
+{
+  "program": "pythran_lttb_pt",
+  "category": "needs_gadget: division",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:36: c = next_bin.mean(axis=0). Valid n_out lies in [3,16], giving capacity 16 and at most 14 bins. Native integer division can compute bin means, but triangle areas multiply Q32 differences; full-width products and their Q32 rescaling need a custom wide fixed-point arithmetic gadget after native arbitrary-integer lowering fails. Guarded padding alone cannot supply that arithmetic.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "needs gadget",
+    "error": "Valid n_out lies in [3,16], giving capacity 16 and at most 14 bins. Native integer division can compute bin means, but triangle areas multiply Q32 differences; full-width products and their Q32 rescaling need a custom wide fixed-point arithmetic gadget after native arbitrary-integer lowering fails. Guarded padding alone cannot supply that arithmetic.",
+    "constraints": null,
+    "rewrites": []
+  },
+  "correctness": {
+    "A": "not run: no executable accepted translation",
+    "B": "not run: no executable accepted translation"
+  },
+  "notes": "Valid n_out lies in [3,16], giving capacity 16 and at most 14 bins. Native integer division can compute bin means, but triangle areas multiply Q32 differences; full-width products and their Q32 rescaling need a custom wide fixed-point arithmetic gadget after native arbitrary-integer lowering fails. Guarded padding alone cannot supply that arithmetic.",
+  "source": {
+    "kernel": "benchmarking/datasets/pythran/pythran_lttb_pt/kernel.py",
+    "function": "downsample",
+    "sha256": "ac9209aa9a9c32c14b9560808c03b248f3824dc9eb0eec3e83384067c3e62283"
+  },
+  "reason": "Valid n_out lies in [3,16], giving capacity 16 and at most 14 bins. Native integer division can compute bin means, but triangle areas multiply Q32 differences; full-width products and their Q32 rescaling need a custom wide fixed-point arithmetic gadget after native arbitrary-integer lowering fails. Guarded padding alone cannot supply that arithmetic."
+}

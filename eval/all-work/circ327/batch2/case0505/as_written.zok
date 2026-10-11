@@ -1,0 +1,31 @@
+from "EMBED" import u32_to_field
+from "utils/casts/field_to_u32" import main as idx
+
+def neg(field x) -> bool:
+    return x > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+
+def lt(field x, field y) -> bool:
+    return if neg(x) != neg(y) then neg(x) else x < y fi
+
+def ab(field x) -> field:
+    return if neg(x) then -x else x fi
+
+def main(private field[13][13][5] a, private field[13][13] b) -> field:
+    field[13][13] arr = [[0; 13]; 13]
+    for u32 i in 0..13 do
+        for u32 j in 0..13 do
+            u32 k = idx(if neg(b[i][j]) then b[i][j]+5 else b[i][j] fi)
+            arr[i][j] = a[i][j][k]
+        endfor
+    endfor
+    field total = 0
+    field selected = 0
+    for u32 i in 0..13 do
+        for u32 j in 0..13 do
+            for u32 k in 0..5 do
+                total = total+a[i][j][k]
+            endfor
+            selected = selected+arr[i][j]
+        endfor
+    endfor
+    return total-selected

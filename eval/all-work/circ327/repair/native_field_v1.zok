@@ -1,0 +1,47 @@
+// Wide field arithmetic, with native unpack for the Q32 right shift.
+from "EMBED" import unpack, u32_to_field as it, u64_to_field
+from "utils/casts/field_to_u32" import main as ui
+from "utils/casts/field_to_u64" import main as to_u64
+
+def neg(field x) -> bool:
+    return x > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+
+def absv(field x) -> field:
+    return if neg(x) then -x else x fi
+
+def ab(field x) -> field:
+    return absv(x)
+
+def lt(field a, field b) -> bool:
+    return if neg(a) != neg(b) then neg(a) else a < b fi
+
+def divc(field a, field b) -> field:
+    field q = u64_to_field(to_u64(absv(a))/to_u64(absv(b)))
+    return if neg(a) != neg(b) then -q else q fi
+
+def mulq(field a, field b) -> field:
+    field v = a*b
+    bool[254] bits = unpack(absv(v))
+    field q = 0
+    for u32 i in 0..222 do
+        q = q*2 + if bits[i] then 1 else 0 fi
+    endfor
+    return if neg(v) then -q else q fi
+
+def mul(field a, field b) -> field:
+    return mulq(a,b)
+
+def divq(field a, field b) -> field:
+    u64 x = to_u64(absv(a))
+    u64 y = to_u64(absv(b))
+    field q = u64_to_field(x/y)
+    u64 r = x%y
+    for u32 k in 0..32 do
+        u64 d = r << 1u32
+        q = q*2 + u64_to_field(d/y)
+        r = d%y
+    endfor
+    return if neg(a) != neg(b) then -q else q fi
+
+def integer_to_field(field x) -> field:
+    return x

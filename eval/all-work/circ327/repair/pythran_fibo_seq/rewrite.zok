@@ -1,0 +1,21 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64 n) -> u64[12]:
+    u64[12] a = [0u64; 12]
+    u64[12] b = [0u64; 12]
+    a[0] = 1u64
+    b[0] = 1u64
+    for u32 i in 0..1024 do
+        u64 carry = 0u64
+        u64[12] next = [0u64; 12]
+        for u32 j in 0..12 do
+            u64 s = a[j]+b[j]
+            u64 v = s+carry
+            carry = if s < a[j] || v < s then 1u64 else 0u64 fi
+            next[j] = v
+        endfor
+        u64[12] old = a
+        a = if it(i) < n then next else a fi
+        b = if it(i) < n then old else b fi
+    endfor
+    return a

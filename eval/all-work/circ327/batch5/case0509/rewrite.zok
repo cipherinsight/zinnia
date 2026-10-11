@@ -1,0 +1,40 @@
+struct Result {
+    u64 a
+    u64 b
+    u64[100] c
+}
+def main(private u64[10][10] im) -> Result:
+    bool[10][10] mask = [[false; 10]; 10]
+    u64 rmin = 10u64
+    u64 rmax = 0u64
+    u64 cmin = 10u64
+    u64 cmax = 0u64
+    for u64 i in 0..10 do
+        for u64 j in 0..10 do
+            mask[i][j] = im[i][j] == 0u64
+        endfor
+    endfor
+    for u64 i in 0..10 do
+        bool row = false
+        bool col = false
+        for u64 j in 0..10 do
+            row = row || mask[i][j]
+            col = col || mask[j][i]
+        endfor
+        rmin = if row && i < rmin then i else rmin fi
+        rmax = if row then i else rmax fi
+        cmin = if col && i < cmin then i else cmin fi
+        cmax = if col then i else cmax fi
+    endfor
+    u64 h = if rmin == 10u64 then 0u64 else rmax-rmin+1u64 fi
+    u64 w = if cmin == 10u64 then 0u64 else cmax-cmin+1u64 fi
+    u64[100] out = [0u64; 100]
+    for u64 i in 0..10 do
+        for u64 j in 0..10 do
+            bool active = i < h && j < w
+            u64 r = if active then rmin+i else 0u64 fi
+            u64 c = if active then cmin+j else 0u64 fi
+            out[i*10u64+j] = if active then im[r][c] else 0u64 fi
+        endfor
+    endfor
+    return Result {a: h, b: w, c: out}

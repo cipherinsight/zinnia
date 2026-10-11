@@ -1,0 +1,63 @@
+{
+  "program": "pythran_factorize_naive",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:17-30: unbounded-syntax while loop and dynamic factor list; @requires bounds n to [0,1024].",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 55078,
+    "rewrites": [
+      "Use 32 guarded iterations: at most ten successful factor extractions and sixteen tested candidate changes before p*p >= n for n<=1024.",
+      "Pad factor list to ten entries and return its length; every extracted factor is at least two.",
+      "Translate n/p on the divisible branch to exact field division since remainder is zero and the mathematical quotient is an integer.",
+      "Use native u32 quotient/remainder; all values are nonnegative and bounded by 1024 (trial p at most 33), so this does not narrow the declared domain.",
+      "Clamp the unused write index after ten factors, so later inactive iterations never access past the padding.",
+      "Enforce the original n<=1024 precondition in Z#; native u32 already enforces n>=0."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "numpy_shape": "list",
+      "compared_values": 3,
+      "max_absolute_error": 0.0,
+      "actual": [
+        2,
+        2,
+        3
+      ],
+      "expected": [
+        2.0,
+        2.0,
+        3.0
+      ]
+    },
+    "B": {
+      "status": "pass",
+      "numpy_shape": "list",
+      "compared_values": 1,
+      "max_absolute_error": 0.0,
+      "actual": [
+        11
+      ],
+      "expected": [
+        11
+      ]
+    }
+  },
+  "notes": "kernel.py:17-30: unbounded-syntax while loop and dynamic factor list; @requires bounds n to [0,1024].\nDeclared n<=1024 implies 32 steps and ten factor slots; native u32 division.",
+  "kernel": "benchmarking/datasets/pythran/pythran_factorize_naive/kernel.py",
+  "numeric_encoding": {
+    "modulus": "52435875175126190479447740508185965837690552500527637822603658699938581184513",
+    "real_scale": 4294967296,
+    "signed_encoding": "centered field residues; no unsigned-only interpretation of negative fixtures",
+    "validation_tolerance": {
+      "rtol": 1e-06,
+      "atol": 1e-06
+    }
+  }
+}

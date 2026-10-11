@@ -1,0 +1,58 @@
+{
+  "program": "case0302",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:11: reshape has private dimensions; every valid reshape has exactly 20 elements, with dimensions divisors of 20.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 62,
+    "seconds": 0.02528332799920463,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch2/case0302/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Encode dynamic matrix as (rows, columns, 20 C-order elements)."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "elements": 20,
+      "max_abs_error": 1.0922962534465341e-10,
+      "logical_shape_checked": true
+    },
+    "B": {
+      "status": "pass",
+      "elements": 20,
+      "max_abs_error": 1.121935877534952e-10,
+      "logical_shape_checked": true
+    }
+  },
+  "notes": "kernel.py:11: reshape has private dimensions; every valid reshape has exactly 20 elements, with dimensions divisors of 20.",
+  "source": "benchmarking/datasets/ds1000_numpy/generated/case0302/kernel.py",
+  "function": "kernel",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/ds1000_numpy/generated/case0302/fixture.json",
+  "source_sha256": "2ed247afdc21bd6326028c0a39e076b56e3b847565dc63030395dcc292ac8526",
+  "encoding": "Real and complex components rounded to nearest integer at scale 2^32; centered field residues for field translations; native arbitrary-precision integers for integer translations. Public return includes all logical output values; padded returns include shape/presence metadata.",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh"
+  },
+  "translation_sha256": {
+    "rewrite": "3c8832d06346fc810f2eadd6906436770ab7fc511d6f79aa6f655e5f78f5bc91"
+  }
+}

@@ -1,0 +1,145 @@
+building: nice -n 10 /home/zhantong/zinnia-eval-run/zinnia-sizefix/scripts/develop.sh --release --features halo2-base-backend,noir-backend
+🍹 Building a mixed python/rust project
+🐍 Found CPython 3.14 at /home/zhantong/zinnia-eval-run/zinnia-sizefix/.venv/bin/python
+🔗 Found pyo3 bindings
+Ignoring msgpack: markers 'extra == "benchmark"' don't match your environment
+Ignoring scipy: markers 'extra == "benchmark"' don't match your environment
+Ignoring scikit-learn: markers 'extra == "benchmark"' don't match your environment
+Ignoring maturin: markers 'extra == "dev"' don't match your environment
+Ignoring pytest: markers 'extra == "dev"' don't match your environment
+Ignoring pyyaml: markers 'extra == "dev"' don't match your environment
+Ignoring scipy: markers 'extra == "dev"' don't match your environment
+Ignoring scikit-learn: markers 'extra == "dev"' don't match your environment
+Ignoring pytest: markers 'extra == "test"' don't match your environment
+Ignoring pyyaml: markers 'extra == "test"' don't match your environment
+Requirement already satisfied: numpy>=2.2 in ./.venv/lib/python3.14/site-packages (2.2.2)
+Requirement already satisfied: z3-solver<5,>=4.13 in ./.venv/lib/python3.14/site-packages (4.16.0.0)
+   Compiling zinnia_core v0.1.0 (/home/zhantong/zinnia-eval-run/zinnia-sizefix)
+warning: variable does not need to be mutable
+  --> src/optim/assert_subsumption.rs:97:20
+   |
+97 |     fn exec(&self, mut ir_graph: IRGraph) -> IRGraph {
+   |                    ----^^^^^^^^
+   |                    |
+   |                    help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/phase1/rules/scalar_control/scalar_op.rs:250:13
+    |
+250 |         let mut extent_of = |builder: &mut Builder<'_>,
+    |             ----^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: field `arr_vid` is never read
+   --> src/helpers/ndarray.rs:523:9
+    |
+521 | pub(crate) struct ReductionInputs {
+    |                   --------------- field in this struct
+522 |     pub elements: Vec<Value>,
+523 |     pub arr_vid: crate::types::ValueId,
+    |         ^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `transpose_materialise` is never used
+   --> src/helpers/static_array/shape.rs:328:4
+    |
+328 | fn transpose_materialise(b: &mut IRBuilder, val: &Value, perm: &[usize]) -> Value {
+    |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `is_stable` is never used
+   --> src/lower/sort/cost.rs:377:19
+    |
+360 | impl Network {
+    | ------------ method in this implementation
+...
+377 |     pub(super) fn is_stable(self) -> bool {
+    |                   ^^^^^^^^^
+
+warning: field `cond_vid` is never read
+   --> src/ops/static_ndarray_ops/elementwise.rs:562:5
+    |
+558 | struct WhereInputs {
+    |        ----------- field in this struct
+...
+562 |     cond_vid: ValueId,
+    |     ^^^^^^^^
+
+warning: `zinnia_core` (lib) generated 6 warnings (run `cargo fix --lib -p zinnia_core` to apply 2 suggestions)
+    Finished `release` profile [optimized] target(s) in 2m 38s
+⚠️ Warning: Failed to set rpath for /home/zhantong/zinnia-eval-run/zinnia-sizefix/target/maturin/lib_zinnia_core.so: Failed to execute 'patchelf', did you install it? Hint: Try `pip install maturin[patchelf]` (or just `pip install patchelf`)
+📦 Built wheel for CPython 3.14 to /home/zhantong/zinnia-eval-run/tmp/.tmpyDTqGh/zinnia-0.0.1-cp314-cp314-linux_x86_64.whl
+✏️ Setting installed package as editable
+🛠 Installed zinnia-0.0.1
+build record: /home/zhantong/zinnia-eval-run/zinnia-sizefix/target/zinnia-harness-build.json
+{
+  "built_at": "2026-10-11T13:11:03+0000",
+  "build_seconds": 160.3,
+  "command": [
+    "nice",
+    "-n",
+    "10",
+    "/home/zhantong/zinnia-eval-run/zinnia-sizefix/scripts/develop.sh",
+    "--release",
+    "--features",
+    "halo2-base-backend,noir-backend"
+  ],
+  "profile": "release",
+  "features": "halo2-base-backend,noir-backend",
+  "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+  "cargo": "cargo 1.96.1 (356927216 2026-06-26)",
+  "extension": "zinnia/_zinnia_core.cpython-314-x86_64-linux-gnu.so",
+  "extension_sha256": "637a5c9ab0fa8f25e07745cbb0c7d9a1e395fa47ca04444de04eeecee19b1324",
+  "embedded_rustc": "rustc version 1.96.1 (31fca3adb 2026-06-26)",
+  "source": {
+    "commit": "2569c9edb8a2bf0b88e9351ca5752f164d2fad24",
+    "branch": "sizefix-cairo",
+    "dirty": false,
+    "diff_sha256": null,
+    "diff_bytes": 0,
+    "untracked_sha256": {}
+  }
+}
+building halo2_hw: nice -n 10 cargo build --release (in /home/zhantong/zinnia-eval-run/zinnia-sizefix/benchmarking/baselines/halo2_hw)
+   Compiling halo2_hw v0.1.0 (/home/zhantong/zinnia-eval-run/zinnia-sizefix/benchmarking/baselines/halo2_hw)
+    Finished `release` profile [optimized] target(s) in 57.98s
+building halo2_lit: nice -n 10 cargo build --release (in /home/zhantong/zinnia-eval-run/zinnia-sizefix/benchmarking/baselines/halo2_hw)
+   Compiling halo2_hw v0.1.0 (/home/zhantong/zinnia-eval-run/zinnia-sizefix/benchmarking/baselines/halo2_hw)
+warning: unused variable: `j`
+  --> /home/zhantong/zinnia-eval-run/zinnia-sizefix/benchmarking/datasets/npbench/npbench_polybench_gemm_gemm/target.kernel.literal.rs:46:14
+   |
+46 |         for (j, column) in columns.iter().enumerate() {
+   |              ^ help: if this is intentional, prefix it with an underscore: `_j`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> /home/zhantong/zinnia-eval-run/zinnia-sizefix/benchmarking/datasets/pythran/pythran_tax/target.tax.literal.rs:178:9
+    |
+178 |     let mut terms: Vec<Cell> = (0..N).map(|p| q.mul(ctx, seg3[p], prog3[p]).cell).collect();
+    |         ----^^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `H3` is never used
+  --> /home/zhantong/zinnia-eval-run/zinnia-sizefix/benchmarking/datasets/npbench/npbench_deep_learning_resnet_resnet/target.resnet_basicblock.literal.rs:23:7
+   |
+23 | const H3: usize = H2 - K3 + 1;
+   |       ^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `W3` is never used
+  --> /home/zhantong/zinnia-eval-run/zinnia-sizefix/benchmarking/datasets/npbench/npbench_deep_learning_resnet_resnet/target.resnet_basicblock.literal.rs:24:7
+   |
+24 | const W3: usize = W2 - K3 + 1;
+   |       ^^
+
+warning: `halo2_hw` (lib) generated 4 warnings (run `cargo fix --lib -p halo2_hw` to apply 2 suggestions)
+    Finished `release` profile [optimized] target(s) in 51.98s
+baseline build record: /home/zhantong/zinnia-eval-run/zinnia-sizefix/target/zinnia-harness-baselines.json

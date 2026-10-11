@@ -1,0 +1,46 @@
+{
+  "program": "npbench_polybench_gesummv_gesummv",
+  "category": "needs_gadget: fixed-point multiplication/rescaling",
+  "as_written": {
+    "status": "rejected",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\n\nthread 'main' (150100) panicked at src/target/r1cs/trans.rs:387:18:\ninternal error: entered unreachable code: Unhandled variable operator return.0\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    "constraints": null,
+    "seconds": 0.036875607998808846,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch2/npbench_polybench_gesummv_gesummv/as_written.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ]
+  },
+  "rewrite": {
+    "status": "needs gadget",
+    "error": "fixed-point multiplication/rescaling",
+    "constraints": null,
+    "rewrites": []
+  },
+  "correctness": {
+    "A": "not run: no accepted translation",
+    "B": "not run: no accepted translation"
+  },
+  "notes": "Preserve Python left associativity: (alpha*A)@x + (beta*B)@x.",
+  "source": "benchmarking/datasets/npbench/npbench_polybench_gesummv_gesummv/kernel.py",
+  "function": "kernel",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/npbench/npbench_polybench_gesummv_gesummv/fixture.json",
+  "source_sha256": "5051367dcc388833a7a353836c23018f090c2619a633f0e12341780ef6af97a8",
+  "encoding": "Real and complex components rounded to nearest integer at scale 2^32; centered field residues for field translations; native arbitrary-precision integers for integer translations. Public return includes all logical output values; padded returns include shape/presence metadata.",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh"
+  },
+  "translation_sha256": {
+    "as_written": "92363694b76c57170b14436e2e1e967a79e2f4c44d5698fb10f79e63e412c0d5"
+  }
+}

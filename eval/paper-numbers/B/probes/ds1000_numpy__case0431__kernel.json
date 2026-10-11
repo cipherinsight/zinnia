@@ -1,0 +1,333 @@
+{
+  "id": "ds1000_numpy__case0431__kernel",
+  "sites": {
+    "12:29:12:42:Compare": "a > interval[0]",
+    "12:44:12:57:Compare": "a < interval[1]",
+    "12:14:12:58:Call": "np.logical_and(a > interval[0], a < interval[1])",
+    "12:13:12:58:UnaryOp": "~np.logical_and(a > interval[0], a < interval[1])"
+  },
+  "numpy": {
+    "A": [
+      {
+        "site": "12:29:12:42:Compare",
+        "value": {
+          "shape": [
+            8
+          ],
+          "length": 8
+        }
+      },
+      {
+        "site": "12:44:12:57:Compare",
+        "value": {
+          "shape": [
+            8
+          ],
+          "length": 8
+        }
+      },
+      {
+        "site": "12:14:12:58:Call",
+        "value": {
+          "shape": [
+            8
+          ],
+          "length": 8
+        }
+      },
+      {
+        "site": "12:13:12:58:UnaryOp",
+        "value": {
+          "shape": [
+            8
+          ],
+          "length": 8
+        }
+      }
+    ],
+    "B": [
+      {
+        "site": "12:29:12:42:Compare",
+        "value": {
+          "shape": [
+            8
+          ],
+          "length": 8
+        }
+      },
+      {
+        "site": "12:44:12:57:Compare",
+        "value": {
+          "shape": [
+            8
+          ],
+          "length": 8
+        }
+      },
+      {
+        "site": "12:14:12:58:Call",
+        "value": {
+          "shape": [
+            8
+          ],
+          "length": 8
+        }
+      },
+      {
+        "site": "12:13:12:58:UnaryOp",
+        "value": {
+          "shape": [
+            8
+          ],
+          "length": 8
+        }
+      }
+    ]
+  },
+  "selected": [
+    "12:13:12:58:UnaryOp",
+    "12:14:12:58:Call",
+    "12:29:12:42:Compare",
+    "12:44:12:57:Compare"
+  ],
+  "source": "def kernel(a: Float[Array, '8']):\n    bprobe_trace = []\n    interval = (a.mean() - 2 * a.std(), a.mean() + 2 * a.std())\n    bprobe_v0 = a > interval[0]\n    bprobe_trace.append((2, bprobe_v0))\n    bprobe_v1 = a < interval[1]\n    bprobe_trace.append((3, bprobe_v1))\n    bprobe_v2 = np.logical_and(bprobe_v0, bprobe_v1)\n    bprobe_trace.append((1, bprobe_v2))\n    bprobe_v3 = ~bprobe_v2\n    bprobe_trace.append((0, bprobe_v3))\n    result = bprobe_v3\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [
+        {
+          "constant": 2
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 0
+        },
+        {
+          "kind": "i",
+          "public": 1
+        },
+        {
+          "kind": "i",
+          "public": 2
+        },
+        {
+          "kind": "i",
+          "public": 3
+        },
+        {
+          "kind": "i",
+          "public": 4
+        },
+        {
+          "kind": "i",
+          "public": 5
+        },
+        {
+          "kind": "i",
+          "public": 6
+        },
+        {
+          "kind": "i",
+          "public": 7
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1
+        ]
+      },
+      "shape": [
+        8
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 3
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 8
+        },
+        {
+          "kind": "i",
+          "public": 9
+        },
+        {
+          "kind": "i",
+          "public": 10
+        },
+        {
+          "kind": "i",
+          "public": 11
+        },
+        {
+          "kind": "i",
+          "public": 12
+        },
+        {
+          "kind": "i",
+          "public": 13
+        },
+        {
+          "kind": "i",
+          "public": 14
+        },
+        {
+          "kind": "i",
+          "public": 15
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1
+        ]
+      },
+      "shape": [
+        8
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 1
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 16
+        },
+        {
+          "kind": "i",
+          "public": 17
+        },
+        {
+          "kind": "i",
+          "public": 18
+        },
+        {
+          "kind": "i",
+          "public": 19
+        },
+        {
+          "kind": "i",
+          "public": 20
+        },
+        {
+          "kind": "i",
+          "public": 21
+        },
+        {
+          "kind": "i",
+          "public": 22
+        },
+        {
+          "kind": "i",
+          "public": 23
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1
+        ]
+      },
+      "shape": [
+        8
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0
+        }
+      ],
+      "output": {
+        "return": [
+          3,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 24
+        },
+        {
+          "kind": "i",
+          "public": 25
+        },
+        {
+          "kind": "i",
+          "public": 26
+        },
+        {
+          "kind": "i",
+          "public": 27
+        },
+        {
+          "kind": "i",
+          "public": 28
+        },
+        {
+          "kind": "i",
+          "public": 29
+        },
+        {
+          "kind": "i",
+          "public": 30
+        },
+        {
+          "kind": "i",
+          "public": 31
+        }
+      ],
+      "output": {
+        "return": [
+          3,
+          1
+        ]
+      },
+      "shape": [
+        8
+      ]
+    }
+  ],
+  "dynamic": []
+}

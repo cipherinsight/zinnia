@@ -1,0 +1,14 @@
+def main(private integer[16] x) -> integer:
+    integer[15] t0 = [0; 15]
+    integer[15] t1 = [0; 15]
+    for u32 i in 0..15 do
+        integer d = x[i+1] - x[i]*x[i]/4294967296
+        t0[i] = 100*(d*d/4294967296)
+        integer e = 4294967296-x[i]
+        t1[i] = e*e/4294967296
+    endfor
+    integer result = 0
+    for u32 i in 0..15 do
+        result = result+t0[i]+t1[i]
+    endfor
+    return result

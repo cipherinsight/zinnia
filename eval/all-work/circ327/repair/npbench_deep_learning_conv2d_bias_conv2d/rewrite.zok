@@ -1,0 +1,31 @@
+from "../native_field" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private field[4][16][16][2] input, private field[2][2][2][8] weights, private field[8] bias) -> field[4][15][15][8]:
+    field[4][15][15][8] output = [[[[0;8];15];15];4]
+    for u32 i in 0..15 do
+        for u32 j in 0..15 do
+            for u32 n in 0..4 do
+                for u32 c in 0..8 do
+                    field total = 0
+                    for u32 di in 0..2 do
+                        for u32 dj in 0..2 do
+                            for u32 k in 0..2 do
+                                total = (total + mul(input[n][(i + di)][(j + dj)][k], weights[di][dj][k][c]))
+                            endfor
+                        endfor
+                    endfor
+                    output[n][i][j][c] = total
+                endfor
+            endfor
+        endfor
+    endfor
+    for u32 n in 0..4 do
+        for u32 i in 0..15 do
+            for u32 j in 0..15 do
+                for u32 c in 0..8 do
+                    output[n][i][j][c] = (output[n][i][j][c] + bias[c])
+                endfor
+            endfor
+        endfor
+    endfor
+    return output

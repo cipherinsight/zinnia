@@ -1,0 +1,26 @@
+// Direct static-shape translation.
+from "EMBED" import u64_to_field
+from "EMBED" import u32_to_u64
+from "EMBED" import unpack
+from "EMBED" import u64_from_bits
+
+def lt(u64 a, u64 b) -> bool:
+    return (a ^ 9223372036854775808u64) < (b ^ 9223372036854775808u64)
+
+def mul(u64 a, u64 b) -> u64:
+    bool sa = a >= 9223372036854775808u64
+    bool sb = b >= 9223372036854775808u64
+    u64 aa = if sa then 0u64-a else a fi
+    u64 bb = if sb then 0u64-b else b fi
+    bool[128] bits = unpack::<128>(u64_to_field(aa)*u64_to_field(bb))
+    u64 v = u64_from_bits(bits[32..96])
+    return if sa != sb then 0u64-v else v fi
+
+def main(private u64[4][4] a) -> u64[4][4]:
+    for u32 j in 0..4 do
+        a[1][j] = 0
+    endfor
+    for u32 i in 0..4 do
+        a[i][0] = 0
+    endfor
+    return a

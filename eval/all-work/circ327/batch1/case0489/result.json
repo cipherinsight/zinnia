@@ -1,0 +1,30 @@
+{
+  "program": "case0489",
+  "category": "timeout_or_oom",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:12-14: np.where index arrays have data-dependent length.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "out of memory",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend",
+    "constraints": null,
+    "returncode": -9,
+    "seconds": 34.676,
+    "rewrites": [
+      "Replace dynamic np.where index arrays and Boolean scatter by guarded element updates over the fixed 100x50 input shape."
+    ]
+  },
+  "correctness": {
+    "A": "not run: no accepted attempt",
+    "B": "not run: no accepted attempt"
+  },
+  "notes": [
+    "Masked 100x50 rewrite killed under the 8 GB cap."
+  ],
+  "source": {
+    "kernel": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch1/case0489/kernel.py",
+    "function": "kernel"
+  }
+}

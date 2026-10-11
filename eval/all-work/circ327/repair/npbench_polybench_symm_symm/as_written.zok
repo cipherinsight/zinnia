@@ -1,0 +1,24 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64 alpha, private u64 beta, private u64[10][13] C, private u64[10][10] A, private u64[10][13] B) -> u64[10][13]:
+    u64[13] temp2 = [0;13]
+    for u32 i in 0..10 do
+        for u32 j in 0..13 do
+            C[i][j] = mul(C[i][j], beta)
+        endfor
+    endfor
+    for u32 i in 0..10 do
+        for u32 j in 0..13 do
+            for u32 k in 0..i do
+                C[k][j] = (C[k][j] + mul(mul(alpha, B[i][j]), A[i][k]))
+            endfor
+            temp2[j] = 0
+            for u32 k in 0..i do
+                temp2[j] = (temp2[j] + mul(B[k][j], A[i][k]))
+            endfor
+        endfor
+        for u32 j in 0..13 do
+            C[i][j] = ((C[i][j] + mul(mul(alpha, B[i][j]), A[i][i])) + mul(alpha, temp2[j]))
+        endfor
+    endfor
+    return C

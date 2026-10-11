@@ -1,0 +1,31 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[16][16] itemscores) -> u64:
+    u64 itemvars = 0u64
+    u64[16] tscores = [0u64; 16]
+    for u32 i in 0..16 do
+        u64 mean = 0u64
+        for u32 j in 0..16 do
+            mean = mean+itemscores[i][j]
+            tscores[j] = tscores[j]+itemscores[i][j]
+        endfor
+        mean = divc(mean,16u64)
+        u64 v = 0u64
+        for u32 j in 0..16 do
+            u64 d = itemscores[i][j]-mean
+            v = v+mulq(d,d)
+        endfor
+        itemvars = itemvars+divc(v,15u64)
+    endfor
+    u64 mean = 0u64
+    for u32 j in 0..16 do
+        mean = mean+tscores[j]
+    endfor
+    mean = divc(mean,16u64)
+    u64 variance = 0u64
+    for u32 j in 0..16 do
+        u64 d = tscores[j]-mean
+        variance = variance+mulq(d,d)
+    endfor
+    variance = divc(variance,15u64)
+    return mulq(4581298449u64,4294967296u64-divq(itemvars,variance))

@@ -1,0 +1,23 @@
+program,dataset,function,outcome,class,construct,detail
+case0311,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 2 elements differ
+case0329,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 48 elements differ
+case0347,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 1 elements differ
+case0366,ds1000_numpy,kernel,rejected_compiler_limitation,compiler_limitation,np.insert at several positions,ZinniaException: IR generation failed: np.insert: this bounded slice supports one scalar obj
+case0390,ds1000_numpy,kernel,rejected_compiler_limitation,compiler_limitation,reshape of a runtime-shaped array,"ZinniaException: IR generation failed: reshape is not supported on an array with a runtime shape held in a padded buffer (a bounded input with per-axis bounds, or a slice with runtime bounds on an inner axis): its elements are not contiguous in C order"
+case0412,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 2 elements differ
+case0431,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 8 elements differ
+case0451,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 4000 elements differ
+case0481,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 1 elements differ
+case0504,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 1 elements differ
+npbench_deep_learning_resnet_resnet,npbench,resnet_basicblock,rejected_resource_limit,resource_limit,compile time over 300 s,timeout after 300s
+npbench_polybench_durbin_durbin,npbench,kernel,accepted_correct,,,logical outputs: 0 of 16 elements differ
+npbench_polybench_seidel_2d_seidel_2d,npbench,kernel,rejected_no_provable_bound,no_provable_bound,range() trip count,"ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value without known bounds. Give the bound a maximum, e.g. a bounded array annotation (Integer[Array, ""N<=8""]) or a precondition (@zk_circuit(requires=[lambda n: 0 <= n <= 8]))"
+pythran_approximated_callgraph,pythran,approximated_callgraph,rejected_compiler_limitation,compiler_limitation,list() of a runtime-shaped array,ZinniaException: IR generation failed: list() of an array with a runtime shape is not supported: its length is not a compile-time number
+pythran_convnet,pythran,convnet,rejected_no_provable_bound,no_provable_bound,array shape from a runtime value,ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int
+pythran_fibo,pythran,test,rejected_compiler_limitation,compiler_limitation,recursion deeper than the inlining limit (16),"ZinniaException: IR generation failed: RecursionLimitExceededError: recursion limit (16) exceeded while inlining @zk_chip `rfibo`. Each recursive call into a chip is unrolled at compile time; if your chip recurses with multiple call sites per level (e.g. fibo(n-1) + fibo(n-2)), the unrolled depth grows exponentially. Either reduce the recursion in the chip body or raise ZinniaConfig.recursion_limit (current default is intentionally small)."
+pythran_lapl3d,pythran,laplacien,accepted_correct,,,logical outputs: 0 of 588 elements differ
+pythran_multitype,pythran,check2,accepted_correct,,,logical outputs: 0 of 2 elements differ
+pythran_multitype,pythran,check,accepted_correct,,,logical outputs: 0 of 2 elements differ
+pythran_multitype,pythran,times,accepted_correct,,,logical outputs: 0 of 1 elements differ
+pythran_reverse_cumsum,pythran,reverse_cumsum,accepted_correct,,,logical outputs: 0 of 10 elements differ
+pythran_wave_simulation,pythran,test,rejected_no_provable_bound,no_provable_bound,array shape from a runtime value,ZinniaException: IR generation failed: shape element at axis 1 must be a compile-time constant int

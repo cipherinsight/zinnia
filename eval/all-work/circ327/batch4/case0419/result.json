@@ -1,0 +1,31 @@
+{
+  "program": "case0419",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:12 reshape/bin count is private-dependent; capacity 8x6 from input shape.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 58469,
+    "elapsed_seconds": 0.786,
+    "exit_code": 0,
+    "rewrites": [
+      "Pad the output to 8x6 and publish its logical column count; each bin consumes at least one of 6 input columns, while bin_size>6 gives zero bins.",
+      "Replace the private reshape with guarded address arithmetic; divide the signed Q32 sum by its integer count using stock u64 division (no rescaling and no handwritten division circuit)."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "max_absolute_error": 1.651259129431537e-10
+    },
+    "B": {
+      "status": "pass",
+      "max_absolute_error": 1.9591217537140437e-10
+    }
+  },
+  "notes": "kernel.py:12 reshape/bin count is private-dependent; capacity 8x6 from input shape."
+}

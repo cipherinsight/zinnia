@@ -1,0 +1,21 @@
+from "../native_field" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private field alpha, private field beta, private field[14][15] A, private field[15][15] B, private field[15][16] C, private field[14][16] D) -> field[14][16]:
+    field[14][15] tmp = [[0;15];14]
+    for u32 i in 0..14 do
+        for u32 j in 0..15 do
+            for u32 k in 0..15 do
+                tmp[i][j] = (tmp[i][j] + mulq(mulq(alpha, A[i][k]), B[k][j]))
+            endfor
+        endfor
+    endfor
+    for u32 i in 0..14 do
+        for u32 j in 0..16 do
+            field s = 0
+            for u32 k in 0..15 do
+                s = (s + mulq(tmp[i][k], C[k][j]))
+            endfor
+            D[i][j] = (s + mulq(beta, D[i][j]))
+        endfor
+    endfor
+    return D

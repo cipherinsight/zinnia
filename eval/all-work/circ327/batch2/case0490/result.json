@@ -1,0 +1,56 @@
+{
+  "program": "case0490",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:13-15: np.where produces dynamic index vectors; each has capacity 50 from the row shape.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 674810,
+    "seconds": 12.580192387998977,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch2/case0490/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Replace value-dependent np.where index arrays with guarded writes over all 50 positions in each row."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "elements": 250,
+      "max_abs_error": 1.162820950639798e-10
+    },
+    "B": {
+      "status": "pass",
+      "elements": 250,
+      "max_abs_error": 1.1640288732905901e-10
+    }
+  },
+  "notes": "kernel.py:13-15: np.where produces dynamic index vectors; each has capacity 50 from the row shape.",
+  "source": "benchmarking/datasets/ds1000_numpy/generated/case0490/kernel.py",
+  "function": "kernel",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/ds1000_numpy/generated/case0490/fixture.json",
+  "source_sha256": "83a0d6fdaef7a9628f07f71c063f13d169222ca4386300e1b036493f4e873223",
+  "encoding": "Real and complex components rounded to nearest integer at scale 2^32; centered field residues for field translations; native arbitrary-precision integers for integer translations. Public return includes all logical output values; padded returns include shape/presence metadata.",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh"
+  },
+  "translation_sha256": {
+    "rewrite": "dad07a1fa2291ceaf036f0f29cae58077fc83a2c12cc175f6c1b2a89fe298d2f"
+  }
+}

@@ -1,0 +1,109 @@
+{
+  "program": "pythran_d2q9_nxnyns",
+  "function": "one_time_step",
+  "category": "timeout_or_oom",
+  "as_written": {
+    "status": "out_of_memory",
+    "constraints": null,
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend",
+    "seconds": 34.5613848590001,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_d2q9_nxnyns/as_written.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "source_file": "pythran_d2q9_nxnyns/as_written.zok",
+    "artifact_sha256": "68f64456ccc0f0a698187aac0b75dd2f7abece27e7a3e6fe1ae71cad633ddae9"
+  },
+  "rewrite": {
+    "status": "out_of_memory",
+    "constraints": null,
+    "error": "Running frontend\nRunning IR optimizations",
+    "seconds": 152.21617961099764,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_d2q9_nxnyns/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Use wide native field products, then native bit unpacking for the Q32 shift; retain native unsigned division and all loop bounds. This avoids bit-blasting every accumulation into a u64 adder."
+    ],
+    "source_file": "pythran_d2q9_nxnyns/rewrite.zok",
+    "artifact_sha256": "1809afc130888c4a1f301249731a3da6989003059f5b12b581c31df2bad9b3fc"
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "expected_elements": 2304,
+      "actual_elements": 2304,
+      "max_abs_error": 4.139327991481423e-09,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_d2q9_nxnyns/rewrite.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_d2q9_nxnyns/A.pin"
+      ]
+    },
+    "B": {
+      "status": "pass",
+      "expected_elements": 2304,
+      "actual_elements": 2304,
+      "max_abs_error": 4.572195955176994e-09,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_d2q9_nxnyns/rewrite.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_d2q9_nxnyns/B.pin"
+      ]
+    }
+  },
+  "notes": "Wide native field products and accumulation; native unpacking implements the Q32 shift, native unsigned division handles quotients. All source loops and outputs are retained.",
+  "source": {
+    "program": "pythran_d2q9_nxnyns",
+    "dataset": "pythran",
+    "kernel": "benchmarking/datasets/pythran/pythran_d2q9_nxnyns/kernel.py",
+    "function": "one_time_step",
+    "sha256": "917879783e36527f1b0e95b78dc645b33748413dc1ddd6c81cc8142233cdec5e"
+  },
+  "numeric_encoding": {
+    "real_scale": 4294967296,
+    "rtol": 1e-06,
+    "atol": 1e-06,
+    "representation": "centered field residues with native unsigned division",
+    "helper": {
+      "file": "native_field.zok",
+      "sha256": "9479d28a511e5492cf372fe2e6416134dbfcf0d2e4e7b5b8848ab5712234ba8e"
+    }
+  },
+  "old_category": "needs_gadget: fixed-point multiplication/rescaling",
+  "old_result": "batch2/pythran_d2q9_nxnyns/result.json",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+    "tmpdir": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/tmp"
+  },
+  "fixture": {
+    "path": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/pythran/pythran_d2q9_nxnyns/fixture.json",
+    "sha256": "667eea67c9f8f5b87a06e52e2ee765b5b908307284872d5430551dc07569b14c"
+  },
+  "reason": "Native-arithmetic out of memory under 300 s / 8 GB; no arithmetic gadget blocker."
+}

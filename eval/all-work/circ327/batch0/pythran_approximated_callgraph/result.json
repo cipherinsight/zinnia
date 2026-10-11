@@ -1,0 +1,36 @@
+{
+  "program": "pythran_approximated_callgraph",
+  "category": "timeout_or_oom",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:15-16: two runtime-sized lists and loop bounds.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "out of memory",
+    "error": "Running frontend\nRunning IR optimizations\n",
+    "constraints": null,
+    "returncode": -9,
+    "seconds": 185.029,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch0/pythran_approximated_callgraph/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Inline lambda and call; allocate a 1024x1024 padded result, guard both loops and return size, using the explicit 0 <= size <= 1024 precondition."
+    ]
+  },
+  "correctness": {
+    "A": "not run",
+    "B": "not run"
+  },
+  "notes": "kernel.py:15-16: two runtime-sized lists and loop bounds."
+}

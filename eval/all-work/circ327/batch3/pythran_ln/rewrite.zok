@@ -1,0 +1,20 @@
+// Alternate native integer representation; no finite-width restriction.
+def divc(integer x, integer c) -> integer:
+    return if x < 0 then -((-x)/c) else x/c fi
+def mulq(integer a, integer b) -> integer:
+    return divc(a*b, 4294967296)
+def main(private integer[16] X, private integer[16] Y) -> integer[16]:
+    for u32 i in 0..16 do
+        integer z = X[i] - 4294967296
+        integer acc = z
+        acc = acc - divc(mulq(z, z), 2)
+        acc = acc + divc(mulq(mulq(z, z), z), 3)
+        acc = acc - divc(mulq(mulq(mulq(z, z), z), z), 4)
+        acc = acc + divc(mulq(mulq(mulq(mulq(z, z), z), z), z), 5)
+        acc = acc - divc(mulq(mulq(mulq(mulq(mulq(z, z), z), z), z), z), 6)
+        acc = acc + divc(mulq(mulq(mulq(mulq(mulq(mulq(z, z), z), z), z), z), z), 7)
+        acc = acc - divc(mulq(mulq(mulq(mulq(mulq(mulq(mulq(z, z), z), z), z), z), z), z), 8)
+        acc = acc + divc(mulq(mulq(mulq(mulq(mulq(mulq(mulq(mulq(z, z), z), z), z), z), z), z), z), 9)
+        Y[i] = acc
+    endfor
+    return Y

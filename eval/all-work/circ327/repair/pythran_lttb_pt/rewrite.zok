@@ -1,0 +1,40 @@
+from "../native_v1" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[16][2] data, private u64 n_out) -> u64[33]:
+    u64[16][2] out = [[0u64; 2]; 16]
+    out[0] = data[0]
+    out[n_out-1u64] = data[15]
+    u64 bins = n_out-2u64
+    u64 base = 14u64/bins
+    u64 extra = 14u64%bins
+    for u64 i in 0..14 do
+        bool active = i < bins && n_out < 16u64
+        u64 start = 1u64+i*base+(if i < extra then i else extra fi)
+        u64 size = base+(if i < extra then 1u64 else 0u64 fi)
+        u64 next = start+size
+        u64 nsize = if i+1u64 == bins then 1u64 else base+(if i+1u64 < extra then 1u64 else 0u64 fi) fi
+        u64[2] mean = [0u64; 2]
+        for u64 j in 0..16 do
+            bool take = active && j >= next && j < next+nsize
+            mean[0] = mean[0]+if take then data[j][0] else 0u64 fi
+            mean[1] = mean[1]+if take then data[j][1] else 0u64 fi
+        endfor
+        mean[0] = divc(mean[0],nsize)
+        mean[1] = divc(mean[1],nsize)
+        u64 best = 0u64
+        u64 chosen = if active then start else 0u64 fi
+        for u64 j in 0..16 do
+            u64 area = divc(absv(mulq(out[i][0]-mean[0],data[j][1]-out[i][1])-mulq(out[i][0]-data[j][0],mean[1]-out[i][1])),2u64)
+            bool take = active && j >= start && j < start+size && (j == start || area > best)
+            chosen = if take then j else chosen fi
+            best = if take then area else best fi
+        endfor
+        out[i+1u64] = if active then data[chosen] else out[i+1u64] fi
+    endfor
+    u64[33] result = [0u64; 33]
+    result[0] = n_out
+    for u64 i in 0..16 do
+        result[1u64+2u64*i] = if n_out == 16u64 then data[i][0] else out[i][0] fi
+        result[2u64+2u64*i] = if n_out == 16u64 then data[i][1] else out[i][1] fi
+    endfor
+    return result

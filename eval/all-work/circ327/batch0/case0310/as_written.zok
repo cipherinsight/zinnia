@@ -1,0 +1,14 @@
+const field HALF = 26217937587563095239723870254092982918845276250263818911301829349969290592256
+def lt(field x, field y) -> bool:
+    return x + HALF < y + HALF
+def main(private field[8][6] a) -> field:
+    field best = a[0][0]
+    field result = 0
+    for field i in 0..8 do
+        for field j in 0..6 do
+            bool take = lt(a[i][j], best)
+            result = if take then i * 6 + j else result fi
+            best = if take then a[i][j] else best fi
+        endfor
+    endfor
+    return result

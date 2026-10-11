@@ -1,0 +1,21 @@
+program,dataset,function,outcome,class,construct,detail
+case0302,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 20 elements differ
+case0324,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 1 elements differ
+case0341,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 30 elements differ
+case0361,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 24 elements differ
+case0385,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 20000 elements differ
+case0406,ds1000_numpy,kernel,rejected_no_provable_bound,no_provable_bound,array shape from a runtime value,ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int
+case0426,ds1000_numpy,kernel,rejected_no_provable_bound,no_provable_bound,np.arange length from a runtime value,ZinniaException: IR generation failed: range stop must be a compile-time constant int
+case0443,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 7 elements differ
+case0471,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 2268 elements differ
+case0499,ds1000_numpy,kernel,rejected_no_provable_bound,no_provable_bound,np.pad width from a runtime value,"ZinniaException: IR generation failed: np.pad: pad width is not statically bounded — its value at runtime could be anything. The previous compiler revision silently capped it at 128 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal pad width, or annotate the kernel inputs that drive the pad width with `@requires(lambda x: x <= K)` so the compiler can derive a tight, sound upper bound."
+npbench_contour_integral_contour_integral,npbench,contour_integral,rejected_no_provable_bound,no_provable_bound,array shape from a runtime value,ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int
+npbench_polybench_correlation_correlation,npbench,kernel,rejected_no_provable_bound,no_provable_bound,array shape from a runtime value,ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int
+npbench_polybench_k3mm_k3mm,npbench,kernel,accepted_correct,,,logical outputs: 0 of 208 elements differ
+npbench_weather_stencils_vadv_vadv,npbench,vadv,accepted_correct,,,logical outputs: 0 of 2250 elements differ
+pythran_clip,pythran,clip,accepted_correct,,,logical outputs: 0 of 4 elements differ
+pythran_factorize_naive,pythran,factorize_naive,rejected_resource_limit,resource_limit,compile time over 300 s,timeout after 300s
+pythran_insertion_sort,pythran,insertion_sort,accepted_correct,,,logical outputs: 0 of 10 elements differ
+pythran_matrix_class_distance,pythran,matrix_class_distance,rejected_no_provable_bound,no_provable_bound,range() trip count,"ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value without known bounds. Give the bound a maximum, e.g. a bounded array annotation (Integer[Array, ""N<=8""]) or a precondition (@zk_circuit(requires=[lambda n: 0 <= n <= 8]))"
+pythran_pselect,pythran,pselect,rejected_unsupported_construct,unsupported_construct,function used as a value,ZinniaException: IR generation failed: functions as values are not supported: `sel0` is used without being called (circuits have no function values; call it directly)
+pythran_sumarray3d,pythran,summation,accepted_correct,,,logical outputs: 0 of 64 elements differ

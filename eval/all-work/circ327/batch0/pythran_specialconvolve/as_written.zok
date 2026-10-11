@@ -1,0 +1,14 @@
+def main(private field[16][16] a) -> field[14][14]:
+    field[14][16] rowconvol = [[0; 16]; 14]
+    for field i in 0..14 do
+        for field j in 0..16 do
+            rowconvol[i][j] = a[i+1][j] + a[i][j] + a[i+2][j]
+        endfor
+    endfor
+    field[14][14] colconvol = [[0; 14]; 14]
+    for field i in 0..14 do
+        for field j in 0..14 do
+            colconvol[i][j] = rowconvol[i][j+1] + rowconvol[i][j] + rowconvol[i][j+2] - 9*a[i+1][j+1]
+        endfor
+    endfor
+    return colconvol

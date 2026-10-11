@@ -1,0 +1,23 @@
+from "../native_field" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private field N, private field[2] CA, private field[4][2] CX, private field INCX, private field[4][2] CY, private field INCY) -> field[9]:
+    bool valid = N > 0 && (CA[0] != 0 || CA[1] != 0)
+    bool unit = INCX == 1 && INCY == 1
+    field ix = if neg(INCX) then (1-N)*INCX else 0 fi
+    field iy = if neg(INCY) then (1-N)*INCY else 0 fi
+    for field i in 0..1024 do
+        bool active = valid && i < N
+        field x = if unit then i else ix fi
+        field y = if unit then i else iy fi
+        x = if neg(x) then x+4 else x fi
+        y = if neg(y) then y+4 else y fi
+        x = if active then x else 0 fi
+        y = if active then y else 0 fi
+        field re = mulq(CA[0],CX[x][0])-mulq(CA[1],CX[x][1])
+        field im = mulq(CA[0],CX[x][1])+mulq(CA[1],CX[x][0])
+        CY[y][0] = if active then CY[y][0]+re else CY[y][0] fi
+        CY[y][1] = if active then CY[y][1]+im else CY[y][1] fi
+        ix = ix+INCX
+        iy = iy+INCY
+    endfor
+    return [if valid then 1 else 0 fi,CY[0][0],CY[0][1],CY[1][0],CY[1][1],CY[2][0],CY[2][1],CY[3][0],CY[3][1]]

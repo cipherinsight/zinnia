@@ -1,0 +1,31 @@
+{
+  "program": "case0508",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:11 argwhere and line 13 crop have data-dependent shapes.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 123734,
+    "elapsed_seconds": 1.75,
+    "exit_code": 0,
+    "rewrites": [
+      "Fuse argwhere coordinate materialization with guarded min/max reductions; pad cropped output to 10x10 plus logical dimensions, bounded by the input shape. All-zero input is invalid in NumPy (empty min).",
+      "Pack buffer and length/dimensions into one public return array."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "max_absolute_error": 0.0
+    },
+    "B": {
+      "status": "pass",
+      "max_absolute_error": 0.0
+    }
+  },
+  "notes": "kernel.py:11 argwhere and line 13 crop have data-dependent shapes."
+}

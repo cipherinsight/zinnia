@@ -1,0 +1,27 @@
+from "EMBED" import int_to_bits, u32_from_bits, field_to_integer, u32_to_field
+
+def ui(integer x) -> u32:
+    return u32_from_bits(int_to_bits::<32>(x))
+
+def it(u32 x) -> integer:
+    return field_to_integer(u32_to_field(x))
+
+def mul(integer x, integer y) -> integer:
+    return (x*y)/4294967296
+
+def main(private integer[8] data, private integer bin_size) -> integer[9]:
+    integer[8] new_data = [0; 8]
+    for u32 i in 0..8 do
+        new_data[i] = data[7-i]
+    endfor
+    integer count = 8/bin_size
+    integer[9] result = [0; 9]
+    result[0] = count
+    for u32 i in 0..8 do
+        integer sum = 0
+        for u32 j in 0..8 do
+            sum = if it(i) < count && it(j) >= it(i)*bin_size && it(j) < (it(i)+1)*bin_size then sum+new_data[j] else sum fi
+        endfor
+        result[i+1] = if it(i) < count then sum/bin_size else 0 fi
+    endfor
+    return result

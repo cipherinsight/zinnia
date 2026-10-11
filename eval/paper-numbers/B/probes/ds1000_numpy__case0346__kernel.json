@@ -1,0 +1,159 @@
+{
+  "id": "ds1000_numpy__case0346__kernel",
+  "sites": {
+    "12:23:12:34:Subscript": "a[row - 1, :]",
+    "12:13:12:35:Call": "np.cumsum(a[row - 1, :])"
+  },
+  "numpy": {
+    "A": [
+      {
+        "site": "12:23:12:34:Subscript",
+        "value": {
+          "shape": [
+            6
+          ],
+          "length": 6
+        }
+      },
+      {
+        "site": "12:13:12:35:Call",
+        "value": {
+          "shape": [
+            6
+          ],
+          "length": 6
+        }
+      }
+    ],
+    "B": [
+      {
+        "site": "12:23:12:34:Subscript",
+        "value": {
+          "shape": [
+            6
+          ],
+          "length": 6
+        }
+      },
+      {
+        "site": "12:13:12:35:Call",
+        "value": {
+          "shape": [
+            6
+          ],
+          "length": 6
+        }
+      }
+    ]
+  },
+  "selected": [
+    "12:13:12:35:Call",
+    "12:23:12:34:Subscript"
+  ],
+  "source": "def kernel(a: Float[Array, '8 6'], row: Integer, multiply_number: Float):\n    bprobe_trace = []\n    a[row - 1, :] *= multiply_number\n    bprobe_v0 = a[row - 1, :]\n    bprobe_trace.append((1, bprobe_v0))\n    bprobe_v1 = np.cumsum(bprobe_v0)\n    bprobe_trace.append((0, bprobe_v1))\n    result = bprobe_v1\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [
+        {
+          "constant": 1
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 0
+        },
+        {
+          "kind": "f",
+          "public": 1
+        },
+        {
+          "kind": "f",
+          "public": 2
+        },
+        {
+          "kind": "f",
+          "public": 3
+        },
+        {
+          "kind": "f",
+          "public": 4
+        },
+        {
+          "kind": "f",
+          "public": 5
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1
+        ]
+      },
+      "shape": [
+        6
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 6
+        },
+        {
+          "kind": "f",
+          "public": 7
+        },
+        {
+          "kind": "f",
+          "public": 8
+        },
+        {
+          "kind": "f",
+          "public": 9
+        },
+        {
+          "kind": "f",
+          "public": 10
+        },
+        {
+          "kind": "f",
+          "public": 11
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1
+        ]
+      },
+      "shape": [
+        6
+      ]
+    }
+  ],
+  "dynamic": []
+}

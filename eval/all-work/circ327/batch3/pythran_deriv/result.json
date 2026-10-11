@@ -1,0 +1,39 @@
+{
+  "program": "pythran_deriv",
+  "category": "circ_error",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:18,27: private range(n), range(n+1); declared n<=1024 and dg has four slots, so every valid call has n<=3.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "rejected",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\n\nthread 'main' (151246) panicked at circ_fields/src/lib.rs:571:56:\ncalled `Option::unwrap()` on a `None` value\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    "constraints": null,
+    "rewrites": [
+      "Use guarded iterations 1..3 and 2..4; dg[n] forces n<=3 on valid calls and n>=0 is explicitly required.",
+      "Represent complex arithmetic by pairs of Q32 real fields using native multiply/add and constant rescaling."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "not_run",
+      "reason": "No R1CS-accepted attempt; no circuit acceptance claimed."
+    },
+    "B": {
+      "status": "not_run",
+      "reason": "No R1CS-accepted attempt; no circuit acceptance claimed."
+    }
+  },
+  "notes": "kernel.py:18,27: private range(n), range(n+1); declared n<=1024 and dg has four slots, so every valid call has n<=3.\nValid-array bounds permit three steps; native Q32 rescaling crashes.",
+  "kernel": "benchmarking/datasets/pythran/pythran_deriv/kernel.py",
+  "numeric_encoding": {
+    "modulus": "52435875175126190479447740508185965837690552500527637822603658699938581184513",
+    "real_scale": 4294967296,
+    "signed_encoding": "centered field residues; no unsigned-only interpretation of negative fixtures",
+    "validation_tolerance": {
+      "rtol": 1e-06,
+      "atol": 1e-06
+    }
+  }
+}

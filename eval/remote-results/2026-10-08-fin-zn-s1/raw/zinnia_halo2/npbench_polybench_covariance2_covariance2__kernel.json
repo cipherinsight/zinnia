@@ -1,0 +1,930 @@
+{
+ "schema": 1,
+ "system": "zinnia_halo2",
+ "case": "npbench_polybench_covariance2_covariance2__kernel",
+ "description": "Zinnia -> halo2-base backend (IPA/BN254, Blake2b transcript)",
+ "windows": {
+  "setup": "compile + parameter choice + witness-free keygen (ParamsIPA::new, keygen_vk, keygen_pk) + writing params/pk/vk to the key directory",
+  "prove_core": "prove_s: create_proof + transcript finalize (halo2_hw's prove_s covers the same calls)",
+  "end_to_end": "preprocess_s (IR evaluation resolving external calls) + witness_s (synthesis into the builder pinned to keygen's layout) + prove_s; params and proving key read from files beforehand, untimed (load_params_s, load_pk_s), as halo2_hw",
+  "verify": "verify_s: transcript + verify_proof against the verifying key read from the key directory (load_params_s, load_vk_s untimed), as halo2_hw"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/npbench/npbench_polybench_covariance2_covariance2/kernel.py": "caf29f2d151e2be5682bc8d8204bf822899b3c2e40a4a47d6371c457092bf459",
+  "benchmarking/datasets/npbench/npbench_polybench_covariance2_covariance2/fixture.json": "d3b996d6278c1259d5984c226187104fb6e42a325394775e5d9c7c9483b49fdb"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-08T17:21:52+0000",
+  "loadavg": [
+   18.1611328125,
+   16.7548828125,
+   14.86279296875
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "compile": 0.11621701437979937,
+    "keygen_s": 0.722562466,
+    "write_s": 0.00966150127351284
+   },
+   "details": {
+    "params": {
+     "k": 9,
+     "lookup_bits": 8,
+     "precision_bits": 32
+    },
+    "params_source": "Zinnia estimate_params",
+    "cells": "advice=[32186] lookup=[6248, 0, 0] fixed=14 instances=196 second_phase=PhaseShape { advice: 0, constants: 0 }",
+    "key_file_bytes": {
+     "keys.json": 598,
+     "params.bin": 32836,
+     "pk.bin": 14367595,
+     "vk.bin": 13447
+    },
+    "exposed_outputs": 196,
+    "elided_outputs": 0,
+    "ir_sha256": "60097a96ddc2d9f7e6e3fb1b06a2bef1fcc7bae958afbea528e48d9355d9733a"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 1.109466384164989,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 97054720,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   18.1611328125,
+   16.7548828125,
+   14.86279296875
+  ],
+  "child": {
+   "wall_s": 1.0074497312307358,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 101097472,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 0.712181363,
+   "end_to_end_s": 0.729642995,
+   "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-src/benchmarking/results/2026-10-08-fin-zn-s1/work/zinnia_halo2/npbench_polybench_covariance2_covariance2__kernel/proofs/warmup/proof.bin",
+   "proof_bytes": 25600,
+   "timings_s": {
+    "load_params_s": 0.016858821,
+    "load_pk_s": 0.014182297,
+    "parse_inputs_s": 1.9905e-05,
+    "preprocess_s": 0.00763481,
+    "witness_s": 0.009826822,
+    "thread_pool_s": 0.000469171,
+    "prove_s": 0.712181363,
+    "prove_call_s": 0.7386721940711141
+   },
+   "details": {
+    "k": 9
+   },
+   "proof_sha256": "aeb32d1c8c18cb2c7a9e7e6440de81d788efc3aa072aa46e91cec91dd9efc5f5"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 196 elements differ",
+   "expected_count": 196,
+   "actual_count": 196,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "728f8353e5fb75305e0d8c717358ae608cd55f8ae94a2eed1fb7628bc85c6a75",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    0.7966791938524693,
+    0.013887712266296148,
+    -0.34458549600094557,
+    0.23628532816655934,
+    -0.20310342754237354,
+    -0.5089283327106386,
+    -0.2868147629778832,
+    0.11825505504384637,
+    0.3173843934200704,
+    0.6923301108181477,
+    1.1822639720048755,
+    0.6961816754192114,
+    0.3122704429551959,
+    0.6248379116877913,
+    0.013887712266296148,
+    1.7821309226565063,
+    -0.6298421646934003,
+    0.027140427147969604,
+    -0.20909893489442766,
+    0.3017969320062548,
+    -0.33616162301041186,
+    0.11835857876576483,
+    0.2919449091423303,
+    0.7069377705920488,
+    0.27239246061071754,
+    0.8355505750514567,
+    -0.28371202759444714,
+    -0.17244426114484668,
+    -0.34458549600094557,
+    -0.6298421646934003,
+    3.577116501284763,
+    0.09254558524116874,
+    0.6438167120795697,
+    0.2775422928389162,
+    -1.5991079667583108,
+    -0.0653075787704438,
+    -0.8878464829176664,
+    -1.3592103568371385,
+    -0.36835145647637546,
+    -1.2165994585957378,
+    1.059793955879286,
+    1.2202927595935762,
+    0.23628532816655934,
+    0.027140427147969604,
+    0.09254558524116874,
+    2.925725481240079,
+    1.2839932865463197,
+    2.176990191452205,
+    1.6384811527095735,
+    2.0405742283910513,
+    2.3645495667587966,
+    2.6975738452747464,
+    2.4626743369735777,
+    2.537687323288992,
+    3.9888460650108755,
+    3.9696395550854504,
+    -0.20310342754237354,
+    -0.20909893489442766,
+    0.6438167120795697,
+    1.2839932865463197,
+    5.836954958271235,
+    4.686250761616975,
+    4.209141071652994,
+    4.8530134577304125,
+    5.442769878078252,
+    4.791444946778938,
+    6.962125114630908,
+    6.522712233476341,
+    8.609302629018202,
+    7.440907756332308,
+    -0.5089283327106386,
+    0.3017969320062548,
+    0.2775422928389162,
+    2.176990191452205,
+    4.686250761616975,
+    6.332206483930349,
+    4.138834381010383,
+    4.088486585766077,
+    5.511097616050392,
+    5.15041443426162,
+    5.466772275045514,
+    5.552444945089519,
+    8.742420375347137,
+    6.932760713621974,
+    -0.2868147629778832,
+    -0.33616162301041186,
+    -1.5991079667583108,
+    1.6384811527095735,
+    4.209141071652994,
+    4.138834381010383,
+    6.725694467313588,
+    6.176915178075433,
+    6.973126948811114,
+    6.954223959241062,
+    7.4021772695705295,
+    8.542136782081798,
+    9.569374075625092,
+    8.62728496780619,
+    0.11825505504384637,
+    0.11835857876576483,
+    -0.0653075787704438,
+    2.0405742283910513,
+    4.8530134577304125,
+    4.088486585766077,
+    6.176915178075433,
+    7.859000616008416,
+    7.607635620515794,
+    7.8056386795360595,
+    9.699757267488167,
+    10.537272104527801,
+    11.51663979375735,
+    11.99571034568362,
+    0.3173843934200704,
+    0.2919449091423303,
+    -0.8878464829176664,
+    2.3645495667587966,
+    5.442769878078252,
+    5.511097616050392,
+    6.973126948811114,
+    7.607635620515794,
+    10.002543774666265,
+    9.3628451412078,
+    11.051457801833749,
+    11.12671315181069,
+    12.633122309111059,
+    12.314679828472435,
+    0.6923301108181477,
+    0.7069377705920488,
+    -1.3592103568371385,
+    2.6975738452747464,
+    4.791444946778938,
+    5.15041443426162,
+    6.954223959241062,
+    7.8056386795360595,
+    9.3628451412078,
+    11.765694475034252,
+    11.488959968555719,
+    11.578639164101332,
+    13.12819353560917,
+    12.858548660064116,
+    1.1822639720048755,
+    0.27239246061071754,
+    -0.36835145647637546,
+    2.4626743369735777,
+    6.962125114630908,
+    5.466772275045514,
+    7.4021772695705295,
+    9.699757267488167,
+    11.051457801833749,
+    11.488959968555719,
+    15.378852943889797,
+    14.32215194357559,
+    15.916667993180454,
+    16.1449152152054,
+    0.6961816754192114,
+    0.8355505750514567,
+    -1.2165994585957378,
+    2.537687323288992,
+    6.522712233476341,
+    5.552444945089519,
+    8.542136782081798,
+    10.537272104527801,
+    11.12671315181069,
+    11.578639164101332,
+    14.32215194357559,
+    15.661947507876903,
+    16.21222238475457,
+    15.965734374243766,
+    0.3122704429551959,
+    -0.28371202759444714,
+    1.059793955879286,
+    3.9888460650108755,
+    8.609302629018202,
+    8.742420375347137,
+    9.569374075625092,
+    11.51663979375735,
+    12.633122309111059,
+    13.12819353560917,
+    15.916667993180454,
+    16.21222238475457,
+    21.592050845501944,
+    19.615332612767816,
+    0.6248379116877913,
+    -0.17244426114484668,
+    1.2202927595935762,
+    3.9696395550854504,
+    7.440907756332308,
+    6.932760713621974,
+    8.62728496780619,
+    11.99571034568362,
+    12.314679828472435,
+    12.858548660064116,
+    16.1449152152054,
+    15.965734374243766,
+    19.615332612767816,
+    20.769403548678383
+   ],
+   "elided": [],
+   "shapes": [
+    [
+     14,
+     14
+    ]
+   ]
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    17.98779296875,
+    16.7421875,
+    14.869140625
+   ],
+   "child": {
+    "wall_s": 1.1090733567252755,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 100827136,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.797322681,
+    "end_to_end_s": 0.814834442,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-src/benchmarking/results/2026-10-08-fin-zn-s1/work/zinnia_halo2/npbench_polybench_covariance2_covariance2__kernel/proofs/sample-1/proof.bin",
+    "proof_bytes": 25600,
+    "timings_s": {
+     "load_params_s": 0.016905984,
+     "load_pk_s": 0.014376413,
+     "parse_inputs_s": 2.0279e-05,
+     "preprocess_s": 0.007645536,
+     "witness_s": 0.009866225,
+     "thread_pool_s": 0.0006231,
+     "prove_s": 0.797322681,
+     "prove_call_s": 0.8235133057460189
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "d2a2fea4b228cd6d9c38dd5e4410f8aa15b218e87f7ade8c76599dcd8059373f"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 196 elements differ",
+    "expected_count": 196,
+    "actual_count": 196,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "728f8353e5fb75305e0d8c717358ae608cd55f8ae94a2eed1fb7628bc85c6a75",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     0.7966791938524693,
+     0.013887712266296148,
+     -0.34458549600094557,
+     0.23628532816655934,
+     -0.20310342754237354,
+     -0.5089283327106386,
+     -0.2868147629778832,
+     0.11825505504384637,
+     0.3173843934200704,
+     0.6923301108181477,
+     1.1822639720048755,
+     0.6961816754192114,
+     0.3122704429551959,
+     0.6248379116877913,
+     0.013887712266296148,
+     1.7821309226565063,
+     -0.6298421646934003,
+     0.027140427147969604,
+     -0.20909893489442766,
+     0.3017969320062548,
+     -0.33616162301041186,
+     0.11835857876576483,
+     0.2919449091423303,
+     0.7069377705920488,
+     0.27239246061071754,
+     0.8355505750514567,
+     -0.28371202759444714,
+     -0.17244426114484668,
+     -0.34458549600094557,
+     -0.6298421646934003,
+     3.577116501284763,
+     0.09254558524116874,
+     0.6438167120795697,
+     0.2775422928389162,
+     -1.5991079667583108,
+     -0.0653075787704438,
+     -0.8878464829176664,
+     -1.3592103568371385,
+     -0.36835145647637546,
+     -1.2165994585957378,
+     1.059793955879286,
+     1.2202927595935762,
+     0.23628532816655934,
+     0.027140427147969604,
+     0.09254558524116874,
+     2.925725481240079,
+     1.2839932865463197,
+     2.176990191452205,
+     1.6384811527095735,
+     2.0405742283910513,
+     2.3645495667587966,
+     2.6975738452747464,
+     2.4626743369735777,
+     2.537687323288992,
+     3.9888460650108755,
+     3.9696395550854504,
+     -0.20310342754237354,
+     -0.20909893489442766,
+     0.6438167120795697,
+     1.2839932865463197,
+     5.836954958271235,
+     4.686250761616975,
+     4.209141071652994,
+     4.8530134577304125,
+     5.442769878078252,
+     4.791444946778938,
+     6.962125114630908,
+     6.522712233476341,
+     8.609302629018202,
+     7.440907756332308,
+     -0.5089283327106386,
+     0.3017969320062548,
+     0.2775422928389162,
+     2.176990191452205,
+     4.686250761616975,
+     6.332206483930349,
+     4.138834381010383,
+     4.088486585766077,
+     5.511097616050392,
+     5.15041443426162,
+     5.466772275045514,
+     5.552444945089519,
+     8.742420375347137,
+     6.932760713621974,
+     -0.2868147629778832,
+     -0.33616162301041186,
+     -1.5991079667583108,
+     1.6384811527095735,
+     4.209141071652994,
+     4.138834381010383,
+     6.725694467313588,
+     6.176915178075433,
+     6.973126948811114,
+     6.954223959241062,
+     7.4021772695705295,
+     8.542136782081798,
+     9.569374075625092,
+     8.62728496780619,
+     0.11825505504384637,
+     0.11835857876576483,
+     -0.0653075787704438,
+     2.0405742283910513,
+     4.8530134577304125,
+     4.088486585766077,
+     6.176915178075433,
+     7.859000616008416,
+     7.607635620515794,
+     7.8056386795360595,
+     9.699757267488167,
+     10.537272104527801,
+     11.51663979375735,
+     11.99571034568362,
+     0.3173843934200704,
+     0.2919449091423303,
+     -0.8878464829176664,
+     2.3645495667587966,
+     5.442769878078252,
+     5.511097616050392,
+     6.973126948811114,
+     7.607635620515794,
+     10.002543774666265,
+     9.3628451412078,
+     11.051457801833749,
+     11.12671315181069,
+     12.633122309111059,
+     12.314679828472435,
+     0.6923301108181477,
+     0.7069377705920488,
+     -1.3592103568371385,
+     2.6975738452747464,
+     4.791444946778938,
+     5.15041443426162,
+     6.954223959241062,
+     7.8056386795360595,
+     9.3628451412078,
+     11.765694475034252,
+     11.488959968555719,
+     11.578639164101332,
+     13.12819353560917,
+     12.858548660064116,
+     1.1822639720048755,
+     0.27239246061071754,
+     -0.36835145647637546,
+     2.4626743369735777,
+     6.962125114630908,
+     5.466772275045514,
+     7.4021772695705295,
+     9.699757267488167,
+     11.051457801833749,
+     11.488959968555719,
+     15.378852943889797,
+     14.32215194357559,
+     15.916667993180454,
+     16.1449152152054,
+     0.6961816754192114,
+     0.8355505750514567,
+     -1.2165994585957378,
+     2.537687323288992,
+     6.522712233476341,
+     5.552444945089519,
+     8.542136782081798,
+     10.537272104527801,
+     11.12671315181069,
+     11.578639164101332,
+     14.32215194357559,
+     15.661947507876903,
+     16.21222238475457,
+     15.965734374243766,
+     0.3122704429551959,
+     -0.28371202759444714,
+     1.059793955879286,
+     3.9888460650108755,
+     8.609302629018202,
+     8.742420375347137,
+     9.569374075625092,
+     11.51663979375735,
+     12.633122309111059,
+     13.12819353560917,
+     15.916667993180454,
+     16.21222238475457,
+     21.592050845501944,
+     19.615332612767816,
+     0.6248379116877913,
+     -0.17244426114484668,
+     1.2202927595935762,
+     3.9696395550854504,
+     7.440907756332308,
+     6.932760713621974,
+     8.62728496780619,
+     11.99571034568362,
+     12.314679828472435,
+     12.858548660064116,
+     16.1449152152054,
+     15.965734374243766,
+     19.615332612767816,
+     20.769403548678383
+    ],
+    "elided": [],
+    "shapes": [
+     [
+      14,
+      14
+     ]
+    ]
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.018210552,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.015193384,
+      "load_vk_s": 0.000838877,
+      "verify_call_s": 0.018359346315264702,
+      "verify_s": 0.018210552
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.16522616799920797,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 36204544,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-2",
+   "loadavg_before": [
+    17.98779296875,
+    16.7421875,
+    14.869140625
+   ],
+   "child": {
+    "wall_s": 0.9718956099823117,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 100577280,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.652665954,
+    "end_to_end_s": 0.6701235120000001,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-src/benchmarking/results/2026-10-08-fin-zn-s1/work/zinnia_halo2/npbench_polybench_covariance2_covariance2__kernel/proofs/sample-2/proof.bin",
+    "proof_bytes": 25600,
+    "timings_s": {
+     "load_pk_s": 0.01427986,
+     "load_params_s": 0.01685724,
+     "parse_inputs_s": 1.9235e-05,
+     "preprocess_s": 0.007655471,
+     "witness_s": 0.009802087,
+     "thread_pool_s": 0.000509887,
+     "prove_s": 0.652665954,
+     "prove_call_s": 0.6787732187658548
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "fa0e1ad14b6f47fb7ee6ce699c7963bcf88d0a4a6f97602e48ab3e0e7d6730b6"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 196 elements differ",
+    "expected_count": 196,
+    "actual_count": 196,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "728f8353e5fb75305e0d8c717358ae608cd55f8ae94a2eed1fb7628bc85c6a75",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.018203796,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.016928314,
+      "load_vk_s": 0.000988783,
+      "verify_call_s": 0.018373905681073666,
+      "verify_s": 0.018203796
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.16498299222439528,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 36376576,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-3",
+   "loadavg_before": [
+    18.9501953125,
+    16.96240234375,
+    14.95068359375
+   ],
+   "child": {
+    "wall_s": 1.009871638379991,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 100925440,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.67946308,
+    "end_to_end_s": 0.697026044,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-src/benchmarking/results/2026-10-08-fin-zn-s1/work/zinnia_halo2/npbench_polybench_covariance2_covariance2__kernel/proofs/sample-3/proof.bin",
+    "proof_bytes": 25600,
+    "timings_s": {
+     "load_pk_s": 0.014182287,
+     "load_params_s": 0.01696338,
+     "parse_inputs_s": 1.9669e-05,
+     "preprocess_s": 0.007623777,
+     "witness_s": 0.009939187,
+     "thread_pool_s": 0.000469061,
+     "prove_s": 0.67946308,
+     "prove_call_s": 0.7061171112582088
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "df44e404e3c335a339f1628145f5bb36453b0142e01e671a5ee0e9783e381fae"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 196 elements differ",
+    "expected_count": 196,
+    "actual_count": 196,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "728f8353e5fb75305e0d8c717358ae608cd55f8ae94a2eed1fb7628bc85c6a75",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.01599143,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.016906077,
+      "load_vk_s": 0.000919353,
+      "verify_call_s": 0.016161950305104256,
+      "verify_s": 0.01599143
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.1648847395554185,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 36487168,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-4",
+   "loadavg_before": [
+    18.9501953125,
+    16.96240234375,
+    14.95068359375
+   ],
+   "child": {
+    "wall_s": 1.109381209127605,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 101081088,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.801994195,
+    "end_to_end_s": 0.819477653,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-src/benchmarking/results/2026-10-08-fin-zn-s1/work/zinnia_halo2/npbench_polybench_covariance2_covariance2__kernel/proofs/sample-4/proof.bin",
+    "proof_bytes": 25600,
+    "timings_s": {
+     "load_pk_s": 0.014266342,
+     "load_params_s": 0.016840852,
+     "parse_inputs_s": 1.997e-05,
+     "preprocess_s": 0.007632411,
+     "witness_s": 0.009851047,
+     "thread_pool_s": 0.000400646,
+     "prove_s": 0.801994195,
+     "prove_call_s": 0.8280503777787089
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "b6a7f94c7f729cb3ef729fe0c84f1fcd087ceb7b29bd753f43270729ca588e9f"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 196 elements differ",
+    "expected_count": 196,
+    "actual_count": 196,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "728f8353e5fb75305e0d8c717358ae608cd55f8ae94a2eed1fb7628bc85c6a75",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.013330159,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.015294016,
+      "load_vk_s": 0.000830849,
+      "verify_call_s": 0.013483060523867607,
+      "verify_s": 0.013330159
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.132528574205935,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 36360192,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-5",
+   "loadavg_before": [
+    18.9501953125,
+    16.96240234375,
+    14.95068359375
+   ],
+   "child": {
+    "wall_s": 1.0231019938364625,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 100593664,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.731401511,
+    "end_to_end_s": 0.747269585,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-src/benchmarking/results/2026-10-08-fin-zn-s1/work/zinnia_halo2/npbench_polybench_covariance2_covariance2__kernel/proofs/sample-5/proof.bin",
+    "proof_bytes": 25600,
+    "timings_s": {
+     "load_pk_s": 0.012957747,
+     "load_params_s": 0.015198547,
+     "parse_inputs_s": 1.7958e-05,
+     "preprocess_s": 0.006874264,
+     "witness_s": 0.00899381,
+     "thread_pool_s": 0.000423219,
+     "prove_s": 0.731401511,
+     "prove_call_s": 0.7552861617878079
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "340c6da171dca7ef5a2ad3094ecf671de53bfe764ea38b9066c4a36f1bc66761"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 196 elements differ",
+    "expected_count": 196,
+    "actual_count": 196,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "728f8353e5fb75305e0d8c717358ae608cd55f8ae94a2eed1fb7628bc85c6a75",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.017403443,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.016949044,
+      "load_vk_s": 0.000920332,
+      "verify_call_s": 0.017579957842826843,
+      "verify_s": 0.017403443
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.16624072566628456,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 36536320,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 0.019134624,
+    "not_applicable": null,
+    "timings_s": {
+     "load_params_s": 0.016863404,
+     "load_vk_s": 0.00094187,
+     "verify_call_s": 0.019305727444589138,
+     "verify_s": 0.019134624
+    },
+    "details": {
+     "error": "halo2-base verify_proof failed: ConstraintSystemFailure"
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.16481161583214998,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 36364288,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

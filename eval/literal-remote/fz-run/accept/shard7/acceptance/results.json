@@ -1,0 +1,441 @@
+{
+ "config": {
+  "timeout_s": 300.0,
+  "memory_max": "8G",
+  "retry_smt_budget_ms": 5000
+ },
+ "results": [
+  {
+   "program": "case0301",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0301/kernel.py",
+   "function": "kernel",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 20 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.05260193068534136,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 20 elements differ",
+     "expected_count": 20,
+     "actual_count": 20,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "case0323",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0323/kernel.py",
+   "function": "kernel",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 1 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.01475758757442236,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 1 elements differ",
+     "expected_count": 1,
+     "actual_count": 1,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "case0340",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0340/kernel.py",
+   "function": "kernel",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 30 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.02052237093448639,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 30 elements differ",
+     "expected_count": 30,
+     "actual_count": 30,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "case0360",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0360/kernel.py",
+   "function": "kernel",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 12 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.015804588794708252,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 12 elements differ",
+     "expected_count": 12,
+     "actual_count": 12,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "case0384",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0384/kernel.py",
+   "function": "kernel",
+   "outcome": "rejected_unsupported_construct",
+   "construct": "np.linalg.matrix_power",
+   "detail": "ZinniaException: IR generation failed: np.linalg.matrix_power is not implemented; supported: norm and the verification helpers verify_inverse, verify_solve, verify_cholesky",
+   "response": {
+    "stage": "compile",
+    "error": "ZinniaException: IR generation failed: np.linalg.matrix_power is not implemented; supported: norm and the verification helpers verify_inverse, verify_solve, verify_cholesky"
+   }
+  },
+  {
+   "program": "case0405",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0405/kernel.py",
+   "function": "kernel",
+   "outcome": "rejected_no_provable_bound",
+   "construct": "np.bincount output length from runtime values",
+   "detail": "ZinniaException: IR generation failed: np.bincount: x entry value is not statically bounded \u2014 its runtime value could be anything, and the output length is `max(x)+1`. The previous compiler revision silently capped the output at 256 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal int array, or annotate the input with `@requires(lambda x: forall(x, lambda v: v <= K))` so the compiler can derive a tight, sound upper bound.",
+   "response": {
+    "stage": "compile",
+    "error": "ZinniaException: IR generation failed: np.bincount: x entry value is not statically bounded \u2014 its runtime value could be anything, and the output length is `max(x)+1`. The previous compiler revision silently capped the output at 256 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal int array, or annotate the input with `@requires(lambda x: forall(x, lambda v: v <= K))` so the compiler can derive a tight, sound upper bound."
+   },
+   "retry_with_larger_smt_budget": {
+    "budget_ms": 5000,
+    "outcome": "rejected_no_provable_bound"
+   }
+  },
+  {
+   "program": "case0425",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0425/kernel.py",
+   "function": "kernel",
+   "outcome": "rejected_no_provable_bound",
+   "construct": "np.arange length from a runtime value",
+   "detail": "ZinniaException: IR generation failed: range stop must be a compile-time constant int",
+   "response": {
+    "stage": "compile",
+    "error": "ZinniaException: IR generation failed: range stop must be a compile-time constant int"
+   },
+   "retry_with_larger_smt_budget": {
+    "budget_ms": 5000,
+    "outcome": "rejected_no_provable_bound"
+   }
+  },
+  {
+   "program": "case0442",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0442/kernel.py",
+   "function": "kernel",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 17 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.02767303679138422,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 17 elements differ",
+     "expected_count": 17,
+     "actual_count": 17,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "case0468",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0468/kernel.py",
+   "function": "kernel",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 100 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.5293570933863521,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 100 elements differ",
+     "expected_count": 100,
+     "actual_count": 100,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "case0498",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0498/kernel.py",
+   "function": "kernel",
+   "outcome": "rejected_no_provable_bound",
+   "construct": "np.pad width from a runtime value",
+   "detail": "ZinniaException: IR generation failed: np.pad: pad width is not statically bounded \u2014 its value at runtime could be anything. The previous compiler revision silently capped it at 128 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal pad width, or annotate the kernel inputs that drive the pad width with `@requires(lambda x: x <= K)` so the compiler can derive a tight, sound upper bound.",
+   "response": {
+    "stage": "compile",
+    "error": "ZinniaException: IR generation failed: np.pad: pad width is not statically bounded \u2014 its value at runtime could be anything. The previous compiler revision silently capped it at 128 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal pad width, or annotate the kernel inputs that drive the pad width with `@requires(lambda x: x <= K)` so the compiler can derive a tight, sound upper bound."
+   },
+   "retry_with_larger_smt_budget": {
+    "budget_ms": 5000,
+    "outcome": "rejected_no_provable_bound"
+   }
+  },
+  {
+   "program": "npbench_compute_compute",
+   "dataset": "npbench",
+   "kernel": "benchmarking/datasets/npbench/npbench_compute_compute/kernel.py",
+   "function": "compute",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 256 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.08958057872951031,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 256 elements differ",
+     "expected_count": 256,
+     "actual_count": 256,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "npbench_polybench_cholesky_cholesky",
+   "dataset": "npbench",
+   "kernel": "benchmarking/datasets/npbench/npbench_polybench_cholesky_cholesky/kernel.py",
+   "function": "kernel",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 225 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 1.2704925518482924,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 225 elements differ",
+     "expected_count": 225,
+     "actual_count": 225,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "npbench_polybench_k2mm_k2mm",
+   "dataset": "npbench",
+   "kernel": "benchmarking/datasets/npbench/npbench_polybench_k2mm_k2mm/kernel.py",
+   "function": "kernel",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 224 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.4213478481397033,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 224 elements differ",
+     "expected_count": 224,
+     "actual_count": 224,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "npbench_weather_stencils_hdiff_hdiff",
+   "dataset": "npbench",
+   "kernel": "benchmarking/datasets/npbench/npbench_weather_stencils_hdiff_hdiff/kernel.py",
+   "function": "hdiff",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 1210 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 2.4736211858689785,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 1210 elements differ",
+     "expected_count": 1210,
+     "actual_count": 1210,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "pythran_check_mask",
+   "dataset": "pythran",
+   "kernel": "benchmarking/datasets/pythran/pythran_check_mask/kernel.py",
+   "function": "check_mask",
+   "outcome": "rejected_unsupported_construct",
+   "construct": "np.bitwise_and",
+   "detail": "ZinniaException: IR generation failed: np.bitwise_and is not implemented",
+   "response": {
+    "stage": "compile",
+    "error": "ZinniaException: IR generation failed: np.bitwise_and is not implemented"
+   }
+  },
+  {
+   "program": "pythran_euler_challenge14",
+   "dataset": "pythran",
+   "kernel": "benchmarking/datasets/pythran/pythran_euler_challenge14/kernel.py",
+   "function": "euler14",
+   "outcome": "rejected_unsupported_construct",
+   "construct": "dict",
+   "detail": "ZinniaException:   In method \"euler14\", line 5\n        lengths = {1: 0}\n                  ^^^^^^\nUnsupportedLangFeatureException: Dict literals are not supported inside @zk_circuit because mapping types are unsupported in circuits.",
+   "response": {
+    "stage": "compile",
+    "error": "ZinniaException:   In method \"euler14\", line 5\n        lengths = {1: 0}\n                  ^^^^^^\nUnsupportedLangFeatureException: Dict literals are not supported inside @zk_circuit because mapping types are unsupported in circuits."
+   }
+  },
+  {
+   "program": "pythran_hyantes_core",
+   "dataset": "pythran",
+   "kernel": "benchmarking/datasets/pythran/pythran_hyantes_core/kernel.py",
+   "function": "run",
+   "outcome": "rejected_no_provable_bound",
+   "construct": "range() trip count",
+   "detail": "ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value without known bounds. Give the bound a maximum, e.g. a bounded array annotation (Integer[Array, \"N<=8\"]) or a precondition (@zk_circuit(requires=[lambda n: 0 <= n <= 8]))",
+   "response": {
+    "stage": "compile",
+    "error": "ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value without known bounds. Give the bound a maximum, e.g. a bounded array annotation (Integer[Array, \"N<=8\"]) or a precondition (@zk_circuit(requires=[lambda n: 0 <= n <= 8]))"
+   },
+   "retry_with_larger_smt_budget": {
+    "budget_ms": 5000,
+    "outcome": "rejected_no_provable_bound"
+   }
+  },
+  {
+   "program": "pythran_matmul",
+   "dataset": "pythran",
+   "kernel": "benchmarking/datasets/pythran/pythran_matmul/kernel.py",
+   "function": "matrix_multiply",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 256 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.4086260190233588,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 256 elements differ",
+     "expected_count": 256,
+     "actual_count": 256,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "pythran_projection_simplex",
+   "dataset": "pythran",
+   "kernel": "benchmarking/datasets/pythran/pythran_projection_simplex/kernel.py",
+   "function": "projection_simplex",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 10 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.09265584405511618,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 10 elements differ",
+     "expected_count": 10,
+     "actual_count": 10,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "pythran_sum_primes",
+   "dataset": "pythran",
+   "kernel": "benchmarking/datasets/pythran/pythran_sum_primes/kernel.py",
+   "function": "sum_primes",
+   "outcome": "rejected_unsupported_construct",
+   "construct": "np.ceil",
+   "detail": "ZinniaException: IR generation failed: np.ceil is not implemented",
+   "response": {
+    "stage": "compile",
+    "error": "ZinniaException: IR generation failed: np.ceil is not implemented"
+   }
+  }
+ ]
+}

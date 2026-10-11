@@ -1,0 +1,96 @@
+{
+  "program": "npbench_spmv_spmv",
+  "function": "spmv",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:12-14: private CSR row pointers create dynamic slices, each with at most 16 entries.",
+    "constraints": null,
+    "source_file": "npbench_spmv_spmv/as_written.zok",
+    "artifact_sha256": "5efd7fab1a70c561098f1fb069b67bd2c822f536dc1c95ea55ffcf597c31ccb8"
+  },
+  "rewrite": {
+    "status": "accepted",
+    "constraints": 76041,
+    "error": null,
+    "seconds": 1.4347959560000163,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_spmv_spmv/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Normalize Python slice endpoints into [0,16] and replace each slice dot product with 16 guarded multiply-accumulate steps. The source arrays have 16 entries."
+    ],
+    "source_file": "npbench_spmv_spmv/rewrite.zok",
+    "artifact_sha256": "193dbbafbb6543102cdb6848a72b3949f4ff9420eecdc7cdd73d0b26f00a5a2a"
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "expected_elements": 8,
+      "actual_elements": 8,
+      "max_abs_error": 5.005120762291426e-10,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_spmv_spmv/rewrite.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_spmv_spmv/A.pin"
+      ]
+    },
+    "B": {
+      "status": "pass",
+      "expected_elements": 8,
+      "actual_elements": 8,
+      "max_abs_error": 9.3327301442514e-10,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_spmv_spmv/rewrite.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_spmv_spmv/B.pin"
+      ]
+    }
+  },
+  "notes": "Q32 values use signed u64; native operations, explicit signs and 32-bit product parts. No arbitrary-integer backend operations.",
+  "source": {
+    "program": "npbench_spmv_spmv",
+    "dataset": "npbench",
+    "kernel": "benchmarking/datasets/npbench/npbench_spmv_spmv/kernel.py",
+    "function": "spmv",
+    "sha256": "78c12d95be2bbb2d634a2ee63da553c86070424c0bb14905ab0b9b95849f34e9"
+  },
+  "numeric_encoding": {
+    "real_scale": 4294967296,
+    "rtol": 1e-06,
+    "atol": 1e-06,
+    "representation": "signed two-complement u64 with native wide products",
+    "helper": {
+      "file": "native.zok",
+      "sha256": "230210f08577e08c6d8067d12af2de953bb0d8a1227875d2288459a4e80ac9ab"
+    }
+  },
+  "old_category": "circ_error",
+  "old_result": "batch3/npbench_spmv_spmv/result.json",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+    "tmpdir": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/tmp"
+  },
+  "fixture": {
+    "path": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/npbench/npbench_spmv_spmv/fixture.json",
+    "sha256": "cd37023e857a0d0d5b42d947107c427d2db2100dc543da847e7f3f434c35c5f7"
+  },
+  "reason": "Normalize Python slice endpoints into [0,16] and replace each slice dot product with 16 guarded multiply-accumulate steps. The source arrays have 16 entries. A/B pass."
+}

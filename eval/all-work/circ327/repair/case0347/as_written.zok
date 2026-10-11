@@ -1,0 +1,13 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[8][6] a, private u64 row, private u64 divide_number) -> u64:
+    u64 ix = row-1u64
+    ix = if neg(ix) then ix+8u64 else ix fi
+    for u32 j in 0..6 do
+        a[ix][j] = divq(a[ix][j],divide_number)
+    endfor
+    u64 result = a[ix][0]
+    for u32 j in 1..6 do
+        result = mulq(result,a[ix][j])
+    endfor
+    return result

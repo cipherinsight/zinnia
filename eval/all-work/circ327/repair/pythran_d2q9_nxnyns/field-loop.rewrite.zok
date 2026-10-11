@@ -1,0 +1,64 @@
+from "../native_field_v1" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def f2m_loc(field[9] f, field[9] m) -> field[9]:
+    m[0] = ((((((((f[0] + f[1]) + f[2]) + f[3]) + f[4]) + f[5]) + f[6]) + f[7]) + f[8])
+    m[1] = (((((f[1] - f[3]) + f[5]) - f[6]) - f[7]) + f[8])
+    m[2] = (((((f[2] - f[4]) + f[5]) + f[6]) - f[7]) - f[8])
+    m[3] = ((((((((mul((0-17179869184), f[0]) - f[1]) - f[2]) - f[3]) - f[4]) + mul(8589934592, f[5])) + mul(8589934592, f[6])) + mul(8589934592, f[7])) + mul(8589934592, f[8]))
+    m[4] = ((((((((mul(17179869184, f[0]) - mul(8589934592, f[1])) - mul(8589934592, f[2])) - mul(8589934592, f[3])) - mul(8589934592, f[4])) + f[5]) + f[6]) + f[7]) + f[8])
+    m[5] = (((((mul((0-8589934592), f[1]) + mul(8589934592, f[3])) + f[5]) - f[6]) - f[7]) + f[8])
+    m[6] = (((((mul((0-8589934592), f[2]) + mul(8589934592, f[4])) + f[5]) + f[6]) - f[7]) - f[8])
+    m[7] = (((f[1] - f[2]) + f[3]) - f[4])
+    m[8] = (((f[5] - f[6]) + f[7]) - f[8])
+    return m
+def relaxation_loc(field[9] m) -> field[9]:
+    m[3] = (m[3] + mul(4858560290, (((mul((0-8589934592), m[0]) + mul(mul(12884901888, m[1]), m[1])) + mul(mul(12884901888, m[2]), m[2])) - m[3])))
+    m[4] = (m[4] + mul(4858560290, (((m[0] + mul(mul(6442450944, m[1]), m[1])) + mul(mul(6442450944, m[2]), m[2])) - m[4])))
+    m[5] = (m[5] + mul(4858560290, ((0-m[1]) - m[5])))
+    m[6] = (m[6] + mul(4858560290, ((0-m[2]) - m[6])))
+    m[7] = (m[7] + mul(7977279525, ((mul(m[1], m[1]) - mul(m[2], m[2])) - m[7])))
+    m[8] = (m[8] + mul(7977279525, (mul(m[1], m[2]) - m[8])))
+    return m
+def m2f_loc(field[9] m, field[9] f) -> field[9]:
+    field c0 = 715827883
+    field c1 = 477218588
+    field c2 = 238609294
+    field c3 = 119304647
+    field c4 = 357913941
+    f[0] = ((mul(c1, m[0]) - mul(c1, m[3])) + mul(c1, m[4]))
+    f[1] = (((((mul(c1, m[0]) + mul(c0, m[1])) - mul(c3, m[3])) - mul(c2, m[4])) - mul(c0, m[5])) + mul(1073741824, m[7]))
+    f[2] = (((((mul(c1, m[0]) + mul(c0, m[2])) - mul(c3, m[3])) - mul(c2, m[4])) - mul(c0, m[6])) - mul(1073741824, m[7]))
+    f[3] = (((((mul(c1, m[0]) - mul(c0, m[1])) - mul(c3, m[3])) - mul(c2, m[4])) + mul(c0, m[5])) + mul(1073741824, m[7]))
+    f[4] = (((((mul(c1, m[0]) - mul(c0, m[2])) - mul(c3, m[3])) - mul(c2, m[4])) + mul(c0, m[6])) - mul(1073741824, m[7]))
+    f[5] = (((((((mul(c1, m[0]) + mul(c0, m[1])) + mul(c0, m[2])) + mul(c2, m[3])) + mul(c3, m[4])) + mul(c4, m[5])) + mul(c4, m[6])) + mul(1073741824, m[8]))
+    f[6] = (((((((mul(c1, m[0]) - mul(c0, m[1])) + mul(c0, m[2])) + mul(c2, m[3])) + mul(c3, m[4])) - mul(c4, m[5])) + mul(c4, m[6])) - mul(1073741824, m[8]))
+    f[7] = (((((((mul(c1, m[0]) - mul(c0, m[1])) - mul(c0, m[2])) + mul(c2, m[3])) + mul(c3, m[4])) - mul(c4, m[5])) - mul(c4, m[6])) + mul(1073741824, m[8]))
+    f[8] = (((((((mul(c1, m[0]) + mul(c0, m[1])) - mul(c0, m[2])) + mul(c2, m[3])) + mul(c3, m[4])) + mul(c4, m[5])) - mul(c4, m[6])) - mul(1073741824, m[8]))
+    return f
+def main(private field[16][16][9] f1, private field[16][16][9] f2) -> field[16][16][9]:
+    field[9] floc = [0;9]
+    field[9] mloc = [0;9]
+    for u32 j in 0..16 do
+        for u32 k in 0..9 do
+            f1[0][j][k] = f1[14][j][k]
+            f1[15][j][k] = f1[1][j][k]
+        endfor
+    endfor
+    for u32 i in 0..16 do
+        for u32 k in 0..9 do
+            f1[i][0][k] = f1[i][14][k]
+            f1[i][15][k] = f1[i][1][k]
+        endfor
+    endfor
+    for u32 i in 1..15 do
+        for u32 j in 1..15 do
+            floc = [f1[i][j][0],f1[(i - 1)][j][1],f1[i][(j - 1)][2],f1[(i + 1)][j][3],f1[i][(j + 1)][4],f1[(i - 1)][(j - 1)][5],f1[(i + 1)][(j - 1)][6],f1[(i + 1)][(j + 1)][7],f1[(i - 1)][(j + 1)][8]]
+            mloc = f2m_loc(floc, mloc)
+            mloc = relaxation_loc(mloc)
+            floc = m2f_loc(mloc, floc)
+            for u32 k in 0..9 do
+                f2[j][i][k] = floc[k]
+            endfor
+        endfor
+    endfor
+    return f2

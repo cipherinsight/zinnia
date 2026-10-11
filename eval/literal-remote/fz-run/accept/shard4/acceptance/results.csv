@@ -1,0 +1,21 @@
+program,dataset,function,outcome,class,construct,detail
+case0298,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 15 elements differ
+case0320,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 2 elements differ
+case0337,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 8 elements differ
+case0357,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 27 elements differ
+case0381,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 100 elements differ
+case0401,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 0 elements differ
+case0419,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 24 elements differ
+case0439,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 2000 elements differ
+case0462,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 8 elements differ
+case0495,ds1000_numpy,kernel,rejected_no_provable_bound,no_provable_bound,np.pad width from a runtime value,"ZinniaException: IR generation failed: np.pad: pad width is not statically bounded — its value at runtime could be anything. The previous compiler revision silently capped it at 128 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal pad width, or annotate the kernel inputs that drive the pad width with `@requires(lambda x: x <= K)` so the compiler can derive a tight, sound upper bound."
+npbench_azimint_naive_azimint_naive,npbench,azimint_naive,rejected_no_provable_bound,no_provable_bound,array shape from a runtime value,ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int
+npbench_polybench_atax_atax,npbench,kernel,accepted_correct,,,logical outputs: 0 of 16 elements differ
+npbench_polybench_heat_3d_heat_3d,npbench,kernel,rejected_no_provable_bound,no_provable_bound,range() trip count,"ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value without known bounds. Give the bound a maximum, e.g. a bounded array annotation (Integer[Array, ""N<=8""]) or a precondition (@zk_circuit(requires=[lambda n: 0 <= n <= 8]))"
+npbench_scattering_self_energies_scattering_self_energies,npbench,scattering_self_energies,accepted_correct,,,logical outputs: 0 of 864 elements differ
+pythran_ccopy,pythran,CCOPY,accepted_correct,,,logical outputs: 0 of 8 elements differ
+pythran_diffusion,pythran,diffuseNumpy,rejected_no_provable_bound,no_provable_bound,range() trip count,"ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value without known bounds. Give the bound a maximum, e.g. a bounded array annotation (Integer[Array, ""N<=8""]) or a precondition (@zk_circuit(requires=[lambda n: 0 <= n <= 8]))"
+pythran_harris,pythran,harris,accepted_correct,,,logical outputs: 0 of 15 elements differ
+pythran_make_circle_two_points,pythran,_make_circle_one_point,rejected_unsupported_construct,unsupported_construct,`is` / `is not`,"ZinniaException: In method ""make_circle_two_points"", line 13 if c is None: ^^^^^^^^^ UnsupportedOperatorException: `is` / `is not` compare object identity, which circuit values do not have; compare values with `==` / `!=`."
+pythran_pivot,pythran,pivot,rejected_no_provable_bound,no_provable_bound,range() trip count,"ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value without known bounds. Give the bound a maximum, e.g. a bounded array annotation (Integer[Array, ""N<=8""]) or a precondition (@zk_circuit(requires=[lambda n: 0 <= n <= 8]))"
+pythran_specialconvolve,pythran,specialconvolve,accepted_correct,,,logical outputs: 0 of 196 elements differ

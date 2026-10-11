@@ -1,0 +1,26 @@
+from "EMBED" import u32_to_field
+from "utils/casts/field_to_u32" import main as idx
+
+def neg(field x) -> bool:
+    return x > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+
+def lt(field x, field y) -> bool:
+    return if neg(x) != neg(y) then neg(x) else x < y fi
+
+def ab(field x) -> field:
+    return if neg(x) then -x else x fi
+
+def main(private field[5][50] arr, private field[5] n1, private field[5] n2) -> field[5][50]:
+    for u32 i in 0..5 do
+        field[50] temp = arr[i]
+        for u32 j in 0..50 do
+            arr[i][j] = if lt(temp[j], n1[i]*4294967296) then 0 else arr[i][j] fi
+        endfor
+        for u32 j in 0..50 do
+            arr[i][j] = if !lt(temp[j], n2[i]*4294967296) then 128849018880 else arr[i][j] fi
+        endfor
+        for u32 j in 0..50 do
+            arr[i][j] = if !lt(temp[j], n1[i]*4294967296) && lt(temp[j], n2[i]*4294967296) then arr[i][j]+21474836480 else arr[i][j] fi
+        endfor
+    endfor
+    return arr

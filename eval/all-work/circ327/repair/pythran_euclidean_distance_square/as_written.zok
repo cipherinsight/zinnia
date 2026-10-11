@@ -1,0 +1,16 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[1][3] x1, private u64[5][3] x2) -> u64[1][5]:
+    u64[1][5] r = [[0u64;5];1]
+    for u32 j in 0..5 do
+        u64 dot = 0
+        u64 s1 = 0
+        u64 s2 = 0
+        for u32 k in 0..3 do
+            dot = (dot + mulq(x1[0][k], x2[j][k]))
+            s1 = (s1 + mulq(x1[0][k], x1[0][k]))
+            s2 = (s2 + mulq(x2[j][k], x2[j][k]))
+        endfor
+        r[0][j] = ((((0u64-2) * dot) + s1) + s2)
+    endfor
+    return r

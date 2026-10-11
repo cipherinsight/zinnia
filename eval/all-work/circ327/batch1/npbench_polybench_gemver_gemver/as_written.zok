@@ -1,0 +1,28 @@
+struct Result {
+    integer[16][16] v0
+    integer[16] v1
+    integer[16] v2
+}
+
+// Reals are encoded at scale 2^32; signed field values use centered residues.
+def main(private integer alpha, private integer beta, private integer[16][16] A, private integer[16] u1, private integer[16] v1, private integer[16] u2, private integer[16] v2, private integer[16] w, private integer[16] x, private integer[16] y, private integer[16] z) -> Result:
+    for u32 i in 0..16 do
+        for u32 j in 0..16 do
+            A[i][j] = A[i][j] + u1[i]*v1[j]/4294967296 + u2[i]*v2[j]/4294967296
+        endfor
+    endfor
+    for u32 j in 0..16 do
+        integer s = 0
+        for u32 i in 0..16 do
+            s = s + (beta*y[i]/4294967296)*A[i][j]/4294967296
+        endfor
+        x[j] = x[j]+s+z[j]
+    endfor
+    for u32 i in 0..16 do
+        integer s = 0
+        for u32 j in 0..16 do
+            s = s + (alpha*A[i][j]/4294967296)*x[j]/4294967296
+        endfor
+        w[i] = w[i]+s
+    endfor
+    return Result { v0: A, v1: w, v2: x }

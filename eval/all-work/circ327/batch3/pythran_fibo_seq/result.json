@@ -1,0 +1,39 @@
+{
+  "program": "pythran_fibo_seq",
+  "category": "circ_error",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:12: range(n) is private; @requires supplies n<=1024. F(1026) exceeds the default 255-bit field, so use native arbitrary integer arithmetic, not modular reduction.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "rejected",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\n\nthread 'main' (150694) panicked at src/target/r1cs/trans.rs:387:18:\ninternal error: entered unreachable code: Unhandled variable operator return\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    "constraints": null,
+    "rewrites": [
+      "Replace range(n) by 1024 guarded iterations; this exact bound is explicitly declared.",
+      "Retain native arbitrary integer accumulator to preserve the full declared result range."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "not_run",
+      "reason": "No R1CS-accepted attempt; no circuit acceptance claimed."
+    },
+    "B": {
+      "status": "not_run",
+      "reason": "No R1CS-accepted attempt; no circuit acceptance claimed."
+    }
+  },
+  "notes": "kernel.py:12: range(n) is private; @requires supplies n<=1024. F(1026) exceeds the default 255-bit field, so use native arbitrary integer arithmetic, not modular reduction.\n1024 guarded steps preserve full integer result; R1CS rejects native integer output.",
+  "kernel": "benchmarking/datasets/pythran/pythran_fibo_seq/kernel.py",
+  "numeric_encoding": {
+    "modulus": "52435875175126190479447740508185965837690552500527637822603658699938581184513",
+    "real_scale": 4294967296,
+    "signed_encoding": "centered field residues; no unsigned-only interpretation of negative fixtures",
+    "validation_tolerance": {
+      "rtol": 1e-06,
+      "atol": 1e-06
+    }
+  }
+}

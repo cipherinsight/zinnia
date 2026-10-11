@@ -1,0 +1,55 @@
+from "EMBED" import u32_to_field
+from "utils/casts/field_to_u32" import main as idx
+
+def neg(field x) -> bool:
+    return x > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+
+def lt(field x, field y) -> bool:
+    return if neg(x) != neg(y) then neg(x) else x < y fi
+
+def ab(field x) -> field:
+    return if neg(x) then -x else x fi
+
+def norm2(field[2] z) -> field:
+    return z[0]*z[0]+z[1]*z[1]
+
+def pos(field i) -> u32:
+    field z = i-1
+    return idx(if neg(z) then z+2 else z fi)
+
+def main(private field n, private field i, private field[2][2][2] a, private field[2][2] b) -> field[13]:
+    field i0 = i
+    field amp0 = norm2(a[pos(i)][pos(i)])
+    for u32 jj in 0..5 do
+        field j = u32_to_field(jj)-1
+        bool active = lt(i,j) && !lt(n,j)
+        u32 col = if active then pos(j) else 0 fi
+        field amp = norm2(a[pos(i)][col])
+        bool take = active && amp > amp0
+        i0 = if take then j else i0 fi
+        amp0 = if take then amp else amp0 fi
+    endfor
+    bool present = i != i0
+    field[2] temp = b[pos(i)]
+    b[pos(i)] = if present then b[pos(i0)] else b[pos(i)] fi
+    b[pos(i0)] = if present then temp else b[pos(i0)] fi
+    for u32 jj in 0..5 do
+        field j = u32_to_field(jj)-1
+        bool active = present && !lt(j,i) && !lt(n,j)
+        u32 row = if active then pos(j) else 0 fi
+        field[2] tmp = a[row][pos(i)]
+        a[row][pos(i)] = if active then a[row][pos(i0)] else a[row][pos(i)] fi
+        a[row][pos(i0)] = if active then tmp else a[row][pos(i0)] fi
+    endfor
+    field[13] result = [0; 13]
+    result[0] = if present then 4294967296 else 0 fi
+    for u32 r in 0..2 do
+        for u32 c in 0..2 do
+            for u32 part in 0..2 do
+                result[1+r*4+c*2+part] = a[r][c][part]
+            endfor
+        endfor
+        result[9+r*2] = b[r][0]
+        result[10+r*2] = b[r][1]
+    endfor
+    return result

@@ -1,0 +1,34 @@
+{
+  "program": "npbench_polybench_trmm_trmm",
+  "category": "needs_gadget: division",
+  "as_written": {
+    "status": "rejected",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\n\nthread 'main' (149018) panicked at src/target/r1cs/trans.rs:387:18:\ninternal error: entered unreachable code: Unhandled variable operator return.0.0\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n",
+    "constraints": null,
+    "returncode": 101,
+    "seconds": 0.047,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch0/npbench_polybench_trmm_trmm/as_written.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ]
+  },
+  "rewrite": {
+    "status": "needs gadget",
+    "error": "Signed fixed-point division (including rescaling a Q32 product) requires a gadget once native integer R1CS lowering fails.",
+    "constraints": null,
+    "rewrites": []
+  },
+  "correctness": {
+    "A": "not run",
+    "B": "not run"
+  },
+  "notes": "Return mutated B, preserving loop order and dot products. Native integer arithmetic was actually compiled, not inferred unsupported. No unsigned/narrowed input domain or modular field-division substitution was used."
+}

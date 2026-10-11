@@ -1,0 +1,32 @@
+// benchmarking/datasets/npbench/npbench_spmv_spmv/kernel.py
+// Signed integers use their canonical field residues; real inputs are Q32.
+def neg(field x) -> bool:
+    return x > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+def absv(field x) -> field:
+    return if neg(x) then -x else x fi
+def lt(field a, field b) -> bool:
+    return if neg(a) != neg(b) then neg(a) else a < b fi
+// Constant integer rescaling uses native remainder and field division only.
+def divc(field x, field c) -> field:
+    field m = absv(x)
+    field q = (m - m % c) / c
+    return if neg(x) then -q else q fi
+def mulq(field a, field b) -> field:
+    return divc(a * b, 4294967296)
+def clip16(field v) -> field:
+    field n = if neg(v) then v+16 else v fi
+    return if neg(n) then 0 else if n > 16 then 16 else n fi fi
+
+def main(private field[9] A_row, private field[16] A_col, private field[16] A_val, private field[8] x) -> field[8]:
+    field[8] y = [0; 8]
+    for u32 i in 0..8 do
+        field start = clip16(A_row[i])
+        field stop = clip16(A_row[i+1])
+        for field j in 0..16 do
+            bool take = j >= start && j < stop
+            field col = if neg(A_col[j]) then A_col[j]+8 else A_col[j] fi
+            col = if take then col else 0 fi
+            y[i] = y[i] + if take then mulq(A_val[j], x[col]) else 0 fi
+        endfor
+    endfor
+    return y

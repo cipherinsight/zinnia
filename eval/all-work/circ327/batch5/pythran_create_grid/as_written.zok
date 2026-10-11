@@ -1,0 +1,15 @@
+def main(private u64[16] x) -> u64[256][3]:
+    u64[16][16][3] z = [[[0u64; 3]; 16]; 16]
+    for u32 i in 0..16 do
+        for u32 j in 0..16 do
+            z[i][j][0] = x[i]
+            z[i][j][1] = x[j]
+        endfor
+    endfor
+    u64[256][3] result = [[0u64; 3]; 256]
+    for u32 i in 0..16 do
+        for u32 j in 0..16 do
+            result[i*16u32+j] = z[i][j]
+        endfor
+    endfor
+    return result

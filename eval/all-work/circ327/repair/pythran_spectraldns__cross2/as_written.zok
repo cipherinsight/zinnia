@@ -1,0 +1,20 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[3][2][5][7][2] c, private u64[3][2][5][7] a, private u64[3][2][5][7][2] b) -> u64[3][2][5][7][2]:
+    for u32 i in 0..2 do
+        for u32 j in 0..5 do
+            for u32 k in 0..7 do
+                for u32 ri in 0..2 do
+                    c[0][i][j][k][ri] = mulq(a[0][i][j][k],b[2][i][j][k][ri])-mulq(a[2][i][j][k],b[1][i][j][k][ri])
+                    c[1][i][j][k][ri] = mulq(a[2][i][j][k],b[0][i][j][k][ri])-mulq(a[0][i][j][k],b[2][i][j][k][ri])
+                    c[2][i][j][k][ri] = mulq(a[0][i][j][k],b[1][i][j][k][ri])-mulq(a[1][i][j][k],b[0][i][j][k][ri])
+                endfor
+                for u32 t in 0..3 do
+                    u64 real = c[t][i][j][k][0]
+                    c[t][i][j][k][0] = 0u64-c[t][i][j][k][1]
+                    c[t][i][j][k][1] = real
+                endfor
+            endfor
+        endfor
+    endfor
+    return c

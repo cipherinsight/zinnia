@@ -1,0 +1,22 @@
+{
+  "id": "pythran__pythran_perm__permutations",
+  "sites": {},
+  "numpy": {
+    "A": [],
+    "B": []
+  },
+  "selected": [],
+  "source": "def permutations(iterable: Integer[Array, '4']):\n    bprobe_trace = []\n    'permutations(range(3), 2) --> (0,1) (0,2) (1,0) (1,2) (2,0) (2,1)'\n    out = []\n    pool = tuple(iterable)\n    n = len(pool)\n    r = n\n    indices = list(range(n))\n    cycles = list(range(n - r + 1, n + 1))[::-1]\n    out.append(tuple([pool[i] for i in indices[:r]]))\n    while 1:\n        for i in reversed(range(r)):\n            cycles[i] -= 1\n            if cycles[i] == 0:\n                indices[i:] = indices[i + 1:] + indices[i:i + 1]\n                cycles[i] = n - i\n            else:\n                j = cycles[i]\n                indices[i], indices[-j] = (indices[-j], indices[i])\n                out.append(tuple([pool[i] for i in indices[:r]]))\n                break\n        else:\n            return bprobe_trace\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [],
+      "output": {
+        "return": []
+      },
+      "shape": [
+        0
+      ]
+    }
+  ],
+  "dynamic": []
+}

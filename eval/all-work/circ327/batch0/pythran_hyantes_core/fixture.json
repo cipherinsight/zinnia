@@ -1,0 +1,41 @@
+{
+ "case": "pythran_hyantes_core",
+ "function": "run",
+ "parameters": [
+  {"name": "xmin", "kind": "scalar", "dtype": "float"},
+  {"name": "ymin", "kind": "scalar", "dtype": "float"},
+  {"name": "xmax", "kind": "scalar", "dtype": "float"},
+  {"name": "ymax", "kind": "scalar", "dtype": "float"},
+  {"name": "step", "kind": "scalar", "dtype": "float"},
+  {"name": "range_", "kind": "scalar", "dtype": "float"},
+  {"name": "range_x", "kind": "scalar", "dtype": "int"},
+  {"name": "range_y", "kind": "scalar", "dtype": "int"},
+  {"name": "t", "kind": "array", "dtype": "float", "shape": [16, 3]}
+ ],
+ "constants": {},
+ "inputs": {
+  "A": {
+   "xmin": 0.0,
+   "ymin": 0.0,
+   "xmax": 90.0,
+   "ymax": 90.0,
+   "step": 1.0,
+   "range_": 100.0,
+   "range_x": 16,
+   "range_y": 16,
+   "t": [[0.007, 0.007, 0.0], [0.10700000000000001, 0.10700000000000001, 0.05], [0.20700000000000002, 0.20700000000000002, 0.1], [0.307, 0.307, 0.15], [0.40700000000000003, 0.40700000000000003, 0.2], [0.507, 0.507, 0.25], [0.607, 0.607, 0.3], [0.707, 0.707, 0.35], [0.807, 0.807, 0.4], [0.907, 0.907, 0.45], [1.007, 1.007, 0.5], [1.107, 1.107, 0.55], [1.2069999999999999, 1.2069999999999999, 0.6], [1.307, 1.307, 0.65], [1.4069999999999998, 1.4069999999999998, 0.7], [1.507, 1.507, 0.75]]
+  },
+  "B": {
+   "xmin": 0.0,
+   "ymin": 0.0,
+   "xmax": 90.0,
+   "ymax": 90.0,
+   "step": 1.0,
+   "range_": 100.0,
+   "range_x": 16,
+   "range_y": 16,
+   "t": [[-0.006, 0.009, 0.01], [0.094, 0.109, 0.060000000000000005], [0.194, 0.20900000000000002, 0.11], [0.294, 0.309, 0.16], [0.394, 0.40900000000000003, 0.21000000000000002], [0.494, 0.509, 0.26], [0.594, 0.609, 0.31], [0.694, 0.709, 0.36], [0.794, 0.809, 0.41000000000000003], [0.894, 0.909, 0.46], [0.994, 1.009, 0.51], [1.094, 1.109, 0.56], [1.194, 1.2089999999999999, 0.61], [1.294, 1.309, 0.66], [1.394, 1.4089999999999998, 0.71], [1.494, 1.509, 0.76]]
+  }
+ },
+ "notes": "A is the arguments of the example call `run(0.,0.,90.,90., 1., 100., 16, 16, [ [i/10. + 0.007, i/10. + 0.007, i/20.] for i in range(16) ])`. Changed for Q32: in A every town is moved by 0.007 rad in both coordinates. In the scaled upstream line the towns at (0, 0) and (1, 1) sit exactly on grid points, where acos(1 - eps) turns the ~1e-9 error of Q32 trigonometry into 0.28 km; now they are 51 and 63 km from the nearest grid point (still within range_ = 100 km), where acos amplifies that error by at most about 1 / sin(0.008) = 125. B is given too, built the same way (towns moved by -0.006 and +0.009 rad, weights by +0.01): its nearest towns are 49 and 69 km from a grid point, so B exercises the distance sum. A seeded perturbation of A moved every town by about 0.15 rad, left none within range_ and gave an all-zero output. B is the arguments of `run(0.,0.,90.,90., 1., 100., 16, 16, [ [i/10. - 0.006, i/10. + 0.009, i/20. + 0.01] for i in range(16) ])`."
+}

@@ -1,0 +1,340 @@
+{
+ "schema": 1,
+ "system": "cairo",
+ "case": "pythran_multitype__check",
+ "description": "Cairo (Scarb 2.20.1, Stwo), Q32",
+ "windows": {
+  "prove_core": "`scarb prove` process wall clock (includes start-up)",
+  "end_to_end": "`scarb execute` + `scarb prove` process wall clocks",
+  "verify": "`scarb verify` process wall clock"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/pythran/pythran_multitype/kernel.py": "5297e050850ff982cf1a5da58aeaf3c28f42bbefe58e4f082490eb91f9cb20a3",
+  "benchmarking/datasets/pythran/pythran_multitype/fixture.check.json": "232801ba395d75216974b8d2ac728b2529578f4c81da7a7718595ca76771f18a",
+  "benchmarking/datasets/pythran/pythran_multitype/cairo/check.cairo": "9e8ed5648eda40e21562b8df2a49df18a58baeaa308cdcbf400da23348a67531",
+  "benchmarking/baselines/cairo/cairo_baseline.py": "4775e9241709712c5d2d3a3a84d49c2582af3f59efa8cd43bc2370775b2a7b8d"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-11T13:19:44+0000",
+  "loadavg": [
+   34.5966796875,
+   27.1015625,
+   24.89453125
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "build": 0.1327131101861596,
+    "process_wall": 0.18951249960809946
+   },
+   "details": {
+    "system": "cairo",
+    "scarb": "/home/zhantong/.local/share/scarb/scarb-v2.20.1-x86_64-unknown-linux-gnu/bin/scarb",
+    "case": "pythran_multitype__check",
+    "input": "A",
+    "mode": "setup",
+    "proof_mode": "stwo",
+    "proof_path": null,
+    "peak_rss_mib": 110
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 0.3049147604033351,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 84238336,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   34.5966796875,
+   27.1015625,
+   24.89453125
+  ],
+  "child": {
+   "wall_s": 29.17425476014614,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 14640287744,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 15.364720875397325,
+   "end_to_end_s": 15.548089777119458,
+   "proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz10b-pythran_multitype__check-zkvm/work/cairo/pythran_multitype__check/proofs/warmup/program/proof-stwo-B.bin",
+   "proof_bytes": 954455,
+   "timings_s": {
+    "execute": 0.18336890172213316,
+    "prove": 15.364720875397325,
+    "prove_json_copy": 13.435315238311887,
+    "process_wall": 29.075243975035846
+   },
+   "details": {
+    "system": "cairo",
+    "scarb": "/home/zhantong/.local/share/scarb/scarb-v2.20.1-x86_64-unknown-linux-gnu/bin/scarb",
+    "case": "pythran_multitype__check",
+    "input": "B",
+    "mode": "prove",
+    "proof_mode": "stwo",
+    "public_words": [
+     1,
+     1,
+     1,
+     6668293068,
+     2
+    ],
+    "input_shapes": [
+     1
+    ],
+    "output_shapes": [
+     [
+      1
+     ],
+     []
+    ],
+    "resources": {
+     "n_steps": 21732,
+     "n_memory_holes": 10,
+     "builtin_instance_counter": [
+      [
+       "range_check_builtin",
+       1274
+      ],
+      [
+       "output_builtin",
+       9
+      ]
+     ],
+     "syscalls": [],
+     "memory_segment_sizes": [
+      [
+       "execution",
+       15902
+      ],
+      [
+       "range_check",
+       1274
+      ],
+      [
+       "output",
+       9
+      ]
+     ],
+     "max_memory_address": 21131
+    },
+    "proof_size_bytes": 954455,
+    "json_proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz10b-pythran_multitype__check-zkvm/work/cairo/pythran_multitype__check/proofs/warmup/program/proof-stwo-B.json",
+    "json_proof_size_bytes": 11218292,
+    "peak_rss_mib": 13911
+   },
+   "proof_sha256": "2a7e0b7f385bdece05fbc5f7035226008ae8672f272629bb4a415e9f902a8465"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 2 elements differ",
+   "expected_count": 2,
+   "actual_count": 2,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "eb32bb009187ae2d4f28e5c2caa9842c9bbef91d768944635ac588d917b9b4b0",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    1.552582967095077,
+    2
+   ],
+   "elided": [],
+   "shapes": [
+    [
+     1
+    ],
+    []
+   ]
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    33.0673828125,
+    27.46923828125,
+    25.08984375
+   ],
+   "child": {
+    "wall_s": 28.98761609289795,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 14928707584,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 13.8107182784006,
+    "end_to_end_s": 13.922707688063383,
+    "proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz10b-pythran_multitype__check-zkvm/work/cairo/pythran_multitype__check/proofs/sample-1/program/proof-stwo-B.bin",
+    "proof_bytes": 954455,
+    "timings_s": {
+     "execute": 0.11198940966278315,
+     "prove": 13.8107182784006,
+     "prove_json_copy": 14.821821516379714,
+     "process_wall": 28.866234125569463
+    },
+    "details": {
+     "system": "cairo",
+     "scarb": "/home/zhantong/.local/share/scarb/scarb-v2.20.1-x86_64-unknown-linux-gnu/bin/scarb",
+     "case": "pythran_multitype__check",
+     "input": "B",
+     "mode": "prove",
+     "proof_mode": "stwo",
+     "public_words": [
+      1,
+      1,
+      1,
+      6668293068,
+      2
+     ],
+     "input_shapes": [
+      1
+     ],
+     "output_shapes": [
+      [
+       1
+      ],
+      []
+     ],
+     "resources": {
+      "n_steps": 21732,
+      "n_memory_holes": 10,
+      "builtin_instance_counter": [
+       [
+        "range_check_builtin",
+        1274
+       ],
+       [
+        "output_builtin",
+        9
+       ]
+      ],
+      "syscalls": [],
+      "memory_segment_sizes": [
+       [
+        "execution",
+        15902
+       ],
+       [
+        "range_check",
+        1274
+       ],
+       [
+        "output",
+        9
+       ]
+      ],
+      "max_memory_address": 21131
+     },
+     "proof_size_bytes": 954455,
+     "json_proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz10b-pythran_multitype__check-zkvm/work/cairo/pythran_multitype__check/proofs/sample-1/program/proof-stwo-B.json",
+     "json_proof_size_bytes": 11218292,
+     "peak_rss_mib": 14186
+    },
+    "proof_sha256": "2a7e0b7f385bdece05fbc5f7035226008ae8672f272629bb4a415e9f902a8465"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 2 elements differ",
+    "expected_count": 2,
+    "actual_count": 2,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "eb32bb009187ae2d4f28e5c2caa9842c9bbef91d768944635ac588d917b9b4b0",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     1.552582967095077,
+     2
+    ],
+    "elided": [],
+    "shapes": [
+     [
+      1
+     ],
+     []
+    ]
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.04463832359761,
+     "not_applicable": null,
+     "timings_s": {
+      "verify": 0.04463832359761,
+      "process_wall": 0.14878943841904402
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.26724259462207556,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 90771456,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 0.028885516338050365,
+    "not_applicable": null,
+    "timings_s": {
+     "verify": 0.028885516338050365,
+     "process_wall": 0.3200852368026972
+    },
+    "details": {
+     "error": null
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.40765915997326374,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 65703936,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

@@ -1,0 +1,18 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def clip16(u64 v) -> u64:
+    u64 n = if neg(v) then (v + 16) else v fi
+    return if neg(n) then 0 else if lt(16, n) then 16 else n fi fi
+def main(private u64[9] A_row, private u64[16] A_col, private u64[16] A_val, private u64[8] x) -> u64[8]:
+    u64[8] y = [0;8]
+    for u32 i in 0..8 do
+        u64 start = clip16(A_row[i])
+        u64 stop = clip16(A_row[(i + 1)])
+        for u64 j in 0..16 do
+            bool take = (!lt(j, start) && lt(j, stop))
+            u64 col = if neg(A_col[j]) then (A_col[j] + 8) else A_col[j] fi
+            col = if take then col else 0 fi
+            y[i] = (y[i] + if take then mulq(A_val[j], x[col]) else 0 fi)
+        endfor
+    endfor
+    return y

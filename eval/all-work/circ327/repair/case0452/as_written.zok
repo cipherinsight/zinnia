@@ -1,0 +1,16 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[5][4] X) -> u64[5][4]:
+    u64[5] l1 = [0;5]
+    for u32 i in 0..5 do
+        for u32 j in 0..4 do
+            l1[i] = (l1[i] + if neg(X[i][j]) then (0u64-X[i][j]) else X[i][j] fi)
+        endfor
+    endfor
+    u64[5][4] result = [[0;4];5]
+    for u32 i in 0..5 do
+        for u32 j in 0..4 do
+            result[i][j] = divq(X[i][j], l1[i])
+        endfor
+    endfor
+    return result

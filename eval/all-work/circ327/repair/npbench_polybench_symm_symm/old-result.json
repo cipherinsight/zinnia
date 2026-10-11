@@ -1,0 +1,46 @@
+{
+  "program": "npbench_polybench_symm_symm",
+  "category": "needs_gadget: fixed-point multiplication/rescaling",
+  "as_written": {
+    "status": "rejected",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\n\nthread 'main' (150109) panicked at src/target/r1cs/trans.rs:387:18:\ninternal error: entered unreachable code: Unhandled variable operator return.0.0\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    "constraints": null,
+    "seconds": 0.08658250300140935,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch2/npbench_polybench_symm_symm/as_written.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ]
+  },
+  "rewrite": {
+    "status": "needs gadget",
+    "error": "fixed-point multiplication/rescaling",
+    "constraints": null,
+    "rewrites": []
+  },
+  "correctness": {
+    "A": "not run: no accepted translation",
+    "B": "not run: no accepted translation"
+  },
+  "notes": "Expose mutated C as public output (source returns None); keep statically unrolled triangular slices.",
+  "source": "benchmarking/datasets/npbench/npbench_polybench_symm_symm/kernel.py",
+  "function": "kernel",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/npbench/npbench_polybench_symm_symm/fixture.json",
+  "source_sha256": "0ca8cf5ac38f31445960514b7560f63465fa612fb2c16c0408c2727f22ddf916",
+  "encoding": "Real and complex components rounded to nearest integer at scale 2^32; centered field residues for field translations; native arbitrary-precision integers for integer translations. Public return includes all logical output values; padded returns include shape/presence metadata.",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh"
+  },
+  "translation_sha256": {
+    "as_written": "69c11ff24a479ad1b032faed0d749846c0183a2d8f07a7d314302e2f016643b2"
+  }
+}

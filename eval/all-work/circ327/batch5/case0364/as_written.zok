@@ -1,0 +1,14 @@
+def lt(u64 a, u64 b) -> bool:
+    return (a ^ 0x8000000000000000) < (b ^ 0x8000000000000000)
+
+def main(private u64[100][10] a, private u64 pos, private u64[10] element) -> u64[101][10]:
+    u64 p = if lt(pos, 0u64) then pos+100u64 else pos fi
+    u64[101][10] result = [[0u64; 10]; 101]
+    for u64 i in 0..101 do
+        for u32 j in 0..10 do
+            u64 ix = if i > p then i-1u64 else i fi
+            ix = if ix < 100u64 then ix else 99u64 fi
+            result[i][j] = if i == p then element[j] else a[ix][j] fi
+        endfor
+    endfor
+    return result

@@ -1,0 +1,488 @@
+{
+  "id": "ds1000_numpy__case0415__kernel",
+  "sites": {
+    "11:19:11:60:Subscript": "data[:data.size // bin_size * bin_size]",
+    "11:19:11:82:Call": "data[:data.size // bin_size * bin_size].reshape(-1, bin_size)",
+    "11:19:11:94:Call": "data[:data.size // bin_size * bin_size].reshape(-1, bin_size).max(axis=1)"
+  },
+  "numpy": {
+    "A": [
+      {
+        "site": "11:19:11:60:Subscript",
+        "value": {
+          "shape": [
+            8
+          ],
+          "length": 8
+        }
+      },
+      {
+        "site": "11:19:11:82:Call",
+        "value": {
+          "shape": [
+            2,
+            4
+          ],
+          "length": 8
+        }
+      },
+      {
+        "site": "11:19:11:94:Call",
+        "value": {
+          "shape": [
+            2
+          ],
+          "length": 2
+        }
+      }
+    ],
+    "B": [
+      {
+        "site": "11:19:11:60:Subscript",
+        "value": {
+          "shape": [
+            8
+          ],
+          "length": 8
+        }
+      },
+      {
+        "site": "11:19:11:82:Call",
+        "value": {
+          "shape": [
+            2,
+            4
+          ],
+          "length": 8
+        }
+      },
+      {
+        "site": "11:19:11:94:Call",
+        "value": {
+          "shape": [
+            2
+          ],
+          "length": 2
+        }
+      }
+    ]
+  },
+  "selected": [
+    "11:19:11:60:Subscript",
+    "11:19:11:82:Call",
+    "11:19:11:94:Call"
+  ],
+  "source": "def kernel(data: Float[Array, '8'], bin_size: Integer):\n    bprobe_trace = []\n    bprobe_v0 = data[:data.size // bin_size * bin_size]\n    bprobe_trace.append((0, bprobe_v0))\n    bprobe_v1 = bprobe_v0.reshape(-1, bin_size)\n    bprobe_trace.append((1, bprobe_v1))\n    bprobe_v2 = bprobe_v1.max(axis=1)\n    bprobe_trace.append((2, bprobe_v2))\n    bin_data_max = bprobe_v2\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [
+        {
+          "constant": 0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "dynamic": {
+        "cells": [
+          {
+            "kind": "f",
+            "public": 1
+          },
+          {
+            "kind": "f",
+            "public": 2
+          },
+          {
+            "kind": "f",
+            "public": 3
+          },
+          {
+            "kind": "f",
+            "public": 4
+          },
+          {
+            "kind": "f",
+            "public": 5
+          },
+          {
+            "kind": "f",
+            "public": 6
+          },
+          {
+            "kind": "f",
+            "public": 7
+          },
+          {
+            "kind": "f",
+            "public": 8
+          }
+        ],
+        "dims": [
+          {
+            "kind": "i",
+            "public": 0
+          }
+        ],
+        "length": {
+          "kind": "i",
+          "public": 0
+        },
+        "offset": 0,
+        "rank": {
+          "constant": 1
+        },
+        "strides": [
+          1
+        ]
+      },
+      "output": {
+        "return": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "cells": [
+        {
+          "constant": 1
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "dynamic": {
+        "cells": [
+          {
+            "kind": "f",
+            "public": 12
+          },
+          {
+            "kind": "f",
+            "public": 13
+          },
+          {
+            "kind": "f",
+            "public": 14
+          },
+          {
+            "kind": "f",
+            "public": 15
+          },
+          {
+            "kind": "f",
+            "public": 16
+          },
+          {
+            "kind": "f",
+            "public": 17
+          },
+          {
+            "kind": "f",
+            "public": 18
+          },
+          {
+            "kind": "f",
+            "public": 19
+          }
+        ],
+        "dims": [
+          {
+            "kind": "i",
+            "public": 10
+          },
+          {
+            "kind": "i",
+            "public": 11
+          }
+        ],
+        "length": {
+          "kind": "i",
+          "public": 9
+        },
+        "rank": {
+          "constant": 2
+        }
+      },
+      "output": {
+        "return": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "cells": [
+        {
+          "constant": 2
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "dynamic": {
+        "cells": [
+          {
+            "kind": "f",
+            "public": 22
+          },
+          {
+            "kind": "f",
+            "public": 23
+          },
+          {
+            "kind": "f",
+            "public": 24
+          },
+          {
+            "kind": "f",
+            "public": 25
+          },
+          {
+            "kind": "f",
+            "public": 26
+          },
+          {
+            "kind": "f",
+            "public": 27
+          },
+          {
+            "kind": "f",
+            "public": 28
+          },
+          {
+            "kind": "f",
+            "public": 29
+          }
+        ],
+        "dims": [
+          {
+            "kind": "i",
+            "public": 21
+          }
+        ],
+        "length": {
+          "kind": "i",
+          "public": 20
+        },
+        "offset": 0,
+        "rank": {
+          "constant": 1
+        },
+        "strides": [
+          1
+        ]
+      },
+      "output": {
+        "return": [
+          2,
+          1
+        ]
+      }
+    }
+  ],
+  "dynamic": [
+    {
+      "dynamic": {
+        "cells": [
+          {
+            "kind": "f",
+            "public": 1
+          },
+          {
+            "kind": "f",
+            "public": 2
+          },
+          {
+            "kind": "f",
+            "public": 3
+          },
+          {
+            "kind": "f",
+            "public": 4
+          },
+          {
+            "kind": "f",
+            "public": 5
+          },
+          {
+            "kind": "f",
+            "public": 6
+          },
+          {
+            "kind": "f",
+            "public": 7
+          },
+          {
+            "kind": "f",
+            "public": 8
+          }
+        ],
+        "dims": [
+          {
+            "kind": "i",
+            "public": 0
+          }
+        ],
+        "length": {
+          "kind": "i",
+          "public": 0
+        },
+        "offset": 0,
+        "rank": {
+          "constant": 1
+        },
+        "strides": [
+          1
+        ]
+      },
+      "output": {
+        "return": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "dynamic": {
+        "cells": [
+          {
+            "kind": "f",
+            "public": 12
+          },
+          {
+            "kind": "f",
+            "public": 13
+          },
+          {
+            "kind": "f",
+            "public": 14
+          },
+          {
+            "kind": "f",
+            "public": 15
+          },
+          {
+            "kind": "f",
+            "public": 16
+          },
+          {
+            "kind": "f",
+            "public": 17
+          },
+          {
+            "kind": "f",
+            "public": 18
+          },
+          {
+            "kind": "f",
+            "public": 19
+          }
+        ],
+        "dims": [
+          {
+            "kind": "i",
+            "public": 10
+          },
+          {
+            "kind": "i",
+            "public": 11
+          }
+        ],
+        "length": {
+          "kind": "i",
+          "public": 9
+        },
+        "rank": {
+          "constant": 2
+        }
+      },
+      "output": {
+        "return": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "dynamic": {
+        "cells": [
+          {
+            "kind": "f",
+            "public": 22
+          },
+          {
+            "kind": "f",
+            "public": 23
+          },
+          {
+            "kind": "f",
+            "public": 24
+          },
+          {
+            "kind": "f",
+            "public": 25
+          },
+          {
+            "kind": "f",
+            "public": 26
+          },
+          {
+            "kind": "f",
+            "public": 27
+          },
+          {
+            "kind": "f",
+            "public": 28
+          },
+          {
+            "kind": "f",
+            "public": 29
+          }
+        ],
+        "dims": [
+          {
+            "kind": "i",
+            "public": 21
+          }
+        ],
+        "length": {
+          "kind": "i",
+          "public": 20
+        },
+        "offset": 0,
+        "rank": {
+          "constant": 1
+        },
+        "strides": [
+          1
+        ]
+      },
+      "output": {
+        "return": [
+          2,
+          1
+        ]
+      }
+    }
+  ]
+}

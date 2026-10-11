@@ -1,0 +1,244 @@
+{
+ "schema": 1,
+ "system": "sp1",
+ "case": "pythran_fibo_seq__fibo",
+ "description": "SP1 6.8.1, core (STARK) proof, Q32 guest",
+ "windows": {
+  "prove_core": "client.prove (prove); SP1's SDK proves from the program and its input, so execution happens inside the prove call and cannot be excluded",
+  "end_to_end": "client.prove (prove), which includes execution",
+  "verify": "client.verify (verify)"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/pythran/pythran_fibo_seq/kernel.py": "a7739e315b7d2f0d7e09c46ad7279030babe0e13ad23dbf699c09d0a2fd5468e",
+  "benchmarking/datasets/pythran/pythran_fibo_seq/fixture.json": "5a3593c77a73f7cda1cf7e0f45cdc93396c2943e29688ab877e19dd874204718",
+  "benchmarking/datasets/pythran/pythran_fibo_seq/zkvm.rs": "3488c74a42aba72bc87f87b68c1b490a19a8338c9733d0702535b08191c2f0b3",
+  "benchmarking/baselines/sp1/target/release/sp1-baseline": "8b11da92afce32f313dba253a6bfad7596b88f6aceacc1ae4b688118a5b5de40"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-07T22:08:15+0000",
+  "loadavg": [
+   22.94580078125,
+   26.14501953125,
+   29.41796875
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "client_init": 25.260430226,
+    "setup": 2.119307325,
+    "process_wall": 27.629168251529336
+   },
+   "details": {
+    "case": "pythran_fibo_seq/fibo",
+    "input": "A",
+    "mode": "setup",
+    "peak_rss_mib": 7069.0,
+    "proof_path": null,
+    "sdk_version": "6.8.1",
+    "system": "sp1",
+    "vk_hash": "0x00ad92698b41ab67151aaf28627b134f695ab112b7c55372402022bb0f72fec6",
+    "vk_path": "/home/zhantong/zinnia-eval-run/zinnia-src/benchmarking/results/2026-10-07-ff1-npb-zkvm-s2/work/sp1/pythran_fibo_seq__fibo/program/vk.bin"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 27.72298230882734,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 7445364736,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   23.3623046875,
+   25.9384765625,
+   29.244140625
+  ],
+  "child": {
+   "wall_s": 47.129929651506245,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 10176958464,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 21.330274348,
+   "end_to_end_s": 21.330274348,
+   "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-src/benchmarking/results/2026-10-07-ff1-npb-zkvm-s2/work/sp1/pythran_fibo_seq__fibo/proofs/warmup/program/proof-core-B.bin",
+   "proof_bytes": 2790983,
+   "timings_s": {
+    "client_init": 24.918486439,
+    "execute": 0.010360641,
+    "prove": 21.330274348,
+    "process_wall": 46.99905488267541
+   },
+   "details": {
+    "case": "pythran_fibo_seq/fibo",
+    "cycles": 2513,
+    "gas": 4474,
+    "input": "B",
+    "input_shapes": [],
+    "mode": "prove",
+    "peak_rss_mib": 9676.0,
+    "proof_mode": "core",
+    "proof_size_bytes": 2790983,
+    "sdk_version": "6.8.1",
+    "syscalls": 2,
+    "system": "sp1"
+   },
+   "proof_sha256": "c7c8ec2eb0de27355134e106f09b2740a40cff8c8918a476b700e42484569d15"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 1 elements differ",
+   "expected_count": 1,
+   "actual_count": 1,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "6cd48f1504de192808e015e99b52885050ef330f24581104a8a8cb99c2ffbcac",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    21
+   ],
+   "elided": [],
+   "shapes": null
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    22.60986328125,
+    25.384765625,
+    28.89892578125
+   ],
+   "child": {
+    "wall_s": 47.72215785458684,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 10048069632,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 21.158217806,
+    "end_to_end_s": 21.158217806,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-src/benchmarking/results/2026-10-07-ff1-npb-zkvm-s2/work/sp1/pythran_fibo_seq__fibo/proofs/sample-1/program/proof-core-B.bin",
+    "proof_bytes": 2790983,
+    "timings_s": {
+     "client_init": 25.703367235,
+     "execute": 0.010561194,
+     "prove": 21.158217806,
+     "process_wall": 47.60780486278236
+    },
+    "details": {
+     "case": "pythran_fibo_seq/fibo",
+     "cycles": 2513,
+     "gas": 4474,
+     "input": "B",
+     "input_shapes": [],
+     "mode": "prove",
+     "peak_rss_mib": 9551.0,
+     "proof_mode": "core",
+     "proof_size_bytes": 2790983,
+     "sdk_version": "6.8.1",
+     "syscalls": 2,
+     "system": "sp1"
+    },
+    "proof_sha256": "fe7353707996bfa2ad8286f8b39c23ace2be185e78d965e7d2b28be0c7a0dd4f"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 1 elements differ",
+    "expected_count": 1,
+    "actual_count": 1,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "6cd48f1504de192808e015e99b52885050ef330f24581104a8a8cb99c2ffbcac",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     21
+    ],
+    "elided": [],
+    "shapes": null
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.090375062,
+     "not_applicable": null,
+     "timings_s": {
+      "client_init": 0.390678391,
+      "verify": 0.090375062,
+      "process_wall": 0.656633629463613
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.7725563254207373,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 91860992,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 8.799e-06,
+    "not_applicable": null,
+    "timings_s": {
+     "client_init": 0.390866349,
+     "verify": 8.799e-06,
+     "process_wall": 0.5710878409445286
+    },
+    "details": {
+     "error": null
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.6723544243723154,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 82907136,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

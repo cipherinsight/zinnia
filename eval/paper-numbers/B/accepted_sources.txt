@@ -1,0 +1,3798 @@
+
+### ds1000_numpy__case0291__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 291 (NumPy problem 0; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 4, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "2 5 5 2"]):
+    result = a.shape
+    return result
+
+### ds1000_numpy__case0298__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 298 (NumPy problem 7; Difficult-Rewrite perturbation of problem 295).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 3, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "5"]):
+    vals, idx = np.unique(a, return_inverse=True)
+    b = np.zeros((a.size, vals.size))
+    b[np.arange(a.size), idx] = 1
+    return b
+
+### ds1000_numpy__case0300__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 300 (NumPy problem 9; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "20"], p: Integer):
+    result = np.percentile(a, p)
+    return result
+
+### ds1000_numpy__case0301__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 301 (NumPy problem 10; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(A: Float[Array, "20"], ncol: Integer):
+    B = np.reshape(A, (-1, ncol))
+    return B
+
+### ds1000_numpy__case0302__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 302 (NumPy problem 11; Semantic perturbation of problem 301).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(A: Float[Array, "20"], nrow: Integer):
+    B = np.reshape(A, (nrow, -1))
+    return B
+
+### ds1000_numpy__case0303__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 303 (NumPy problem 12; Difficult-Rewrite perturbation of problem 301).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(A: Float[Array, "23"], ncol: Integer):
+    col = ( A.shape[0] // ncol) * ncol
+    B = A[:col]
+    B= np.reshape(B, (-1, ncol))
+    return B
+
+### ds1000_numpy__case0304__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 304 (NumPy problem 13; Difficult-Rewrite perturbation of problem 301).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(A: Float[Array, "23"], ncol: Integer):
+    col = ( A.shape[0] // ncol) * ncol
+    B = A[len(A)-col:][::-1]
+    B = np.reshape(B, (-1, ncol))
+    return B
+
+### ds1000_numpy__case0309__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 309 (NumPy problem 18; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "8 6"]):
+    result = a.argmax()
+    return result
+
+### ds1000_numpy__case0310__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 310 (NumPy problem 19; Semantic perturbation of problem 309).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "8 6"]):
+    result = a.argmin()
+    return result
+
+### ds1000_numpy__case0311__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 311 (NumPy problem 20; Semantic perturbation of problem 309).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "8 6"]):
+    result = np.unravel_index(a.argmax(), a.shape, order = 'F')
+    return result
+
+### ds1000_numpy__case0312__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 312 (NumPy problem 21; Semantic perturbation of problem 309).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "8 6"]):
+    result = np.unravel_index(a.argmax(), a.shape)
+    return result
+
+### ds1000_numpy__case0313__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 313 (NumPy problem 22; Surface perturbation of problem 309).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "8 6"]):
+    result = a.argmax()
+
+    return result
+
+### ds1000_numpy__case0314__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 314 (NumPy problem 23; Difficult-Rewrite perturbation of problem 309).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "8 6"]):
+    idx = np.unravel_index(a.argmax(), a.shape)
+    a[idx] = a.min()
+    result = np.unravel_index(a.argmax(), a.shape)
+    return result
+
+### ds1000_numpy__case0317__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 317 (NumPy problem 26; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "10 20 5"]):
+    result = np.array(a)
+    return result
+
+### ds1000_numpy__case0318__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 318 (NumPy problem 27; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "8 6"], permutation: Integer[Array, "6"]):
+    c = np.empty_like(permutation)
+    c[permutation] = np.arange(len(permutation))
+    a = a[:, c]
+    return a
+
+### ds1000_numpy__case0319__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 319 (NumPy problem 28; Semantic perturbation of problem 318).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "8 6 8"], permutation: Integer[Array, "8"]):
+    c = np.empty_like(permutation)
+    c[permutation] = np.arange(len(permutation))
+    result = a[c, :, :]
+    return result
+
+### ds1000_numpy__case0320__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 320 (NumPy problem 29; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "5 6"]):
+    result = np.unravel_index(a.argmin(), a.shape)
+    return result
+
+### ds1000_numpy__case0321__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 321 (NumPy problem 30; Semantic perturbation of problem 320).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "5 6"]):
+    result = np.unravel_index(a.argmax(), a.shape)
+    return result
+
+### ds1000_numpy__case0322__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 322 (NumPy problem 31; Difficult-Rewrite perturbation of problem 320).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 3, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Integer[Array, "2 2"]):
+    result = np.argwhere(a == np.min(a))
+    return result
+
+### ds1000_numpy__case0323__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 323 (NumPy problem 32; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(degree: Integer):
+    result = np.sin(np.deg2rad(degree))
+    return result
+
+### ds1000_numpy__case0324__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 324 (NumPy problem 33; Semantic perturbation of problem 323).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(degree: Integer):
+    result = np.cos(np.deg2rad(degree))
+    return result
+
+### ds1000_numpy__case0325__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 325 (NumPy problem 34; Difficult-Rewrite perturbation of problem 323).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 3, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(number: Integer):
+    deg = np.sin(np.deg2rad(number))
+    rad = np.sin(number)
+    result = int(rad > deg)
+    return result
+
+### ds1000_numpy__case0326__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 326 (NumPy problem 35; Difficult-Rewrite perturbation of problem 323).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(value: Float):
+    result = np.degrees(np.arcsin(value))
+    return result
+
+### ds1000_numpy__case0329__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 329 (NumPy problem 38; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "8 6"], power: Integer):
+    a = a ** power
+    return a
+
+### ds1000_numpy__case0330__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 330 (NumPy problem 39; Surface perturbation of problem 329).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "8 6"], power: Integer):
+    result = a ** power
+
+    return result
+
+### ds1000_numpy__case0334__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 334 (NumPy problem 43; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "50"], b: Float[Array, "50"], c: Float[Array, "50"]):
+    result = np.mean([a, b, c], axis=0)
+    return result
+
+### ds1000_numpy__case0335__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 335 (NumPy problem 44; Semantic perturbation of problem 334).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "50"], b: Float[Array, "50"], c: Float[Array, "50"]):
+    result = np.max([a, b, c], axis=0)
+    return result
+
+### ds1000_numpy__case0336__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 336 (NumPy problem 45; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "8 8"]):
+    result = np.diag(np.fliplr(a))
+    return result
+
+### ds1000_numpy__case0337__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 337 (NumPy problem 46; Surface perturbation of problem 336).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "8 10"]):
+    result = np.diag(np.fliplr(a))
+    return result
+
+### ds1000_numpy__case0338__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 338 (NumPy problem 47; Semantic perturbation of problem 336).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "8 8"]):
+    result = np.vstack((np.diag(a), np.diag(np.fliplr(a))))
+    return result
+
+### ds1000_numpy__case0339__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 339 (NumPy problem 48; Difficult-Rewrite perturbation of problem 336).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "8 10"]):
+    dim = min(a.shape)
+    b = a[:dim,:dim]
+    result = np.vstack((np.diag(b), np.diag(np.fliplr(b))))
+    return result
+
+### ds1000_numpy__case0340__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 340 (NumPy problem 49; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(X: Integer[Array, "5 6"]):
+    result = []
+    for value in X.flat:
+        result.append(value)
+    return result
+
+### ds1000_numpy__case0341__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 341 (NumPy problem 50; Semantic perturbation of problem 340).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(X: Integer[Array, "5 6"]):
+    result = []
+    for value in X.flat:
+        result.append(value)
+    return result
+
+### ds1000_numpy__case0342__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 342 (NumPy problem 51; Surface perturbation of problem 340).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(X: Integer[Array, "5 6"]):
+    result = []
+    for value in X.flat:
+        result.append(value)
+
+
+    return result
+
+### ds1000_numpy__case0343__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 343 (NumPy problem 52; Difficult-Rewrite perturbation of problem 340).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(X: Integer[Array, "5 6"]):
+    result = []
+    for value in X.T.flat:
+        result.append(value)
+    return result
+
+### ds1000_numpy__case0345__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 345 (NumPy problem 54; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "8 6"], col: Integer, multiply_number: Float):
+    a[:, col-1] *= multiply_number
+    result = np.cumsum(a[:, col-1])
+    return result
+
+### ds1000_numpy__case0346__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 346 (NumPy problem 55; Semantic perturbation of problem 345).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "8 6"], row: Integer, multiply_number: Float):
+    a[row-1, :] *= multiply_number
+    result = np.cumsum(a[row-1, :])
+    return result
+
+### ds1000_numpy__case0347__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 347 (NumPy problem 56; Difficult-Rewrite perturbation of problem 345).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "8 6"], row: Integer, divide_number: Float):
+    a[row-1, :] /= divide_number
+    result = np.multiply.reduce(a[row-1, :])
+    return result
+
+### ds1000_numpy__case0349__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 349 (NumPy problem 58; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "8 6"]):
+    result = a.shape[1]
+    return result
+
+### ds1000_numpy__case0353__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 353 (NumPy problem 62; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 3, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(A: Integer[Array, "2 3"], B: Integer[Array, "7 3"]):
+    dims = np.maximum(B.max(0),A.max(0))+1
+    output = A[~np.in1d(np.ravel_multi_index(A.T,dims),np.ravel_multi_index(B.T,dims))]
+    return output
+
+### ds1000_numpy__case0355__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 355 (NumPy problem 64; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "3 3 3"], b: Integer[Array, "3 3 3"]):
+    sort_indices = np.argsort(a, axis=0)
+    static_indices = np.indices(a.shape)
+    c = b[sort_indices, static_indices[1], static_indices[2]]
+    return c
+
+### ds1000_numpy__case0356__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 356 (NumPy problem 65; Surface perturbation of problem 355).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "3 3 3"], b: Integer[Array, "3 3 3"]):
+    sort_indices = np.argsort(a, axis=0)
+    static_indices = np.indices(a.shape)
+    c = b[sort_indices, static_indices[1], static_indices[2]]
+    return c
+
+### ds1000_numpy__case0357__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 357 (NumPy problem 66; Semantic perturbation of problem 355).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "3 3 3"], b: Integer[Array, "3 3 3"]):
+    sort_indices = np.argsort(a, axis=0)[::-1, :, :]
+    static_indices = np.indices(a.shape)
+    c = b[sort_indices, static_indices[1], static_indices[2]]
+    return c
+
+### ds1000_numpy__case0358__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 358 (NumPy problem 67; Difficult-Rewrite perturbation of problem 355).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "3 3 3"], b: Integer[Array, "3 3 3"]):
+    index = np.argsort(a.sum(axis = (1, 2)))
+    result = b[index, :, :]
+    return result
+
+### ds1000_numpy__case0359__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 359 (NumPy problem 68; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "3 3"]):
+    a = np.delete(a, 2, axis = 1)
+    return a
+
+### ds1000_numpy__case0360__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 360 (NumPy problem 69; Semantic perturbation of problem 359).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "4 4"]):
+    a = np.delete(a, 2, axis = 0)
+    return a
+
+### ds1000_numpy__case0361__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 361 (NumPy problem 70; Difficult-Rewrite perturbation of problem 359).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "6 6"]):
+    temp = np.array([0, 2])
+    a = np.delete(a, temp, axis = 1)
+    return a
+
+### ds1000_numpy__case0363__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 363 (NumPy problem 72; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "100"], pos: Integer, element: Integer):
+    a = np.insert(a, pos, element)
+    return a
+
+### ds1000_numpy__case0364__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 364 (NumPy problem 73; Semantic perturbation of problem 363).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "100 10"], pos: Integer, element: Float[Array, "10"]):
+    a = np.insert(a, pos, element, axis = 0)
+    return a
+
+### ds1000_numpy__case0365__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 365 (NumPy problem 74; Surface perturbation of problem 363).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "100"], pos: Integer, element: Integer):
+    a = np.insert(a, pos, element)
+
+
+    return a
+
+### ds1000_numpy__case0368__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 368 (NumPy problem 77; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 5, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "3 3"]):
+    result = np.isclose(a, a[0], atol=0).all()
+    return result
+
+### ds1000_numpy__case0369__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 369 (NumPy problem 78; Semantic perturbation of problem 368).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 5, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "3 3"]):
+    result =np.isclose(a, a[:, 0].reshape(-1, 1), atol=0).all()
+    return result
+
+### ds1000_numpy__case0370__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 370 (NumPy problem 79; Surface perturbation of problem 368).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 5, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "3 3"]):
+    result = np.isclose(a, a[0], atol=0).all()
+
+    return result
+
+### ds1000_numpy__case0373__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 373 (NumPy problem 82; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_chip
+def ecdf_result(x):
+    xs = np.sort(x)
+    ys = np.arange(1, len(xs)+1)/float(len(xs))
+    return ys
+
+@zk_circuit
+def kernel(grades: Float[Array, "50"]):
+    result = ecdf_result(grades)
+    return result
+
+### ds1000_numpy__case0374__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 374 (NumPy problem 83; Difficult-Rewrite perturbation of problem 373).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_chip
+def ecdf_result(x):
+    xs = np.sort(x)
+    ys = np.arange(1, len(xs)+1)/float(len(xs))
+    return xs, ys
+
+@zk_circuit
+def kernel(grades: Float[Array, "50"], eval: Integer[Array, "5"]):
+    resultx, resulty = ecdf_result(grades)
+    result = np.zeros_like(eval, dtype=float)
+    for i, element in enumerate(eval):
+        if element < resultx[0]:
+            result[i] = 0
+        elif element >= resultx[-1]:
+            result[i] = 1
+        else:
+            result[i] = resulty[(resultx > element).argmax()-1]
+    return result
+
+### ds1000_numpy__case0375__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 375 (NumPy problem 84; Difficult-Rewrite perturbation of problem 373).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_chip
+def ecdf_result(x):
+    xs = np.sort(x)
+    ys = np.arange(1, len(xs)+1)/float(len(xs))
+    return xs, ys
+
+@zk_circuit
+def kernel(grades: Float[Array, "50"], threshold: Float):
+    resultx, resulty = ecdf_result(grades)
+    t = (resulty > threshold).argmax()
+    low = resultx[0]
+    high = resultx[t]
+    return [low, high]
+
+### ds1000_numpy__case0381__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 381 (NumPy problem 90; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "100"]):
+    result = np.argsort(a)[::-1][:len(a)]
+    return result
+
+### ds1000_numpy__case0382__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 382 (NumPy problem 91; Semantic perturbation of problem 381).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "100"]):
+    result = np.argsort(a)
+    return result
+
+### ds1000_numpy__case0383__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 383 (NumPy problem 92; Difficult-Rewrite perturbation of problem 381).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "100"], N: Integer):
+    result = np.argsort(a)[::-1][:N]
+    return result
+
+### ds1000_numpy__case0385__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 385 (NumPy problem 94; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "100 200"]):
+    result = a.reshape(a.shape[0]//2, 2, a.shape[1]//2, 2).swapaxes(1, 2).transpose(1, 0, 2, 3).reshape(-1, 2, 2)
+    return result
+
+### ds1000_numpy__case0386__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 386 (NumPy problem 95; Semantic perturbation of problem 385).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "100 200"]):
+    result = np.lib.stride_tricks.sliding_window_view(a, window_shape=(2,2)).reshape(-1, 2, 2)
+    return result
+
+### ds1000_numpy__case0387__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 387 (NumPy problem 96; Semantic perturbation of problem 385).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "100 200"]):
+    result = a.reshape(a.shape[0]//2, 2, a.shape[1]//2, 2).swapaxes(1, 2).reshape(-1, 2, 2)
+    return result
+
+### ds1000_numpy__case0389__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 389 (NumPy problem 98; Difficult-Rewrite perturbation of problem 385).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "6 3 4"], h: Integer, w: Integer):
+    n, nrows, ncols = a.shape
+    result = a.reshape(h//nrows, -1, nrows, ncols).swapaxes(1,2).reshape(h, w)
+    return result
+
+### ds1000_numpy__case0391__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 391 (NumPy problem 100; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "20 10"], low: Integer, high: Integer):
+    result = a[:, low:high]
+    return result
+
+### ds1000_numpy__case0392__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 392 (NumPy problem 101; Semantic perturbation of problem 391).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "20 10"], low: Integer, high: Integer):
+    result = a[low:high, :]
+    return result
+
+### ds1000_numpy__case0393__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 393 (NumPy problem 102; Difficult-Rewrite perturbation of problem 391).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "20 10"], low: Integer, high: Integer):
+    high = min(high, a.shape[1])
+    result = a[:, low:high]
+    return result
+
+### ds1000_numpy__case0398__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 398 (NumPy problem 107; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(A: Float[Array, "30"], a: Integer, b: Integer):
+    B = np.empty(len(A))
+    for k in range(0, len(B)):
+        if k == 0:
+            B[k] = a*A[k]
+        else:
+            B[k] = a*A[k] + b*B[k-1]
+    return B
+
+### ds1000_numpy__case0399__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 399 (NumPy problem 108; Difficult-Rewrite perturbation of problem 398).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(A: Float[Array, "30"], a: Integer, b: Integer, c: Integer):
+    B = np.empty(len(A))
+    for k in range(0, len(B)):
+        if k == 0:
+            B[k] = a*A[k]
+        elif k == 1:
+            B[k] = a*A[k] + b*B[k-1]
+        else:
+            B[k] = a*A[k] + b*B[k-1] + c*B[k-2]
+    return B
+
+### ds1000_numpy__case0400__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 400 (NumPy problem 109; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel():
+    result = np.array([])
+    return result
+
+### ds1000_numpy__case0401__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 401 (NumPy problem 110; Semantic perturbation of problem 400).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel():
+    result = np.array([[], [], []])
+    return result
+
+### ds1000_numpy__case0402__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 402 (NumPy problem 111; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(dims: Integer[Array, "5"], a: Float[Array, "8 9 8 8 8"], index: Integer[Array, "5"]):
+    result = np.ravel_multi_index(index, dims=dims, order='F')
+    return result
+
+### ds1000_numpy__case0403__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 403 (NumPy problem 112; Semantic perturbation of problem 402).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(dims: Integer[Array, "5"], a: Float[Array, "8 9 8 8 8"], index: Integer[Array, "5"]):
+    result = np.ravel_multi_index(index, dims=dims, order='C')
+    return result
+
+### ds1000_numpy__case0409__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 409 (NumPy problem 118; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(x: Float[Array, "8 6"], y: Float[Array, "8 6"]):
+    x_new = np.array(x)
+    y_new = np.array(y)
+    z = x_new + y_new
+    return z
+
+### ds1000_numpy__case0412__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 412 (NumPy problem 121; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(x: Float[Array, "10"]):
+    result = x[x >=0]
+    return result
+
+### ds1000_numpy__case0413__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 413 (NumPy problem 122; Semantic perturbation of problem 412).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(x: Complex[Array, "10"]):
+    result = x[x.imag !=0]
+    return result
+
+### ds1000_numpy__case0414__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 414 (NumPy problem 123; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(data: Float[Array, "8"], bin_size: Integer):
+    bin_data_mean = data[:(data.size // bin_size) * bin_size].reshape(-1, bin_size).mean(axis=1)
+    return bin_data_mean
+
+### ds1000_numpy__case0415__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 415 (NumPy problem 124; Semantic perturbation of problem 414).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(data: Float[Array, "8"], bin_size: Integer):
+    bin_data_max = data[:(data.size // bin_size) * bin_size].reshape(-1, bin_size).max(axis=1)
+    return bin_data_max
+
+### ds1000_numpy__case0416__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 416 (NumPy problem 125; Semantic perturbation of problem 414).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(data: Float[Array, "8 6"], bin_size: Integer):
+    bin_data_mean = data[:,:(data.shape[1] // bin_size) * bin_size].reshape(data.shape[0], -1, bin_size).mean(axis=-1)
+    return bin_data_mean
+
+### ds1000_numpy__case0417__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 417 (NumPy problem 126; Semantic perturbation of problem 414).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(data: Float[Array, "8"], bin_size: Integer):
+    new_data = data[::-1]
+    bin_data_mean = new_data[:(data.size // bin_size) * bin_size].reshape(-1, bin_size).mean(axis=1)
+    return bin_data_mean
+
+### ds1000_numpy__case0418__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 418 (NumPy problem 127; Difficult-Rewrite perturbation of problem 414).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(data: Float[Array, "8 6"], bin_size: Integer):
+    new_data = data[:, ::-1]
+    bin_data_mean = new_data[:,:(data.shape[1] // bin_size) * bin_size].reshape(data.shape[0], -1, bin_size).mean(axis=-1)
+    return bin_data_mean
+
+### ds1000_numpy__case0419__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 419 (NumPy problem 128; Difficult-Rewrite perturbation of problem 414).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(data: Float[Array, "8 6"], bin_size: Integer):
+    new_data = data[:, ::-1]
+    bin_data_mean = new_data[:,:(data.shape[1] // bin_size) * bin_size].reshape(data.shape[0], -1, bin_size).mean(axis=-1)[:,::-1]
+    return bin_data_mean
+
+### ds1000_numpy__case0420__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 420 (NumPy problem 129; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 3, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(x: Float, x_min: Integer, x_max: Integer):
+    return np.where(x < x_min, x_min, np.where(x > x_max, x_max, 3*x**2 - 2*x**3))
+
+### ds1000_numpy__case0422__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 422 (NumPy problem 131; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "50"], b: Float[Array, "50"]):
+    result = np.correlate(a, np.hstack((b[1:], b)), mode='valid')
+    return result
+
+### ds1000_numpy__case0428__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 428 (NumPy problem 137; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "30"]):
+    result = (a.mean()-3*a.std(), a.mean()+3*a.std())
+    return result
+
+### ds1000_numpy__case0429__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 429 (NumPy problem 138; Semantic perturbation of problem 428).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "30"]):
+    result = (a.mean()-2*a.std(), a.mean()+2*a.std())
+    return result
+
+### ds1000_numpy__case0430__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 430 (NumPy problem 139; Surface perturbation of problem 428).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "30"]):
+    result = (a.mean()-3*a.std(), a.mean()+3*a.std())
+
+    return result
+
+### ds1000_numpy__case0431__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 431 (NumPy problem 140; Difficult-Rewrite perturbation of problem 428).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 3, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "8"]):
+    interval = (a.mean()-2*a.std(), a.mean()+2*a.std())
+    result = ~np.logical_and(a>interval[0], a<interval[1])
+    return result
+
+### ds1000_numpy__case0433__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 433 (NumPy problem 142; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Integer[Array, "4 4"], zero_rows: Integer, zero_cols: Integer):
+    a[zero_rows, :] = 0
+    a[:, zero_cols] = 0
+    return a
+
+### ds1000_numpy__case0434__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 434 (NumPy problem 143; Semantic perturbation of problem 433).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Integer[Array, "4 4"], zero_rows: Integer[Array, "2"], zero_cols: Integer[Array, "2"]):
+    a[zero_rows, :] = 0
+    a[:, zero_cols] = 0
+    return a
+
+### ds1000_numpy__case0435__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 435 (NumPy problem 144; Semantic perturbation of problem 433).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Integer[Array, "4 4"]):
+    a[1, :] = 0
+    a[:, 0] = 0
+    return a
+
+### ds1000_numpy__case0436__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 436 (NumPy problem 145; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "10 5"]):
+    mask = (a.max(axis=1,keepdims=1) == a)
+    return mask
+
+### ds1000_numpy__case0437__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 437 (NumPy problem 146; Semantic perturbation of problem 436).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "10 5"]):
+    mask = (a.min(axis=1,keepdims=1) == a)
+    return mask
+
+### ds1000_numpy__case0438__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 438 (NumPy problem 147; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(post: Integer[Array, "4"], distance: Integer[Array, "4"]):
+    result = np.corrcoef(post, distance)[0][1]
+    return result
+
+### ds1000_numpy__case0439__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 439 (NumPy problem 148; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(X: Float[Array, "10 20"]):
+    result = X.T[:, :, None] * X.T[:, None]
+    return result
+
+### ds1000_numpy__case0440__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 440 (NumPy problem 149; Difficult-Rewrite perturbation of problem 439).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(Y: Float[Array, "10 5 5"]):
+    X = np.zeros([Y.shape[1], Y.shape[0]])
+    for i, mat in enumerate(Y):
+        diag = np.sqrt(np.diag(mat))
+        X[:, i] += diag
+    return X
+
+### ds1000_numpy__case0441__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 441 (NumPy problem 150; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 3, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Integer[Array, "4"], number: Integer):
+    is_contained = number in a
+    return is_contained
+
+### ds1000_numpy__case0442__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 442 (NumPy problem 151; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(A: Integer[Array, "20"], B: Integer[Array, "3"]):
+    C = A[~np.in1d(A,B)]
+    return C
+
+### ds1000_numpy__case0443__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 443 (NumPy problem 152; Semantic perturbation of problem 442).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(A: Integer[Array, "20"], B: Integer[Array, "3"]):
+    C = A[np.in1d(A,B)]
+    return C
+
+### ds1000_numpy__case0444__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 444 (NumPy problem 153; Difficult-Rewrite perturbation of problem 442).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 3, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(A: Integer[Array, "20"], B: Integer[Array, "3"]):
+    C = A[np.logical_and(A > B[0], A < B[1]) | np.logical_and(A > B[1], A < B[2])]
+    return C
+
+### ds1000_numpy__case0448__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 448 (NumPy problem 157; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(x_dists: Float[Array, "3 4"], y_dists: Float[Array, "3 4"]):
+    dists = np.vstack(([x_dists.T], [y_dists.T])).T
+    return dists
+
+### ds1000_numpy__case0449__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 449 (NumPy problem 158; Surface perturbation of problem 448).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(x_dists: Float[Array, "3 4"], y_dists: Float[Array, "3 4"]):
+    dists = np.vstack(([x_dists.T], [y_dists.T])).T
+    return dists
+
+### ds1000_numpy__case0450__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 450 (NumPy problem 159; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "7 8 9"], second: Integer[Array, "2"], third: Integer[Array, "2"]):
+    result = a[:, np.array(second).reshape(-1,1), third]
+    return result
+
+### ds1000_numpy__case0451__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 451 (NumPy problem 160; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel():
+    arr = np.zeros((20,10,10,2))
+    return arr
+
+### ds1000_numpy__case0452__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 452 (NumPy problem 161; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(X: Integer[Array, "5 4"]):
+    l1 = np.abs(X).sum(axis = 1)
+    result = X / l1.reshape(-1, 1)
+    return result
+
+### ds1000_numpy__case0453__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 453 (NumPy problem 162; Semantic perturbation of problem 452).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(X: Integer[Array, "5 4"]):
+    l2 = np.sqrt((X*X).sum(axis=-1))
+    result = X / l2.reshape(-1, 1)
+    return result
+
+### ds1000_numpy__case0454__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 454 (NumPy problem 163; Semantic perturbation of problem 452).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(X: Integer[Array, "5 4"]):
+    linf = np.abs(X).max(axis = 1)
+    result = X / linf.reshape(-1, 1)
+    return result
+
+### ds1000_numpy__case0456__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 456 (NumPy problem 165; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "8 3"]):
+    result = np.linalg.norm(a - a[:, None], axis = -1)
+    return result
+
+### ds1000_numpy__case0457__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 457 (NumPy problem 166; Surface perturbation of problem 456).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(dim: Integer, a: Float[Array, "8 6"]):
+    result = np.linalg.norm(a - a[:, None], axis = -1)
+    return result
+
+### ds1000_numpy__case0458__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 458 (NumPy problem 167; Semantic perturbation of problem 456).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(dim: Integer, a: Float[Array, "8 6"]):
+    result = np.triu(np.linalg.norm(a - a[:, None], axis = -1))
+    return result
+
+### ds1000_numpy__case0462__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 462 (NumPy problem 171; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Integer[Array, "20"]):
+    selection = np.ones(len(a), dtype = bool)
+    selection[1:] = a[1:] != a[:-1]
+    selection &= a != 0
+    result = a[selection]
+    return result
+
+### ds1000_numpy__case0463__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 463 (NumPy problem 172; Semantic perturbation of problem 462).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Integer[Array, "20 1"]):
+    selection = np.ones((len(a), 1), dtype = bool)
+    selection[1:] = a[1:] != a[:-1]
+    selection &= a != 0
+    result = a[selection].reshape(-1, 1)
+    return result
+
+### ds1000_numpy__case0467__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 467 (NumPy problem 176; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_chip
+def window(arr, shape=(3, 3)):
+    ans = []
+    # Find row and column window sizes
+    r_win = np.floor(shape[0] / 2).astype(int)
+    c_win = np.floor(shape[1] / 2).astype(int)
+    x, y = arr.shape
+    for i in range(x):
+        xmin = max(0, i - r_win)
+        xmax = min(x, i + r_win + 1)
+        for j in range(y):
+            ymin = max(0, j - c_win)
+            ymax = min(y, j + c_win + 1)
+            ans.append(arr[xmin:xmax, ymin:ymax])
+    return ans
+
+@zk_circuit
+def kernel(a: Integer[Array, "4 4"], size: Integer[Array, "2"]):
+    result = window(a, size)
+    return result
+
+### ds1000_numpy__case0468__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 468 (NumPy problem 177; Semantic perturbation of problem 467).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_chip
+def window(arr, shape=(3, 3)):
+    ans = []
+    # Find row and column window sizes
+    r_win = np.floor(shape[0] / 2).astype(int)
+    c_win = np.floor(shape[1] / 2).astype(int)
+    x, y = arr.shape
+    for j in range(y):
+        ymin = max(0, j - c_win)
+        ymax = min(y, j + c_win + 1)
+        for i in range(x):
+            xmin = max(0, i - r_win)
+            xmax = min(x, i + r_win + 1)
+
+            ans.append(arr[xmin:xmax, ymin:ymax])
+    return ans
+
+@zk_circuit
+def kernel(a: Integer[Array, "4 4"], size: Integer[Array, "2"]):
+    result = window(a, size)
+    return result
+
+### ds1000_numpy__case0471__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 471 (NumPy problem 180; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(Z: Float[Array, "6 2 9 3 7 4"]):
+    result = Z[..., -1:]
+    return result
+
+### ds1000_numpy__case0472__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 472 (NumPy problem 181; Semantic perturbation of problem 471).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "6 2 9 3 7 4"]):
+    result = a[-1:,...]
+    return result
+
+### ds1000_numpy__case0477__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 477 (NumPy problem 186; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(i: Float[Array, "4"]):
+    i = np.diag(i)
+    return i
+
+### ds1000_numpy__case0478__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 478 (NumPy problem 187; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Integer[Array, "4 4"]):
+    result = np.einsum('ii->i', a)
+    save = result.copy()
+    a[...] = 0
+    result[...] = save
+    return a
+
+### ds1000_numpy__case0480__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 480 (NumPy problem 189; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(x: Integer[Array, "8"], y: Integer[Array, "8"], a: Integer, b: Integer):
+    result = ((x == a) & (y == b)).argmax()
+    if x[result] != a or y[result] != b:
+        result = -1
+    return result
+
+### ds1000_numpy__case0481__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 481 (NumPy problem 190; Semantic perturbation of problem 480).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 3, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(x: Integer[Array, "9"], y: Integer[Array, "9"], a: Integer, b: Integer):
+    idx_list = ((x == a) & (y == b))
+    result = idx_list.nonzero()[0]
+    return result
+
+### ds1000_numpy__case0485__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 485 (NumPy problem 194; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(A: Float[Array, "5 6 3"], B: Float[Array, "3 3"]):
+    result = np.tensordot(A,B,axes=((2),(0)))
+    return result
+
+### ds1000_numpy__case0490__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 490 (NumPy problem 199; Semantic perturbation of problem 489).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(arr: Float[Array, "5 50"], n1: Integer[Array, "5"], n2: Integer[Array, "5"]):
+    for a, t1, t2 in zip(arr, n1, n2):
+        temp = a.copy()
+        a[np.where(temp < t1)] = 0
+        a[np.where(temp >= t2)] = 30
+        a[np.logical_and(temp >= t1, temp < t2)] += 5
+    return arr
+
+### ds1000_numpy__case0491__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 491 (NumPy problem 200; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(s1: Float[Array, "6 1"], s2: Float[Array, "6 1"]):
+    result = (~np.isclose(s1,s2)).sum()
+    return result
+
+### ds1000_numpy__case0500__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 500 (NumPy problem 209; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "54"]):
+    a = a.reshape(-1, 3)
+    return a
+
+### ds1000_numpy__case0501__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 501 (NumPy problem 210; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "13 13 2"], b: Integer[Array, "13 13"]):
+    result = np.take_along_axis(a, b[..., np.newaxis], axis=-1)[..., 0]
+    return result
+
+### ds1000_numpy__case0502__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 502 (NumPy problem 211; Surface perturbation of problem 501).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "13 13 2"], b: Integer[Array, "13 13"]):
+    result = np.take_along_axis(a, b[..., np.newaxis], axis=-1)[..., 0]
+    return result
+
+### ds1000_numpy__case0503__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 503 (NumPy problem 212; Semantic perturbation of problem 501).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "13 13 5"], b: Integer[Array, "13 13"]):
+    result = np.take_along_axis(a, b[..., np.newaxis], axis=-1)[..., 0]
+    return result
+
+### ds1000_numpy__case0504__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 504 (NumPy problem 213; Difficult-Rewrite perturbation of problem 501).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "13 13 5"], b: Integer[Array, "13 13"]):
+    arr = np.take_along_axis(a, b[..., np.newaxis], axis=-1)[..., 0]
+    result = np.sum(arr)
+    return result
+
+### ds1000_numpy__case0505__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 505 (NumPy problem 214; Difficult-Rewrite perturbation of problem 501).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(a: Float[Array, "13 13 5"], b: Integer[Array, "13 13"]):
+    arr = np.take_along_axis(a, b[..., np.newaxis], axis=-1)[..., 0]
+    result = np.sum(a) - np.sum(arr)
+    return result
+
+### ds1000_numpy__case0507__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 507 (NumPy problem 216; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(im: Integer[Array, "5 6"]):
+    mask = im == 0
+    rows = np.flatnonzero((~mask).sum(axis=1))
+    cols = np.flatnonzero((~mask).sum(axis=0))
+    if rows.shape[0] == 0:
+        result = np.array([])
+    else:
+        result = im[rows.min():rows.max()+1, cols.min():cols.max()+1]
+    return result
+
+### ds1000_numpy__case0508__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 508 (NumPy problem 217; Surface perturbation of problem 507).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(A: Integer[Array, "10 10"]):
+    B = np.argwhere(A)
+    (ystart, xstart), (ystop, xstop) = B.min(0), B.max(0) + 1
+    result = A[ystart:ystop, xstart:xstop]
+    return result
+
+### ds1000_numpy__case0509__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 509 (NumPy problem 218; Difficult-Rewrite perturbation of problem 507).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 3, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(im: Float[Array, "10 10"]):
+    mask = im == 0
+    rows = np.flatnonzero((mask).sum(axis=1))
+    cols = np.flatnonzero((mask).sum(axis=0))
+
+    if rows.shape[0] == 0:
+        result = np.array([])
+    else:
+        result = im[rows.min():rows.max()+1, cols.min():cols.max()+1]
+    return result
+
+### ds1000_numpy__case0510__kernel
+from zinnia import *
+import numpy as np
+
+# DS-1000 problem 510 (NumPy problem 219; Difficult-Rewrite perturbation of problem 507).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 3, each dtype wide enough for every DS-1000 test input.
+
+@zk_circuit
+def kernel(im: Float[Array, "10 10"]):
+    mask = im == 0
+    rows = np.flatnonzero((~mask).sum(axis=1))
+    cols = np.flatnonzero((~mask).sum(axis=0))
+    if rows.shape[0] == 0:
+        result = np.array([])
+    else:
+        result = im[rows.min():rows.max()+1, cols.min():cols.max()+1]
+    return result
+
+### npbench__npbench_compute_compute__compute
+# npbench program compute/compute_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def compute(array_1: Integer[Array, '16 16'], array_2: Integer[Array, '16 16'], a: Integer, b: Integer, c: Integer):
+    return np.clip(array_1, 2, 10) * a + array_2 * b + c
+
+### npbench__npbench_crc16_crc16__crc16
+# npbench program crc16/crc16_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def crc16(data: Integer[Array, '16'], poly: Integer=33800):
+    """
+    CRC-16-CCITT Algorithm
+    """
+    crc = 65535
+    for b in data:
+        cur_byte = 255 & b
+        for _ in range(0, 8):
+            if crc & 1 ^ cur_byte & 1:
+                crc = crc >> 1 ^ poly
+            else:
+                crc >>= 1
+            cur_byte >>= 1
+    crc = ~crc & 65535
+    crc = crc << 8 | crc >> 8 & 255
+    return crc & 65535
+
+### npbench__npbench_deep_learning_conv2d_bias_conv2d__conv2d_bias
+# npbench program deep_learning/conv2d_bias/conv2d_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_chip
+def conv2d(input, weights):
+    K = weights.shape[0]
+    N = input.shape[0]
+    H_out = input.shape[1] - K + 1
+    W_out = input.shape[2] - K + 1
+    C_out = weights.shape[3]
+    output = np.empty((N, H_out, W_out, C_out), dtype=np.float32)
+    for i in range(H_out):
+        for j in range(W_out):
+            output[:, i, j, :] = np.sum(input[:, i:i + K, j:j + K, :, np.newaxis] * weights[np.newaxis, :, :, :], axis=(1, 2, 3))
+    return output
+
+@zk_circuit
+def conv2d_bias(input: Float[Array, '4 16 16 2'], weights: Float[Array, '2 2 2 8'], bias: Float[Array, '8']):
+    return conv2d(input, weights) + bias
+
+### npbench__npbench_deep_learning_mlp_mlp__mlp
+# npbench program deep_learning/mlp/mlp_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_chip
+def relu(x):
+    return np.maximum(x, 0)
+
+@zk_chip
+def softmax(x):
+    tmp_max = np.max(x, axis=-1, keepdims=True)
+    tmp_out = np.exp(x - tmp_max)
+    tmp_sum = np.sum(tmp_out, axis=-1, keepdims=True)
+    return tmp_out / tmp_sum
+
+@zk_circuit
+def mlp(input: Float[Array, '2 2'], w1: Float[Array, '2 16'], b1: Float[Array, '16'], w2: Float[Array, '16 2'], b2: Float[Array, '2'], w3: Float[Array, '2 2'], b3: Float[Array, '2']):
+    x = relu(input @ w1 + b1)
+    x = relu(x @ w2 + b2)
+    x = softmax(x @ w3 + b3)
+    return x
+
+### npbench__npbench_deep_learning_resnet_resnet__resnet_basicblock
+# npbench program deep_learning/resnet/resnet_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_chip
+def relu(x):
+    return np.maximum(x, 0)
+
+@zk_chip
+def conv2d(input, weights):
+    K = weights.shape[0]
+    N = input.shape[0]
+    H_out = input.shape[1] - K + 1
+    W_out = input.shape[2] - K + 1
+    C_out = weights.shape[3]
+    output = np.empty((N, H_out, W_out, C_out), dtype=np.float32)
+    for i in range(H_out):
+        for j in range(W_out):
+            output[:, i, j, :] = np.sum(input[:, i:i + K, j:j + K, :, np.newaxis] * weights[np.newaxis, :, :, :], axis=(1, 2, 3))
+    return output
+
+@zk_chip
+def batchnorm2d(x, eps=1e-05):
+    mean = np.mean(x, axis=0, keepdims=True)
+    std = np.std(x, axis=0, keepdims=True)
+    return (x - mean) / np.sqrt(std + eps)
+
+@zk_circuit
+def resnet_basicblock(input: Float[Array, '4 7 7 16'], conv1: Float[Array, '1 1 16 4'], conv2: Float[Array, '3 3 4 4'], conv3: Float[Array, '1 1 4 16']):
+    padded = np.zeros((input.shape[0], input.shape[1] + 2, input.shape[2] + 2, conv1.shape[3]))
+    padded[:, 1:-1, 1:-1, :] = conv2d(input, conv1)
+    x = batchnorm2d(padded)
+    x = relu(x)
+    x = conv2d(x, conv2)
+    x = batchnorm2d(x)
+    x = relu(x)
+    x = conv2d(x, conv3)
+    x = batchnorm2d(x)
+    return relu(x + input)
+
+### npbench__npbench_deep_learning_softmax_softmax__softmax
+# npbench program deep_learning/softmax/softmax_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def softmax(x: Float[Array, '2 2 16 16']):
+    tmp_max = np.max(x, axis=-1, keepdims=True)
+    tmp_out = np.exp(x - tmp_max)
+    tmp_sum = np.sum(tmp_out, axis=-1, keepdims=True)
+    return tmp_out / tmp_sum
+
+### npbench__npbench_go_fast_go_fast__go_fast
+# npbench program go_fast/go_fast_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def go_fast(a: Float[Array, '16 16']):
+    trace = 0.0
+    for i in range(a.shape[0]):
+        trace += np.tanh(a[i, i])
+    return a + trace
+
+### npbench__npbench_polybench_atax_atax__kernel
+# npbench program polybench/atax/atax_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def kernel(A: Float[Array, '13 16'], x: Float[Array, '16']):
+    return A @ x @ A
+
+### npbench__npbench_polybench_bicg_bicg__kernel
+# npbench program polybench/bicg/bicg_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def kernel(A: Float[Array, '16 13'], p: Float[Array, '13'], r: Float[Array, '16']):
+    return (r @ A, A @ p)
+
+### npbench__npbench_polybench_cholesky_cholesky__kernel
+# npbench program polybench/cholesky/cholesky_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def kernel(A: Float[Array, '15 15']):
+    A[0, 0] = np.sqrt(A[0, 0])
+    for i in range(1, A.shape[0]):
+        for j in range(i):
+            A[i, j] -= np.dot(A[i, :j], A[j, :j])
+            A[i, j] /= A[j, j]
+        A[i, i] -= np.dot(A[i, :i], A[i, :i])
+        A[i, i] = np.sqrt(A[i, i])
+
+### npbench__npbench_polybench_covariance2_covariance2__kernel
+# npbench program polybench/covariance2/covariance2_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+@requires(lambda M, float_n, data: 0 <= M <= 1024)
+def kernel(M: Integer, float_n: Float, data: Float[Array, '16 14']):
+    return np.cov(np.transpose(data))
+
+### npbench__npbench_polybench_deriche_deriche__kernel
+# npbench program polybench/deriche/deriche_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def kernel(alpha: Float, imgIn: Float[Array, '16 8']):
+    k = (1.0 - np.exp(-alpha)) * (1.0 - np.exp(-alpha)) / (1.0 + alpha * np.exp(-alpha) - np.exp(2.0 * alpha))
+    a1 = a5 = k
+    a2 = a6 = k * np.exp(-alpha) * (alpha - 1.0)
+    a3 = a7 = k * np.exp(-alpha) * (alpha + 1.0)
+    a4 = a8 = -k * np.exp(-2.0 * alpha)
+    b1 = 2.0 ** (-alpha)
+    b2 = -np.exp(-2.0 * alpha)
+    c1 = c2 = 1
+    y1 = np.empty_like(imgIn)
+    y1[:, 0] = a1 * imgIn[:, 0]
+    y1[:, 1] = a1 * imgIn[:, 1] + a2 * imgIn[:, 0] + b1 * y1[:, 0]
+    for j in range(2, imgIn.shape[1]):
+        y1[:, j] = a1 * imgIn[:, j] + a2 * imgIn[:, j - 1] + b1 * y1[:, j - 1] + b2 * y1[:, j - 2]
+    y2 = np.empty_like(imgIn)
+    y2[:, -1] = 0.0
+    y2[:, -2] = a3 * imgIn[:, -1]
+    for j in range(imgIn.shape[1] - 3, -1, -1):
+        y2[:, j] = a3 * imgIn[:, j + 1] + a4 * imgIn[:, j + 2] + b1 * y2[:, j + 1] + b2 * y2[:, j + 2]
+    imgOut = c1 * (y1 + y2)
+    y1[0, :] = a5 * imgOut[0, :]
+    y1[1, :] = a5 * imgOut[1, :] + a6 * imgOut[0, :] + b1 * y1[0, :]
+    for i in range(2, imgIn.shape[0]):
+        y1[i, :] = a5 * imgOut[i, :] + a6 * imgOut[i - 1, :] + b1 * y1[i - 1, :] + b2 * y1[i - 2, :]
+    y2[-1, :] = 0.0
+    y2[-2, :] = a7 * imgOut[-1, :]
+    for i in range(imgIn.shape[0] - 3, -1, -1):
+        y2[i, :] = a7 * imgOut[i + 1, :] + a8 * imgOut[i + 2, :] + b1 * y2[i + 1, :] + b2 * y2[i + 2, :]
+    imgOut[:] = c2 * (y1 + y2)
+    return imgOut
+
+### npbench__npbench_polybench_durbin_durbin__kernel
+# npbench program polybench/durbin/durbin_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def kernel(r: Float[Array, '16']):
+    y = np.empty_like(r)
+    alpha = -r[0]
+    beta = 1.0
+    y[0] = -r[0]
+    for k in range(1, r.shape[0]):
+        beta *= 1.0 - alpha * alpha
+        alpha = -(r[k] + np.dot(np.flip(r[:k]), y[:k])) / beta
+        y[:k] += alpha * np.flip(y[:k])
+        y[k] = alpha
+    return y
+
+### npbench__npbench_polybench_floyd_warshall_floyd_warshall__kernel
+# npbench program polybench/floyd_warshall/floyd_warshall_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def kernel(path: Integer[Array, '16 16']):
+    for k in range(path.shape[0]):
+        path[:] = np.minimum(path[:], np.add.outer(path[:, k], path[k, :]))
+
+### npbench__npbench_polybench_gemm_gemm__kernel
+# npbench program polybench/gemm/gemm_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def kernel(alpha: Float, beta: Float, C: Float[Array, '14 15'], A: Float[Array, '14 16'], B: Float[Array, '16 15']):
+    C[:] = alpha * A @ B + beta * C
+
+### npbench__npbench_polybench_gemver_gemver__kernel
+# npbench program polybench/gemver/gemver_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def kernel(alpha: Float, beta: Float, A: Float[Array, '16 16'], u1: Float[Array, '16'], v1: Float[Array, '16'], u2: Float[Array, '16'], v2: Float[Array, '16'], w: Float[Array, '16'], x: Float[Array, '16'], y: Float[Array, '16'], z: Float[Array, '16']):
+    A += np.outer(u1, v1) + np.outer(u2, v2)
+    x += beta * y @ A + z
+    w += alpha * A @ x
+
+### npbench__npbench_polybench_gesummv_gesummv__kernel
+# npbench program polybench/gesummv/gesummv_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def kernel(alpha: Float, beta: Float, A: Float[Array, '16 16'], B: Float[Array, '16 16'], x: Float[Array, '16']):
+    return alpha * A @ x + beta * B @ x
+
+### npbench__npbench_polybench_gramschmidt_gramschmidt__kernel
+# npbench program polybench/gramschmidt/gramschmidt_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def kernel(A: Float[Array, '14 12']):
+    Q = np.zeros_like(A)
+    R = np.zeros((A.shape[1], A.shape[1]), dtype=A.dtype)
+    for k in range(A.shape[1]):
+        nrm = np.dot(A[:, k], A[:, k])
+        R[k, k] = np.sqrt(nrm)
+        Q[:, k] = A[:, k] / R[k, k]
+        for j in range(k + 1, A.shape[1]):
+            R[k, j] = np.dot(Q[:, k], A[:, j])
+            A[:, j] -= Q[:, k] * R[k, j]
+    return (Q, R)
+
+### npbench__npbench_polybench_k2mm_k2mm__kernel
+# npbench program polybench/k2mm/k2mm_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def kernel(alpha: Float, beta: Float, A: Float[Array, '14 15'], B: Float[Array, '15 15'], C: Float[Array, '15 16'], D: Float[Array, '14 16']):
+    D[:] = alpha * A @ B @ C + beta * D
+
+### npbench__npbench_polybench_k3mm_k3mm__kernel
+# npbench program polybench/k3mm/k3mm_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def kernel(A: Float[Array, '13 15'], B: Float[Array, '15 14'], C: Float[Array, '14 16'], D: Float[Array, '16 16']):
+    return A @ B @ C @ D
+
+### npbench__npbench_polybench_lu_lu__kernel
+# npbench program polybench/lu/lu_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def kernel(A: Float[Array, '15 15']):
+    for i in range(A.shape[0]):
+        for j in range(i):
+            A[i, j] -= A[i, :j] @ A[:j, j]
+            A[i, j] /= A[j, j]
+        for j in range(i, A.shape[0]):
+            A[i, j] -= A[i, :i] @ A[:i, j]
+
+### npbench__npbench_polybench_ludcmp_ludcmp__kernel
+# npbench program polybench/ludcmp/ludcmp_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def kernel(A: Float[Array, '15 15'], b: Float[Array, '15']):
+    x = np.zeros_like(b)
+    y = np.zeros_like(b)
+    for i in range(A.shape[0]):
+        for j in range(i):
+            A[i, j] -= A[i, :j] @ A[:j, j]
+            A[i, j] /= A[j, j]
+        for j in range(i, A.shape[0]):
+            A[i, j] -= A[i, :i] @ A[:i, j]
+    for i in range(A.shape[0]):
+        y[i] = b[i] - A[i, :i] @ y[:i]
+    for i in range(A.shape[0] - 1, -1, -1):
+        x[i] = (y[i] - A[i, i + 1:] @ x[i + 1:]) / A[i, i]
+    return (x, y)
+
+### npbench__npbench_polybench_mvt_mvt__kernel
+# npbench program polybench/mvt/mvt_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def kernel(x1: Float[Array, '16'], x2: Float[Array, '16'], y_1: Float[Array, '16'], y_2: Float[Array, '16'], A: Float[Array, '16 16']):
+    x1 += A @ y_1
+    x2 += y_2 @ A
+
+### npbench__npbench_polybench_symm_symm__kernel
+# npbench program polybench/symm/symm_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def kernel(alpha: Float, beta: Float, C: Float[Array, '10 13'], A: Float[Array, '10 10'], B: Float[Array, '10 13']):
+    temp2 = np.empty((C.shape[1],), dtype=C.dtype)
+    C *= beta
+    for i in range(C.shape[0]):
+        for j in range(C.shape[1]):
+            C[:i, j] += alpha * B[i, j] * A[i, :i]
+            temp2[j] = B[:i, j] @ A[i, :i]
+        C[i, :] += alpha * B[i, :] * A[i, i] + alpha * temp2
+
+### npbench__npbench_polybench_syr2k_syr2k__kernel
+# npbench program polybench/syr2k/syr2k_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def kernel(alpha: Float, beta: Float, C: Float[Array, '13 13'], A: Float[Array, '13 9'], B: Float[Array, '13 9']):
+    for i in range(A.shape[0]):
+        C[i, :i + 1] *= beta
+        for k in range(A.shape[1]):
+            C[i, :i + 1] += A[:i + 1, k] * alpha * B[i, k] + B[:i + 1, k] * alpha * A[i, k]
+
+### npbench__npbench_polybench_syrk_syrk__kernel
+# npbench program polybench/syrk/syrk_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def kernel(alpha: Float, beta: Float, C: Float[Array, '14 14'], A: Float[Array, '14 10']):
+    for i in range(A.shape[0]):
+        C[i, :i + 1] *= beta
+        for k in range(A.shape[1]):
+            C[i, :i + 1] += alpha * A[i, k] * A[:i + 1, k]
+
+### npbench__npbench_polybench_trisolv_trisolv__kernel
+# npbench program polybench/trisolv/trisolv_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def kernel(L: Float[Array, '16 16'], x: Float[Array, '16'], b: Float[Array, '16']):
+    for i in range(x.shape[0]):
+        x[i] = (b[i] - L[i, :i] @ x[:i]) / L[i, i]
+
+### npbench__npbench_polybench_trmm_trmm__kernel
+# npbench program polybench/trmm/trmm_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def kernel(alpha: Float, A: Float[Array, '13 13'], B: Float[Array, '13 16']):
+    for i in range(B.shape[0]):
+        for j in range(B.shape[1]):
+            B[i, j] += np.dot(A[i + 1:, i], B[i + 1:, j])
+    B *= alpha
+
+### npbench__npbench_pythran_arc_distance_arc_distance__arc_distance
+# npbench program pythran/arc_distance/arc_distance_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def arc_distance(theta_1: Float[Array, '16'], phi_1: Float[Array, '16'], theta_2: Float[Array, '16'], phi_2: Float[Array, '16']):
+    """
+    Calculates the pairwise arc distance between all points in vector a and b.
+    """
+    temp = np.sin((theta_2 - theta_1) / 2) ** 2 + np.cos(theta_1) * np.cos(theta_2) * np.sin((phi_2 - phi_1) / 2) ** 2
+    distance_matrix = 2 * np.arctan2(np.sqrt(temp), np.sqrt(1 - temp))
+    return distance_matrix
+
+### npbench__npbench_scattering_self_energies_scattering_self_energies__scattering_self_energies
+# npbench program scattering_self_energies/scattering_self_energies_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def scattering_self_energies(neigh_idx: Integer[Array, '6 2'], dH: Complex[Array, '6 2 2 3 3'], G: Complex[Array, '2 4 6 3 3'], D: Complex[Array, '2 2 6 2 2 2'], Sigma: Complex[Array, '2 4 6 3 3']):
+    for k in range(G.shape[0]):
+        for E in range(G.shape[1]):
+            for q in range(D.shape[0]):
+                for w in range(D.shape[1]):
+                    for i in range(D.shape[-2]):
+                        for j in range(D.shape[-1]):
+                            for a in range(neigh_idx.shape[0]):
+                                for b in range(neigh_idx.shape[1]):
+                                    if E - w >= 0:
+                                        dHG = G[k, E - w, neigh_idx[a, b]] @ dH[a, b, i]
+                                        dHD = dH[a, b, j] * D[q, w, a, b, i, j]
+                                        Sigma[k, E, a] += dHG @ dHD
+
+### npbench__npbench_weather_stencils_hdiff_hdiff__hdiff
+# npbench program weather_stencils/hdiff/hdiff_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def hdiff(in_field: Float[Array, '15 15 10'], out_field: Float[Array, '11 11 10'], coeff: Float[Array, '11 11 10']):
+    I, J, K = (out_field.shape[0], out_field.shape[1], out_field.shape[2])
+    lap_field = 4.0 * in_field[1:I + 3, 1:J + 3, :] - (in_field[2:I + 4, 1:J + 3, :] + in_field[0:I + 2, 1:J + 3, :] + in_field[1:I + 3, 2:J + 4, :] + in_field[1:I + 3, 0:J + 2, :])
+    res = lap_field[1:, 1:J + 1, :] - lap_field[:-1, 1:J + 1, :]
+    flx_field = np.where(res * (in_field[2:I + 3, 2:J + 2, :] - in_field[1:I + 2, 2:J + 2, :]) > 0, 0, res)
+    res = lap_field[1:I + 1, 1:, :] - lap_field[1:I + 1, :-1, :]
+    fly_field = np.where(res * (in_field[2:I + 2, 2:J + 3, :] - in_field[2:I + 2, 1:J + 2, :]) > 0, 0, res)
+    out_field[:, :, :] = in_field[2:I + 2, 2:J + 2, :] - coeff[:, :, :] * (flx_field[1:, :, :] - flx_field[:-1, :, :] + fly_field[:, 1:, :] - fly_field[:, :-1, :])
+
+### npbench__npbench_weather_stencils_vadv_vadv__vadv
+# npbench program weather_stencils/vadv/vadv_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+BET_M = 0.5
+BET_P = 0.5
+
+@zk_circuit
+def vadv(utens_stage: Float[Array, '15 15 10'], u_stage: Float[Array, '15 15 10'], wcon: Float[Array, '16 15 10'], u_pos: Float[Array, '15 15 10'], utens: Float[Array, '15 15 10'], dtr_stage: Float):
+    I, J, K = (utens_stage.shape[0], utens_stage.shape[1], utens_stage.shape[2])
+    ccol = np.ndarray((I, J, K), dtype=utens_stage.dtype)
+    dcol = np.ndarray((I, J, K), dtype=utens_stage.dtype)
+    data_col = np.ndarray((I, J), dtype=utens_stage.dtype)
+    for k in range(1):
+        gcv = 0.25 * (wcon[1:, :, k + 1] + wcon[:-1, :, k + 1])
+        cs = gcv * BET_M
+        ccol[:, :, k] = gcv * BET_P
+        bcol = dtr_stage - ccol[:, :, k]
+        correction_term = -cs * (u_stage[:, :, k + 1] - u_stage[:, :, k])
+        dcol[:, :, k] = dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term
+        divided = 1.0 / bcol
+        ccol[:, :, k] = ccol[:, :, k] * divided
+        dcol[:, :, k] = dcol[:, :, k] * divided
+    for k in range(1, K - 1):
+        gav = -0.25 * (wcon[1:, :, k] + wcon[:-1, :, k])
+        gcv = 0.25 * (wcon[1:, :, k + 1] + wcon[:-1, :, k + 1])
+        as_ = gav * BET_M
+        cs = gcv * BET_M
+        acol = gav * BET_P
+        ccol[:, :, k] = gcv * BET_P
+        bcol = dtr_stage - acol - ccol[:, :, k]
+        correction_term = -as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k]) - cs * (u_stage[:, :, k + 1] - u_stage[:, :, k])
+        dcol[:, :, k] = dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term
+        divided = 1.0 / (bcol - ccol[:, :, k - 1] * acol)
+        ccol[:, :, k] = ccol[:, :, k] * divided
+        dcol[:, :, k] = (dcol[:, :, k] - dcol[:, :, k - 1] * acol) * divided
+    for k in range(K - 1, K):
+        gav = -0.25 * (wcon[1:, :, k] + wcon[:-1, :, k])
+        as_ = gav * BET_M
+        acol = gav * BET_P
+        bcol = dtr_stage - acol
+        correction_term = -as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k])
+        dcol[:, :, k] = dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term
+        divided = 1.0 / (bcol - ccol[:, :, k - 1] * acol)
+        dcol[:, :, k] = (dcol[:, :, k] - dcol[:, :, k - 1] * acol) * divided
+    for k in range(K - 1, K - 2, -1):
+        datacol = dcol[:, :, k]
+        data_col[:] = datacol
+        utens_stage[:, :, k] = dtr_stage * (datacol - u_pos[:, :, k])
+    for k in range(K - 2, -1, -1):
+        datacol = dcol[:, :, k] - ccol[:, :, k] * data_col[:, :]
+        data_col[:] = datacol
+        utens_stage[:, :, k] = dtr_stage * (datacol - u_pos[:, :, k])
+
+### pythran__pythran_allpairs__sqr_dists_loops
+# pythran program allpairs.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def sqr_dists(X: Float[Array, '16 16'], Y: Float[Array, '16 16']):
+    return np.array([[np.sum((x - y) ** 2) for x in X] for y in Y])
+
+@zk_circuit
+def sqr_dists_loops(X: Float[Array, '16 16'], Y: Float[Array, '16 16']):
+    m, n = (X.shape[0], Y.shape[0])
+    D = np.zeros((m, n))
+    for i in range(m):
+        for j in range(n):
+            D[i, j] = np.sum((X[i] - Y[j]) ** 2)
+    return D
+
+### pythran__pythran_allpairs__sqr_dists
+# pythran program allpairs.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def sqr_dists(X: Float[Array, '16 16'], Y: Float[Array, '16 16']):
+    return np.array([[np.sum((x - y) ** 2) for x in X] for y in Y])
+
+@zk_circuit
+def sqr_dists_loops(X: Float[Array, '16 16'], Y: Float[Array, '16 16']):
+    m, n = (X.shape[0], Y.shape[0])
+    D = np.zeros((m, n))
+    for i in range(m):
+        for j in range(n):
+            D[i, j] = np.sum((X[i] - Y[j]) ** 2)
+    return D
+
+### pythran__pythran_arc_distance__arc_distance
+# pythran program arc_distance.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def arc_distance(theta_1: Float[Array, '5'], phi_1: Float[Array, '5'], theta_2: Float[Array, '5'], phi_2: Float[Array, '5']):
+    """
+    Calculates the pairwise arc distance between all points in vector a and b.
+    """
+    temp = np.sin((theta_2 - theta_1) / 2) ** 2 + np.cos(theta_1) * np.cos(theta_2) * np.sin((phi_2 - phi_1) / 2) ** 2
+    distance_matrix = 2 * np.arctan2(np.sqrt(temp), np.sqrt(1 - temp))
+    return distance_matrix
+
+### pythran__pythran_bubble_sort__bubble_sort
+# pythran program bubble_sort.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+
+@zk_circuit
+def bubble_sort(list0: Integer[Array, '11']):
+    list1 = [x for x in list0]
+    for i in range(0, len(list1) - 1):
+        swap_test = False
+        for j in range(0, len(list1) - i - 1):
+            if list1[j] > list1[j + 1]:
+                list1[j], list1[j + 1] = (list1[j + 1], list1[j])
+            swap_test = True
+        if swap_test == False:
+            break
+    return list1
+
+### pythran__pythran_ccopy__CCOPY
+# pythran program ccopy.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+
+@zk_circuit
+@requires(lambda N, CX, INCX, CY, INCY: 0 <= N <= 1024)
+def CCOPY(N: Integer, CX: Complex[Array, '4'], INCX: Integer, CY: Complex[Array, '4'], INCY: Integer):
+    if N <= 0:
+        return
+    if INCX == 1 and INCY == 1:
+        for I in range(N):
+            CY[I] = CX[I]
+    else:
+        IX = 0
+        IY = 0
+        if INCX < 0:
+            IX = (-N + 1) * INCX
+        if INCY < 0:
+            IY = (-N + 1) * INCY
+        for I in range(N):
+            CY[IY] = CX[IX]
+            IX = IX + INCX
+            IY = IY + INCY
+    return
+
+### pythran__pythran_clip__clip
+# pythran program clip.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_chip
+def limit1(x, epsilon=1e-06):
+    if abs(x) < epsilon:
+        return 0
+    else:
+        return x / abs(x)
+
+@zk_circuit
+def clip(z: Complex[Array, '2'], _max: Float):
+    out = np.empty(z.shape, dtype=z.dtype)
+    for i in range(len(z)):
+        if abs(z[i]) > _max:
+            out[i] = limit1(z[i]) * _max
+        else:
+            out[i] = z[i]
+    return out
+
+### pythran__pythran_create_grid__create_grid
+# pythran program create_grid.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def create_grid(x: Float[Array, '16']):
+    N = x.shape[0]
+    z = np.zeros((N, N, 3))
+    z[:, :, 0] = x.reshape(-1, 1)
+    z[:, :, 1] = x
+    fast_grid = z.reshape(N * N, 3)
+    return fast_grid
+
+### pythran__pythran_cronbach__cronbach
+# pythran program cronbach.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+
+@zk_circuit
+def cronbach(itemscores: Float[Array, '16 16']):
+    itemvars = itemscores.var(1, None, None, 1)
+    tscores = itemscores.sum(0)
+    nitems = len(itemscores)
+    return nitems / (nitems - 1) * (1 - itemvars.sum() / tscores.var(None, None, None, 1))
+
+### pythran__pythran_crotg__CROTG
+# pythran program crotg.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import math
+
+@zk_circuit
+def CROTG(CA: Complex, CB: Complex, C: Float=0, S: Complex=0):
+    if abs(CA) == 0.0:
+        C = 0.0
+        S = complex(1.0, 0.0)
+        CA = CB
+    else:
+        SCALE = abs(CA) + abs(CB)
+        NORM = SCALE * math.sqrt(abs(CA / SCALE) ** 2 + abs(CB / SCALE) ** 2)
+        ALPHA = CA / abs(CA)
+        C = abs(CA) / NORM
+        S = ALPHA * CB.conjugate() / NORM
+        CA = ALPHA * NORM
+    return (CA, CB, C, S)
+
+### pythran__pythran_d2q9_nxnyns__one_time_step
+# pythran program d2q9_nxnyns.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_chip
+def m2f_loc(m, f):
+    c0 = 1.0 / 6
+    c1 = 1.0 / 9
+    c2 = 1.0 / 18
+    c3 = 1.0 / 36
+    c4 = 1.0 / 12
+    f[0] = c1 * m[0] - c1 * m[3] + c1 * m[4]
+    f[1] = c1 * m[0] + c0 * m[1] - c3 * m[3] - c2 * m[4] - c0 * m[5] + 0.25 * m[7]
+    f[2] = c1 * m[0] + c0 * m[2] - c3 * m[3] - c2 * m[4] - c0 * m[6] - 0.25 * m[7]
+    f[3] = c1 * m[0] - c0 * m[1] - c3 * m[3] - c2 * m[4] + c0 * m[5] + 0.25 * m[7]
+    f[4] = c1 * m[0] - c0 * m[2] - c3 * m[3] - c2 * m[4] + c0 * m[6] - 0.25 * m[7]
+    f[5] = c1 * m[0] + c0 * m[1] + c0 * m[2] + c2 * m[3] + c3 * m[4] + c4 * m[5] + c4 * m[6] + 0.25 * m[8]
+    f[6] = c1 * m[0] - c0 * m[1] + c0 * m[2] + c2 * m[3] + c3 * m[4] - c4 * m[5] + c4 * m[6] - 0.25 * m[8]
+    f[7] = c1 * m[0] - c0 * m[1] - c0 * m[2] + c2 * m[3] + c3 * m[4] - c4 * m[5] - c4 * m[6] + 0.25 * m[8]
+    f[8] = c1 * m[0] + c0 * m[1] - c0 * m[2] + c2 * m[3] + c3 * m[4] + c4 * m[5] - c4 * m[6] - 0.25 * m[8]
+
+@zk_chip
+def f2m_loc(f, m):
+    m[0] = f[0] + f[1] + f[2] + f[3] + f[4] + f[5] + f[6] + f[7] + f[8]
+    m[1] = f[1] - f[3] + f[5] - f[6] - f[7] + f[8]
+    m[2] = f[2] - f[4] + f[5] + f[6] - f[7] - f[8]
+    m[3] = -4.0 * f[0] - f[1] - f[2] - f[3] - f[4] + 2.0 * f[5] + 2.0 * f[6] + 2.0 * f[7] + 2.0 * f[8]
+    m[4] = 4.0 * f[0] - 2.0 * f[1] - 2.0 * f[2] - 2.0 * f[3] - 2.0 * f[4] + f[5] + f[6] + f[7] + f[8]
+    m[5] = -2.0 * f[1] + 2.0 * f[3] + f[5] - f[6] - f[7] + f[8]
+    m[6] = -2.0 * f[2] + 2.0 * f[4] + f[5] + f[6] - f[7] - f[8]
+    m[7] = f[1] - f[2] + f[3] - f[4]
+    m[8] = f[5] - f[6] + f[7] - f[8]
+
+@zk_chip
+def getf(f, floc, i, j):
+    floc[0] = f[i, j, 0]
+    floc[1] = f[i - 1, j, 1]
+    floc[2] = f[i, j - 1, 2]
+    floc[3] = f[i + 1, j, 3]
+    floc[4] = f[i, j + 1, 4]
+    floc[5] = f[i - 1, j - 1, 5]
+    floc[6] = f[i + 1, j - 1, 6]
+    floc[7] = f[i + 1, j + 1, 7]
+    floc[8] = f[i - 1, j + 1, 8]
+
+@zk_chip
+def setf(f, floc, i, j):
+    f[j, i, 0] = floc[0]
+    f[j, i, 1] = floc[1]
+    f[j, i, 2] = floc[2]
+    f[j, i, 3] = floc[3]
+    f[j, i, 4] = floc[4]
+    f[j, i, 5] = floc[5]
+    f[j, i, 6] = floc[6]
+    f[j, i, 7] = floc[7]
+    f[j, i, 8] = floc[8]
+
+@zk_chip
+def relaxation_loc(m):
+    m[3] += 1.1312217194570136 * (-2 * m[0] + 3.0 * m[1] * m[1] + 3.0 * m[2] * m[2] - m[3])
+    m[4] += 1.1312217194570136 * (m[0] + 1.5 * m[1] * m[1] + 1.5 * m[2] * m[2] - m[4])
+    m[5] += 1.1312217194570136 * (-m[1] - m[5])
+    m[6] += 1.1312217194570136 * (-m[2] - m[6])
+    m[7] += 1.8573551263001487 * (m[1] * m[1] - m[2] * m[2] - m[7])
+    m[8] += 1.8573551263001487 * (m[1] * m[2] - m[8])
+
+@zk_chip
+def periodic_bc(f):
+    nx, ny, ns = f.shape
+    for j in range(ny):
+        for k in range(ns):
+            f[0, j, k] = f[nx - 2, j, k]
+            f[nx - 1, j, k] = f[1, j, k]
+    for i in range(nx):
+        for k in range(ns):
+            f[i, 0, k] = f[i, ny - 2, k]
+            f[i, ny - 1, k] = f[i, 1, k]
+
+@zk_circuit
+def one_time_step(f1: Float[Array, '16 16 9'], f2: Float[Array, '16 16 9']):
+    nx, ny, ns = f1.shape
+    floc = np.zeros(ns)
+    mloc = np.zeros(ns)
+    periodic_bc(f1)
+    for i in range(1, nx - 1):
+        for j in range(1, ny - 1):
+            getf(f1, floc, i, j)
+            f2m_loc(floc, mloc)
+            relaxation_loc(mloc)
+            m2f_loc(mloc, floc)
+            setf(f2, floc, i, j)
+    return f2
+
+### pythran__pythran_deuxd_convolution__conv
+# pythran program deuxd_convolution.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_chip
+def clamp(i, offset, maxval):
+    j = max(0, i + offset)
+    return min(j, maxval)
+
+@zk_chip
+def reflect(pos, offset, bound):
+    idx = pos + offset
+    return min(2 * (bound - 1) - idx, max(idx, -idx))
+
+@zk_circuit
+def conv(x: Float[Array, '16 16'], weights: Float[Array, '5 5']):
+    sx = x.shape
+    sw = weights.shape
+    result = np.zeros_like(x)
+    for i in range(sx[0]):
+        for j in range(sx[1]):
+            for ii in range(sw[0]):
+                for jj in range(sw[1]):
+                    idx = (clamp(i, ii - sw[0] // 2, sw[0]), clamp(j, jj - sw[0] // 2, sw[0]))
+                    result[i, j] += x[idx] * weights[ii, jj]
+    return result
+
+### pythran__pythran_euclidean_distance_square__euclidean_distance_square
+# pythran program euclidean_distance_square.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def euclidean_distance_square(x1: Float[Array, '1 3'], x2: Float[Array, '5 3']):
+    return -2 * np.dot(x1, x2.T) + np.sum(np.square(x1), axis=1)[:, np.newaxis] + np.sum(np.square(x2), axis=1)
+
+### pythran__pythran_fbcorr__fbcorr
+# pythran program fbcorr_numpy.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+
+@zk_circuit
+def fbcorr(imgs: Float[Array, '4 8 8 3'], filters: Float[Array, '6 5 5 3'], output: Float[Array, '4 6 4 4']):
+    n_imgs, n_rows, n_cols, n_channels = imgs.shape
+    n_filters, height, width, n_ch2 = filters.shape
+    'omp parallel for'
+    for ii in range(n_imgs):
+        for rr in range(n_rows - height + 1):
+            for cc in range(n_cols - width + 1):
+                for hh in range(height):
+                    for ww in range(width):
+                        for jj in range(n_channels):
+                            for ff in range(n_filters):
+                                imgval = imgs[ii, rr + hh, cc + ww, jj]
+                                filterval = filters[ff, hh, ww, jj]
+                                output[ii, ff, rr, cc] += imgval * filterval
+
+### pythran__pythran_fibo_seq__fibo
+# pythran program fibo_seq.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+
+@zk_circuit
+@requires(lambda n: 0 <= n <= 1024)
+def fibo(n: Integer):
+    """ fibonaccie compuation. """
+    a, b = (1, 1)
+    for _ in range(n):
+        a, b = (a + b, a)
+    return a
+
+### pythran__pythran_goodexpomeasure__goodExpoMeasure
+# pythran program goodExpoMeasure.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy
+
+@zk_circuit
+@requires(lambda inRGB, sigma: sigma != 0)
+def goodExpoMeasure(inRGB: Integer[Array, '16 16 16'], sigma: Float):
+    """
+    Compute the good exposition image quality measure on 1 input image.
+    """
+    R = inRGB[0, :, :].astype(numpy.float64)
+    G = inRGB[1, :, :].astype(numpy.float64)
+    B = inRGB[2, :, :].astype(numpy.float64)
+    goodExpoR = numpy.exp(-(R - 128) ** 2 / sigma)
+    goodExpoG = numpy.exp(-(G - 128) ** 2 / sigma)
+    goodExpoB = numpy.exp(-(B - 128) ** 2 / sigma)
+    goodExpo = goodExpoR * goodExpoG * goodExpoB
+    goodExpo = (numpy.round(goodExpo, 2) * (2 ** 8 - 1)).astype(numpy.uint8)
+    return goodExpo
+
+### pythran__pythran_harris__harris
+# pythran program harris.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def harris(I: Float[Array, '4 6']):
+    m, n = I.shape
+    dx = (I[1:, :] - I[:m - 1, :])[:, 1:]
+    dy = (I[:, 1:] - I[:, :n - 1])[1:, :]
+    A = dx * dx
+    B = dy * dy
+    C = dx * dy
+    tr = A + B
+    det = A * B - C * C
+    k = 0.05
+    return det - k * tr * tr
+
+### pythran__pythran_hasting__fweb
+# pythran program hasting.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def fweb(y: Float[Array, '3'], t: Float, a1: Float, a2: Float, b1: Float, b2: Float, d1: Float, d2: Float):
+    yprime = np.empty((3,))
+    yprime[0] = y[0] * (1.0 - y[0]) - a1 * y[0] * y[1] / (1.0 + b1 * y[0])
+    yprime[1] = a1 * y[0] * y[1] / (1.0 + b1 * y[0]) - a2 * y[1] * y[2] / (1.0 + b2 * y[1]) - d1 * y[1]
+    yprime[2] = a2 * y[1] * y[2] / (1.0 + b2 * y[1]) - d2 * y[2]
+    return yprime
+
+### pythran__pythran_insertion_sort__insertion_sort
+# pythran program insertion_sort.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+
+@zk_circuit
+def insertion_sort(list2: Float[Array, '10']):
+    for i in range(1, len(list2)):
+        save = list2[i]
+        j = i
+        while j > 0 and list2[j - 1] > save:
+            list2[j] = list2[j - 1]
+            j -= 1
+        list2[j] = save
+
+### pythran__pythran_ising__ising_step
+# pythran program ising.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def ising_step(field: Integer[Array, '2 2'], beta: Float=0.4):
+    N, M = field.shape
+    for n_offset in range(2):
+        for m_offset in range(2):
+            for n in range(n_offset, N, 2):
+                for m in range(m_offset, M, 2):
+                    _ising_update(field, n, m, np.float32(beta))
+    return field
+
+@zk_chip
+def clamp(v, n):
+    if v < 0:
+        return v + n
+    elif v < n:
+        return v
+    else:
+        return v - n
+
+@zk_chip
+def _ising_update(field, n, m, beta):
+    total = 0
+    N, M = field.shape
+    for i in range(n - 1, n + 2):
+        for j in range(m - 1, m + 2):
+            if i == n and j == m:
+                continue
+            total += field[clamp(i, N), clamp(j, M)]
+    dE = 2 * field[n, m] * total
+    if dE <= 0:
+        field[n, m] *= -1
+    elif np.exp(-dE * beta) > 0.5:
+        field[n, m] *= -1
+
+### pythran__pythran_l2norm__l2_norm
+# pythran program l2norm.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def l2_norm(x: Float[Array, '16 16']):
+    return np.sqrt(np.sum(np.abs(x) ** 2, 1))
+
+### pythran__pythran_lap__laplacian
+# pythran program lap.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy
+
+@zk_circuit
+@requires(lambda var, dh2: dh2 != 0.0)
+def laplacian(var: Float[Array, '16'], dh2: Float):
+    """ (1D array, dx^2) -> laplacian(1D array)
+    periodic_laplacian_1D_4th_order
+    Implementing the 4th order 1D laplacian with periodic condition
+    """
+    lap = numpy.zeros_like(var)
+    lap[1:] = 4.0 / 3.0 * var[:-1]
+    lap[0] = 4.0 / 3.0 * var[1]
+    lap[:-1] += 4.0 / 3.0 * var[1:]
+    lap[-1] += 4.0 / 3.0 * var[0]
+    lap += -5.0 / 2.0 * var
+    lap[2:] += -1.0 / 12.0 * var[:-2]
+    lap[:2] += -1.0 / 12.0 * var[-2:]
+    lap[:-2] += -1.0 / 12.0 * var[2:]
+    lap[-2:] += -1.0 / 12.0 * var[:2]
+    return lap / dh2
+
+### pythran__pythran_lapl3d__laplacien
+# pythran program lapl3d.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def laplacien(image: Float[Array, '16 16 3']):
+    out_image = np.abs(4 * image[1:-1, 1:-1] - image[0:-2, 1:-1] - image[2:, 1:-1] - image[1:-1, 0:-2] - image[1:-1, 2:])
+    valmax = np.max(out_image)
+    valmax = max(1.0, valmax) + 1e-09
+    out_image /= valmax
+    return out_image
+
+### pythran__pythran_ln__ln
+# pythran program ln.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+
+@zk_circuit
+def ln(X: Float[Array, '16'], Y: Float[Array, '16']):
+    Y[:] = X - 1 - (X - 1) ** 2 / 2 + (X - 1) ** 3 / 3 - (X - 1) ** 4 / 4 + (X - 1) ** 5 / 5 - (X - 1) ** 6 / 6 + (X - 1) ** 7 / 7 - (X - 1) ** 8 / 8 + (X - 1) ** 9 / 9
+    return Y
+
+### pythran__pythran_log_likelihood__log_likelihood
+# pythran program log_likelihood.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy
+
+@zk_circuit
+@requires(lambda data, mean, sigma: sigma != 0.0)
+def log_likelihood(data: Float[Array, '16'], mean: Float, sigma: Float):
+    s = (data - mean) ** 2 / (2 * sigma ** 2)
+    pdfs = numpy.exp(-s)
+    pdfs /= numpy.sqrt(2 * numpy.pi) * sigma
+    return numpy.log(pdfs).sum()
+
+### pythran__pythran_lu__factorMatrix1
+# pythran program lu.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def factorMatrix0(M: Float[Array, '5 5']):
+    n = M.shape[0]
+    m = M.shape[1]
+    for line in range(0, n - 1):
+        cmax = np.argmax(abs(M[line:n, line])) + line
+        if cmax != line:
+            M[[line, cmax]] = M[[cmax, line]]
+        pivot = M[line, line]
+        for j in range(line + 1, n):
+            v = M[j, line] / pivot
+            for k in range(line, m):
+                M[j, k] -= v * M[line, k]
+
+@zk_circuit
+def factorMatrix1(M: Float[Array, '5 5']):
+    n = M.shape[0]
+    m = M.shape[1]
+    for line in range(0, n - 1):
+        cmax = line
+        vmax = abs(M[line, line])
+        for i in range(line + 1, n):
+            if abs(M[i, line]) > vmax:
+                vmax = abs(M[i, line])
+                cmax = i
+        if cmax != line:
+            for j in range(line, m):
+                t = M[line, j]
+                M[line, j] = M[cmax, j]
+                M[cmax, j] = t
+        pivot = M[line, line]
+        for j in range(line + 1, n):
+            v = M[j, line] / pivot
+            for k in range(line, m):
+                M[j, k] -= v * M[line, k]
+
+### pythran__pythran_lu__factorMatrix0
+# pythran program lu.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def factorMatrix0(M: Float[Array, '5 5']):
+    n = M.shape[0]
+    m = M.shape[1]
+    for line in range(0, n - 1):
+        cmax = np.argmax(abs(M[line:n, line])) + line
+        if cmax != line:
+            M[[line, cmax]] = M[[cmax, line]]
+        pivot = M[line, line]
+        for j in range(line + 1, n):
+            v = M[j, line] / pivot
+            for k in range(line, m):
+                M[j, k] -= v * M[line, k]
+
+@zk_circuit
+def factorMatrix1(M: Float[Array, '5 5']):
+    n = M.shape[0]
+    m = M.shape[1]
+    for line in range(0, n - 1):
+        cmax = line
+        vmax = abs(M[line, line])
+        for i in range(line + 1, n):
+            if abs(M[i, line]) > vmax:
+                vmax = abs(M[i, line])
+                cmax = i
+        if cmax != line:
+            for j in range(line, m):
+                t = M[line, j]
+                M[line, j] = M[cmax, j]
+                M[cmax, j] = t
+        pivot = M[line, line]
+        for j in range(line + 1, n):
+            v = M[j, line] / pivot
+            for k in range(line, m):
+                M[j, k] -= v * M[line, k]
+
+### pythran__pythran_make_decision__md
+# pythran program make_decision.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def md(E: Complex[Array, '16'], symbols: Complex[Array, '8']):
+    L = E.shape[0]
+    M = symbols.shape[0]
+    syms_out = np.zeros(L, dtype=E.dtype)
+    for i in range(L):
+        im = np.argmin(abs(E[i] - symbols) ** 2)
+        syms_out[i] = symbols[im]
+    return syms_out
+
+### pythran__pythran_matmul__matrix_multiply
+# pythran program matmul.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+
+@zk_chip
+def zero(n, m):
+    return [[0 for row in range(n)] for col in range(m)]
+
+@zk_circuit
+def matrix_multiply(m0: Float[Array, '16 16'], m1: Float[Array, '16 16']):
+    new_matrix = zero(len(m0), len(m1[0]))
+    for i in range(len(m0)):
+        for j in range(len(m1[0])):
+            r = 0
+            'omp parallel for reduction(+:r)'
+            for k in range(len(m1)):
+                r += m0[i][k] * m1[k][j]
+            new_matrix[i][j] = r
+    return new_matrix
+
+### pythran__pythran_multi_export__a
+# pythran program multi_export.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+
+@zk_circuit
+def a(i: Float):
+    return i
+
+### pythran__pythran_multitype__check2
+# pythran program multitype.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+
+@zk_circuit
+@requires(lambda n, m: 0 <= n <= 1024)
+@requires(lambda n, m: 0 <= m <= 1024)
+def times(n: Integer, m: Integer):
+    return n * m
+
+@zk_circuit
+def check2(x: Float[Array, '1'], y: Boolean[Array, '1']):
+    if y:
+        return (x, y)
+    else:
+        return (x + x, y)
+
+@zk_circuit
+def check(x: Float[Array, '1'], y: Integer):
+    if y:
+        return (x, y)
+    else:
+        return (x + x, y)
+
+### pythran__pythran_multitype__check
+# pythran program multitype.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+
+@zk_circuit
+@requires(lambda n, m: 0 <= n <= 1024)
+@requires(lambda n, m: 0 <= m <= 1024)
+def times(n: Integer, m: Integer):
+    return n * m
+
+@zk_circuit
+def check2(x: Float[Array, '1'], y: Boolean[Array, '1']):
+    if y:
+        return (x, y)
+    else:
+        return (x + x, y)
+
+@zk_circuit
+def check(x: Float[Array, '1'], y: Integer):
+    if y:
+        return (x, y)
+    else:
+        return (x + x, y)
+
+### pythran__pythran_multitype__times
+# pythran program multitype.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+
+@zk_circuit
+@requires(lambda n, m: 0 <= n <= 1024)
+@requires(lambda n, m: 0 <= m <= 1024)
+def times(n: Integer, m: Integer):
+    return n * m
+
+@zk_circuit
+def check2(x: Float[Array, '1'], y: Boolean[Array, '1']):
+    if y:
+        return (x, y)
+    else:
+        return (x + x, y)
+
+@zk_circuit
+def check(x: Float[Array, '1'], y: Integer):
+    if y:
+        return (x, y)
+    else:
+        return (x + x, y)
+
+### pythran__pythran_pairwise__pairwise
+# pythran program pairwise_numpy.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def pairwise(X: Float[Array, '16 8']):
+    M, N = X.shape
+    D = np.empty((M, M))
+    for i in range(M):
+        for j in range(M):
+            d = 0.0
+            for k in range(N):
+                tmp = X[i, k] - X[j, k]
+                d += tmp * tmp
+            D[i, j] = np.sqrt(d)
+    return D
+
+### pythran__pythran_periodic_bc__periodic_bc
+# pythran program periodic_bc.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+
+@zk_circuit
+def periodic_bc(f: Float[Array, '3 3 3']):
+    f[:, 0, :] = f[:, -2, :]
+    return f
+
+### pythran__pythran_periodic_dist__dist
+# pythran program periodic_dist.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def dist(x: Float[Array, '16'], y: Float[Array, '16'], z: Float[Array, '16'], L: Integer, periodicX: Boolean, periodicY: Boolean, periodicZ: Boolean):
+    """ Computes distances between all particles and places the result in a matrix such that the ij th matrix entry corresponds to the distance between particle i and j """
+    N = len(x)
+    xtemp = np.tile(x, (N, 1))
+    dx = xtemp - xtemp.T
+    ytemp = np.tile(y, (N, 1))
+    dy = ytemp - ytemp.T
+    ztemp = np.tile(z, (N, 1))
+    dz = ztemp - ztemp.T
+    if periodicX:
+        dx[dx > L / 2] = dx[dx > L / 2] - L
+        dx[dx < -L / 2] = dx[dx < -L / 2] + L
+    if periodicY:
+        dy[dy > L / 2] = dy[dy > L / 2] - L
+        dy[dy < -L / 2] = dy[dy < -L / 2] + L
+    if periodicZ:
+        dz[dz > L / 2] = dz[dz > L / 2] - L
+        dz[dz < -L / 2] = dz[dz < -L / 2] + L
+    d = np.sqrt(dx ** 2 + dy ** 2 + dz ** 2)
+    d[d == 0] = -1
+    return (d, dx, dy, dz)
+
+### pythran__pythran_perm__permutations
+# pythran program perm.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+
+@zk_circuit
+def permutations(iterable: Integer[Array, '4']):
+    """permutations(range(3), 2) --> (0,1) (0,2) (1,0) (1,2) (2,0) (2,1)"""
+    out = []
+    pool = tuple(iterable)
+    n = len(pool)
+    r = n
+    indices = list(range(n))
+    cycles = list(range(n - r + 1, n + 1))[::-1]
+    out.append(tuple([pool[i] for i in indices[:r]]))
+    while 1:
+        for i in reversed(range(r)):
+            cycles[i] -= 1
+            if cycles[i] == 0:
+                indices[i:] = indices[i + 1:] + indices[i:i + 1]
+                cycles[i] = n - i
+            else:
+                j = cycles[i]
+                indices[i], indices[-j] = (indices[-j], indices[i])
+                out.append(tuple([pool[i] for i in indices[:r]]))
+                break
+        else:
+            return out
+
+### pythran__pythran_projection_simplex__projection_simplex
+# pythran program projection_simplex.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def projection_simplex(v: Float[Array, '10'], z: Integer=1):
+    """
+    Old implementation for test and benchmark purposes.
+    The arguments v and z should be a vector and a scalar, respectively.
+    """
+    n_features = v.shape[0]
+    u = np.sort(v)[::-1]
+    cssv = np.cumsum(u) - z
+    ind = np.arange(n_features) + 1
+    cond = u - cssv / ind > 0
+    rho = ind[cond][-1]
+    theta = cssv[cond][-1] / float(rho)
+    w = np.maximum(v - theta, 0)
+    return w
+
+### pythran__pythran_pythagorean_triples__next_pythagorean_triples
+# pythran program pythagorean_triples.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def next_pythagorean_triples(previous: Integer[Array, '1 3']):
+    matrices = np.array([[-1, 2, 2], [-2, 1, 2], [-2, 2, 3], [1, 2, 2], [2, 1, 2], [2, 2, 3], [1, -2, 2], [2, -1, 2], [2, -2, 3]])
+    next_triples = np.transpose(np.dot(matrices, np.transpose(previous)))
+    next_triples = next_triples.reshape((3 * previous.shape[0], previous.shape[1]))
+    return next_triples
+
+### pythran__pythran_reverse_cumsum__reverse_cumsum
+# pythran program reverse_cumsum.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def reverse_cumsum(x: Float[Array, '10']):
+    return np.cumsum(x[::-1])[::-1]
+
+### pythran__pythran_rosen__rosen
+# pythran program rosen.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def rosen(x: Float[Array, '16']):
+    t0 = 100 * (x[1:] - x[:-1] ** 2) ** 2
+    t1 = (1 - x[:-1]) ** 2
+    return np.sum(t0 + t1)
+
+### pythran__pythran_smoothing__smoothing
+# pythran program smoothing.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+
+@zk_circuit
+def smoothing(x: Float[Array, '16'], alpha: Float):
+    """
+  Exponential smoothing of a time series
+  For x = 10**6 floats
+  - Python runtime: 9 seconds
+  - Parakeet runtime: .01 seconds
+  """
+    s = x.copy()
+    for i in range(1, len(x)):
+        s[i] = alpha * x[i] + (1 - alpha) * s[i - 1]
+    return s
+
+### pythran__pythran_specialconvolve__specialconvolve
+# pythran program specialconvolve.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+
+@zk_circuit
+def specialconvolve(a: Integer[Array, '16 16']):
+    rowconvol = a[1:-1, :] + a[:-2, :] + a[2:, :]
+    colconvol = rowconvol[:, 1:-1] + rowconvol[:, :-2] + rowconvol[:, 2:] - 9 * a[1:-1, 1:-1]
+    return colconvol
+
+### pythran__pythran_spectraldns__add_pressure_diffusion
+# pythran program spectralDNS.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+
+@zk_chip
+def cross1(c, a, b):
+    c[0] = a[0] * b[2] - a[2] * b[1]
+    c[1] = a[2] * b[0] - a[0] * b[2]
+    c[2] = a[0] * b[1] - a[1] * b[0]
+    return c
+
+@zk_circuit
+def cross2(c: Complex[Array, '3 2 5 7'], a: Float[Array, '3 2 5 7'], b: Complex[Array, '3 2 5 7']):
+    cross1(c, a, b)
+    c *= 1j
+    return c
+
+@zk_circuit
+def add_pressure_diffusion(dU: Complex[Array, '3 2 5 7'], U_hat: Complex[Array, '3 2 5 7'], K2: Float[Array, '2 5 7'], K: Float[Array, '3 2 5 7'], P_hat: Complex[Array, '2 5 7'], K_over_K2: Float[Array, '3 2 5 7'], nu: Float):
+    du0, du1, du2 = (dU[0], dU[1], dU[2])
+    k_0, k_1, k_2 = (K_over_K2[0], K_over_K2[1], K_over_K2[2])
+    P_hat[:] = du0 * k_0 + du1 * k_1 + du2 * k_2
+    dU[:] = dU - P_hat * K - nu * K2 * U_hat
+    return P_hat
+
+### pythran__pythran_spectraldns__cross2
+# pythran program spectralDNS.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+
+@zk_chip
+def cross1(c, a, b):
+    c[0] = a[0] * b[2] - a[2] * b[1]
+    c[1] = a[2] * b[0] - a[0] * b[2]
+    c[2] = a[0] * b[1] - a[1] * b[0]
+    return c
+
+@zk_circuit
+def cross2(c: Complex[Array, '3 2 5 7'], a: Float[Array, '3 2 5 7'], b: Complex[Array, '3 2 5 7']):
+    cross1(c, a, b)
+    c *= 1j
+    return c
+
+@zk_circuit
+def add_pressure_diffusion(dU: Complex[Array, '3 2 5 7'], U_hat: Complex[Array, '3 2 5 7'], K2: Float[Array, '2 5 7'], K: Float[Array, '3 2 5 7'], P_hat: Complex[Array, '2 5 7'], K_over_K2: Float[Array, '3 2 5 7'], nu: Float):
+    du0, du1, du2 = (dU[0], dU[1], dU[2])
+    k_0, k_1, k_2 = (K_over_K2[0], K_over_K2[1], K_over_K2[2])
+    P_hat[:] = du0 * k_0 + du1 * k_1 + du2 * k_2
+    dU[:] = dU - P_hat * K - nu * K2 * U_hat
+    return P_hat
+
+### pythran__pythran_sumarray3d__summation
+# pythran program sumarray3d.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def summation(pos: Float[Array, '16 3'], weights: Float[Array, '16'], points: Float[Array, '16 3']):
+    n_points = len(points)
+    n_weights = len(weights)
+    sum_array3d = np.zeros((n_points, 3))
+
+    def compute(i):
+        pxi = points[i, 0]
+        pyi = points[i, 1]
+        pzi = points[i, 2]
+        total = 0.0
+        for j in range(n_weights):
+            weight_j = weights[j]
+            xj = pos[j, 0]
+            yj = pos[j, 1]
+            zj = pos[j, 2]
+            dx = pxi - pos[j, 0]
+            dy = pyi - pos[j, 1]
+            dz = pzi - pos[j, 2]
+            dr = 1.0 / np.sqrt(dx * dx + dy * dy + dz * dz)
+            total += weight_j * dr
+            sum_array3d[i, 0] += weight_j * dx
+            sum_array3d[i, 1] += weight_j * dy
+            sum_array3d[i, 2] += weight_j * dz
+        return total
+    sum_array = np.array([compute(i) for i in range(n_points)])
+    return (sum_array, sum_array3d)
+
+### pythran__pythran_tax__tax
+# pythran program tax.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def tax(d: Float[Array, '10']):
+    tax_seg1 = d[d > 256303] * 0.45 - 16164.53
+    tax_seg2 = d[(d > 54057) & (d <= 256303)] * 0.42 - 8475.44
+    seg3 = d[(d > 13769) & (d <= 54057)] - 13769
+    seg4 = d[(d > 8820) & (d <= 13769)] - 8820
+    prog_seg3 = seg3 * 2.2376e-06 + 0.2397
+    prog_seg4 = seg4 * 1.00727e-05 + 0.14
+    return (np.sum(tax_seg1) + np.sum(tax_seg2) + np.sum(seg3 * prog_seg3 + 939.57) + np.sum(seg4 * prog_seg4)) / np.sum(d)
+
+### pythran__pythran_value_index__tri
+# pythran program value_index.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def tri(score: Integer[Array, '10 10'], score_t: Integer[Array, '10 10']):
+    score_t[0, 0] = score[0, 0]
+    score_t = score[np.argsort(score[:, 1])]
+    return score_t
+
+### pythran__pythran_vibr_energy__calculate_vibr_energy
+# pythran program vibr_energy.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy
+
+@zk_circuit
+def calculate_vibr_energy(harmonic: Float[Array, '16'], anharmonic: Float[Array, '16'], i: Float[Array, '16']):
+    return numpy.exp(-harmonic * i - anharmonic * i ** 2)
+
+### pythran__pythran_wdist__slow_wdist
+# pythran program wdist.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def slow_wdist(A: Float[Array, '2 3'], B: Float[Array, '2 3'], W: Float[Array, '2 3']):
+    k, m = A.shape
+    _, n = B.shape
+    D = np.zeros((m, n))
+    for ii in range(m):
+        for jj in range(n):
+            wdiff = (A[:, ii] - B[:, jj]) / W[:, ii]
+            D[ii, jj] = np.sqrt((wdiff ** 2).sum())
+    return D
+
+### pythran__pythran_weights__weights
+# pythran program weights.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
+from zinnia import *
+import numpy as np
+
+@zk_circuit
+def weights(input_data: Integer[Array, '5 2'], threshold: Float=0.3):
+    n_seq, length = input_data.shape
+    weights = np.zeros(n_seq, dtype=np.float32)
+    for i in range(n_seq):
+        vector = input_data[i, None, :]
+        count_matches = np.sum(vector == input_data, axis=1)
+        over_threshold = count_matches > threshold * length
+        total = np.sum(over_threshold)
+        weights[i] = 1 / total
+    return weights

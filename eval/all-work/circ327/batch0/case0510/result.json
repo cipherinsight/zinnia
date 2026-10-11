@@ -1,0 +1,52 @@
+{
+  "program": "case0510",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:12-17: flatnonzero and crop produce value-dependent lengths.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 39036,
+    "returncode": 0,
+    "seconds": 0.537,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch0/case0510/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Use ten-entry row/column presence masks and guarded extrema; pad the cropped result to 10x10 with height and width, bounded by the input shape."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "rtol": 1e-06,
+      "atol": 1e-06,
+      "decoded_shape": [
+        9,
+        9
+      ]
+    },
+    "B": {
+      "status": "pass",
+      "rtol": 1e-06,
+      "atol": 1e-06,
+      "decoded_shape": [
+        9,
+        9
+      ]
+    }
+  },
+  "notes": "kernel.py:12-17: flatnonzero and crop produce value-dependent lengths."
+}

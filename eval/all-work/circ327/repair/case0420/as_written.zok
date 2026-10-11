@@ -1,0 +1,4 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64 x, private u64 x_min, private u64 x_max) -> u64:
+    return if lt(x, (x_min * 4294967296u64)) then (x_min * 4294967296u64) else if lt((x_max * 4294967296u64), x) then (x_max * 4294967296u64) else ((3u64 * mulq(x, x)) - (2u64 * mulq(mulq(x, x), x))) fi fi

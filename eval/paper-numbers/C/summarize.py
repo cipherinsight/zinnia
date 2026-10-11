@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Rebuild all paper tables and per-program evidence from stored observations."""
+import collections, csv, hashlib, json, math, statistics, subprocess
+from pathlib import Path
+from collect import HERE, ROOT, REPO, ACCEPT, TIMES, manifest
+
+def pct(values,p):
+    v=sorted(values); x=(len(v)-1)*p; lo=math.floor(x); hi=math.ceil(x)
+    return v[lo]+(v[hi]-v[lo])*(x-lo)
+def budget(q):
+    # Z3 can report resource-limit cancellation as 'canceled'.
+    return not q['skipped'] and q['result']=='Unknown' and (q['reason_unknown'] in {'max. resource limit exceeded','resource limits reached'} or (q['reason_unknown']=='canceled' and q['site']=='resolver.decide' and q['steps']==1_000_000))
+def counts(r,prefix=''):
+    qs=[q for q in r['queries'] if q['site'].startswith(prefix)]
+    return dict(issued=sum(not q['skipped'] for q in qs), exhausted=sum(budget(q) for q in qs), skipped=sum(q['skipped'] for q in qs), unknown=sum(q['result']=='Unknown' and not q['skipped'] for q in qs))
+def table(headers,rows):
+    return '\n'.join(['| '+' | '.join(headers)+' |','|'+'|'.join(['---']*len(headers))+'|']+['| '+' | '.join(map(str,r))+' |' for r in rows])
+def main():
+    local={r['id']:r for r in map(json.loads,(HERE/'local_counts.jsonl').read_text().splitlines())}
+    expected=manifest(); assert set(local)=={r['id'] for r in expected}
+    assert all(r['ok'] for r in local.values()), [(r['id'],r.get('error')) for r in local.values() if not r['ok']]
+    remote={}
+    for r in map(json.loads,TIMES.read_text().splitlines()):
+        if r['config']!='default': continue
+        key=r['set']+':'+r['name']; assert key not in remote; remote[key]=r
+    rows=[]
+    for p in expected:
+        r=remote[p['id']]; l=local[p['id']]
+        derived = 'DS-1000' if p['name'].startswith(('case','ds1000_')) else 'NPBench' if p['name'].startswith('npbench_') else 'Pythran' if p['name'].startswith('pythran_') else None
+        assert derived == p['corpus']
+        assert r['ok'] and r['compile_s'] is not None
+        assert r['function']==p['function'] and r['kernel'].endswith(p['kernel'])
+        rows.append(dict(id=p['id'],corpus=p['corpus'],group=p['group'],acceptance_match=p.get('acceptance_match',True),compile_s=r['compile_s'],resolver_smt_s=r['resolver_smt_s'],smt_share=r['resolver_smt_s']/r['compile_s'],**counts(l),resolver_issued=counts(l,'resolver.')['issued'],resolver_exhausted=counts(l,'resolver.')['exhausted'],selection_issued=counts(l,'lower.select')['issued'],selection_exhausted=counts(l,'lower.select')['exhausted'],kernel=p['kernel'],function=p['function']))
+    with (HERE/'per_program.csv').open('w') as f:
+        w=csv.DictWriter(f,fieldnames=list(rows[0]));w.writeheader();w.writerows(rows)
+    corpora=['DS-1000','NPBench','Pythran']
+    groups=[(c,[r for r in rows if r['group']=='acceptance' and r['corpus']==c]) for c in corpora]
+    alternatives=[('DS-1000 perf, acceptance-matched',[r for r in rows if r['group']=='perf' and r['acceptance_match']]),('DS-1000 perf, all successful',[r for r in rows if r['group']=='perf']),('DS-1000 acceptance + matched perf records',[r for r in rows if r['corpus']=='DS-1000' and r['acceptance_match']])]
+    def stats(rs):
+        ts=[r['compile_s'] for r in rs];ss=[r['smt_share'] for r in rs]
+        return dict(n=len(rs),median_s=statistics.median(ts),p90_s=pct(ts,.9),max_s=max(ts),smt_share_weighted=sum(r['resolver_smt_s'] for r in rs)/sum(ts),smt_share_mean=statistics.mean(ss),smt_share_median=statistics.median(ss),smt_share_p90=pct(ss,.9),smt_share_max=max(ss),p90_nearest_rank_s=sorted(ts)[math.ceil(.9*len(ts))-1])
+    summary={name:dict(stats(rs),**{k:sum(r[k] for r in rs) for k in ['issued','exhausted','skipped','unknown','resolver_issued','resolver_exhausted','selection_issued','selection_exhausted']}) for name,rs in groups+alternatives}
+    (HERE/'summary.json').write_text(json.dumps(summary,indent=2)+'\n')
+    def timing_table(gs):
+        return table(['Corpus / population','n','Median (s)','p90 (s)','Max (s)','SMT share, weighted','Mean share','Median share','p90 share','Max share'],[[name,s['n'],*[f"{s[k]:.6f}" for k in ['median_s','p90_s','max_s']],*[f"{100*s[k]:.4f}%" for k in ['smt_share_weighted','smt_share_mean','smt_share_median','smt_share_p90','smt_share_max']]] for name,_ in gs for s in [summary[name]]])
+    def count_table(gs):
+        return table(['Corpus / population','Programs','All Z3 calls','Exhausted','Skipped: total budget','Other actual Unknown','Resolver calls','Resolver exhausted','Reasoning calls','Selection calls'],[[name,len(rs),sum(r['issued'] for r in rs),sum(r['exhausted'] for r in rs),sum(r['skipped'] for r in rs),sum(r['unknown']-r['exhausted'] for r in rs),sum(r['resolver_issued'] for r in rs),sum(r['resolver_exhausted'] for r in rs),sum(r['issued']-r['selection_issued'] for r in rs),sum(r['selection_issued'] for r in rs)] for name,rs in gs])
+    lines=['# Task C: compile times and SMT query budgets','',
+    'Generated by `summarize.py`. Remote times use compiler **4115cecb** (as identified in the task); local deterministic query counts use **3ebe0558f25592a0c1f8b6cf9bf7ad09f3ddb1d1**. No local times, proofs, or keys are reported or generated.','',
+    '## Population and definitions','',
+    'Primary population: exactly the **214 `accepted_correct` program/function entries** in the supplied acceptance account: DS-1000 132, NPBench 32, Pythran 50. Join `program::function` to default-config `acceptance:<dataset>` timing rows. Corpus follows the name (`case*`/`ds1000_*`, `npbench_*`, `pythran_*`), checked against the acceptance dataset. All primary entries have successful remote timings and successful final-compiler local compilations. No rejected programs enter the tables.','',
+    'Compile time is the recorded `compile_s`, not `wall_s`. The remote driver starts its clock before the harness `compile_kernel` call, so it includes module loading and compilation. Median is the ordinary sample median; p90 uses linear interpolation at index `(n−1)×0.9` (NumPy default / type 7). The alternative nearest-rank p90 is given below. There is one default timing record per set/program/function, not a distribution of repeated trials.','',
+    'Each program’s SMT share is exactly `resolver_smt_s / compile_s`. The primary corpus share is compile-time-weighted, `sum(resolver_smt_s) / sum(compile_s)`. The table also gives the unweighted mean, median, p90, and max of the per-program ratios to resolve aggregation ambiguity.','',
+    '## Remote compile-time results','',timing_table(groups),'',
+    'Nearest-rank p90 alternative (seconds): '+', '.join(f"{c}: {summary[c]['p90_nearest_rank_s']:.6f}" for c in corpora)+'.','',
+    '## Local SMT query counts','',
+    'Primary definition of an issued query: one actual Z3 `Solver.check`, `Solver.check_assumptions`, or `Optimize.check` on the compile path. A value query and its uniqueness check count separately; a bounds query can issue multiple checks. Include resolver, entailment/shape reasoning, and construction selection. Cache hits, interval/static answers, formula-size skips, and calls short-circuited after the compilation budget are not issued queries. Narrower resolver-only and value-reasoning-only alternatives are included in the table.','',
+    'Budget exhaustion means an actual check returned `Unknown` with a resource-limit reason (`max. resource limit exceeded`, `resource limits reached`, or `canceled` with consumed steps reaching the configured per-query limit). The default compile path sets deterministic step limits, no wall-clock solver timeout; this collector does not interrupt calls. Calls skipped after the total reasoning budget are reported separately: they do not consume a new query budget.','',count_table(groups),'',
+    '## Telemetry and validation','',
+    '- `src/optim/z3_budget.rs`: `ZINNIA_Z3_TRACE=1` emits site, result, consumed resource steps, and a separate `(compilation budget spent)` marker. The trace field named `rlimit` is **steps consumed**, not the configured limit. Local duration fields are discarded and never written to these result files.',
+    '- `src/optim/telemetry.rs` and `src/lib.rs`: `ZINNIA_SMT_LOG_TELEMETRY=1` exposes resolver counters. `queries_smt_unknown` includes non-unique values and alternate satisfying models; it is **not** an exhaustion counter. These counters are retained for audit, not substituted for actual check counts.',
+    '- The compiler has **no exact unknown-reason / budget-exhaustion counter**. `z3_observer.c` adds observation externally using `LD_PRELOAD`: each wrapper calls the original linked Z3 function once, returns its result unchanged, and reads `Z3_*_get_reason_unknown` only for `Unknown`. It does not alter compiler files, formulas, limits, or solver results. Each actual compiler trace must pair with exactly one observer record; skipped queries must not have one.',
+    '- Default limits (`src/optim/z3_budget.rs`): resolver 1,000,000 steps; speculative tightening 100,000; optimizer resolver 5,000,000; entailment 10,000,000; construction selection 100,000,000. A compilation has a separate 200,000,000-step reasoning cap. The last issued check can overshoot the remaining total cap; subsequent checks are skipped.',
+    '- `collect.py` reuses `benchmarking.harness.kernels.compile_kernel`, the same helper as the remote timing script. This supplies function source without module import lines via `ZKCircuit.from_method` and retains registered helper chips and decorator lowering. Backend is the default halo2 compile target. Fixture inputs are not needed or read: compilation does not specialize on fixture values.',
+    '- Every compilation uses a fresh process and the specified worktree `.venv/bin/python`, with `PYTHONHASHSEED=0`. Inherited `ZINNIA_*` variables and `LD_PRELOAD` are cleared; only observational telemetry is enabled. `-B` prevents writes to worktree bytecode caches. Four workers share one systemd scope with `MemoryMax=16G`.',
+    '- `verification.json` repeats one program per corpus without the observer, choosing the program with the most actual Unknowns (first in stored order on ties). It checks identical success, query sequence, answers, step counts, total-budget skips, and resolver counters. This verifies the observer does not perturb those representative runs.','',
+    '## Performance-set and pooling alternatives','',
+    'The remote file also contains 100 successful DS-1000 `perf` variants. Only 92 names match the fixed acceptance account; 8 do not. These are distinct kernel variants, so the primary table uses acceptance records alone and does not double-weight overlapping programs. Below are both the acceptance-matched performance alternative and the all-successful-performance interpretation, plus literal pooling of acceptance and matched performance records (224 records, not 224 unique source problems). NPBench and Pythran have no separate perf rows in this file.','',timing_table(alternatives),'',count_table(alternatives),'',
+    'Perf rows not in the accepted account: '+', '.join('`'+r['id']+'`' for r in rows if r['group']=='perf' and not r['acceptance_match'])+'.','',
+    '## Caveats','',
+    'Remote `resolver_smt_s` measures the exposed resolver phases only. It excludes direct `prove()` and construction-selection Z3 cost, so its ratio is **resolver SMT share**, not all SMT time. The source timing collector explicitly documents this limitation. Resolver times were parsed from millisecond summaries printed with one decimal place; zeros can mean rounding below that precision. These are historical remote observations, not times for the final compiler. Local final-compiler counts should not be interpreted as the exact query workload that produced the older remote times. All three observed `canceled` answers were `resolver.decide` checks consuming exactly 1,000,000 steps (the default IR-generation query limit); the other 175 exhausted checks explicitly reported `max. resource limit exceeded`. All exhaustion and total-budget skips occurred in `pythran_ccopy::CCOPY`. Counts are deterministic for the fixed compiler, Z3 build, configuration, and sources; different compiler/Z3 versions can change them.','',
+    '## Reproduce','',
+    'From this directory (all generated files remain here):','',
+    '```sh',
+    'systemd-run --user --scope -q -p MemoryMax=16G /home/zhantong/Projects/zinnia-project/wt/npb-hw/.venv/bin/python -B collect.py --jobs 4',
+    'systemd-run --user --scope -q -p MemoryMax=16G /home/zhantong/Projects/zinnia-project/wt/npb-hw/.venv/bin/python -B collect.py --verify',
+    'python -B summarize.py',
+    '```','',
+    'For tables alone, run `python -B summarize.py` against the stored `local_counts.jsonl`. `manifest.json` lists kernel paths/functions; `local_counts.jsonl` contains every query’s site, result, consumed steps, skip flag, and unknown reason (no local times); `per_program.csv` gives every timing and count; `summary.json` contains unrounded aggregate values.','',
+    '## Input provenance','']
+    inputs=[ACCEPT,TIMES,REPO/'zinnia/_zinnia_core.cpython-314-x86_64-linux-gnu.so',next((REPO/'.venv/lib').glob('python*/site-packages/z3/lib/libz3.so.4.16'))]
+    provenance={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
+    (HERE/'provenance.json').write_text(json.dumps(provenance,indent=2)+'\n')
+    lines.extend([table(['Input','SHA-256'],provenance.items()),'', 'Per-kernel SHA-256 hashes are stored in `local_counts.jsonl`.','', '## Per-program evidence','',
+    'All times below are remote seconds; share is a percentage. `Z3` includes selection; `Exhausted` excludes total-budget skips. Acceptance membership is fixed by the supplied account. These rows enumerate every program behind every aggregate above.',''])
+    for label,rs in groups+[('DS-1000 performance variants',[r for r in rows if r['group']=='perf'])]:
+        lines.extend(['### '+label,'',table(['Record','Accepted account','Compile s','Resolver SMT s','Share %','Z3','Exhausted','Skipped','Resolver Z3','Selection Z3'],[[r['id'],r['acceptance_match'],f"{r['compile_s']:.9f}",f"{r['resolver_smt_s']:.7f}",f"{100*r['smt_share']:.6f}",r['issued'],r['exhausted'],r['skipped'],r['resolver_issued'],r['selection_issued']] for r in rs]),''])
+    lines.extend(['## Budget-exhausted or skipped-query programs',''])
+    affected=[r for r in rows if r['exhausted'] or r['skipped'] or r['unknown']]
+    lines.append(table(['Record','Issued','Exhausted','Skipped','Actual Unknown'],[[r['id'],r['issued'],r['exhausted'],r['skipped'],r['unknown']] for r in affected]) if affected else 'None.')
+    reasons=collections.Counter(q.get('reason_unknown','<total-budget skip>') for r in local.values() for q in r['queries'] if q['result']=='Unknown')
+    lines.extend(['','Actual Unknown reason frequencies and total-budget skips across all stored variants: `'+json.dumps(reasons,sort_keys=True)+'`.',''])
+    (HERE/'REPORT.md').write_text('\n'.join(lines))
+    print(json.dumps(summary,indent=2))
+if __name__=='__main__': main()

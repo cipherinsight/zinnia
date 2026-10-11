@@ -1,0 +1,97 @@
+{
+  "program": "pythran_fibo_seq",
+  "function": "fibo",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:12: range(n) is private; the explicit n<=1024 contract supplies a bound. The integer result needs more than one u64 or field; the rewrite preserves it with twelve u64 limbs.",
+    "constraints": null,
+    "source_file": "pythran_fibo_seq/as_written.zok",
+    "artifact_sha256": "2e7737693874a599c08b0f28966a7fb986fdf716fe557fa5388c67f6470e296f"
+  },
+  "rewrite": {
+    "status": "accepted",
+    "constraints": 3072540,
+    "error": null,
+    "seconds": 68.57287846700274,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_fibo_seq/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Use 1024 guarded iterations from the explicit n<=1024 contract; twelve u64 limbs preserve the entire Fibonacci result (F1026 < 2^768)."
+    ],
+    "source_file": "pythran_fibo_seq/rewrite.zok",
+    "artifact_sha256": "85f3f57558df4512f1e3ae56c3a2a626dcb7a60588587193458d5ffa2e981540"
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "expected_elements": 1,
+      "actual_elements": 1,
+      "max_abs_error": 0.0,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_fibo_seq/rewrite.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_fibo_seq/A.pin"
+      ]
+    },
+    "B": {
+      "status": "pass",
+      "expected_elements": 1,
+      "actual_elements": 1,
+      "max_abs_error": 0.0,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_fibo_seq/rewrite.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_fibo_seq/B.pin"
+      ]
+    }
+  },
+  "notes": "Native u64 Q32 arithmetic with explicit signs, wide product parts, and quotient/remainder digits; all source outputs retained.",
+  "source": {
+    "program": "pythran_fibo_seq",
+    "dataset": "pythran",
+    "kernel": "benchmarking/datasets/pythran/pythran_fibo_seq/kernel.py",
+    "function": "fibo",
+    "sha256": "a7739e315b7d2f0d7e09c46ad7279030babe0e13ad23dbf699c09d0a2fd5468e"
+  },
+  "numeric_encoding": {
+    "real_scale": 4294967296,
+    "rtol": 1e-06,
+    "atol": 1e-06,
+    "representation": "signed two-complement u64 with native wide products",
+    "integer_output": "Twelve little-endian unsigned 64-bit limbs; exact through n=1024.",
+    "helper": {
+      "file": "native.zok",
+      "sha256": "230210f08577e08c6d8067d12af2de953bb0d8a1227875d2288459a4e80ac9ab"
+    }
+  },
+  "old_category": "circ_error",
+  "old_result": "batch3/pythran_fibo_seq/result.json",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+    "tmpdir": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/tmp"
+  },
+  "fixture": {
+    "path": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/pythran/pythran_fibo_seq/fixture.json",
+    "sha256": "5a3593c77a73f7cda1cf7e0f45cdc93396c2943e29688ab877e19dd874204718"
+  },
+  "reason": "Use 1024 guarded iterations from the explicit n<=1024 contract; twelve u64 limbs preserve the entire Fibonacci result (F1026 < 2^768). A/B pass."
+}

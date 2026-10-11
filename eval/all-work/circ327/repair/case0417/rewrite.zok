@@ -1,0 +1,18 @@
+from "../native_v1" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[8] data, private u64 bin_size) -> u64[9]:
+    u64[8] new_data = [0;8]
+    for u32 i in 0..8 do
+        new_data[i] = data[(7 - i)]
+    endfor
+    u64 count = divc(8, bin_size)
+    u64[9] result = [0;9]
+    result[0] = count
+    for u32 i in 0..8 do
+        u64 sum = 0
+        for u32 j in 0..8 do
+            sum = if ((lt(it(i), count) && !lt(it(j), (it(i) * bin_size))) && lt(it(j), ((it(i) + 1) * bin_size))) then (sum + new_data[j]) else sum fi
+        endfor
+        result[i+1] = if lt(it(i), count) then divc(sum, bin_size) else 0 fi
+    endfor
+    return result

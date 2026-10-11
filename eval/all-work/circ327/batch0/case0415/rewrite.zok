@@ -1,0 +1,75 @@
+const field HALF = 26217937587563095239723870254092982918845276250263818911301829349969290592256
+def lt(field x, field y) -> bool:
+    return x + HALF < y + HALF
+struct Output {
+    field[8] values
+    field length
+}
+def main(private field[8] data, private field bin_size) -> Output:
+    field[8] result = [0; 8]
+    field count = 0
+    for field i in 0..8 do
+        field m = data[i*1]
+        for field j in 1..1 do
+            m = if lt(m, data[i*1+j]) then data[i*1+j] else m fi
+        endfor
+        result[i] = if bin_size == 1 then m else result[i] fi
+    endfor
+    count = if bin_size == 1 then 8 else count fi
+    for field i in 0..4 do
+        field m = data[i*2]
+        for field j in 1..2 do
+            m = if lt(m, data[i*2+j]) then data[i*2+j] else m fi
+        endfor
+        result[i] = if bin_size == 2 then m else result[i] fi
+    endfor
+    count = if bin_size == 2 then 4 else count fi
+    for field i in 0..2 do
+        field m = data[i*3]
+        for field j in 1..3 do
+            m = if lt(m, data[i*3+j]) then data[i*3+j] else m fi
+        endfor
+        result[i] = if bin_size == 3 then m else result[i] fi
+    endfor
+    count = if bin_size == 3 then 2 else count fi
+    for field i in 0..2 do
+        field m = data[i*4]
+        for field j in 1..4 do
+            m = if lt(m, data[i*4+j]) then data[i*4+j] else m fi
+        endfor
+        result[i] = if bin_size == 4 then m else result[i] fi
+    endfor
+    count = if bin_size == 4 then 2 else count fi
+    for field i in 0..1 do
+        field m = data[i*5]
+        for field j in 1..5 do
+            m = if lt(m, data[i*5+j]) then data[i*5+j] else m fi
+        endfor
+        result[i] = if bin_size == 5 then m else result[i] fi
+    endfor
+    count = if bin_size == 5 then 1 else count fi
+    for field i in 0..1 do
+        field m = data[i*6]
+        for field j in 1..6 do
+            m = if lt(m, data[i*6+j]) then data[i*6+j] else m fi
+        endfor
+        result[i] = if bin_size == 6 then m else result[i] fi
+    endfor
+    count = if bin_size == 6 then 1 else count fi
+    for field i in 0..1 do
+        field m = data[i*7]
+        for field j in 1..7 do
+            m = if lt(m, data[i*7+j]) then data[i*7+j] else m fi
+        endfor
+        result[i] = if bin_size == 7 then m else result[i] fi
+    endfor
+    count = if bin_size == 7 then 1 else count fi
+    for field i in 0..1 do
+        field m = data[i*8]
+        for field j in 1..8 do
+            m = if lt(m, data[i*8+j]) then data[i*8+j] else m fi
+        endfor
+        result[i] = if bin_size == 8 then m else result[i] fi
+    endfor
+    count = if bin_size == 8 then 1 else count fi
+    return Output {values: result, length: count}

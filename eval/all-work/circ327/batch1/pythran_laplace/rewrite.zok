@@ -1,0 +1,23 @@
+// Reals are encoded at scale 2^32; signed field values use centered residues.
+struct Output {
+    integer[1024][1024] values
+    u32 length
+}
+def main(private u32 N, private u32 Niter) -> Output:
+    assert(N <= 1024)
+    assert(Niter <= 1024)
+    integer[1024][1024] u = [[0int; 1024]; 1024]
+    for u32 j in 0..1024 do
+        u[0][j] = if j < N then 4294967296int else 0int fi
+    endfor
+    for u32 t in 0..1024 do
+        for u32 i in 1..1023 do
+            for u32 j in 1..1023 do
+                bool active = t < Niter && i+1 < N && j+1 < N
+                integer num = ((u[i+1][j]+u[i-1][j])*42949673/4294967296)+((u[i][j+1]+u[i][j-1])*42949673/4294967296)
+                integer v = num*4294967296/171798692
+                u[i][j] = if active then v else u[i][j] fi
+            endfor
+        endfor
+    endfor
+    return Output { values: u, length: N }

@@ -1,0 +1,504 @@
+{
+  "id": "ds1000_numpy__case0450__kernel",
+  "sites": {
+    "11:18:11:34:Call": "np.array(second)",
+    "11:18:11:48:Call": "np.array(second).reshape(-1, 1)",
+    "11:13:11:56:Subscript": "a[:, np.array(second).reshape(-1, 1), third]"
+  },
+  "numpy": {
+    "A": [
+      {
+        "site": "11:18:11:34:Call",
+        "value": {
+          "shape": [
+            2
+          ],
+          "length": 2
+        }
+      },
+      {
+        "site": "11:18:11:48:Call",
+        "value": {
+          "shape": [
+            2,
+            1
+          ],
+          "length": 2
+        }
+      },
+      {
+        "site": "11:13:11:56:Subscript",
+        "value": {
+          "shape": [
+            7,
+            2,
+            2
+          ],
+          "length": 28
+        }
+      }
+    ],
+    "B": [
+      {
+        "site": "11:18:11:34:Call",
+        "value": {
+          "shape": [
+            2
+          ],
+          "length": 2
+        }
+      },
+      {
+        "site": "11:18:11:48:Call",
+        "value": {
+          "shape": [
+            2,
+            1
+          ],
+          "length": 2
+        }
+      },
+      {
+        "site": "11:13:11:56:Subscript",
+        "value": {
+          "shape": [
+            7,
+            2,
+            2
+          ],
+          "length": 28
+        }
+      }
+    ]
+  },
+  "selected": [
+    "11:13:11:56:Subscript",
+    "11:18:11:34:Call",
+    "11:18:11:48:Call"
+  ],
+  "source": "def kernel(a: Float[Array, '7 8 9'], second: Integer[Array, '2'], third: Integer[Array, '2']):\n    bprobe_trace = []\n    bprobe_v0 = np.array(second)\n    bprobe_trace.append((1, bprobe_v0))\n    bprobe_v1 = bprobe_v0.reshape(-1, 1)\n    bprobe_trace.append((2, bprobe_v1))\n    bprobe_v2 = a[:, bprobe_v1, third]\n    bprobe_trace.append((0, bprobe_v2))\n    result = bprobe_v2\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [
+        {
+          "constant": 1
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 0
+        },
+        {
+          "kind": "i",
+          "public": 1
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1
+        ]
+      },
+      "shape": [
+        2
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 2
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 2
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1,
+          0
+        ]
+      },
+      "shape": [
+        1
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 3
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1,
+          1
+        ]
+      },
+      "shape": [
+        1
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 4
+        },
+        {
+          "kind": "f",
+          "public": 5
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1,
+          0,
+          0
+        ]
+      },
+      "shape": [
+        2
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 6
+        },
+        {
+          "kind": "f",
+          "public": 7
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1,
+          0,
+          1
+        ]
+      },
+      "shape": [
+        2
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 8
+        },
+        {
+          "kind": "f",
+          "public": 9
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1,
+          1,
+          0
+        ]
+      },
+      "shape": [
+        2
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 10
+        },
+        {
+          "kind": "f",
+          "public": 11
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1,
+          1,
+          1
+        ]
+      },
+      "shape": [
+        2
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 12
+        },
+        {
+          "kind": "f",
+          "public": 13
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1,
+          2,
+          0
+        ]
+      },
+      "shape": [
+        2
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 14
+        },
+        {
+          "kind": "f",
+          "public": 15
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1,
+          2,
+          1
+        ]
+      },
+      "shape": [
+        2
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 16
+        },
+        {
+          "kind": "f",
+          "public": 17
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1,
+          3,
+          0
+        ]
+      },
+      "shape": [
+        2
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 18
+        },
+        {
+          "kind": "f",
+          "public": 19
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1,
+          3,
+          1
+        ]
+      },
+      "shape": [
+        2
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 20
+        },
+        {
+          "kind": "f",
+          "public": 21
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1,
+          4,
+          0
+        ]
+      },
+      "shape": [
+        2
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 22
+        },
+        {
+          "kind": "f",
+          "public": 23
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1,
+          4,
+          1
+        ]
+      },
+      "shape": [
+        2
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 24
+        },
+        {
+          "kind": "f",
+          "public": 25
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1,
+          5,
+          0
+        ]
+      },
+      "shape": [
+        2
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 26
+        },
+        {
+          "kind": "f",
+          "public": 27
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1,
+          5,
+          1
+        ]
+      },
+      "shape": [
+        2
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 28
+        },
+        {
+          "kind": "f",
+          "public": 29
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1,
+          6,
+          0
+        ]
+      },
+      "shape": [
+        2
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 30
+        },
+        {
+          "kind": "f",
+          "public": 31
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1,
+          6,
+          1
+        ]
+      },
+      "shape": [
+        2
+      ]
+    }
+  ],
+  "dynamic": []
+}

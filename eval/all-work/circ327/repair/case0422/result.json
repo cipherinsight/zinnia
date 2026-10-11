@@ -1,0 +1,87 @@
+{
+  "program": "case0422",
+  "function": "kernel",
+  "category": "accepted_as_written",
+  "as_written": {
+    "status": "accepted",
+    "constraints": 518400,
+    "error": null,
+    "seconds": 20.322036384000967,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/case0422/as_written.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "source_file": "case0422/as_written.zok",
+    "artifact_sha256": "8db82f87d86f6ba2e8b5dadb1ad1adfd61b23351735faa54e54626f7d028f255"
+  },
+  "rewrite": null,
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "expected_elements": 50,
+      "actual_elements": 50,
+      "max_abs_error": 6.8119643259478835e-09,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/case0422/as_written.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/case0422/A.pin"
+      ]
+    },
+    "B": {
+      "status": "pass",
+      "expected_elements": 50,
+      "actual_elements": 50,
+      "max_abs_error": 7.006192959124746e-09,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/case0422/as_written.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/case0422/B.pin"
+      ]
+    }
+  },
+  "notes": "Q32 values use signed u64; native operations, explicit signs and 32-bit product parts. No arbitrary-integer backend operations.",
+  "source": {
+    "program": "case0422",
+    "dataset": "ds1000_numpy",
+    "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0422/kernel.py",
+    "function": "kernel",
+    "sha256": "0140f690b5c7c9da659b3080a67076a800a80c837fc435584b6498b37ed9d416"
+  },
+  "numeric_encoding": {
+    "real_scale": 4294967296,
+    "rtol": 1e-06,
+    "atol": 1e-06,
+    "representation": "signed two-complement u64 with native wide products",
+    "helper": {
+      "file": "native.zok",
+      "sha256": "230210f08577e08c6d8067d12af2de953bb0d8a1227875d2288459a4e80ac9ab"
+    }
+  },
+  "old_category": "needs_gadget: division",
+  "old_result": "batch0/case0422/result.json",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+    "tmpdir": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/tmp"
+  },
+  "fixture": {
+    "path": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/ds1000_numpy/generated/case0422/fixture.json",
+    "sha256": "8617c159dc1757e2a7876a44cf29adf75a1ea6ae8547018ccc0cf4d1645fb91e"
+  },
+  "reason": "Native signed Q32 arithmetic compiles; both fixtures pass."
+}

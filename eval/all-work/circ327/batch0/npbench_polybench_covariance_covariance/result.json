@@ -1,0 +1,29 @@
+{
+  "program": "npbench_polybench_covariance_covariance",
+  "category": "needs_gadget: division",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:12-14: M determines covariance array and loop bounds.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "needs gadget",
+    "error": "needs gadget: division; kernel.py:14 divides by private float_n - 1.0; fixed-point division remains necessary.",
+    "constraints": null,
+    "rewrites": [
+      "Pad covariance to 14x14 and guard iterations: successful data[:, i] reads require 0 <= M <= 14.",
+      "Return public M and retain the mutation data -= mean as an observable output."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "not applicable",
+      "reason": "No accepted full translation."
+    },
+    "B": {
+      "status": "not applicable",
+      "reason": "No accepted full translation."
+    }
+  },
+  "notes": "kernel.py:14 divides by private float_n - 1.0; fixed-point division remains necessary. Bounded rewrite analyzed but not emitted as a dummy executable; missing gadget explicitly prohibited."
+}

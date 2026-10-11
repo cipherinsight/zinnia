@@ -1,0 +1,1 @@
+kernel.py:33-34: private b shape and private nt/nit loops are not expressible as written. For nt>0, build_up_b assigns a 14x14 RHS into b[1:-1,1:-1], forcing ny=nx=16 on valid calls; for nt=0 b is unobserved. A guarded 16x16 allocation and two loops bounded by declared 1024 preserve all outputs. Lines 10,18,39-40 still require private fixed-point division.

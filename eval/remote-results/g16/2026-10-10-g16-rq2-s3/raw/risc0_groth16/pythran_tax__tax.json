@@ -1,0 +1,254 @@
+{
+ "schema": 1,
+ "system": "risc0_groth16",
+ "case": "pythran_tax__tax",
+ "description": "RISC Zero 3.0.3, Groth16 receipt, Q32 guest",
+ "windows": {
+  "prove_core": "prove_session + succinct compression + Groth16 wrap",
+  "end_to_end": "execute + the prove core",
+  "verify": "receipt.verify (verify)"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/pythran/pythran_tax/kernel.py": "438a9cc3ce066b198c60b777551be83affcafcd3ce03fde3f55c5f4f924b679b",
+  "benchmarking/datasets/pythran/pythran_tax/fixture.json": "a024213915a29de4e7d35bdcba2c1c29c5ed76d47e4517962a3f19a8f3a0e889",
+  "benchmarking/datasets/pythran/pythran_tax/zkvm.rs": "55e88a1429cb942684defe97a6f553b5f154aaba6adc463a225a190c6076a25f",
+  "benchmarking/baselines/risc0/target/release/risc0-baseline": "81c51d8fd5ddc90c2a10983cf5f0561e75cfc95fc2e979f469e982df280b09fe"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-10T20:47:54+0000",
+  "loadavg": [
+   56.81103515625,
+   59.5205078125,
+   61.4033203125
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "load_program": 0.003746295,
+    "process_wall": 0.005463678389787674
+   },
+   "details": {
+    "case": "pythran_tax/tax",
+    "image_id": "32628779215131ff66a8e246536660794758e3e3ac779cb3f3f9827bf9ca252d",
+    "input": "A",
+    "mode": "setup",
+    "peak_rss_mib": 6.0,
+    "proof_path": null,
+    "system": "risc0",
+    "zkvm_version": "3.0.3"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 0.10817842464894056,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 33665024,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   56.88818359375,
+   59.1650390625,
+   61.208984375
+  ],
+  "child": {
+   "wall_s": 59.17420721706003,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 8091045888,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 59.024693531,
+   "end_to_end_s": 59.046391693,
+   "proof_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s3/work/risc0_groth16/pythran_tax__tax/proofs/warmup/program/receipt-groth16-B.bin",
+   "proof_bytes": 545,
+   "timings_s": {
+    "compress_succinct": 6.959257676,
+    "execute": 0.021698162,
+    "load_program": 0.000151583,
+    "prove": 5.109385276,
+    "wrap_groth16": 46.956050579,
+    "process_wall": 59.05364688672125
+   },
+   "details": {
+    "case": "pythran_tax/tax",
+    "image_id": "32628779215131ff66a8e246536660794758e3e3ac779cb3f3f9827bf9ca252d",
+    "input": "B",
+    "input_shapes": [
+     10
+    ],
+    "mode": "prove",
+    "paging_cycles": 21237,
+    "peak_rss_mib": 1422.0,
+    "proof_mode": "groth16",
+    "proof_size_bytes": 545,
+    "segments": 1,
+    "system": "risc0",
+    "total_cycles": 65536,
+    "user_cycles": 7694,
+    "zkvm_version": "3.0.3"
+   },
+   "proof_sha256": "b5a86e6cc1e8ba555a9af25a3f05e136be0e41fa7f51fafede69295a1c56e7c4"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 1 elements differ",
+   "expected_count": 1,
+   "actual_count": 1,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "eb4c6835ce6e8f1719cf19361fe066a8ea4b788715b2827c0e121510bcf96b35",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    0.31775352731347084
+   ],
+   "elided": [],
+   "shapes": null
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    58.9228515625,
+    60.99609375,
+    61.3017578125
+   ],
+   "child": {
+    "wall_s": 68.82896800059825,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 8055238656,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 68.659771332,
+    "end_to_end_s": 68.681713122,
+    "proof_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s3/work/risc0_groth16/pythran_tax__tax/proofs/sample-1/program/receipt-groth16-B.bin",
+    "proof_bytes": 545,
+    "timings_s": {
+     "compress_succinct": 8.18854834,
+     "execute": 0.02194179,
+     "load_program": 0.000174489,
+     "prove": 6.265908402,
+     "wrap_groth16": 54.20531459,
+     "process_wall": 68.68837941996753
+    },
+    "details": {
+     "case": "pythran_tax/tax",
+     "image_id": "32628779215131ff66a8e246536660794758e3e3ac779cb3f3f9827bf9ca252d",
+     "input": "B",
+     "input_shapes": [
+      10
+     ],
+     "mode": "prove",
+     "paging_cycles": 21237,
+     "peak_rss_mib": 1422.0,
+     "proof_mode": "groth16",
+     "proof_size_bytes": 545,
+     "segments": 1,
+     "system": "risc0",
+     "total_cycles": 65536,
+     "user_cycles": 7694,
+     "zkvm_version": "3.0.3"
+    },
+    "proof_sha256": "b572af0b35745fc78a54c27ffd358609156bb49292fef5c2970b55bc7201a193"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 1 elements differ",
+    "expected_count": 1,
+    "actual_count": 1,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "eb4c6835ce6e8f1719cf19361fe066a8ea4b788715b2827c0e121510bcf96b35",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     0.31775352731347084
+    ],
+    "elided": [],
+    "shapes": null
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.005598085,
+     "not_applicable": null,
+     "timings_s": {
+      "load_program": 0.000175239,
+      "verify": 0.005598085,
+      "process_wall": 0.007758905179798603
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.11626422684639692,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 33599488,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 0.005564995,
+    "not_applicable": null,
+    "timings_s": {
+     "load_program": 0.000150751,
+     "verify": 0.005564995,
+     "process_wall": 0.007485439069569111
+    },
+    "details": {
+     "error": null
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.11621565092355013,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 33611776,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

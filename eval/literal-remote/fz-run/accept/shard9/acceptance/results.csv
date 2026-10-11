@@ -1,0 +1,22 @@
+program,dataset,function,outcome,class,construct,detail
+case0303,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 20 elements differ
+case0325,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 1 elements differ
+case0342,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 30 elements differ
+case0362,ds1000_numpy,kernel,rejected_compiler_limitation,compiler_limitation,np.delete at a runtime position,ZinniaException: IR generation failed: np.delete: only static integer obj values are supported
+case0386,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 78804 elements differ
+case0407,ds1000_numpy,kernel,rejected_no_provable_bound,no_provable_bound,np.bincount output length from runtime values,"ZinniaException: IR generation failed: np.bincount: x entry value is not statically bounded — its runtime value could be anything, and the output length is `max(x)+1`. The previous compiler revision silently capped the output at 256 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal int array, or annotate the input with `@requires(lambda x: forall(x, lambda v: v <= K))` so the compiler can derive a tight, sound upper bound."
+case0427,ds1000_numpy,kernel,rejected_no_provable_bound,no_provable_bound,np.arange length from a runtime value,ZinniaException: IR generation failed: range stop must be a compile-time constant int
+case0444,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 17 elements differ
+case0472,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 1512 elements differ
+case0500,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 54 elements differ
+npbench_crc16_crc16,npbench,crc16,accepted_correct,,,logical outputs: 0 of 1 elements differ
+npbench_polybench_covariance2_covariance2,npbench,kernel,accepted_correct,,,logical outputs: 0 of 196 elements differ
+npbench_polybench_lu_lu,npbench,kernel,accepted_correct,,,logical outputs: 0 of 225 elements differ
+pythran_allpairs,pythran,sqr_dists_loops,accepted_correct,,,logical outputs: 0 of 256 elements differ
+pythran_allpairs,pythran,sqr_dists,accepted_correct,,,logical outputs: 0 of 256 elements differ
+pythran_clip2,pythran,clip,rejected_compiler_limitation,compiler_limitation,shape element from a bounded runtime value where a constant is needed,"ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int (it is a runtime value in [0, 2]; a runtime size is not supported here)"
+pythran_fannkuch,pythran,fannkuch2,rejected_compiler_limitation,compiler_limitation,range() with a runtime bound used as a value,ZinniaException: IR generation failed: range() with a runtime argument is only supported as the iterable of a `for` loop or comprehension (got a Integer that is not a compile-time constant)
+pythran_ising,pythran,ising_step,accepted_correct,,,logical outputs: 0 of 4 elements differ
+pythran_monte_carlo,pythran,montecarlo_integration,rejected_no_provable_bound,no_provable_bound,range() trip count,"ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value without known bounds. Give the bound a maximum, e.g. a bounded array annotation (Integer[Array, ""N<=8""]) or a precondition (@zk_circuit(requires=[lambda n: 0 <= n <= 8]))"
+pythran_pythagorean_triples,pythran,next_pythagorean_triples,accepted_correct,,,logical outputs: 0 of 9 elements differ
+pythran_tax,pythran,tax,accepted_correct,,,logical outputs: 0 of 1 elements differ

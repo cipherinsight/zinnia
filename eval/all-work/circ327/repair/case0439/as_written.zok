@@ -1,0 +1,12 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[10][20] X) -> u64[20][10][10]:
+    u64[20][10][10] result = [[[0;10];10];20]
+    for u32 k in 0..20 do
+        for u32 i in 0..10 do
+            for u32 j in 0..10 do
+                result[k][i][j] = mul(X[i][k], X[j][k])
+            endfor
+        endfor
+    endfor
+    return result

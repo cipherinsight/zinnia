@@ -1,0 +1,52 @@
+{
+  "program": "npbench_polybench_nussinov_nussinov",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:17-19: table allocation and loops depend on N.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 1310320,
+    "returncode": 0,
+    "seconds": 20.933,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch0/npbench_polybench_nussinov_nussinov/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Pad table to 14x14 and guard loops using N; valid executions require 0 <= N <= 14 because for N > 14 the recurrence reads seq[N-1]."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "rtol": 1e-06,
+      "atol": 1e-06,
+      "decoded_shape": [
+        14,
+        14
+      ]
+    },
+    "B": {
+      "status": "pass",
+      "rtol": 1e-06,
+      "atol": 1e-06,
+      "decoded_shape": [
+        14,
+        14
+      ]
+    }
+  },
+  "notes": "kernel.py:17-19: table allocation and loops depend on N."
+}

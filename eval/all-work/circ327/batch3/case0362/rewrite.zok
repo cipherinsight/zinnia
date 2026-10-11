@@ -1,0 +1,36 @@
+// benchmarking/datasets/ds1000_numpy/generated/case0362/kernel.py
+// Signed integers use their canonical field residues; real inputs are Q32.
+def neg(field x) -> bool:
+    return x > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+def absv(field x) -> field:
+    return if neg(x) then -x else x fi
+def lt(field a, field b) -> bool:
+    return if neg(a) != neg(b) then neg(a) else a < b fi
+// Constant integer rescaling uses native remainder and field division only.
+def divc(field x, field c) -> field:
+    field m = absv(x)
+    field q = (m - m % c) / c
+    return if neg(x) then -q else q fi
+def mulq(field a, field b) -> field:
+    return divc(a * b, 4294967296)
+
+def main(private field[8][6] a, private field[4] del_col) -> field[49]:
+    bool[6] keep = [true; 6]
+    for u32 d in 0..4 do
+        bool active = !lt(6, del_col[d])
+        field idx = del_col[d] - 1
+        idx = if neg(idx) then idx + 6 else idx fi
+        for field j in 0..6 do
+            keep[j] = keep[j] && !(active && idx == j)
+        endfor
+    endfor
+    field[49] out = [0; 49]
+    field n = 0
+    for field j in 0..6 do
+        for field i in 0..8 do
+            out[1 + i * 6 + n] = if keep[j] then a[i][j] else out[1 + i * 6 + n] fi
+        endfor
+        n = n + if keep[j] then 1 else 0 fi
+    endfor
+    out[0] = n
+    return out

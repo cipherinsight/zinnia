@@ -1,0 +1,39 @@
+{
+  "program": "npbench_cavity_flow_cavity_flow",
+  "category": "needs_gadget: division",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:33-34: private b shape and private nt/nit loops are not expressible as written. For nt>0, build_up_b assigns a 14x14 RHS into b[1:-1,1:-1], forcing ny=nx=16 on valid calls; for nt=0 b is unobserved. A guarded 16x16 allocation and two loops bounded by declared 1024 preserve all outputs. Lines 10,18,39-40 still require private fixed-point division.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "needs_gadget",
+    "error": "kernel.py:33-34: private b shape and private nt/nit loops are not expressible as written. For nt>0, build_up_b assigns a 14x14 RHS into b[1:-1,1:-1], forcing ny=nx=16 on valid calls; for nt=0 b is unobserved. A guarded 16x16 allocation and two loops bounded by declared 1024 preserve all outputs. Lines 10,18,39-40 still require private fixed-point division.",
+    "constraints": null,
+    "rewrites": [
+      "Guard the unused b allocation when nt=0; use 16x16 when nt>0, as implied by assignment shape compatibility.",
+      "Bound nt and nit loops at the declared 1024 with activity guards."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "not_run",
+      "reason": "No R1CS-accepted attempt; no circuit acceptance claimed."
+    },
+    "B": {
+      "status": "not_run",
+      "reason": "No R1CS-accepted attempt; no circuit acceptance claimed."
+    }
+  },
+  "notes": "kernel.py:33-34: private b shape and private nt/nit loops are not expressible as written. For nt>0, build_up_b assigns a 14x14 RHS into b[1:-1,1:-1], forcing ny=nx=16 on valid calls; for nt=0 b is unobserved. A guarded 16x16 allocation and two loops bounded by declared 1024 preserve all outputs. Lines 10,18,39-40 still require private fixed-point division.",
+  "kernel": "benchmarking/datasets/npbench/npbench_cavity_flow_cavity_flow/kernel.py",
+  "numeric_encoding": {
+    "modulus": "52435875175126190479447740508185965837690552500527637822603658699938581184513",
+    "real_scale": 4294967296,
+    "signed_encoding": "centered field residues; no unsigned-only interpretation of negative fixtures",
+    "validation_tolerance": {
+      "rtol": 1e-06,
+      "atol": 1e-06
+    }
+  }
+}

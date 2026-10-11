@@ -1,0 +1,54 @@
+{
+  "program": "pythran_gauss",
+  "function": "gauss",
+  "category": "circ_error",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:29 private n loop bound.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "rejected",
+    "constraints": null,
+    "error": "Running frontend\nRunning IR optimizations\n\nthread 'main' (154635) panicked at src/ir/opt/tuple.rs:139:39:\nUpdate (0) on non-tuple NonTuple((set_default_modulus 52435875175126190479447740508185965837690552500527637822603658699938581184513\n(declare\n (\n  (a.0.0 (bv 64))\n  (a.0.1 (bv 64))\n  (n (bv 64))\n  (a.0.2 (bv 64))\n  (a.0.3 (bv 64))\n  (a.3.3 (bv 64))\n  (a.3.2 (bv 64))\n  (a.3.1 (bv 64))\n  (a.3.0 (bv 64))\n  (a.2.3 (bv 64))\n  (a.2.2 (bv 64))\n  (a.2.1 (bv 64))\n  (a.2.0 (bv 64))",
+    "seconds": 0.07438211599946953,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_gauss/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Bound active iterations by four: any n>4 accesses beyond the declared 4x4 matrix and is not a valid successful input. Guard updates and the reciprocal on inactive iterations."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "not_run",
+      "reason": "No accepted compilation"
+    },
+    "B": {
+      "status": "not_run",
+      "reason": "No accepted compilation"
+    }
+  },
+  "notes": "Native u64 Q32 arithmetic with explicit signs, wide product parts, and quotient/remainder digits; all source outputs retained.",
+  "source": {
+    "program": "pythran_gauss",
+    "dataset": "pythran",
+    "kernel": "benchmarking/datasets/pythran/pythran_gauss/kernel.py",
+    "function": "gauss"
+  },
+  "numeric_encoding": {
+    "real_scale": 4294967296,
+    "signed": "two-complement u64",
+    "rtol": 1e-06,
+    "atol": 1e-06
+  }
+}

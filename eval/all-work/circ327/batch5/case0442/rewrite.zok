@@ -1,0 +1,16 @@
+struct Result {
+    u64 a
+    u64[20] b
+}
+def main(private u64[20] A, private u64[3] B) -> Result:
+    u64[20] C = [0u64; 20]
+    u64 n = 0u64
+    for u32 i in 0..20 do
+        bool found = false
+        for u32 j in 0..3 do
+            found = found || A[i] == B[j]
+        endfor
+        C[n] = if !found then A[i] else C[n] fi
+        n = if !found then n+1u64 else n fi
+    endfor
+    return Result {a: n, b: C}

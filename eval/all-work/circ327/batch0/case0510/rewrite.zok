@@ -1,0 +1,38 @@
+struct Output {
+    field[10][10] values
+    field height
+    field width
+}
+def main(private field[10][10] im) -> Output:
+    bool[10][10] mask = [[false; 10]; 10]
+    bool[10] rows = [false; 10]
+    bool[10] cols = [false; 10]
+    for field i in 0..10 do
+        for field j in 0..10 do
+            mask[i][j] = im[i][j] == 0
+            rows[i] = rows[i] || !mask[i][j]
+            cols[j] = cols[j] || !mask[i][j]
+        endfor
+    endfor
+    field rmin = 10
+    field rmax = 0
+    field cmin = 10
+    field cmax = 0
+    for field i in 0..10 do
+        rmin = if rows[i] && i < rmin then i else rmin fi
+        rmax = if rows[i] then i else rmax fi
+        cmin = if cols[i] && i < cmin then i else cmin fi
+        cmax = if cols[i] then i else cmax fi
+    endfor
+    field height = if rmin < 10 then rmax-rmin+1 else 0 fi
+    field width = if rmin < 10 then cmax-cmin+1 else 0 fi
+    field[10][10] result = [[0; 10]; 10]
+    for field i in 0..10 do
+        for field j in 0..10 do
+            bool active = i < height && j < width
+            field r = if active then rmin+i else 0 fi
+            field c = if active then cmin+j else 0 fi
+            result[i][j] = if active then im[r][c] else 0 fi
+        endfor
+    endfor
+    return Output {values: result, height: height, width: width}

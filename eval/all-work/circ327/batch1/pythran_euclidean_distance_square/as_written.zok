@@ -1,0 +1,15 @@
+// Reals are encoded at scale 2^32; signed field values use centered residues.
+def main(private integer[1][3] x1, private integer[5][3] x2) -> integer[1][5]:
+    integer[1][5] r = [[0int; 5]; 1]
+    for u32 j in 0..5 do
+        integer dot = 0
+        integer s1 = 0
+        integer s2 = 0
+        for u32 k in 0..3 do
+            dot = dot + x1[0][k]*x2[j][k]/4294967296
+            s1 = s1 + x1[0][k]*x1[0][k]/4294967296
+            s2 = s2 + x2[j][k]*x2[j][k]/4294967296
+        endfor
+        r[0][j] = -2*dot+s1+s2
+    endfor
+    return r

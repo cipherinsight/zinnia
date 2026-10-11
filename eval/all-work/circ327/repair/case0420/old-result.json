@@ -1,0 +1,41 @@
+{
+  "program": "case0420",
+  "category": "needs_gadget: division",
+  "as_written": {
+    "status": "rejected",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\n\nthread 'main' (149090) panicked at src/target/r1cs/trans.rs:387:18:\ninternal error: entered unreachable code: Unhandled variable operator return\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    "constraints": null,
+    "seconds": 0.007266521453857422,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch5/case0420/as_written.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ]
+  },
+  "rewrite": {
+    "status": "needs gadget",
+    "error": "Native integer Q32 arithmetic cannot be lowered to R1CS; a custom wide fixed-point rescaling/division gadget would be required.",
+    "constraints": null,
+    "rewrites": []
+  },
+  "correctness": {
+    "A": "not run",
+    "B": "not run"
+  },
+  "notes": "Full Q32 products require wider intermediates than native u64. The faithful native arbitrary-integer candidate fails R1CS lowering; no custom wide multiplication/rescaling/division gadget was introduced. See probes/native_integer_field_output.compile.log and probes/stdlib_inventory.json.",
+  "source": {
+    "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0420/kernel.py",
+    "function": "kernel",
+    "sha256": "bf00cc91d37e058c50a65333591ae7ad7d3d09d1becc2220e935d9d03f373929"
+  },
+  "encoding": "Private inputs; public return value. Real numbers are rounded to scale 2^32. Native u64 values use signed two-complement interpretation; integer arithmetic is used for candidate full-width Q32 products to avoid truncating them to 64 bits before rescaling.",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/ds1000_numpy/generated/case0420/fixture.json",
+  "reason": "Full Q32 products require wider intermediates than native u64. The faithful native arbitrary-integer candidate fails R1CS lowering; no custom wide multiplication/rescaling/division gadget was introduced. See probes/native_integer_field_output.compile.log and probes/stdlib_inventory.json."
+}

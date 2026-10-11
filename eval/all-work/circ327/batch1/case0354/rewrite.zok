@@ -1,0 +1,44 @@
+// Reals are encoded at scale 2^32; signed field values use centered residues.
+struct Output {
+    field[9][3] values
+    field length
+}
+def main(private field[2][3] A, private field[7][3] B) -> Output:
+    field[3] dims = [0; 3]
+    for u32 k in 0..3 do
+        field m = A[0][k]
+        for u32 i in 0..2 do
+            m = if A[i][k] > m then A[i][k] else m fi
+        endfor
+        for u32 j in 0..7 do
+            m = if B[j][k] > m then B[j][k] else m fi
+        endfor
+        dims[k] = m + 1
+    endfor
+    field[2] ai = [0; 2]
+    field[7] bi = [0; 7]
+    for u32 i in 0..2 do
+        ai[i] = (A[i][0]*dims[1]+A[i][1])*dims[2]+A[i][2]
+    endfor
+    for u32 j in 0..7 do
+        bi[j] = (B[j][0]*dims[1]+B[j][1])*dims[2]+B[j][2]
+    endfor
+    field[9][3] result = [[0; 3]; 9]
+    field count = 0
+    for u32 i in 0..2 do
+        bool found = false
+        for u32 j in 0..7 do
+            found = found || ai[i] == bi[j]
+        endfor
+        result[count] = if !found then A[i] else result[count] fi
+        count = count + if !found then 1 else 0 fi
+    endfor
+    for u32 j in 0..7 do
+        bool found = false
+        for u32 i in 0..2 do
+            found = found || ai[i] == bi[j]
+        endfor
+        result[count] = if !found then B[j] else result[count] fi
+        count = count + if !found then 1 else 0 fi
+    endfor
+    return Output { values: result, length: count }

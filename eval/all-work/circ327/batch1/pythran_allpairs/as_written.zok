@@ -1,0 +1,14 @@
+// Reals are encoded at scale 2^32; signed field values use centered residues.
+def main(private integer[16][16] X, private integer[16][16] Y) -> integer[16][16]:
+    integer[16][16] D = [[0int; 16]; 16]
+    for u32 i in 0..16 do
+        for u32 j in 0..16 do
+            integer s = 0
+            for u32 k in 0..16 do
+                integer d = X[i][k] - Y[j][k]
+                s = s + d*d/4294967296
+            endfor
+            D[i][j] = s
+        endfor
+    endfor
+    return D

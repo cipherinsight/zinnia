@@ -1,0 +1,27 @@
+from "EMBED" import int_to_bits, u32_from_bits, field_to_integer, u32_to_field
+
+def ui(integer x) -> u32:
+    return u32_from_bits(int_to_bits::<32>(x))
+
+def it(u32 x) -> integer:
+    return field_to_integer(u32_to_field(x))
+
+def mul(integer x, integer y) -> integer:
+    return (x*y)/4294967296
+
+def main(private integer N, private integer[4][2] CX, private integer INCX, private integer[4][2] CY, private integer INCY) -> integer[3]:
+    integer[3] result = [0; 3]
+    integer ix = if INCX < 0 then (-N+1)*INCX else 0 fi
+    integer iy = if INCY < 0 then (-N+1)*INCY else 0 fi
+    for u32 I in 0..1024 do
+        integer x = if INCX == 1 && INCY == 1 then it(I) else ix fi
+        integer y = if INCX == 1 && INCY == 1 then it(I) else iy fi
+        x = if x < 0 then x+4 else x fi
+        y = if y < 0 then y+4 else y fi
+        result[1] = if it(I) < N then result[1]+mul(CX[ui(x)][0],CY[ui(y)][0])+mul(CX[ui(x)][1],CY[ui(y)][1]) else result[1] fi
+        result[2] = if it(I) < N then result[2]+mul(CX[ui(x)][0],CY[ui(y)][1])-mul(CX[ui(x)][1],CY[ui(y)][0]) else result[2] fi
+        ix = ix+INCX
+        iy = iy+INCY
+    endfor
+    result[0] = if N > 0 then 1 else 0 fi
+    return result

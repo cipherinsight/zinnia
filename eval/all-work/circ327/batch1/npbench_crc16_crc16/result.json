@@ -1,0 +1,29 @@
+{
+  "program": "npbench_crc16_crc16",
+  "category": "unsupported_feature: integer bitwise",
+  "as_written": {
+    "status": "rejected",
+    "error": "Running frontend\nError: ZStatementWalker: Bit/Rem operators require U* operands\nIn: /home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch1/npbench_crc16_crc16/as_written.zok\n  def main(private integer[16] data, private integer poly) -> integer:\n      integer crc = 65535\n      for u32 i in 0..16 do\n          integer cur_byte = 255 & data[i]\n          for u32 k in 0..8 do\n              crc = if ((crc & 1) ^ (cur_byte & 1)) != 0 then (crc >> 1) ^ poly else crc >> 1 fi\n              cur_byte = cur_byte >> 1\n          endfor\n      endfor\n      crc = (!crc) & 65535\n      crc = (crc << 8) | ((crc >> 8) & 255)\n      return crc & 65535",
+    "constraints": null,
+    "returncode": 1,
+    "seconds": 0.016
+  },
+  "rewrite": {
+    "status": "unsupported feature",
+    "error": "Z# bitwise operators require bounded unsigned U* operands. The Integer signature permits negative/arbitrarily large poly; changing it to u64 would narrow the input domain. No custom multiword/signed bitwise gadget is permitted.",
+    "constraints": null,
+    "rewrites": []
+  },
+  "correctness": {
+    "A": "not run: native Integer bitwise translation rejected",
+    "B": "not run: native Integer bitwise translation rejected"
+  },
+  "notes": [
+    "An exploratory u64 translation compiled and matched A/B but was discarded because the signature does not bound poly; its successful fixture tests do not establish domain equivalence.",
+    "Native Integer bitwise rejected; unsigned narrowing was discarded."
+  ],
+  "source": {
+    "kernel": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch1/npbench_crc16_crc16/kernel.py",
+    "function": "crc16"
+  }
+}

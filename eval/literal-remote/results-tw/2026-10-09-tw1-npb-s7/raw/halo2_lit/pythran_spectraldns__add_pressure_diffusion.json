@@ -1,0 +1,739 @@
+{
+ "schema": 1,
+ "system": "halo2_lit",
+ "case": "pythran_spectraldns__add_pressure_diffusion",
+ "description": "literal-translation halo2-base (same prover stack as halo2_hw)",
+ "windows": {
+  "prove_core": "create_proof (prove_s)",
+  "end_to_end": "witness synthesis (witness_s) + create_proof (prove_s)",
+  "verify": "verify_proof with the stored verifying key (verify_s)"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/pythran/pythran_spectraldns/kernel.py": "7468c037b11510552b893e731f9cbde5edeb3221482db2c6152f04dc3e423768",
+  "benchmarking/datasets/pythran/pythran_spectraldns/fixture.add_pressure_diffusion.json": "3163b8aa6e0c1f4f6ac89e634485cd2a4d3ca21cd19d2e5ec7e7035a46d4f074",
+  "benchmarking/datasets/pythran/pythran_spectraldns/target.add_pressure_diffusion.literal.rs": "211addf4cbc9c0a196461c0115cdd22bb3e4654360726af890337944b08efecb",
+  "benchmarking/baselines/halo2_hw/target-literal/release/halo2_hw": "88b06f9fe2990ec90ee1cb204d95e38dd13612c08e26dcfe782dc75404456dfe"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-09T10:04:37+0000",
+  "loadavg": [
+   15.42138671875,
+   13.84130859375,
+   13.02001953125
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "choose_k_s": 0.589325917,
+    "keygen_pk_s": 0.636704164,
+    "keygen_vk_s": 1.429549087,
+    "load_input_s": 0.000322788,
+    "params_s": 0.309095279,
+    "synthesize_s": 0.040525947,
+    "write_s": 0.061160228,
+    "process_wall": 3.0771026937291026
+   },
+   "details": {
+    "case": "pythran_spectraldns__add_pressure_diffusion",
+    "cells": {
+     "advice": 195770,
+     "fixed": 11,
+     "instances": 140,
+     "lookup": 49312
+    },
+    "input": "A",
+    "k": 10,
+    "lookup_bits": 8,
+    "mode": "setup",
+    "params": {
+     "k": 10,
+     "lookup_bits": 8,
+     "num_advice_per_phase": [
+      195
+     ],
+     "num_fixed": 1,
+     "num_instance_columns": 1,
+     "num_lookup_advice_per_phase": [
+      50,
+      0,
+      0
+     ]
+    },
+    "pk_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-npb-s7/work/halo2_lit/pythran_spectraldns__add_pressure_diffusion/program/pk.bin",
+    "vk_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-npb-s7/work/halo2_lit/pythran_spectraldns__add_pressure_diffusion/program/vk.bin"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 3.1954649006947875,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 224796672,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   14.7373046875,
+   13.77392578125,
+   13.0146484375
+  ],
+  "child": {
+   "wall_s": 4.033536063507199,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 217595904,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 3.679050257,
+   "end_to_end_s": 3.70020494,
+   "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-npb-s7/work/halo2_lit/pythran_spectraldns__add_pressure_diffusion/proofs/warmup/program/proof.bin",
+   "proof_bytes": 78176,
+   "timings_s": {
+    "load_input_s": 0.00034394,
+    "load_params_s": 0.04275229,
+    "load_pk_s": 0.10643896,
+    "prove_s": 3.679050257,
+    "prove_samples_s": [
+     3.679050257
+    ],
+    "thread_pool_s": 0.001228861,
+    "witness_s": 0.021154683,
+    "write_s": 0.000365682,
+    "process_wall": 3.8602347001433372
+   },
+   "details": {
+    "case": "pythran_spectraldns__add_pressure_diffusion",
+    "cells": {
+     "advice": 195770,
+     "fixed": 11,
+     "instances": 140,
+     "lookup": 49312
+    },
+    "input": "B",
+    "instance_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-npb-s7/work/halo2_lit/pythran_spectraldns__add_pressure_diffusion/proofs/warmup/program/instance.json",
+    "k": 10,
+    "lookup_bits": 8,
+    "mode": "prove",
+    "proof_bytes": 78176
+   },
+   "proof_sha256": "10c8ce1c80e4279be339adc400b7cd6774fb69455e934d3997b065d5256b72ab"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 140 elements differ",
+   "expected_count": 140,
+   "actual_count": 140,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "9b20f1b7ef78dc4bb497f23880a8304bd8f828a8de0ef6748570b38ee78e8c94",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    221.14691468328238,
+    14.873465411830693,
+    286.2666325743776,
+    -21.895749845076352,
+    216.86276650847867,
+    3.927969882497564,
+    261.60440229438245,
+    -11.989808015991002,
+    209.59159638383426,
+    -14.111516859382391,
+    168.69241050444543,
+    14.925019953865558,
+    250.38566277758218,
+    -1.3276456836611032,
+    332.8578705305699,
+    -10.127646282548085,
+    232.11977912276052,
+    9.65233425796032,
+    267.95712271053344,
+    18.920957972761244,
+    352.048371814657,
+    46.89508587005548,
+    275.4969588352833,
+    6.334433352574706,
+    265.7121173273772,
+    8.460304767126217,
+    261.40005253558047,
+    6.900308641139418,
+    268.59843159560114,
+    26.15561749530025,
+    330.1849647194613,
+    14.760642515029758,
+    400.3801936786622,
+    2.89202239876613,
+    294.74649851140566,
+    31.635709397494793,
+    289.7844149034936,
+    -36.64169804658741,
+    274.6057230178267,
+    -14.036844317801297,
+    233.77841841219924,
+    -17.40673414687626,
+    304.1934263955336,
+    4.555475286440924,
+    278.78884850488976,
+    -13.043790492927656,
+    255.39799587684684,
+    1.5421798550523818,
+    333.87235709652305,
+    -1.863117377506569,
+    318.44569087726995,
+    8.920201634289697,
+    322.93248793738894,
+    0.18568800296634436,
+    336.8640622163657,
+    -19.622381784487516,
+    273.1854836894199,
+    -9.103462765691802,
+    336.7053598794155,
+    -8.653198956279084,
+    267.95972043136135,
+    -25.967343466356397,
+    337.1147645856254,
+    38.233034699456766,
+    339.6691169287078,
+    12.930627081077546,
+    388.26029090047814,
+    34.756938306149095,
+    303.9448168417439,
+    -35.66635355516337,
+    296.91177388862707,
+    31.956777579849586,
+    373.3287975245621,
+    -9.276422573020682,
+    405.69243660615757,
+    -9.136248144321144,
+    280.9749185128603,
+    -21.258558109402657,
+    387.45172588853166,
+    6.571664748247713,
+    341.72094133356586,
+    -19.26969521306455,
+    337.5136081168894,
+    -20.419740699697286,
+    303.0017375804018,
+    -17.554124606540427,
+    414.1784421354532,
+    2.445170031161979,
+    409.3733215434477,
+    -41.28658385714516,
+    397.4394279390108,
+    -58.027747619198635,
+    341.358169086976,
+    19.162177605787292,
+    334.5224914108403,
+    -48.63306321040727,
+    439.6827629816253,
+    -1.6916771880351007,
+    427.1276312812697,
+    52.99088805215433,
+    437.1636544831563,
+    -0.35608718753792346,
+    314.7366187807638,
+    0.07816676399670541,
+    395.2349836600479,
+    -4.087407554499805,
+    452.2386247571558,
+    -14.166259209625423,
+    368.1051445903722,
+    24.926554227946326,
+    420.7847844392527,
+    24.697602034313604,
+    463.6566288881004,
+    10.668357867281884,
+    394.2773556925822,
+    8.058555093593895,
+    378.04506182973273,
+    9.831118104746565,
+    415.06428772676736,
+    -15.74290184630081,
+    409.2098649647087,
+    5.61982367024757,
+    377.2120885918848,
+    -7.071278027724475,
+    478.3592956273351,
+    -54.05426395381801,
+    472.6528223103378,
+    -28.000742162577808,
+    443.0661336951889,
+    -12.210828836541623,
+    480.5945018453058,
+    18.375835549551994,
+    444.8097814023495,
+    41.39899713988416,
+    363.2265329777729,
+    39.03129724878818,
+    443.57448698207736,
+    17.497912022052333,
+    467.4291765023954,
+    -34.19981335476041
+   ],
+   "elided": [],
+   "shapes": null
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    15.47705078125,
+    13.99267578125,
+    13.10498046875
+   ],
+   "child": {
+    "wall_s": 3.6922603445127606,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 217235456,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 3.309319845,
+    "end_to_end_s": 3.331184776,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-npb-s7/work/halo2_lit/pythran_spectraldns__add_pressure_diffusion/proofs/sample-1/program/proof.bin",
+    "proof_bytes": 78176,
+    "timings_s": {
+     "load_input_s": 0.000488677,
+     "load_params_s": 0.043563113,
+     "load_pk_s": 0.110628396,
+     "prove_s": 3.309319845,
+     "prove_samples_s": [
+      3.309319845
+     ],
+     "thread_pool_s": 0.001412151,
+     "witness_s": 0.021864931,
+     "write_s": 0.000396449,
+     "process_wall": 3.5004244334995747
+    },
+    "details": {
+     "case": "pythran_spectraldns__add_pressure_diffusion",
+     "cells": {
+      "advice": 195770,
+      "fixed": 11,
+      "instances": 140,
+      "lookup": 49312
+     },
+     "input": "B",
+     "instance_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-npb-s7/work/halo2_lit/pythran_spectraldns__add_pressure_diffusion/proofs/sample-1/program/instance.json",
+     "k": 10,
+     "lookup_bits": 8,
+     "mode": "prove",
+     "proof_bytes": 78176
+    },
+    "proof_sha256": "67c7079344151be7c600bbc0f48b480ed3b10b9a4fa05cad9d2a392fb9b654e5"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 140 elements differ",
+    "expected_count": 140,
+    "actual_count": 140,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "9b20f1b7ef78dc4bb497f23880a8304bd8f828a8de0ef6748570b38ee78e8c94",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     221.14691468328238,
+     14.873465411830693,
+     286.2666325743776,
+     -21.895749845076352,
+     216.86276650847867,
+     3.927969882497564,
+     261.60440229438245,
+     -11.989808015991002,
+     209.59159638383426,
+     -14.111516859382391,
+     168.69241050444543,
+     14.925019953865558,
+     250.38566277758218,
+     -1.3276456836611032,
+     332.8578705305699,
+     -10.127646282548085,
+     232.11977912276052,
+     9.65233425796032,
+     267.95712271053344,
+     18.920957972761244,
+     352.048371814657,
+     46.89508587005548,
+     275.4969588352833,
+     6.334433352574706,
+     265.7121173273772,
+     8.460304767126217,
+     261.40005253558047,
+     6.900308641139418,
+     268.59843159560114,
+     26.15561749530025,
+     330.1849647194613,
+     14.760642515029758,
+     400.3801936786622,
+     2.89202239876613,
+     294.74649851140566,
+     31.635709397494793,
+     289.7844149034936,
+     -36.64169804658741,
+     274.6057230178267,
+     -14.036844317801297,
+     233.77841841219924,
+     -17.40673414687626,
+     304.1934263955336,
+     4.555475286440924,
+     278.78884850488976,
+     -13.043790492927656,
+     255.39799587684684,
+     1.5421798550523818,
+     333.87235709652305,
+     -1.863117377506569,
+     318.44569087726995,
+     8.920201634289697,
+     322.93248793738894,
+     0.18568800296634436,
+     336.8640622163657,
+     -19.622381784487516,
+     273.1854836894199,
+     -9.103462765691802,
+     336.7053598794155,
+     -8.653198956279084,
+     267.95972043136135,
+     -25.967343466356397,
+     337.1147645856254,
+     38.233034699456766,
+     339.6691169287078,
+     12.930627081077546,
+     388.26029090047814,
+     34.756938306149095,
+     303.9448168417439,
+     -35.66635355516337,
+     296.91177388862707,
+     31.956777579849586,
+     373.3287975245621,
+     -9.276422573020682,
+     405.69243660615757,
+     -9.136248144321144,
+     280.9749185128603,
+     -21.258558109402657,
+     387.45172588853166,
+     6.571664748247713,
+     341.72094133356586,
+     -19.26969521306455,
+     337.5136081168894,
+     -20.419740699697286,
+     303.0017375804018,
+     -17.554124606540427,
+     414.1784421354532,
+     2.445170031161979,
+     409.3733215434477,
+     -41.28658385714516,
+     397.4394279390108,
+     -58.027747619198635,
+     341.358169086976,
+     19.162177605787292,
+     334.5224914108403,
+     -48.63306321040727,
+     439.6827629816253,
+     -1.6916771880351007,
+     427.1276312812697,
+     52.99088805215433,
+     437.1636544831563,
+     -0.35608718753792346,
+     314.7366187807638,
+     0.07816676399670541,
+     395.2349836600479,
+     -4.087407554499805,
+     452.2386247571558,
+     -14.166259209625423,
+     368.1051445903722,
+     24.926554227946326,
+     420.7847844392527,
+     24.697602034313604,
+     463.6566288881004,
+     10.668357867281884,
+     394.2773556925822,
+     8.058555093593895,
+     378.04506182973273,
+     9.831118104746565,
+     415.06428772676736,
+     -15.74290184630081,
+     409.2098649647087,
+     5.61982367024757,
+     377.2120885918848,
+     -7.071278027724475,
+     478.3592956273351,
+     -54.05426395381801,
+     472.6528223103378,
+     -28.000742162577808,
+     443.0661336951889,
+     -12.210828836541623,
+     480.5945018453058,
+     18.375835549551994,
+     444.8097814023495,
+     41.39899713988416,
+     363.2265329777729,
+     39.03129724878818,
+     443.57448698207736,
+     17.497912022052333,
+     467.4291765023954,
+     -34.19981335476041
+    ],
+    "elided": [],
+    "shapes": null
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.039979216,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.043452254,
+      "load_vk_s": 0.004794396,
+      "verify_s": 0.039979216,
+      "process_wall": 0.09031242970377207
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.20121378730982542,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 35250176,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-2",
+   "loadavg_before": [
+    15.1953125,
+    13.9775390625,
+    13.109375
+   ],
+   "child": {
+    "wall_s": 3.8310287725180387,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 217608192,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 3.456990684,
+    "end_to_end_s": 3.478721751,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-npb-s7/work/halo2_lit/pythran_spectraldns__add_pressure_diffusion/proofs/sample-2/program/proof.bin",
+    "proof_bytes": 78176,
+    "timings_s": {
+     "load_input_s": 0.000450417,
+     "load_params_s": 0.042932301,
+     "load_pk_s": 0.109944143,
+     "prove_s": 3.456990684,
+     "prove_samples_s": [
+      3.456990684
+     ],
+     "thread_pool_s": 0.001140149,
+     "witness_s": 0.021731067,
+     "write_s": 0.000615588,
+     "process_wall": 3.645721346139908
+    },
+    "details": {
+     "case": "pythran_spectraldns__add_pressure_diffusion",
+     "cells": {
+      "advice": 195770,
+      "fixed": 11,
+      "instances": 140,
+      "lookup": 49312
+     },
+     "input": "B",
+     "instance_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-npb-s7/work/halo2_lit/pythran_spectraldns__add_pressure_diffusion/proofs/sample-2/program/instance.json",
+     "k": 10,
+     "lookup_bits": 8,
+     "mode": "prove",
+     "proof_bytes": 78176
+    },
+    "proof_sha256": "0d479f66294a39e2c127ee9605c35154cc6a0cfece649aa44dcea5632d1a7dbb"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 140 elements differ",
+    "expected_count": 140,
+    "actual_count": 140,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "9b20f1b7ef78dc4bb497f23880a8304bd8f828a8de0ef6748570b38ee78e8c94",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.041223943,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.044072472,
+      "load_vk_s": 0.004908609,
+      "verify_s": 0.041223943,
+      "process_wall": 0.09361300524324179
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.20155859366059303,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 35291136,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-3",
+   "loadavg_before": [
+    14.61669921875,
+    13.89501953125,
+    13.09130859375
+   ],
+   "child": {
+    "wall_s": 2.4793953308835626,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 217247744,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 2.114263936,
+    "end_to_end_s": 2.135420635,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-npb-s7/work/halo2_lit/pythran_spectraldns__add_pressure_diffusion/proofs/sample-3/program/proof.bin",
+    "proof_bytes": 78176,
+    "timings_s": {
+     "load_input_s": 0.000393005,
+     "load_params_s": 0.042857656,
+     "load_pk_s": 0.107832212,
+     "prove_s": 2.114263936,
+     "prove_samples_s": [
+      2.114263936
+     ],
+     "thread_pool_s": 0.000720073,
+     "witness_s": 0.021156699,
+     "write_s": 0.000400242,
+     "process_wall": 2.2978411791846156
+    },
+    "details": {
+     "case": "pythran_spectraldns__add_pressure_diffusion",
+     "cells": {
+      "advice": 195770,
+      "fixed": 11,
+      "instances": 140,
+      "lookup": 49312
+     },
+     "input": "B",
+     "instance_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-npb-s7/work/halo2_lit/pythran_spectraldns__add_pressure_diffusion/proofs/sample-3/program/instance.json",
+     "k": 10,
+     "lookup_bits": 8,
+     "mode": "prove",
+     "proof_bytes": 78176
+    },
+    "proof_sha256": "c9a984b573a41bf2d30738d011b0e58f6869ef44020ff42b4580768a31293abf"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 140 elements differ",
+    "expected_count": 140,
+    "actual_count": 140,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "9b20f1b7ef78dc4bb497f23880a8304bd8f828a8de0ef6748570b38ee78e8c94",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.033169846,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.03381788,
+      "load_vk_s": 0.004765786,
+      "verify_s": 0.033169846,
+      "process_wall": 0.07391763664782047
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.2011631689965725,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 35127296,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 0.037870296,
+    "not_applicable": null,
+    "timings_s": {
+     "load_params_s": 0.042893848,
+     "load_vk_s": 0.004737278,
+     "verify_s": 0.037870296,
+     "process_wall": 0.08742950763553381
+    },
+    "details": {
+     "error": null
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.20136833935976028,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 35381248,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

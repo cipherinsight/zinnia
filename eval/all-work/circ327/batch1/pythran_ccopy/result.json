@@ -1,0 +1,46 @@
+{
+  "program": "pythran_ccopy",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:15,24: range(N) has a private bound.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 1854207,
+    "returncode": 0,
+    "seconds": 62.717,
+    "rewrites": [
+      "Bound both range(N) loops by 1024 and guard I<N, from @requires(0<=N<=1024). Encode each complex value as real/imaginary fields and expose mutated CY."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "expected_elements": 8,
+      "actual_elements": 8,
+      "max_absolute_error": 0.0,
+      "rtol": 1e-06,
+      "atol": 1e-06
+    },
+    "B": {
+      "status": "pass",
+      "expected_elements": 8,
+      "actual_elements": 8,
+      "max_absolute_error": 1.1503908936560947e-10,
+      "rtol": 1e-06,
+      "atol": 1e-06
+    }
+  },
+  "notes": [
+    "Guard 1,024 copy iterations from declared N bound; return mutated CY.",
+    "A/B checked with zxi against undecorated original NumPy source; rtol=atol=1e-6. Reals use scale 2^32; signed field values use centered residues."
+  ],
+  "accepted_attempt": "rewrite",
+  "source": {
+    "kernel": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch1/pythran_ccopy/kernel.py",
+    "function": "CCOPY"
+  }
+}

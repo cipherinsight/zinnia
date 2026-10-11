@@ -1,0 +1,6 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[3] y, private u64 t, private u64 a1, private u64 a2, private u64 b1, private u64 b2, private u64 d1, private u64 d2) -> u64[3]:
+    u64 v1 = divq(mulq(mulq(a1,y[0]),y[1]),4294967296u64+mulq(b1,y[0]))
+    u64 v2 = divq(mulq(mulq(a2,y[1]),y[2]),4294967296u64+mulq(b2,y[1]))
+    return [mulq(y[0],4294967296u64-y[0])-v1, v1-v2-mulq(d1,y[1]), v2-mulq(d2,y[2])]

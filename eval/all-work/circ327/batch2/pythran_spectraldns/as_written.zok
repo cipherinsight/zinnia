@@ -1,0 +1,35 @@
+from "EMBED" import int_to_bits, u32_from_bits, field_to_integer, u32_to_field
+
+def ui(integer x) -> u32:
+    return u32_from_bits(int_to_bits::<32>(x))
+
+def it(u32 x) -> integer:
+    return field_to_integer(u32_to_field(x))
+
+def mul(integer x, integer y) -> integer:
+    return (x*y)/4294967296
+
+def main(private integer[3][2][5][7][2] c, private integer[3][2][5][7] a, private integer[3][2][5][7][2] b) -> integer[3][2][5][7][2]:
+    for u32 i in 0..2 do
+        for u32 j in 0..5 do
+            for u32 k in 0..7 do
+                for u32 part in 0..2 do
+                    c[0][i][j][k][part] = mul(a[0][i][j][k],b[2][i][j][k][part])-mul(a[2][i][j][k],b[1][i][j][k][part])
+                    c[1][i][j][k][part] = mul(a[2][i][j][k],b[0][i][j][k][part])-mul(a[0][i][j][k],b[2][i][j][k][part])
+                    c[2][i][j][k][part] = mul(a[0][i][j][k],b[1][i][j][k][part])-mul(a[1][i][j][k],b[0][i][j][k][part])
+                endfor
+            endfor
+        endfor
+    endfor
+    for u32 h in 0..3 do
+        for u32 i in 0..2 do
+            for u32 j in 0..5 do
+                for u32 k in 0..7 do
+                    integer r = c[h][i][j][k][0]
+                    c[h][i][j][k][0] = -c[h][i][j][k][1]
+                    c[h][i][j][k][1] = r
+                endfor
+            endfor
+        endfor
+    endfor
+    return c

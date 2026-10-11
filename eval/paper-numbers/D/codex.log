@@ -1,0 +1,3094 @@
+Reading additional input from stdin...
+OpenAI Codex v0.162.0
+--------
+workdir: /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+model: gpt-6-astra
+provider: proxy
+approval: never
+sandbox: danger-full-access
+reasoning effort: medium
+reasoning summaries: none
+session id: 01a12078-bf75-7800-bdbf-e2dfa584c174
+--------
+user
+# Common rules for paper-number tasks (2026-10-09)
+
+You compute numbers for the evaluation section of a paper about Zinnia, a compiler from NumPy
+programs to zk-SNARK circuits (halo2-base and Noir backends).
+
+- Final compiler: commit 3ebe0558, built in the worktree /home/zhantong/Projects/zinnia-project/wt/npb-hw
+  (use its `.venv/bin/python`; `from zinnia import ZKCircuit`; `ZKCircuit(name, source).compile()` where
+  `source` is the function text WITHOUT import lines, as the harness passes it; see
+  benchmarking/harness for how the harness compiles kernels and reads fixtures, and reuse that code).
+- Benchmarks: wt/npb-hw/benchmarking/datasets (ds1000, ds1000_numpy, npbench, pythran, case_sets/).
+  The acceptance account of the paper (214 of 327 accepted, compiler 4115cecb, remote run):
+  /home/zhantong/Projects/zinnia-project/eval-redo/final-analysis/fin/remote/post-freeze/data-fin/accept_final/results.json
+- NEVER generate proofs or keys, never run timing. Compile, mock-run and count only. Cap memory: run heavy
+  Python under `systemd-run --user --scope -q -p MemoryMax=16G ...`, at most 8 parallel processes.
+- Do not edit anything in wt/ or zinnia-paper/. Write scripts and outputs only under your task folder
+  /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/<task>/.
+- Every number you report must be reproducible by a script in your folder. Report in
+  <task>/REPORT.md: the definition you used, the numbers, the per-program list behind each count,
+  caveats, and the command to reproduce. Be precise; do not guess. If a definition is ambiguous,
+  pick the most natural one, state it, and give the alternative's number too.
+
+Task D (folder D/): the running example of the walkthrough.
+
+The paper's walkthrough (zinnia-paper/oopsla-2027-r1/walkthrough.tex and fig/tikz/walkthrough.tex; read
+them) compiles this program on the halo2-base backend:
+
+    def kernel(a: Integer[Array, "5 6"], key: Integer[Array, "6"]):  # check the figure for exact types
+        p = np.argsort(key, kind="stable"); c = np.empty_like(p); c[p] = np.arange(6)
+        im = a[:, c]
+        rows = np.flatnonzero(im.any(axis=1)); cols = np.flatnonzero(im.any(axis=0))
+        return im[rows[0]:rows[-1]+1, cols[0]:cols[-1]+1]
+
+(take the exact program from fig/tikz/walkthrough.tex). The text says: "The circuit has X cells, against
+Y when each operator is selected on its own." Compute X (default compiler 3ebe0558) and Y (the same with
+local selection, env ZINNIA_ABLATE_JOINT=1; see the compiler's docs/ablations.md), as halo2-base advice +
+lookup cells (both phases) at the circuit's own parameters, plus Noir gates for both. Also check, with a
+mock run on two inputs against NumPy, that the program compiles and outputs NumPy's result, and check
+whether the text's claims hold in the compiled circuit: the sort checks a prover-supplied order and
+establishes the permutation; the scatter-add's tests [p_k = j] are shared as one-hot vectors; the scans use
+running products and their sum-to-one check makes the index assertions (len >= 1) unselected; the window
+uses the scans' one-hot vectors. Report which claims hold, with evidence from the selection trace.
+
+Your task folder: /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D/. Finish with REPORT.md there.
+codex
+I’ll read the exact walkthrough program, harness, and ablation docs, then compile and count both selection modes and check two inputs against NumPy.
+exec
+/usr/bin/zsh -lc "pwd; rg --files -g AGENTS.md -g ablations.md -g '*walkthrough*' /home/zhantong/Projects/zinnia-project | head -60" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 13ms:
+/home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+/home/zhantong/Projects/zinnia-project/study-backups/before-zhaoyu-assignment-remark-1790241323/AGENTS.md
+/home/zhantong/Projects/zinnia-project/study-backups/before-assign-remaining-1790241049/AGENTS.md
+/home/zhantong/Projects/zinnia-project/study-backups/before-unassign-P1-random-freeze-1790231829/AGENTS.md
+/home/zhantong/Projects/zinnia-project/study-backups/before-protect-completed-results-1790177712/AGENTS.md
+/home/zhantong/Projects/zinnia-project/study-backups/before-assign-P8-1790170903/AGENTS.md
+/home/zhantong/Projects/zinnia-project/study-backups/before-unassign-P9-1790170680/AGENTS.md
+/home/zhantong/Projects/zinnia-project/study-backups/before-freeze-P4-P5-1790150612/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/fix-frontend/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/zinnia-eval/wt/fact-rules-base/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/literal-arith-npb/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/layer-sort/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/zinnia-eval/wt/fact-rules-base/docs/ablations.md
+/home/zhantong/Projects/zinnia-project/wt/literal-arith-npb/docs/ablations.md
+/home/zhantong/Projects/zinnia-project/zinnia-paper/oopsla-2027-r1/walkthrough.tex
+/home/zhantong/Projects/zinnia-project/zinnia-paper/oopsla-2027-r1/fig/tikz/walkthrough.tex
+/home/zhantong/Projects/zinnia-project/zinnia-paper/oopsla-2027-r1/fig/tikz/walkthrough-crop.tex
+/home/zhantong/Projects/zinnia-project/zinnia-src/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/fix-halo2base/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/cleanup-1/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/frontend-2/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/zinnia-eval/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/zinnia-eval/docs/ablations.md
+/home/zhantong/Projects/zinnia-project/wt/literal-fix/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/literal-fix/docs/ablations.md
+/home/zhantong/Projects/zinnia-project/wt/layer-scatter/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/perf-noir/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/array-ssa-review2/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/array-ssa-review2/docs/ablations.md
+/home/zhantong/Projects/zinnia-project/wt/literal-npb3/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/harness-keys/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/literal-npb3/docs/ablations.md
+/home/zhantong/Projects/zinnia-project/wt/layer-core/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/layer-arith/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/perf-ops/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/array-ssa-fix/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/npb-hw-b1/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/array-ssa-fix/docs/ablations.md
+/home/zhantong/Projects/zinnia-project/wt/npb-hw-b1/docs/ablations.md
+/home/zhantong/Projects/zinnia-project/wt/literal-npb1/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/bench-zkvm/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/integ-1/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/perf-2/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/literal-npb1/docs/ablations.md
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/perf-halo2base/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/array-ssa-af1-base/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/docs/ablations.md
+/home/zhantong/Projects/zinnia-project/wt/bench-datasets/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/array-ssa-af1-base/docs/ablations.md
+/home/zhantong/Projects/zinnia-project/wt/literal-ds4/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/layer-gather/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/hint-op/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/literal-ds4/docs/ablations.md
+/home/zhantong/Projects/zinnia-project/wt/bench-circuits/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/delegate-systems/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/determinism/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/delegate-systems/docs/ablations.md
+/home/zhantong/Projects/zinnia-project/wt/array-ssa-af1/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/core-2/studies/user_study/site/AGENTS.md
+/home/zhantong/Projects/zinnia-project/wt/array-ssa-af1/docs/ablations.md
+
+exec
+/usr/bin/zsh -lc 'ls -la' in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 0ms:
+total 16
+drwxr-xr-x 2 zhantong zhantong   23 Oct  9 19:42 .
+drwxr-xr-x 6 zhantong zhantong 4096 Oct  9 19:42 ..
+-rw-r--r-- 1 zhantong zhantong 9274 Oct  9 19:42 codex.log
+
+exec
+/usr/bin/zsh -lc 'for p in /AGENTS.md /home/AGENTS.md /home/zhantong/AGENTS.md /home/zhantong/Projects/AGENTS.md /home/zhantong/Projects/zinnia-project/AGENTS.md /home/zhantong/Projects/zinnia-project/eval-redo/AGENTS.md /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/AGENTS.md; do if [ -f "$p" ]; then cat "$p"; fi; done' in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 0ms:
+exec
+/usr/bin/zsh -lc 'cat /home/zhantong/Projects/zinnia-project/zinnia-paper/oopsla-2027-r1/walkthrough.tex /home/zhantong/Projects/zinnia-project/zinnia-paper/oopsla-2027-r1/fig/tikz/walkthrough.tex /home/zhantong/Projects/zinnia-project/wt/npb-hw/docs/ablations.md' in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 0ms:
+\section{Illustrative Walkthrough}
+\label{sec:walkthrough}
+
+\F~\ref{fig:walkthrough}(a) shows a program that extends the crop of
+\F~\ref{fig:intro-crop}, and we now follow it through the compiler. The
+columns of the image $a$ are stored sorted by \texttt{key}, and the program
+restores their original order before it crops the image to the bounding box of
+its nonzero pixels. Lines~2--3 compute the rank $c_j$ of each column, its
+position in the sorted order, and line~4 reads the columns back in their
+original order. Lines~5--8 are the crop, which here indexes the first and last
+nonzero row and column directly. NumPy therefore rejects an image without
+nonzero pixels, since \texttt{rows[0]} is then out of range.
+
+\begin{figure}[t]
+  \centering
+  \input{fig/tikz/walkthrough}
+  \caption{\textbf{Compiling the running example.} (a)~The program. (b)~Arrays and
+  facts on one input. (c)~The graph, with the selected subgraph shaded.}
+  \label{fig:walkthrough}
+\end{figure}
+
+\paragraph{Symbolic execution.}
+Since $p$ is the result of \texttt{np.argsort}, it is a permutation \wfact{1},
+and the assignment on line~3 becomes one scatter operator. Every $c_j$ is one of
+the values of \texttt{np.arange(6)} \wfact{2}, so the reads on line~4 need no
+index check. The flags $h$ and $g$ mark the nonzero rows and columns of
+$\mathit{im}$. The cells of \texttt{rows} are the positions of the set flags of
+$h$ in increasing order, and its runtime length is $\ell_r = \sum_i h_i$.
+\texttt{rows[0]} and \texttt{rows[-1]} are therefore the first and last set
+flag, $r_0$ and $r_1$. They become scan operators, and \texttt{rows} itself is
+never built. Their index check, $\ell_r \ge 1$, remains an assertion, and so
+does $\ell_c \ge 1$ for the columns. Both scans lie in $[0, 4]$, and $r_0 \le
+r_1$ because they scan the same flags \wfact{3}. The slice therefore needs
+neither Python's wrap nor its clamp, and its height $r_1 + 1 - r_0$ needs no
+$\max(0, \cdot)$.
+
+The slice becomes a window operator, whose output is the only array of the
+program with a shape that depends on the input. Since a slice with runtime
+bounds keeps the bounds of the sliced array, the output has the bounded type
+$\langle \texttt{Int};\, 5, 6 \mid 30 \rangle$ \wfact{4}. The circuit thus reserves
+the $5 \times 6$ cells of $\mathit{im}$ for it, the cropped image fills the
+first $r_1 + 1 - r_0$ rows and $c_1 + 1 - c_0$ columns of these cells, and the
+remaining cells hold padding.
+
+\paragraph{Selection.}
+The selected construction nodes form the two shaded subgraphs of
+\F~\ref{fig:walkthrough}(c). The sort takes the order of the keys from the
+prover and checks that the pairs of key and index increase along it, which
+establishes that $p$ is a permutation. The scatter-add relies on this fact. It
+computes the tests $[p_k = j]$ for every $k$ and $j$, and it provides them as
+the one-hot vector of each $c_j$, which is column $j$ of the matrix in the
+figure. Each read is then a sum $\mathit{im}_{ij} = \sum_k [p_k = j]\, a_{ik}$,
+and $c$ itself is never computed. The scans use running products and check that
+their one-hot vector sums to one, which holds exactly when some flag is set. They
+thereby establish $\ell_r \ge 1$ and $\ell_c \ge 1$, the claims of the index
+checks, so these assertions are not selected. The one-hot vectors $E$ of the
+scans also let the window shift the rows and columns of $\mathit{im}$ without
+comparing $r_0$ and $c_0$ with every position.
+
+Selected one operator at a time, each scan would use a select chain, which is
+cheaper on its own but provides neither the one-hot vectors nor the claims of
+the index checks. The window would then compare its bounds with every position,
+and the assertions would remain. The circuit has \ph{X} cells, against \ph{Y}
+when each operator is selected on its own. The sort leaves the prover no choice,
+since the order that it checks is unique. By \Thm~\ref{thm:lowering}, the
+correctness of the selected constructions then composes into the correctness of
+the circuit.
+% Figure body for the illustrative walkthrough (Sec. 6). The program extends
+% the crop of Fig. 3: the columns of the image a are stored sorted by key, and
+% the program restores their order by the ranks before cropping.
+%   (a) the program;
+%   (b) symbolic execution on one input: key, p = argsort(key), c = the ranks,
+%       a and im = a[:, c], the row and column flags, the output with its
+%       capacity, the first and last set flags and the window; facts
+%       \wfact{1}-\wfact{4} as in the text;
+%   (c) the graph of the construction nodes, with the selected subgraph shaded:
+%       the sort provides p and perm(p); the scatter-add relies on perm(p) and
+%       provides the tests T = [p_k = j], drawn as the 6x6 matrix they form;
+%       the reads rely on T; the checked scans provide their one-hot vectors E
+%       and the claim "nonempty" of the index checks of rows[0], rows[-1],
+%       cols[0], cols[-1], so these assertions are not selected; the window
+%       relies on E. Unselected: a select per write for the scatter, table
+%       reads, select-chain scans, the assertions.
+% The input: key = (20, 40, 60, 10, 30, 50), so p = (3,0,4,1,5,2) and
+% c = (1,3,5,0,2,4); im has its nonzero pixels in rows 1-3 and columns 1-3,
+% and a's column k is im's column p_k (nonzero columns 0, 3 and 5).
+%
+% DRAFT (2026-10-08): drawn before the compiler supports this program. It
+% assumes the work requested from the compiler session (argsort => perm merged,
+% flatnonzero endpoints become scans, a checked first-set scan whose
+% postcondition is "nonempty"); check every node and edge against the trace.
+\ifdefined\wtProgram\else\newsavebox\wtProgram\fi
+\begin{lrbox}{\wtProgram}%
+\begin{minipage}[t]{4.95cm}
+\begin{lstlisting}[style=zpython, deletekeywords={[4]axis},
+  basicstyle=\ttfamily\fontsize{6.4}{7.6}\selectfont,
+  numbers=left, numbersep=3pt, xleftmargin=9pt]
+p = np.argsort(key, kind="stable")
+c = np.empty_like(p)
+c[p] = np.arange(6)
+im = a[:, c]
+rows = np.flatnonzero(im.any(axis=1))
+cols = np.flatnonzero(im.any(axis=0))
+return im[rows[0]:rows[-1]+1,
+          cols[0]:cols[-1]+1]
+\end{lstlisting}
+\end{minipage}%
+\end{lrbox}%
+\tikzset{
+  wt/cell/.style={draw=figGrayLine!70, line width=0.3pt, minimum size=0.26cm,
+    inner sep=0pt, font=\fontsize{5.5}{6}\selectfont},
+  wt/on/.style={wt/cell, fill=figReqLine!55},
+  wt/pad/.style={wt/cell, fill=figGrayFill, text=figOffText},
+  wt/name/.style={font=\scriptsize, inner sep=1pt},
+  wt/tiny/.style={font=\fontsize{5.5}{6}\selectfont, inner sep=0.5pt},
+  wt/part/.style={anchor=west, font=\footnotesize\bfseries, inner sep=0pt},
+  wt/fact/.style={draw=figFact, text=figFact, line width=0.6pt,
+    rounded corners=4pt, inner xsep=2.5pt, inner ysep=1.5pt, font=\scriptsize,
+    fill=white},
+  wt/rootfact/.style={wt/fact, double=white, double distance=1pt},
+  wt/con/.style={draw=figConLine, fill=figConFill, line width=0.5pt,
+    minimum height=0.4cm, inner xsep=2.5pt, font=\scriptsize,
+    rounded corners=1pt},
+  wt/off/.style={draw=figOffLine, dashed, text=figOffText, line width=0.5pt,
+    minimum height=0.4cm, inner xsep=2.5pt, font=\scriptsize,
+    rounded corners=1pt, fill=white},
+  wt/ir/.style={draw=figGrayLine, dashed, line width=0.5pt, rounded corners=2pt,
+    inner sep=2pt, font=\scriptsize\ttfamily, fill=white},
+  wt/provides/.style={-{Stealth[length=3.5pt,width=3pt]}, line width=0.6pt},
+  wt/relies/.style={-{Stealth[length=3.5pt,width=3pt]}, line width=0.6pt,
+    densely dashed},
+  wt/flow/.style={-{Stealth[length=4pt,width=4pt]}, line width=1pt,
+    draw=figGrayLine},
+  wt/hull/.style={draw=figYellowLine!80, fill=figYellowFill, line width=0.6pt},
+}%
+\def\wtS{0.26}% cell size
+% \wtGrid{x}{y}{rows}{cols}{on cells r/c, 0-based}: a grid, top-left at (x,y)
+\newcommand*{\wtGrid}[5]{%
+  \foreach \r in {1,...,#3} \foreach \c in {1,...,#4}
+    \node[wt/cell] at ({#1+(\c-0.5)*\wtS}, {#2-(\r-0.5)*\wtS}) {};
+  \foreach \r/\c in {#5}
+    \node[wt/on] at ({#1+(\c+0.5)*\wtS}, {#2-(\r+0.5)*\wtS}) {};}
+% \wtStrip{x}{y}{values}: a row of cells holding values, left edge at x
+\newcommand*{\wtStrip}[3]{%
+  \foreach \v [count=\i] in {#3}
+    \node[wt/cell] at ({#1+(\i-0.5)*\wtS}, #2) {\v};}
+\begin{tikzpicture}
+  % ============================== (a) program ===============================
+  \node[wt/part] at (0, 0.15) {(a)~Program};
+  \node[anchor=north west, inner sep=0pt] at (0, -0.2) {\usebox{\wtProgram}};
+
+  % ========================= (b) symbolic execution =========================
+  \begin{scope}[shift={(5.35, 0)}]
+    \node[wt/part] at (0, 0.15) {(b)~Symbolic execution};
+    % key, p = argsort(key), c = the ranks
+    \node[wt/name, anchor=east] at (0.45, -0.45) {\texttt{key}};
+    \wtStrip{0.5}{-0.45}{20,40,60,10,30,50}
+    \node[wt/name, anchor=east] at (0.45, -0.8) {$p$};
+    \wtStrip{0.5}{-0.8}{3,0,4,1,5,2}
+    \node[wt/name, anchor=east] at (0.45, -1.15) {$c$};
+    \wtStrip{0.5}{-1.15}{1,3,5,0,2,4}
+    \node[wt/fact, anchor=north west] at (0.05, -1.45) {\wfact{1}\,$\mathit{perm}(p)$};
+    \node[wt/fact, anchor=north west] at (0.05, -1.9) {\wfact{2}\,$0 \le c_j \le 5$};
+    % a -> im
+    \node[wt/name, anchor=south] at (2.95, -0.3) {$a$};
+    \wtGrid{2.17}{-0.3}{5}{6}{2/0,3/0,1/3,3/3,1/5,2/5}
+    \draw[wt/flow] (3.82, -0.95) -- (4.22, -0.95);
+    \node[wt/name, anchor=south] at (5.09, -0.3) {$\mathit{im}$};
+    \wtGrid{4.31}{-0.3}{5}{6}{1/1,3/1,1/2,2/2,2/3,3/3}
+    % the window on im
+    \draw[figFact, line width=0.9pt, rounded corners=1pt]
+      (4.31+\wtS, -0.3-\wtS) rectangle (4.31+4*\wtS, -0.3-4*\wtS);
+    % row flags h and column flags g
+    \foreach \v [count=\i] in {0,1,1,1,0}
+      \node[wt/cell] at (6.02, {-0.3-(\i-0.5)*\wtS}) {\v};
+    \node[wt/name, anchor=west] at (6.15, -1.52) {$h$};
+    \wtStrip{4.31}{-1.72}{0,1,1,1,0,0}
+    \node[wt/name, anchor=east] at (4.27, -1.72) {$g$};
+    % the first and last set flags of h
+    \draw[wt/provides, figFact] (6.42, -0.69) -- (6.18, -0.69);
+    \node[wt/name, anchor=west] at (6.42, -0.69) {$r_0$};
+    \draw[wt/provides, figFact] (6.42, -1.21) -- (6.18, -1.21);
+    \node[wt/name, anchor=west] at (6.42, -1.21) {$r_1$};
+    % the output: 30 reserved cells, the cropped image in the first 3 x 3,
+    % padding elsewhere
+    \node[wt/name, anchor=south] at (7.63, -0.3) {output};
+    \foreach \r in {1,...,5} \foreach \c in {1,...,6}
+      \node[wt/pad] at ({6.85+(\c-0.5)*\wtS}, {-0.3-(\r-0.5)*\wtS}) {};
+    \foreach \r in {1,...,3} \foreach \c in {1,...,3}
+      \node[wt/cell, fill=white] at ({6.85+(\c-0.5)*\wtS}, {-0.3-(\r-0.5)*\wtS}) {};
+    \foreach \r/\c in {0/0,2/0,0/1,1/1,1/2,2/2}
+      \node[wt/on] at ({6.85+(\c+0.5)*\wtS}, {-0.3-(\r+0.5)*\wtS}) {};
+    \draw[figFact, line width=0.9pt, rounded corners=1pt]
+      (6.85, -0.3) rectangle (6.85+3*\wtS, -0.3-3*\wtS);
+    \node[wt/fact, anchor=north] at (5.3, -1.95) {\wfact{3}\,$0 \le r_0 \le r_1 \le 4$};
+    \node[wt/fact, anchor=north] at (7.63, -1.95) {\wfact{4}\,capacity 30};
+  \end{scope}
+
+  % ======================= (c) construction selection =======================
+  \node[wt/part] at (0, -2.95) {(c)~Construction selection};
+  % the IR, operators still whole
+  \node[wt/ir] (i1) at (1.1, -3.35) {argsort(key)};
+  \node[wt/ir] (i2) at (3.25, -3.35) {c[p] = arange(6)};
+  \node[wt/ir] (i3) at (5.75, -3.35) {a[:, c]};
+  \node[wt/ir] (i0) at (7.75, -3.35) {assert len(rows)>0};
+  \node[wt/ir] (i4) at (10.15, -3.35) {rows[0], rows[-1]};
+  \node[wt/ir] (i5) at (12.55, -3.35) {im[r0:r1+1, ...]};
+  % unselected nodes, in a row of their own above the selected ones
+  \node[wt/off] (n2b) at (4.25, -3.95) {selects};
+  \node[wt/off] (n3b) at (6.55, -3.95) {table};
+  \node[wt/off] (n0) at (7.75, -3.95) {assertion};
+  \node[wt/off] (n4b) at (11.2, -3.95) {select chain};
+  % selected nodes
+  \node[wt/con] (n1) at (1.1, -4.6) {sort, prover order};
+  \node[wt/con] (n2) at (3.0, -4.6) {scatter-add};
+  \node[wt/con] (n3) at (5.35, -4.6) {one-hot};
+  \node[wt/con, align=center] (n4) at (9.6, -4.6) {running products,\\[-1pt] $\textstyle\sum_k e_k = 1$};
+  \node[wt/con] (n5) at (12.5, -4.6) {shift by one-hot};
+  \foreach \i/\n in {i1/n1, i2/n2, i2/n2b, i3/n3, i3/n3b, i0/n0, i4/n4, i4/n4b, i5/n5}
+    \draw[line width=0.4pt, draw=figGrayLine] (\i.south) -- (\n.north);
+  % requirements
+  \node[wt/fact] (q1) at (2.05, -5.45) {$\mathit{perm}(p)$};
+  % the tests T = [p_k = j] as the matrix they form
+  \begin{scope}[shift={(3.95, -5.1)}]
+    \foreach \k in {0,...,5} \foreach \j in {0,...,5}
+      \node[wt/cell, minimum size=0.13cm] at ({(\j+0.5)*0.13}, {-(\k+0.5)*0.13}) {};
+    \foreach \k/\j in {0/3,1/0,2/4,3/1,4/5,5/2}
+      \fill[figReqLine] ({(\j+0.5)*0.13}, {-(\k+0.5)*0.13}) circle (1.4pt);
+    \node[wt/tiny, anchor=west] (q2l) at (0.82, -0.39) {$[p_k = j]$};
+  \end{scope}
+  \node[wt/rootfact] (q0) at (8.3, -5.45) {$\ell_r, \ell_c \ge 1$};
+  % the one-hot vectors of the scans
+  \begin{scope}[shift={(10.45, -5.45)}]
+    \foreach \i in {1,...,5}
+      \node[wt/cell, minimum size=0.18cm] at ({(\i-0.5)*0.18}, 0) {};
+    \node[wt/on, minimum size=0.18cm] at (0.27, 0) {};
+    \node[wt/tiny, anchor=west] (q4l) at (0.95, 0) {$E(r_0), \ldots$};
+  \end{scope}
+  \draw[wt/provides] (n1.south) -- (q1);
+  \draw[wt/relies] (q1.north) -- (n2.south);
+  \draw[wt/provides] (n2.south) -- (3.95, -5.12);
+  \draw[wt/relies] (4.73, -5.12) -- (n3.south);
+  \draw[wt/provides] (n0.south) -- (q0);
+  \draw[wt/provides] (n4.south) -- (q0);
+  \draw[wt/provides] (n4.south) -- (10.5, -5.36);
+  \draw[wt/relies] (11.35, -5.36) -- (n5.south);
+
+  % the selected subgraph (overlay: the curves' control points would
+  % otherwise widen the bounding box)
+  \begin{scope}[on background layer, overlay]
+    \draw[wt/hull] plot[smooth cycle, tension=0.45] coordinates {
+      ($(n1.north west)+(-.12,.12)$) ($(n3.north east)+(.12,.12)$)
+      ($(n3.south east)+(.12,-.1)$) ($(q2l.east)+(.1,0)$) (4.4, -6.0)
+      ($(q1.south)+(0,-.14)$) ($(n1.south west)+(-.12,-.25)$)};
+    \draw[wt/hull] plot[smooth cycle, tension=0.45] coordinates {
+      ($(n4.north west)+(-.12,.1)$) ($(n5.north east)+(.12,.12)$)
+      ($(n5.south east)+(.12,-.12)$) ($(q4l.east)+(.1,-.12)$) (10.4, -5.68)
+      ($(q0.south west)+(-.12,-.12)$) ($(q0.north west)+(-.12,.1)$)};
+  \end{scope}
+\end{tikzpicture}%
+# Ablation switches (measurement only)
+
+These environment variables turn off one part of the compiler, so the evaluation can
+report what each part contributes. Each is read by the compiler itself (set it in the
+environment of the process that compiles). Unset (for the `ZINNIA_ABLATE_*` switches:
+set to anything but `1`), they change nothing: the compiled IR is identical to a build
+without them (checked on the 100 DS-1000 and 79 NPBench/Pythran perf cases, both
+targets, IR and `main.nr` digests).
+
+## The use of facts
+
+| Variable | What it turns off | Where |
+|---|---|---|
+| `ZINNIA_ABLATE_SMT=1` | Every Z3 query that reasons about values answers `Unknown` without calling Z3: the IR generator's resolver and `prove()` (bounds, preconditions, index checks, strategy choices), the shape-parameter bounds, and the SMT tier of `AlwaysSatisfiedElimination`. Each caller treats `Unknown` as "no information", so what is left is constants, intervals over the IR (`RangeResolver`) and the scans of interval facts (`ask_bounds`). The construction selection of the lowering layer (a Z3 optimization over costs, not reasoning about values) stays on. | `optim::z3_budget::{check, check_assuming, check_optimize}` |
+| `ZINNIA_ABLATE_LAYER_FACTS=1` | The array-lowering layer gets no free facts (no bounds, no gadget postconditions) and ignores the program's checks: no check is dropped as implied by an earlier one or by a construction's postcondition, and no check justifies a construction's precondition. Every precondition fact gets a check node (the selection may still use another construction's postcondition when that is cheaper). | `lower::emit::lower`, `lower::facts::FreeFacts::none` |
+| `ZINNIA_ABLATE_ARRAY_FACTS=1` | Every query of the array facts (`docs/array-facts.md`) sees none: no element range of an array reaches the bound and decision queries, no read gets its array's range, no order or permutation is known (the boundary reads of a sorted runtime-shaped array, the permutation scatter, the layer's argsort-line permutation are not used), and no array is known to be all zeros or ones or an identity matrix (the constant-content strategies of sum, prod, mean, where and matmul are not offered). Sources still state facts; nothing reads them, and no `IR::ArrayFact` is emitted. In the array-lowering layer every array claim is off (`docs/array-facts-lowering.md`): none is established, implied or composed, program checks are read as before array claims (no order, `Holds`, float or strict-bound forms), no value's checks are merged into one range check, no statement is decided by facts, no sort hint is bounded into a range, and the constructions keyed on array claims (a sort of a sorted input, the argmax of a sorted line, scans of monotone flags, a wrap of a non-negative index) do not apply. The measurement scripts call this configuration `abl_array_facts`. | `optim::array_facts::ablated`, `builder/array_facts.rs`, `lower::array_facts::enabled` (`lower::emit::Options::no_array_facts`) |
+| `ZINNIA_ABLATE_CHECK_ELIM=1` | The two optimizer passes that drop program checks, `AlwaysSatisfiedElimination` and `AssertSubsumption`, are not run. Checks the IR generator never emitted (discharged at IR generation by `prove()` or by bounds) are not affected; that is `ZINNIA_ABLATE_SMT`'s territory. | `lib.rs::compile_circuit` |
+
+Related, older switches (not ablations of the fact layer):
+
+- `ZINNIA_SMT_ENABLE=0` replaces only the IR generator's resolver (`require_static_int`
+  and the other resolver chokepoints) with the static-only resolver, which also loses the
+  interval tier. It does not affect `prove()`, the shape-parameter bounds, or
+  `AlwaysSatisfiedElimination` (which builds its own resolver).
+- `ZINNIA_REQ_DISABLE=1` makes `prove()` answer `Unknown`, so every op precondition is
+  checked in the circuit and every strategy takes its default; the interval fallbacks of
+  the index checks still apply.
+
+## The array-lowering layer's selection
+
+The array-lowering layer (`src/lower/`) chooses, for every operator group, a
+construction (an implementation node) among the ones its families offer, in one joint
+optimization over the whole program (`emit::select_members`). Two switches replace that
+choice, so the evaluation can measure what deciding jointly, and deciding at all, is
+worth.
+
+| Variable | What it changes | Where |
+|---|---|---|
+| `ZINNIA_ABLATE_JOINT=1` | Local selection: each group chooses its construction on its own, priced as if it were the only group of the program (definition below). Only the decision changes: the chosen constructions are emitted by the normal machinery, so a shared value two groups both chose is built once, a check a chosen construction proves is dropped, and the verifier challenge is laid out once. | `lower::local`, `lower::emit::lower_with`, `Context::sharing_groups` |
+| `ZINNIA_FORCE_CONSTRUCTION=<list>` | No selection: for every group, the first listed construction that applies to it (its candidates produce every live lane of the group) is the only one offered (with its helper, the multiplexer's index bits). The list holds construction names (`Construction::name`) and named configurations `@delegate`, `@selects` (below). A group no listed construction applies to, or whose forced construction cannot be selected together with the rest of the program, keeps the layer's choice (a *fallback*; the layer report counts them). | `lower::forcing` |
+| `ZINNIA_LAYER_REPORT=<path>` | Not an ablation: appends one JSON line per lowering round to `<path>`, with each group's family, the constructions applicable to it, the forced one and the chosen ones. The compiled program does not depend on it. | `lower::report` |
+
+### Local selection (`ZINNIA_ABLATE_JOINT=1`)
+
+The compiler's selection pays every shared node once: a value several groups use (the
+bits of an index, the one-hot of a scan or of an index wrap, the cells of a written
+array), a fact one construction establishes for another, a program check one
+construction discharges for several, a program-wide facility (the verifier challenge,
+the RAM trace), and the costs some prices divide among the groups that may share them
+(the equality tests of reads at one index, the fixed columns of the lookup tables). A
+construction that is costly alone can therefore be the cheapest choice in the program.
+The local selection removes exactly that credit:
+
+1. **Decisions, one group at a time, priced alone.** The groups decide in group order
+   (the order of their first lanes in the program). A group's decision is the cheapest
+   selection that justifies its own requirements with every node at its full cost:
+   what an earlier group selected is not free, and a price that the compiler divides
+   among the groups that may share a cost is the price for this group alone
+   (`Context::sharing_groups`). A group's requirements are its live lanes and the
+   program checks its constructions can establish or rely on (the checks the compiler
+   makes requirements of, attached to every group whose candidates mention them).
+2. **Node kinds.** Free facts stay free. A program check stays what it is in the
+   compiler: a group may rely on it, keeping it at its cost, or discharge it by its own
+   postcondition; a check two groups both count is counted by each. A check node (the
+   framework's check of an unproven precondition) is paid by the group that needs it.
+   A program-wide facility is paid in full by every group that uses it. A shared value
+   is paid by every group that uses it.
+3. **Commitment.** Some constructions are sound only together with a particular
+   construction of another group (a read through the one-hot of an index wrap relies on
+   the wrap's lanes being the ones the program checks; the overlay of a written array
+   reads the wrap's one-hot). So a decision is committed: every lane a selected node
+   produces is produced by that node. A later group may use a node that produces a
+   committed lane only if it is that lane's producer or a *variant* of it (the same
+   construction producing a strict superset of its requirements, such as the same wrap
+   also exposing its one-hot), which then replaces it. A node that produces lanes of
+   several groups (the RAM trace of a written array produces the reads of its versions,
+   which are element groups of their own) commits all of them; a group whose lanes are
+   all committed has nothing left to decide. This is how written arrays (memory groups,
+   their versions and overlays) are handled: whichever of the array's groups decides
+   first chooses its representation, paying for it in full.
+4. **Completion.** With every lane's producer fixed, the program checks, check nodes,
+   shared values and program-wide facilities the decided constructions need are
+   selected by the compiler's selection among the nodes that produce no lane.
+
+### Fixed configurations (`ZINNIA_FORCE_CONSTRUCTION=@name`)
+
+One fixed construction per family (`OpKind::family`), whatever it costs
+(`lower::forcing::CONFIGURATIONS`). A family not listed keeps the layer's choice.
+
+| Family | `@delegate` | `@selects` |
+|---|---|---|
+| element (a read at a runtime index) | `memory: element by table read` (Noir: a native array read through bb's ROM; halo2-base: a dynamic-lookup table read) | `gather: element by a select chain` |
+| memory (an array written at runtime) | `memory: native RAM` (Noir: bb's RAM) / `memory: RAM trace` (halo2-base) | `memory: overlay of selects` |
+| wrap (NumPy's negative index) | layer's choice | `memory: wrap by pinned sign` |
+| scan (first / last set flag, argmax of flags) | layer's choice | `gather: scan by a select chain` |
+| sort | layer's choice | `sort: network` |
+| searchsorted | layer's choice | `searchsorted: count` |
+| linear (matmul, correlation) | layer's choice | `linear: direct product sums` |
+| is_permutation | layer's choice | `permutation: hit counts` |
+| mask write | layer's choice | `mask write: selects` |
+| insert, window, permutation scatter, corrcoef | layer's choice | layer's choice |
+
+`@delegate` is what a conventional circuit compiler does with array code: every access
+at a runtime index goes through the backend's memory. On Noir the array is a native
+array, so Noir's compiler and bb lower the access, not Zinnia; the halo2-base
+counterpart (table read, RAM trace) is reported as an ablation only. It fixes the
+families that decide how an array is represented and accessed; the other families keep
+the layer's choice, because their alternatives differ in computing a result against
+checking it (sort, searchsorted, linear, is_permutation), have no memory-based
+alternative (wrap, scan, window, permutation scatter, insert, mask write), or have no
+choice (corrcoef: the input type decides). `@selects` is the simplest uniform lowering:
+select chains and plain compute everywhere a family has such a construction (insert's
+two constructions are two forms of the same position one-hot, neither a select).
+
+A RAM construction applies only to an array whose versions form one chain read in
+program order; a written array that is not keeps the layer's choice (a fallback). An
+element read of a written array lowered by the RAM is produced by the RAM node (it is
+not a fallback).
+
+### Measurement scripts (`benchmarking/ablations/`)
+
+* `measure.py --config C`: per perf case and target, halo2-base cells and `k`, Noir
+  `bb gates` (`--gates`), IR and `main.nr` digests, and the layer report's summary
+  (per family the constructions chosen, the groups lowered through the backend's memory,
+  the fallbacks of a fixed configuration). `compare.py` compares two of its outputs.
+* `oracle.py`: for every family with two or more applicable constructions in a program,
+  the program compiled once per construction forced (one family at a time); the
+  compiler's choice against the best and the worst forced construction.
+* `soundness.py --config C`: the harness protocol with one proof per case (keys from
+  input A, a proof of input B equal to NumPy's outputs, verification, a tampered public
+  value rejected).
+* `run_configs.sh WT OUT CONFIG [JOBS]`: the remote runner (configurations `final`,
+  `abl_joint`, `fix_delegate`, `fix_selects`, `oracle`, `noir_hw`).
+
+
+exec
+/usr/bin/zsh -lc "rg -n 'cells|advice|gate_count|mock|selection_trace|compile\\(' /home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness | head -100" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 0ms:
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/toolchains.py:165:NARGO_COMMIT = re.compile(r"git version hash: ([0-9a-f]{40}), is dirty: (true|false)")
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/tests/test_outputs.py:105:        {"output": {"return": [0]}, "shape": [2], "cells": [f(0), {"constant": 7}]},
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/tests/test_outputs.py:107:                                                "dims": [i(6), i(2)], "cells": [f(3), f(4), f(5)]}},
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/tests/test_outputs.py:127:                           "cells": [i(4 + k) for k in range(9)]}}
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/tests/test_outputs.py:138:                          "strides": [6, 1], "offset": 0, "cells": [c(0)] * 4}}
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/tests/test_outputs.py:140:    # A complex part has two cells per element.
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/tests/test_outputs.py:142:                    "cells": [i(0), c(0.0), i(1), c(2.5)]}
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/tests/test_outputs.py:160:    layout = [{"output": {"argument": "a"}, "shape": [2], "cells": []}]
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/tests/test_noir_execute.py:167:    package.compile()
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/run.py:62:    package.compile()
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/reference.py:49:    exec(compile(source, str(kernel_path), "exec"), namespace)  # noqa: S102 - our own datasets
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/kernels.py:84:    return circuit.compile()
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/__main__.py:177:    accept = sub.add_parser("accept", help="compile + mock-run + reference compare")
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/acceptance/validate.py:1:"""The acceptance runner: compile + mock-run + reference compare for every program.
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/acceptance/validate.py:12:3. with a fixture: run the mock backend on input B (input A if there is no B)
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/acceptance/validate.py:60:def _mock_publics(proof) -> tuple[list[int], bool]:
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/acceptance/validate.py:63:    The mock names each public after its `ExposePublic` statement id, so sorting
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/acceptance/validate.py:71:    return [v for _, v in entries], proof.proof_bytes_hex == "mock_satisfied"
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/acceptance/validate.py:75:    """Compile, mock-run and compare one program (runs in the child)."""
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/acceptance/validate.py:98:        proof = compiled.prove(*args, backend="mock")
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/acceptance/validate.py:102:        return {**result, "stage": "mock", "mock_error": f"{type(exc).__name__}: {exc}"[:2000]}
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/acceptance/validate.py:103:    values, satisfied = _mock_publics(proof)
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/acceptance/validate.py:105:        return {**result, "stage": "mock", "mock_error": "constraints unsatisfied on the "
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/acceptance/validate.py:188:    if stage == "mock":
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/acceptance/validate.py:189:        return Outcome("accepted_unsatisfied", response["mock_error"])
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/acceptance/validate.py:267:        cells = [counts[(outcome, d)] for d in datasets]
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/acceptance/validate.py:268:        lines.append(f"| {outcome} | " + " | ".join(map(str, cells)) + f" | {sum(cells)} |")
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/acceptance/classify.py:73:    return Rule(reason_class, re.compile(pattern, re.I | re.S), construct)
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/__init__.py:24:- ``acceptance/``  compile + mock-run + reference compare for the acceptance sets
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/adapters/zinnia_noir.py:133:        nargo_compile_s = package.compile()
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/adapters/noir_hw.py:132:        compile_s = package.compile()
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/adapters/zinnia_halo2.py:192:                     "Zinnia estimate_params", "cells": fingerprints["A"],
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/adapters/zinnia_common.py:98:    """The public vector from the exposed outputs alone (what the mock reports).
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/adapters/zinnia_common.py:100:    Public inputs come first in the full vector's statement order but the mock
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/adapters/zinnia_common.py:118:    `outputs`). A vector holding only the exposed outputs (the mock's) is
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/adapters/noir_toolchain.py:113:    def compile(self) -> float:
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:6:  choose `(k, lookup_bits)`, and count the circuit's advice, lookup-advice and
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:7:  fixed cells at that lookup width (a witness-free synthesis; cell counts do not
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:12:**Cells** are advice + lookup cells (the cells the prover commits to). Both sides
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:16:has more limbs (more cells) for the same constraints. Cells at different widths
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:20:Each row therefore records, per side, the cells at its own chosen `k` (and that
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:21:`k` and lookup width), and both sides' cells at the **common lookup width**, the
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:38:`--profile 0450` prints, for one case, the advice and lookup cells per IR operation
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:39:type (at lookup width 8), which shows where a circuit's cells come from.
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:45:position by position (the harness's decoder and tolerance) and with the mock
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:49:when the baselines change; the baseline's cells at a common width it did not
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:119:    Zinnia chose, the record also carries `at_common`: the cells at that width."""
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:136:        stats["at_common"] = {key: wider[key] for key in ("lookup_bits", "advice", "lookup")}
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:145:    """`(IR operation, statements, advice cells, lookup cells)`, most advice first."""
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:153:    for stmt_id, advice, lookup in json.loads(halo2_base_cell_profile(compiled._compiled_ir, lookup_bits)):
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:156:        entry[1] += advice
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:161:def mock_publics_in_order(labelled: list[str]) -> list[int]:
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:162:    """The mock's raw public values (`public_<kind>_<statement id>=<raw>`, listed
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:197:    mock = compiled.prove(*args, backend="mock")
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:198:    mock_raw = mock_publics_in_order(mock.public_values)
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:208:        "mock_equal": halo2_raw == mock_raw,
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:224:            and record.get("mock_equal") is True and numpy_ok)
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:254:    """The baseline's cells at its own chosen size, or at `lookup_bits` if given."""
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:271:            cells = out["cells"]
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:272:            return {"k": out["k"], "lookup_bits": out["lookup_bits"], **cells}
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:282:    return record["advice"] + record["lookup"]
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:286:    """Zinnia / halo2_hw cells, each side at its own chosen `k` and lookup width."""
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:294:    """The comparison ratio: Zinnia / halo2_hw cells at the common lookup width
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:308:    """Both sides' cells at the larger of their two lookup widths."""
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:313:        z = {"advice": zinnia["advice"], "lookup": zinnia["lookup"]}
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:315:        z = {key: zinnia["at_common"][key] for key in ("advice", "lookup")}
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:317:        h = {"advice": hw["advice"], "lookup": hw["lookup"]}
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:324:        h = {"advice": wider["advice"], "lookup": wider["lookup"]}
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:347:        "ratio": "Zinnia / halo2_hw cells at the common lookup width (max of both sides' lookup_bits)",
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:352:def fmt_cells(record: dict | None) -> str:
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:357:    return f"{record['advice']} + {record['lookup']}"
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:372:    lines = ["| case | status | Zinnia advice + lookup | k/lb | halo2_hw advice + lookup | k/lb | "
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:380:        lines.append(f"| {case[-4:]} | {row['status']} | {fmt_cells(z)} | {fmt_k(z)} | "
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:381:                     f"{fmt_cells(h)} | {fmt_k(h)} | {fmt_ratio(ratio_own_k(row))} | "
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:382:                     f"{common.get('lookup_bits', '-')} | {fmt_cells(common.get('zinnia'))} | "
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:383:                     f"{fmt_cells(common.get('halo2_hw'))} | {fmt_ratio(ratio(row))} |")
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:398:            f"| {case[-4:]} | {a['status']} | {fmt_cells(zb)} | {zb.get('k', '-')} | "
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:399:            f"{fmt_cells(za)} | {za.get('k', '-')} | {fmt_cells(h)} | {h.get('k', '-')} | "
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:434:    ap.add_argument("--profile", help="print the cells per IR operation type of one case")
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:447:        print(f"{'operation':24} {'stmts':>6} {'advice':>9} {'lookup':>8}")
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:448:        for op, count, advice, lookup in rows:
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:449:            print(f"{op:24} {count:6d} {advice:9d} {lookup:8d}")
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:478:        print(f"{case}  zinnia={fmt_cells(zinnia)} k={fmt_k(zinnia)}  "
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py:479:              f"halo2_hw={fmt_cells(hw)} k={fmt_k(hw)}  ratio_own_k={fmt_ratio(ratio_own_k(rows[case]))}  "
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/outputs.py:109:        static  = {"output": ..., "shape": [d, ...], "cells": [slot, ...]}
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/outputs.py:111:                   "dims": [slot, ...], "cells": [slot, ...],
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/outputs.py:114:    A part marked `"complex": true` has two cells (real, imaginary) per element.
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/outputs.py:141:            cells = [value(cell) for cell in part["cells"]]
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/outputs.py:142:            if math.prod(part["shape"]) * per_element != len(cells):
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/outputs.py:143:                raise ValueError(f"static part of shape {part['shape']} has {len(cells)} cells")
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/outputs.py:144:            values.extend(cells)
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/outputs.py:152:        cells = [value(cell) for cell in dynamic["cells"]]
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/outputs.py:159:        if positions and (max(positions) + 1) * per_element > len(cells):
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/outputs.py:160:            raise ValueError(f"dynamic part of shape {dims} does not fit its {len(cells)} cells")
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/outputs.py:162:            values.extend(cells[position * per_element:(position + 1) * per_element])
+
+exec
+/usr/bin/zsh -lc 'cat /home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/ablations/measure.py' in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 0ms:
+#!/usr/bin/env python3
+"""Costs, IR digests and layer decisions of one compiler configuration, per perf case.
+
+For every `perf` case of the case sets and both targets, each compile in its own child
+process with the configuration's environment (`common.CONFIGS`, or `--env NAME=VALUE`):
+halo2-base cells (and `k`), the Noir circuit's `bb gates` (with `--gates`), the IR and
+`main.nr` digests, and what the array-lowering layer chose (`common.summarize_report`):
+per family the constructions chosen, the groups lowered through the backend's memory,
+and for a named fixed configuration the groups that kept the layer's choice
+(fallbacks).
+
+    python benchmarking/ablations/measure.py --config abl_joint --out abl_joint.json \\
+        [--case-sets ds1000,npbench_pythran|PATH] [--cases 0345,pythran_lu__factorMatrix0] \\
+        [--targets halo2,noir] [--gates] [--jobs 8] [--timeout 1200] \\
+        [--wrap "python benchmarking/ablations/capped.py 8G 1100"]
+
+The output maps case set -> case -> target -> record (`common.measure`), with the
+configuration and its environment under `"config"`.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shlex
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import common  # noqa: E402
+
+
+def parse_env(pairs: list[str]) -> dict[str, str]:
+    env = {}
+    for pair in pairs:
+        name, _, value = pair.partition("=")
+        env[name] = value
+    return env
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--config", required=True, help=f"one of {', '.join(common.CONFIGS)}, or a "
+                    "label for --env")
+    ap.add_argument("--env", action="append", default=[], help="NAME=VALUE (with a custom label)")
+    ap.add_argument("--case-sets", default=",".join(common.CASE_SETS),
+                    help="names from common.CASE_SETS or paths of case-set files")
+    ap.add_argument("--cases", help="comma-separated case names (default: every perf case)")
+    ap.add_argument("--targets", default=",".join(common.TARGETS))
+    ap.add_argument("--gates", action="store_true", help="also measure Noir bb gates")
+    ap.add_argument("--jobs", type=int, default=8)
+    ap.add_argument("--timeout", type=float, default=1200)
+    ap.add_argument("--wrap", default="", help="command prefix of each child (a memory cap)")
+    ap.add_argument("--out", type=Path, required=True)
+    args = ap.parse_args()
+
+    if args.config in common.CONFIGS and args.env:
+        ap.error("--env takes a label of its own, not a predefined configuration")
+    env = common.CONFIGS.get(args.config) if not args.env else parse_env(args.env)
+    if env is None:
+        ap.error(f"unknown configuration {args.config}")
+    wanted = set(args.cases.split(",")) if args.cases else None
+    jobs = []
+    for set_name in args.case_sets.split(","):
+        entries = common.perf_entries(common.case_set_file(set_name))
+        for case in sorted(entries):
+            short = case.removeprefix("ds1000_case")
+            if wanted is None or case in wanted or short in wanted:
+                for target in args.targets.split(","):
+                    jobs.append((set_name, case, entries[case], target))
+    wrap = shlex.split(args.wrap)
+
+    def run(job):
+        set_name, case, entry, target = job
+        record = common.run_child(entry, target, env, args.gates, args.timeout, wrap)
+        cost = common.cost_of(record, target)
+        layer = record.get("layer", {})
+        print(f"{case} {target} cost={cost} fallback={layer.get('fallback')} "
+              f"native={layer.get('native_memory')} {record.get('error', '')[:200]}", flush=True)
+        return job, record
+
+    results: dict = {"config": {"name": args.config, "env": env}}
+    with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+        for (set_name, case, _, target), record in pool.map(run, jobs):
+            results.setdefault(set_name, {}).setdefault(case, {})[target] = record
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(json.dumps(results, indent=1, sort_keys=True) + "\n")
+    errors = [(s, c, t) for s, per in results.items() if s != "config" for c, by in per.items()
+              for t, r in by.items() if "error" in r]
+    print(f"{len(jobs) - len(errors)}/{len(jobs)} measured; errors: {errors}")
+    return 1 if errors else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+exec
+/usr/bin/zsh -lc "cat /home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/kernels.py; sed -n '60,145p' /home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/acceptance/validate.py; sed -n '110,142p' /home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/costs_halo2.py; git -C /home/zhantong/Projects/zinnia-project/wt/npb-hw rev-parse HEAD" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 0ms:
+"""Loading, classifying and compiling `kernel.py` files, and the scope rule."""
+
+from __future__ import annotations
+
+import ast
+import importlib.util
+import sys
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+#: The scope rule (author's decision, applied to every dataset): a kernel that
+#: imports any module other than `numpy` (and its submodules) and `math` is out
+#: of scope. `zinnia` is the language's own import and is always allowed.
+ALLOWED_TOP_LEVEL_MODULES = frozenset({"numpy", "math", "zinnia"})
+
+
+def imported_modules(path: Path) -> list[str]:
+    """Top-level module names of every import statement in the file."""
+    tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+    names: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.extend(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:  # relative import: a sibling module, never in scope
+                names.append("." * node.level + (node.module or ""))
+            elif node.module:
+                names.append(node.module.split(".")[0])
+    return names
+
+
+def out_of_scope_imports(path: Path) -> list[str]:
+    """The imports that put this kernel out of scope (empty = in scope)."""
+    return sorted({n for n in imported_modules(path) if n not in ALLOWED_TOP_LEVEL_MODULES})
+
+
+def function_roles(path: Path) -> dict[str, str]:
+    """`circuit`, `chip` or `plain` for every top-level function of the file."""
+    tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+    roles: dict[str, str] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        decorators = {ast.unparse(dec) for dec in node.decorator_list}
+        if any(d == "zk_circuit" or d.startswith("zk_circuit(") for d in decorators):
+            roles[node.name] = "circuit"
+        elif any(d == "zk_chip" or d.startswith("zk_chip(") for d in decorators):
+            roles[node.name] = "chip"
+        else:
+            roles[node.name] = "plain"
+    return roles
+
+
+def load_kernel_module(path: Path) -> ModuleType:
+    """Import a kernel file under a module name derived from its folder.
+
+    The module is registered in `sys.modules` so that chips and helpers
+    defined in the same file resolve during compilation.
+    """
+    module_name = "zinnia_benchmark_" + path.parent.name
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load module spec for {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def compile_kernel(path: Path, function: str, backend: str = "halo2") -> Any:
+    """Compile one `@zk_circuit` function for `backend` (`ZinniaConfig.backend`:
+    `halo2` or `noir`); returns a `ZKCompiledProgram`.
+
+    The backend is the compile target. Where Zinnia has several equivalent
+    lowerings (sorts: a sorting network or pinned prover hints) it picks the one
+    cheaper on that backend; the program proves on every backend either way.
+    """
+    from zinnia import ZKCircuit
+    from zinnia.config.zinnia_config import ZinniaConfig
+
+    module = load_kernel_module(path)
+    circuit = ZKCircuit.from_method(getattr(module, function), config=ZinniaConfig(backend=backend))
+    return circuit.compile()
+def _mock_publics(proof) -> tuple[list[int], bool]:
+    """Mock public values (signed integers, Q32 for floats) in exposure order.
+
+    The mock names each public after its `ExposePublic` statement id, so sorting
+    by that id restores the exposure order a real backend uses.
+    """
+    entries = []
+    for entry in proof.public_values:
+        name, _, value = entry.partition("=")
+        entries.append((int(name.rsplit("_", 1)[1]), int(value)))
+    entries.sort()
+    return [v for _, v in entries], proof.proof_bytes_hex == "mock_satisfied"
+
+
+def check_program(request: dict) -> dict:
+    """Compile, mock-run and compare one program (runs in the child)."""
+    from benchmarking.harness.adapters.base import StepFailure
+    from benchmarking.harness.adapters.zinnia_common import describe_compiled, zinnia_publics
+    from benchmarking.harness.fixtures import PROVE_INPUT, SETUP_INPUT, load_fixture
+    from benchmarking.harness.kernels import compile_kernel
+    from benchmarking.harness.outputs import UnlistedOutput, check_outputs, reference_outputs
+    from benchmarking.harness.reference import run_kernel_with_arguments
+
+    kernel, function = Path(request["kernel"]), request["function"]
+    started = time.perf_counter()
+    try:
+        compiled = compile_kernel(kernel, function)
+    except BaseException as exc:  # noqa: BLE001 - PyO3 panics derive from BaseException
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
+        return {"stage": "compile", "error": f"{type(exc).__name__}: {exc}"[:2000]}
+    result = {"stage": "compiled", "compile_s": time.perf_counter() - started}
+    if not request.get("fixture"):
+        return {**result, "unchecked": "no fixture"}
+    fixture = load_fixture(Path(request["fixture"]))
+    input_name = PROVE_INPUT if PROVE_INPUT in fixture.inputs else SETUP_INPUT
+    args = fixture.arguments(input_name)
+    try:
+        proof = compiled.prove(*args, backend="mock")
+    except BaseException as exc:  # noqa: BLE001
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
+        return {**result, "stage": "mock", "mock_error": f"{type(exc).__name__}: {exc}"[:2000]}
+    values, satisfied = _mock_publics(proof)
+    if not satisfied:
+        return {**result, "stage": "mock", "mock_error": "constraints unsatisfied on the "
+                                                         "honest input"}
+    info = describe_compiled(compiled)
+    try:
+        returned, arguments_after = run_kernel_with_arguments(kernel, function, args)
+        expected, shapes = reference_outputs(returned, arguments_after, args,
+                                             info["output_layout"])
+    except UnlistedOutput as exc:
+        return {**result, "stage": "checked", "input": input_name,
+                "output_check": {"status": "mismatch", "detail": str(exc)}}
+    except Exception as exc:  # noqa: BLE001
+        return {**result, "unchecked": f"no reference: {type(exc).__name__}: {exc}"[:500]}
+    try:
+        publics = zinnia_publics(values, info)
+    except StepFailure as failure:
+        return {**result, "stage": "decode", "decode_error": failure.detail}
+    check = check_outputs(expected, publics, Tolerance(**request["tolerance"]),
+                          expected_shapes=shapes)
+    return {**result, "stage": "checked", "input": input_name, "output_check": check.to_json()}
+
+
+def _child_main(request_path: Path, response_path: Path) -> int:
+    request = json.loads(request_path.read_text())
+    try:
+        response = check_program(request)
+    except Exception as exc:  # noqa: BLE001
+        response = {"stage": "harness", "error": f"{type(exc).__name__}: {exc}",
+                    "traceback": traceback.format_exc(limit=6)}
+    response_path.write_text(json.dumps(response))
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Parent side
+# ---------------------------------------------------------------------------
+
+
+def _run_isolated(program: AcceptanceProgram, config: AcceptanceConfig, work: Path,
+                  smt_budget_ms: int | None) -> dict:
+    tag = program.program.replace("/", "_") + (f"-smt{smt_budget_ms}" if smt_budget_ms else "")
+    request_path, response_path = work / f"{tag}.request.json", work / f"{tag}.response.json"
+
+
+# ------------------------------------------------------------------ Zinnia side
+
+
+def zinnia_one(case: str, other_lookup_bits: int | None = None) -> dict:
+    """Compile one kernel and measure it (runs inside the child process).
+
+    When `other_lookup_bits` (the baseline's width) is wider than the width
+    Zinnia chose, the record also carries `at_common`: the cells at that width."""
+    from benchmarking.harness.kernels import compile_kernel
+    from zinnia._zinnia_core import halo2_base_cell_stats
+
+    started = time.perf_counter()
+    compiled = compile_kernel(paths.DS1000_PERF / case / "kernel.py", "kernel")
+    compiled_s = time.perf_counter() - started
+    census = collections.Counter()
+    for stmt in compiled.get_ir_stmts():
+        name = str(stmt["ir_instance"]["__class__"]).removesuffix("IR")
+        if name in CENSUS_OPS:
+            census[name] += 1
+    stats = json.loads(halo2_base_cell_stats(compiled._compiled_ir))
+    if other_lookup_bits is not None and other_lookup_bits > stats["lookup_bits"]:
+        params = {"k": stats["k"], "precision_bits": stats["precision_bits"],
+                  "lookup_bits": other_lookup_bits}
+        wider = json.loads(halo2_base_cell_stats(compiled._compiled_ir, json.dumps(params)))
+        stats["at_common"] = {key: wider[key] for key in ("lookup_bits", "advice", "lookup")}
+    stats["ops"] = dict(sorted(census.items()))
+    stats["ir_stmts"] = len(compiled.get_ir_stmts())
+    stats["compile_s"] = round(compiled_s, 3)
+    stats["measure_s"] = round(time.perf_counter() - started - compiled_s, 3)
+    return stats
+
+3ebe0558f25592a0c1f8b6cf9bf7ad09f3ddb1d1
+
+exec
+/usr/bin/zsh -lc 'cat /home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/ablations/common.py' in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 0ms:
+"""Shared parts of the ablation scripts: the configurations, one measured compile in a
+child process, and the summary of the layer report (`ZINNIA_LAYER_REPORT`).
+
+A measurement compiles one perf case for one target in its own process, with the
+configuration's environment variables set (they are read by the compiler itself,
+`docs/ablations.md`), and records:
+
+* `ir`: SHA-256 (16 hex digits) of the exported IR statements, as
+  `benchmarking/determinism.py` computes it;
+* halo2: `cells` = advice + lookup cells at the `k` that `estimate_params` picks,
+  with `k`, `lookup_bits` and `poly_cost` (committed polynomials x 2^k, the size model
+  `estimate_params` minimises; it also counts the columns that fixed overheads such as
+  a verifier challenge or a lookup table add, which cells do not see)
+  (`halo2_base_cell_stats`, witness-free);
+* noir: `noir` = SHA-256 (16 hex digits) of the emitted `main.nr` (input B), and with
+  gates on, `gates` = `bb gates` circuit size (`noir_gates.gate_count`);
+* `layer`: what the array-lowering layer chose (`summarize_report`).
+"""
+
+from __future__ import annotations
+
+import collections
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+BENCHMARKING = ROOT / "benchmarking"
+CASE_SETS = {
+    "ds1000": BENCHMARKING / "datasets" / "case_sets" / "ds1000_perf.json",
+    "npbench_pythran": BENCHMARKING / "datasets" / "case_sets" / "npbench_pythran_perf.json",
+}
+TARGETS = ("halo2", "noir")
+
+#: The compiler configurations of the ablation study: environment variables set for the
+#: compile (`docs/ablations.md`). `final` is the compiler as measured everywhere else.
+CONFIGS: dict[str, dict[str, str]] = {
+    "final": {},
+    "abl_joint": {"ZINNIA_ABLATE_JOINT": "1"},
+    "fix_delegate": {"ZINNIA_FORCE_CONSTRUCTION": "@delegate"},
+    "fix_selects": {"ZINNIA_FORCE_CONSTRUCTION": "@selects"},
+    "abl_array_facts": {"ZINNIA_ABLATE_ARRAY_FACTS": "1"},
+}
+
+#: Constructions through the backend's memory: Noir's native ROM / RAM, halo2-base's
+#: dynamic-lookup table read and RAM trace.
+NATIVE_MEMORY = ("memory: element by table read", "memory: native RAM", "memory: RAM trace")
+
+#: Constructions that are part of another one, not an alternative to it
+#: (`src/lower/forcing.rs`, HELPERS).
+HELPERS = ("memory: index bits",)
+
+
+def case_set_file(name: str) -> Path:
+    """A case set by name (`CASE_SETS`) or by path (e.g. a scaled set outside the dataset)."""
+    return CASE_SETS[name] if name in CASE_SETS else Path(name)
+
+
+def perf_entries(case_set: Path) -> dict[str, dict]:
+    """The case set's `perf` entries by case name."""
+    entries = json.loads(case_set.read_text())["cases"]
+    return {e["case"]: e for e in entries if e["status"] == "perf"}
+
+
+def case_files(entry: dict) -> tuple[Path, Path, str]:
+    """`(kernel.py, fixture.json, entry function)` of a case-set entry."""
+    directory = (BENCHMARKING / entry["path"] if "path" in entry
+                 else BENCHMARKING / "datasets" / "ds1000" / entry["case"])
+    fixture = directory / (entry.get("fixture") or "fixture.json")
+    return directory / "kernel.py", fixture, entry.get("function", "kernel")
+
+
+def sha16(data: str | bytes) -> str:
+    if isinstance(data, str):
+        data = data.encode()
+    return hashlib.sha256(data).hexdigest()[:16]
+
+
+# ----------------------------------------------------------------- the child side
+
+
+def measure(kernel: str, fixture_path: str, function: str, target: str, gates: bool) -> dict:
+    """Compile once in this process and measure (the configuration is in os.environ)."""
+    sys.path.insert(0, str(ROOT))
+    sys.path.insert(0, str(BENCHMARKING))
+    os.environ.setdefault("ZINNIA_SKIP_RELEASE_BUILD", "1")
+    from benchmarking.harness.fixtures import load_fixture
+    from benchmarking.harness.kernels import compile_kernel
+
+    started = time.perf_counter()
+    compiled = compile_kernel(Path(kernel), function, backend=target)
+    record: dict = {"compile_s": round(time.perf_counter() - started, 3)}
+    stmts = compiled.get_ir_stmts()
+    record.update(ir=sha16(json.dumps(stmts, sort_keys=True)), stmts=len(stmts))
+    if target == "halo2":
+        from zinnia._zinnia_core import halo2_base_cell_stats
+        stats = json.loads(halo2_base_cell_stats(compiled._compiled_ir))
+        record.update(cells=stats["advice"] + stats["lookup"], advice=stats["advice"],
+                      lookup=stats["lookup"], k=stats["k"], lookup_bits=stats["lookup_bits"],
+                      poly_cost=stats.get("poly_cost"))
+    else:
+        fixture = load_fixture(Path(fixture_path))
+        source = compiled.emit_structural(*fixture.arguments("B"), backend="noir")
+        record["noir"] = sha16(source)
+        if gates:
+            from noir_gates import NOIR_FPC, gate_count
+            record.update(gate_count(source, "noir_fpc", NOIR_FPC))
+    return record
+
+
+def child_main(argv: list[str]) -> int:
+    """`--child KERNEL FIXTURE FUNCTION TARGET [--gates]`: print one JSON line."""
+    kernel, fixture, function, target = argv[:4]
+    try:
+        record = measure(kernel, fixture, function, target, "--gates" in argv[4:])
+    except BaseException as exc:  # noqa: BLE001 - PyO3 panics derive from BaseException
+        if isinstance(exc, KeyboardInterrupt):
+            raise
+        record = {"error": f"{type(exc).__name__}: {exc}"[:1500]}
+    print(json.dumps(record), flush=True)
+    return 0
+
+
+# ---------------------------------------------------------------- the parent side
+
+
+def run_child(entry: dict, target: str, env: dict[str, str], gates: bool, timeout: float,
+              wrap: list[str]) -> dict:
+    """Measure one case and target in a child process with `env` added to the
+    environment; the layer report is collected and summarized.
+
+    `wrap` (a memory cap such as `capped.py MEM SECONDS`) should enforce its own
+    timeout below `timeout`: on this process's timeout only the wrapper is killed, and
+    a wrapper that runs its command in a session of its own leaves it running."""
+    kernel, fixture, function = case_files(entry)
+    with tempfile.TemporaryDirectory(prefix="zinnia-ablation-") as tmp:
+        report = Path(tmp) / "layer.jsonl"
+        child_env = {**os.environ, **env, "ZINNIA_LAYER_REPORT": str(report),
+                     "ZINNIA_SKIP_RELEASE_BUILD": "1"}
+        cmd = [*wrap, sys.executable, str(Path(__file__).resolve()), "--child", str(kernel),
+               str(fixture), function, target, *(["--gates"] if gates else [])]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=ROOT,
+                                  env=child_env)
+        except subprocess.TimeoutExpired:
+            return {"error": f"timeout after {timeout:.0f} s"}
+        record = None
+        for line in reversed(proc.stdout.strip().splitlines()):
+            if line.startswith("{"):
+                record = json.loads(line)
+                break
+        if record is None:
+            tail = (proc.stderr or proc.stdout).strip().splitlines()[-3:]
+            record = {"error": f"exit {proc.returncode}: {' | '.join(tail)}"[:1500]}
+        if report.exists():
+            record["layer"] = summarize_report(report.read_text().splitlines())
+    return record
+
+
+def summarize_report(lines: list[str]) -> dict:
+    """What the layer chose, over every lowering round of one compile:
+
+    * `groups`: per group (in order) its family, the constructions applicable to it,
+      the forced one, whether it was released, whether a configuration fixes its family,
+      and the constructions chosen for its lanes;
+    * `chosen`: per family, how many groups chose each construction;
+    * `native_memory`: groups whose lanes come from the backend's memory (NATIVE_MEMORY);
+    * `fallback`: groups of a family a named configuration fixes whose lanes come from
+      none of the configuration's constructions (the layer's choice is kept for them);
+    * `estimated_cost`: the layer's own cost estimate of what it selected, summed over
+      rounds (halo2-base cells or Noir gates of the cost model, not a measurement).
+    """
+    groups: list[dict] = []
+    chosen: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
+    estimated = 0
+    native = fallback = 0
+    for line in lines:
+        if not line.strip():
+            continue
+        round_ = json.loads(line)
+        estimated += round_["estimated_cost"]
+        forcing = set(round_.get("forcing", []))
+        for g in round_["groups"]:
+            groups.append({k: g[k] for k in ("family", "kind", "lanes", "applicable", "forced",
+                                             "released", "fixed_family", "chosen")})
+            for name in g["chosen"]:
+                chosen[g["family"]][name] += 1
+            if any(name in NATIVE_MEMORY for name in g["chosen"]):
+                native += 1
+            if g["fixed_family"] and not forcing & set(g["chosen"]):
+                fallback += 1
+    return {"groups": groups, "chosen": {f: dict(c) for f, c in sorted(chosen.items())},
+            "native_memory": native, "fallback": fallback, "estimated_cost": estimated}
+
+
+def cost_of(record: dict, target: str, metric: str = "cells") -> int | None:
+    """The measured cost: halo2-base cells (or `metric`, e.g. `poly_cost`), or Noir gates."""
+    if "error" in record:
+        return None
+    return record.get(metric) if target == "halo2" else record.get("gates")
+
+
+if __name__ == "__main__" and sys.argv[1:2] == ["--child"]:
+    sys.exit(child_main(sys.argv[2:]))
+
+exec
+/usr/bin/zsh -lc "cat /home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/fixtures.py | head -150; cat /home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/reference.py | head -100; rg -n 'layer_report|lowering_report|selection.*report' /home/zhantong/Projects/zinnia-project/wt/npb-hw/zinnia /home/zhantong/Projects/zinnia-project/wt/npb-hw/src | head -40" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 0ms:
+"""`fixture.json`: the inputs of one case (schema in `eval-redo/BRIEF.md`).
+
+```json
+{"case": "ds1000_case0300", "function": "kernel",
+ "parameters": [{"name": "a", "kind": "array", "dtype": "float", "shape": [20]},
+                {"name": "p", "kind": "scalar", "dtype": "int"}],
+ "inputs": {"A": {"a": [...], "p": 25}, "B": {"a": [...], "p": 37}},
+ "notes": "..."}
+```
+
+Input `A` is used for setup (key generation), input `B` for every timed proof
+and the output check. Every input is private and every output public.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Mapping
+
+import numpy as np
+
+SETUP_INPUT = "A"
+PROVE_INPUT = "B"
+
+_NUMPY_DTYPES = {"float": np.float64, "int": np.int64, "bool": np.bool_, "complex": np.complex128}
+_SCALAR_TYPES = {"float": float, "int": int, "bool": bool, "complex": complex}
+
+
+class FixtureError(ValueError):
+    """A fixture that does not satisfy the schema."""
+
+
+@dataclass(frozen=True)
+class Parameter:
+    name: str
+    kind: str  # "array" | "scalar"
+    dtype: str  # "float" | "int" | "bool" | "complex" (values as [real, imag] pairs)
+    shape: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class Fixture:
+    case: str
+    function: str
+    parameters: tuple[Parameter, ...]
+    inputs: Mapping[str, Mapping[str, Any]]
+    path: Path
+    sha256: str
+
+    def values(self, input_name: str) -> dict[str, Any]:
+        """The raw JSON values of one input, by parameter name."""
+        try:
+            return dict(self.inputs[input_name])
+        except KeyError:
+            raise FixtureError(f"{self.path}: no input {input_name!r}") from None
+
+    def arguments(self, input_name: str) -> list[Any]:
+        """The kernel's positional arguments for one input, in signature order.
+
+        Arrays become NumPy arrays of the declared dtype and shape; scalars
+        become Python `float`, `int` or `bool`.
+        """
+        values = self.values(input_name)
+        return [_argument(param, values[param.name]) for param in self.parameters]
+
+
+def _argument(param: Parameter, value: Any) -> Any:
+    if param.dtype == "complex":
+        value = _complex_values(value)
+    if param.kind == "scalar":
+        return _SCALAR_TYPES[param.dtype](value)
+    array = np.array(value, dtype=_NUMPY_DTYPES[param.dtype])
+    if array.shape != param.shape:
+        raise FixtureError(f"parameter {param.name!r}: value has shape {array.shape}, "
+                           f"declared {param.shape}")
+    return array
+
+
+def _complex_values(value: Any) -> Any:
+    """A complex fixture value: each number is the pair `[real, imag]` (JSON
+    has no complex numbers), nested like the array it belongs to."""
+    if isinstance(value, list) and len(value) == 2 \
+            and all(isinstance(part, (int, float)) for part in value):
+        return complex(value[0], value[1])
+    if isinstance(value, list):
+        return [_complex_values(item) for item in value]
+    raise FixtureError(f"complex value {value!r} is not a [real, imag] pair")
+
+
+def _parameter(raw: Mapping[str, Any]) -> Parameter:
+    kind = raw.get("kind")
+    dtype = raw.get("dtype")
+    if kind not in ("array", "scalar"):
+        raise FixtureError(f"parameter {raw.get('name')!r}: kind must be array or scalar")
+    if dtype not in _NUMPY_DTYPES:
+        raise FixtureError(f"parameter {raw.get('name')!r}: dtype must be float, int, bool "
+                           "or complex")
+    shape = tuple(int(d) for d in raw.get("shape", ())) if kind == "array" else ()
+    return Parameter(name=str(raw["name"]), kind=kind, dtype=dtype, shape=shape)
+
+
+def load_fixture(path: Path) -> Fixture:
+    """Load and validate one fixture file."""
+    data = path.read_bytes()
+    raw = json.loads(data)
+    try:
+        parameters = tuple(_parameter(p) for p in raw["parameters"])
+        inputs = raw["inputs"]
+        fixture = Fixture(case=str(raw["case"]), function=str(raw.get("function", "kernel")),
+                          parameters=parameters, inputs=inputs, path=path,
+                          sha256=hashlib.sha256(data).hexdigest())
+    except KeyError as exc:
+        raise FixtureError(f"{path}: missing field {exc}") from None
+    _validate(fixture)
+    return fixture
+
+
+def _validate(fixture: Fixture) -> None:
+    for name in (SETUP_INPUT, PROVE_INPUT):
+        values = fixture.values(name)
+        missing = [p.name for p in fixture.parameters if p.name not in values]
+        if missing:
+            raise FixtureError(f"{fixture.path}: input {name} lacks {missing}")
+        fixture.arguments(name)  # checks shapes and dtypes
+    # A kernel without parameters has one possible input, used for both.
+    if fixture.parameters and fixture.values(SETUP_INPUT) == fixture.values(PROVE_INPUT):
+        raise FixtureError(f"{fixture.path}: inputs A and B must differ")
+"""The NumPy reference: a kernel's body run as plain NumPy.
+
+The `@zk_circuit` decorator (and `@zk_chip`, `@zk_external`) becomes the
+identity, Zinnia's annotation names stay importable, and the function is called
+on copies of the inputs (kernels may mutate their arguments). No per-case
+overrides: a kernel whose body is not valid NumPy has no reference, and the
+harness reports that.
+"""
+
+from __future__ import annotations
+
+import inspect
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+
+def _identity_decorator(method=None, **_kwargs):
+    if method is None:
+        return lambda m: m
+    return method
+
+
+def kernel_namespace() -> dict[str, Any]:
+    import zinnia
+
+    namespace = {name: getattr(zinnia, name) for name in dir(zinnia) if not name.startswith("_")}
+    namespace["np"] = np
+    namespace["zk_circuit"] = _identity_decorator
+    namespace["zk_chip"] = _identity_decorator
+    namespace["zk_external"] = _identity_decorator
+    return namespace
+
+
+def run_kernel_as_numpy(kernel_path: Path, function: str, args: list[Any]) -> Any:
+    """Execute the kernel file with the shims above and call `function(*args)`."""
+    return run_kernel_with_arguments(kernel_path, function, args)[0]
+
+
+def run_kernel_with_arguments(kernel_path: Path, function: str,
+                              args: list[Any]) -> tuple[Any, dict[str, Any]]:
+    """Like `run_kernel_as_numpy`, and also return the arguments after the call
+    by parameter name (a kernel that returns `None` outputs the arrays it wrote)."""
+    source = kernel_path.read_text()
+    # The real import would rebind the shims; Zinnia's names are already there.
+    source = source.replace("from zinnia import *", "")
+    namespace = kernel_namespace()
+    exec(compile(source, str(kernel_path), "exec"), namespace)  # noqa: S102 - our own datasets
+    call_args = [np.array(a, copy=True) if isinstance(a, np.ndarray) else a for a in args]
+    kernel = namespace[function]
+    result = kernel(*call_args)
+    names = list(inspect.signature(kernel).parameters)
+    return result, dict(zip(names, call_args))
+
+codex
+The figure contains the exact body but no function signature. I’ll use the integer array types and dimensions from your prompt and note that choice in the report. The figure is also marked as a draft, so I’ll check its construction claims against the saved selection traces.
+exec
+/usr/bin/zsh -lc "cat /home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/noir_gates.py | head -210; rg -n 'report|selected|requires|provides' /home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/report.rs; rg -n 'class Tolerance' /home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/*.py; rg -n 'def __init__' /home/zhantong/Projects/zinnia-project/wt/npb-hw/zinnia/api/zk_circuit.py" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 0ms:
+#!/usr/bin/env python3
+"""Gate counts (`bb gates` circuit size) of the performance-set Noir circuits.
+
+Sources (one per run):
+  --zinnia          emit each case's `main.nr` with the installed Zinnia build
+                    (`emit_structural` on fixture input B; the circuit text does
+                    not depend on the input values, only on their shapes) and
+                    stage it with `noir_fpc`;
+  --zinnia-dir DIR  pre-rendered Zinnia circuits `DIR/<case>.nr`, with `noir_fpc`;
+  --baselines       the handwritten `datasets/ds1000/<case>/main.nr`, staged with
+                    `baselines/noir_hw` exactly as `hw_check.noir_driver setup`
+                    stages it (the number `hw_check.check` records as `gates`).
+
+Both sides are compiled with `nargo compile` and sized with `bb gates
+--scheme ultra_honk --verifier_target noir-recursive` (zero-knowledge
+UltraHonk, the target of the harness and of Zinnia's Noir driver). Cases
+default to every `perf` case of `datasets/case_sets/ds1000_perf.json`. Each
+case runs in a child process with a timeout; `--wrap` prefixes the child
+command (e.g. a memory cap); `--jobs` runs that many children at once.
+
+    .venv/bin/python benchmarking/noir_gates.py --zinnia --out zn.json [--emit-dir DIR]
+    .venv/bin/python benchmarking/noir_gates.py --baselines --out hw.json
+    .venv/bin/python benchmarking/noir_gates.py --compare zn.json hw.json [--markdown]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+THIS_DIR = Path(__file__).resolve().parent
+ROOT = THIS_DIR.parent
+DATASET = THIS_DIR / "datasets" / "ds1000"
+CASE_SET = THIS_DIR / "datasets" / "case_sets" / "ds1000_perf.json"
+NOIR_FPC = THIS_DIR / "noir_fpc"
+NOIR_HW = THIS_DIR / "baselines" / "noir_hw"
+PROVE_INPUT = "B"
+os.environ.setdefault("ZINNIA_SKIP_RELEASE_BUILD", "1")
+BB_FLAGS = ("--scheme", "ultra_honk", "--verifier_target", "noir-recursive")
+
+
+def tool(env: str, home_rel: str, name: str) -> str:
+    explicit = os.environ.get(env)
+    if explicit:
+        return explicit
+    home = Path.home() / home_rel
+    return str(home) if home.is_file() else (shutil.which(name) or name)
+
+
+NARGO = tool("ZINNIA_NARGO_BIN", ".nargo/bin/nargo", "nargo")
+BB = tool("ZINNIA_BB_BIN", ".bb/bb", "bb")
+
+
+def case_name(spec: str) -> str:
+    return spec if spec.startswith("ds1000_case") else f"ds1000_case{spec}"
+
+
+def perf_cases() -> list[str]:
+    """Every case whose status in the performance case set is `perf`."""
+    entries = json.loads(CASE_SET.read_text())["cases"]
+    return sorted(e["case"] for e in entries if e["status"] == "perf")
+
+
+def load_case(case: str):
+    """(compiled program, kernel arguments of `input_name`) for one perf case."""
+    sys.path.insert(0, str(ROOT))
+    from benchmarking.harness.fixtures import load_fixture
+    from benchmarking.harness.kernels import compile_kernel
+
+    directory = DATASET / case
+    fixture = load_fixture(directory / "fixture.json")
+    compiled = compile_kernel(directory / "kernel.py", fixture.function, backend="noir")
+    return compiled, fixture
+
+
+def zinnia_main_nr(case: str) -> str:
+    compiled, fixture = load_case(case)
+    return compiled.emit_structural(*fixture.arguments(PROVE_INPUT), backend="noir")
+
+
+def gate_count(main_nr: str, library: str, library_dir: Path) -> dict:
+    """`nargo compile` + `bb gates` of `main.nr` depending on one library."""
+    with tempfile.TemporaryDirectory(prefix="noir-gates-") as tmp:
+        pkg = Path(tmp)
+        (pkg / "src").mkdir()
+        (pkg / "src" / "main.nr").write_text(main_nr)
+        shutil.copytree(library_dir, pkg / library, ignore=shutil.ignore_patterns("target"))
+        (pkg / "Nargo.toml").write_text(
+            '[package]\nname = "circuit"\ntype = "bin"\nauthors = [""]\n\n'
+            f'[dependencies]\n{library} = {{ path = "./{library}" }}\n')
+        proc = subprocess.run([NARGO, "compile", "--silence-warnings"], cwd=pkg,
+                              capture_output=True, text=True)
+        if proc.returncode != 0:
+            return {"error": "nargo compile: " + (proc.stdout + proc.stderr)[-1500:]}
+        proc = subprocess.run([BB, "gates", "-b", str(pkg / "target" / "circuit.json"), *BB_FLAGS],
+                              capture_output=True, text=True)
+        if proc.returncode != 0:
+            return {"error": "bb gates: " + (proc.stdout + proc.stderr)[-1500:]}
+        document, _ = json.JSONDecoder().raw_decode(proc.stdout[proc.stdout.find("{"):])
+        fn = document["functions"][0]
+        return {"gates": fn["circuit_size"], "acir_opcodes": fn["acir_opcodes"]}
+
+
+def child(case: str, source: str, source_dir: str | None, emit_dir: str | None) -> dict:
+    try:
+        if source == "zinnia":
+            main_nr = zinnia_main_nr(case)
+            if emit_dir:
+                Path(emit_dir).mkdir(parents=True, exist_ok=True)
+                (Path(emit_dir) / f"{case}.nr").write_text(main_nr)
+        elif source == "zinnia-dir":
+            main_nr = (Path(source_dir) / f"{case}.nr").read_text()
+        else:
+            main_nr = (DATASET / case / "main.nr").read_text()
+    except BaseException as e:  # noqa: BLE001 - PyO3 panics derive from BaseException
+        return {"error": f"source: {type(e).__name__}: {e}"[:1500]}
+    if source == "baselines":
+        return gate_count(main_nr, "noir_hw", NOIR_HW)
+    return gate_count(main_nr, "noir_fpc", NOIR_FPC)
+
+
+def geomean(xs: list[float]) -> float:
+    return math.exp(sum(math.log(x) for x in xs) / len(xs)) if xs else float("nan")
+
+
+def compare(zinnia_json: Path, baseline_json: Path, markdown: bool) -> int:
+    """Per-case Zinnia/handwritten ratio, worst first, and the geomean."""
+    zn = json.loads(zinnia_json.read_text())
+    hw = json.loads(baseline_json.read_text())
+    rows = []
+    for case in sorted(set(zn) | set(hw)):
+        z, h = zn.get(case, {}).get("gates"), hw.get(case, {}).get("gates")
+        rows.append((case, z, h, z / h if z and h else None))
+    rows.sort(key=lambda r: (r[3] is None, -(r[3] or 0)))
+    ratios = [r[3] for r in rows if r[3] is not None]
+    if markdown:
+        print("| case | Zinnia | handwritten | Zinnia/hw |\n|---|---|---|---|")
+        for case, z, h, r in rows:
+            print(f"| {case.removeprefix('ds1000_case')} | {z if z is not None else '-'} "
+                  f"| {h if h is not None else '-'} | {f'{r:.3f}' if r else '-'} |")
+    else:
+        for case, z, h, r in rows:
+            print(f"{case}  {z!s:>8}  {h!s:>8}  {f'{r:.3f}' if r else '-'}")
+    print(f"pairs {len(ratios)}  geomean {geomean(ratios):.4f}  "
+          f"Zinnia cheaper on {sum(r < 1 for r in ratios)}, "
+          f"costlier on {sum(r > 1 for r in ratios)}")
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--zinnia", action="store_true")
+    src.add_argument("--zinnia-dir")
+    src.add_argument("--baselines", action="store_true")
+    src.add_argument("--compare", nargs=2, metavar=("ZINNIA_JSON", "BASELINE_JSON"))
+    ap.add_argument("--markdown", action="store_true", help="--compare: a markdown table")
+    ap.add_argument("--cases", default="all", help="comma-separated case numbers, or 'all'")
+    ap.add_argument("--timeout", type=int, default=1200)
+    ap.add_argument("--wrap", default="", help="command prefix for each child (e.g. a memory cap)")
+    ap.add_argument("--jobs", type=int, default=1)
+    ap.add_argument("--emit-dir", help="--zinnia: also write each emitted main.nr here")
+    ap.add_argument("--out")
+    ap.add_argument("--child", help=argparse.SUPPRESS)
+    a = ap.parse_args()
+    if a.compare:
+        return compare(Path(a.compare[0]), Path(a.compare[1]), a.markdown)
+    source = "zinnia" if a.zinnia else ("zinnia-dir" if a.zinnia_dir else "baselines")
+
+    if a.child:
+        print(json.dumps(child(a.child, source, a.zinnia_dir, a.emit_dir)))
+        return 0
+    if not a.out:
+        ap.error("--out is required")
+
+    cases = perf_cases() if a.cases == "all" else [case_name(c) for c in a.cases.split(",")]
+    out_path = Path(a.out)
+    results = json.loads(out_path.read_text()) if out_path.exists() else {}
+    todo = [c for c in cases if c not in results]
+
+    def run(case: str) -> tuple[str, dict]:
+        cmd = a.wrap.split() + [sys.executable, __file__, "--child", case]
+        cmd += {"zinnia": ["--zinnia"], "zinnia-dir": ["--zinnia-dir", a.zinnia_dir or ""],
+                "baselines": ["--baselines"]}[source]
+        if a.emit_dir:
+            cmd += ["--emit-dir", a.emit_dir]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=a.timeout)
+            lines = [l for l in proc.stdout.splitlines() if l.startswith("{")]
+            rec = json.loads(lines[-1]) if lines else {"error": "crash: " + proc.stderr[-800:]}
+        except subprocess.TimeoutExpired:
+            rec = {"error": "timeout"}
+        return case, rec
+
+    with ThreadPoolExecutor(max_workers=max(1, a.jobs)) as pool:
+        for case, rec in pool.map(run, todo):
+            results[case] = rec
+            print(case, rec.get("gates", rec.get("error", "")[:160]), flush=True)
+            out_path.write_text(json.dumps(results, indent=1, sort_keys=True))
+    return 0
+
+
+1://! The layer report (measurement only): `ZINNIA_LAYER_REPORT=<path>` appends
+4://! any) and the constructions selected for its lanes. The ablation scripts read it
+17:/// Append the report of one lowering to `path`.
+29:    selected: &[usize],
+50:                names(&own, &mut selected.iter().copied())
+52:                names(&produces_lane, &mut selected.iter().copied())
+77:        "estimated_cost": selected.iter().map(|&i| nodes[i].node.cost).sum::<u64>(),
+78:        // Each selected node's estimated cost, for comparing the cost
+80:        "selected": selected
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/case_sets.py:62:class Tolerance:
+23:    def __init__(
+
+exec
+/usr/bin/zsh -lc "cat /home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/report.rs; sed -n '18,50p' /home/zhantong/Projects/zinnia-project/wt/npb-hw/zinnia/api/zk_circuit.py; sed -n '60,76p' /home/zhantong/Projects/zinnia-project/wt/npb-hw/benchmarking/harness/case_sets.py; rg -n 'ZINNIA_.*(DUMP|TRACE|REPORT)' /home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 0ms:
+//! The layer report (measurement only): `ZINNIA_LAYER_REPORT=<path>` appends
+//! one JSON line per lowering round to `<path>`, with, for every group, its
+//! family, the constructions applicable to it, the forced construction (if
+//! any) and the constructions selected for its lanes. The ablation scripts read it
+//! (`benchmarking/ablations/`); the compiled program does not depend on it.
+
+use std::collections::BTreeSet;
+use std::io::Write;
+use std::path::Path;
+
+use serde_json::json;
+
+use super::construction::Target;
+use super::emit::{NodeEntry, Offer, Options};
+use super::graph::{Group, GroupId};
+
+/// Append the report of one lowering to `path`.
+///
+/// # Panics
+/// When the file cannot be written (a measurement must not lose its record
+/// silently).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn append(
+    path: &Path,
+    target: Target,
+    options: &Options,
+    groups: &[Group],
+    nodes: &[NodeEntry],
+    selected: &[usize],
+    offers: &[Offer],
+    released: &BTreeSet<GroupId>,
+) {
+    let names = |pick: &dyn Fn(&NodeEntry) -> bool, among: &mut dyn Iterator<Item = usize>| -> Vec<&'static str> {
+        let mut out: Vec<&'static str> = Vec::new();
+        for i in among {
+            if pick(&nodes[i]) && !out.contains(&nodes[i].name) {
+                out.push(nodes[i].name);
+            }
+        }
+        out
+    };
+    let rows: Vec<serde_json::Value> = groups
+        .iter()
+        .map(|group| {
+            let own = |n: &NodeEntry| n.group == Some(group.id);
+            let produces_lane = |n: &NodeEntry| n.lanes().any(|s| group.lanes.iter().any(|l| l.stmt == s));
+            // A group without lanes (a memory group whose reads are all at
+            // runtime positions) is decided by the nodes offered for it.
+            let chosen = if group.lanes.is_empty() {
+                names(&own, &mut selected.iter().copied())
+            } else {
+                names(&produces_lane, &mut selected.iter().copied())
+            };
+            json!({
+                "group": group.id,
+                "family": group.kind.family(),
+                "kind": group.kind.name(),
+                "lanes": group.lanes.len(),
+                "applicable": offers[group.id].applicable,
+                "forced": offers[group.id].forced,
+                "released": released.contains(&group.id),
+                // A family a named configuration fixes (a group of it that
+                // keeps the layer's choice is a fallback).
+                "fixed_family": options.forcing.fixes_family(group.kind.family()),
+                "chosen": chosen,
+            })
+        })
+        .collect();
+    let line = json!({
+        "target": match target {
+            Target::Halo2Base => "halo2",
+            Target::Noir => "noir",
+        },
+        "local": options.local,
+        "no_facts": options.no_facts,
+        "forcing": options.forcing.names(),
+        "estimated_cost": selected.iter().map(|&i| nodes[i].node.cost).sum::<u64>(),
+        // Each selected node's estimated cost, for comparing the cost
+        // model with measurements node by node.
+        "selected": selected
+            .iter()
+            .map(|&i| json!({ "name": nodes[i].name, "group": nodes[i].group, "cost": nodes[i].node.cost }))
+            .collect::<Vec<_>>(),
+        "groups": rows,
+    });
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .unwrap_or_else(|e| panic!("ZINNIA_LAYER_REPORT: cannot open {}: {e}", path.display()));
+    // One write per line, so that processes appending to one file do not
+    // interleave within a line.
+    file.write_all(format!("{line}\n").as_bytes())
+        .unwrap_or_else(|e| panic!("ZINNIA_LAYER_REPORT: cannot write {}: {e}", path.display()));
+}
+    chips: Dict[str, ZKChip]
+    externals: Dict[str, ZKExternalFunc]
+    config: ZinniaConfig
+    program: ZKCompiledProgram | None
+
+    def __init__(
+            self,
+            name: str,
+            source: str,
+            chips: List[Any] = None,
+            externals: List[Any] = None,
+            config: ZinniaConfig = ZinniaConfig()
+    ):
+        if name == 'main':
+            raise ValueError('Circuit name cannot be `main`, please use another name.')
+        self.name = name
+        self.source = source
+        self.chips = ZKCircuit.__parse_chips(chips)
+        self.externals = ZKCircuit.__parse_externals(externals)
+        self.config = config
+        self.program = None
+
+    @staticmethod
+    def __parse_chips(chips: List[Any] | None) -> Dict[str, ZKChip]:
+        if chips is None:
+            return {}
+        result = {}
+        for chip in chips:
+            if isinstance(chip, ZKChip):
+                result[chip.name] = chip
+            else:
+                chip_instance = ZKChip.from_method(chip)
+                result[chip_instance.name] = chip_instance
+
+@dataclass(frozen=True)
+class Tolerance:
+    abs: float
+    rel: float
+    source: str
+
+    def allows(self, expected: float, actual: float) -> bool:
+        return abs(actual - expected) <= self.abs + self.rel * abs(expected)
+
+
+#: Used when the case set gives no tolerance; recorded as such in every result.
+DEFAULT_TOLERANCE = Tolerance(abs=1e-6, rel=1e-6, source="harness default")
+
+
+def parse_tolerance(raw: Any, source: str) -> Tolerance:
+    if raw is None:
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/report.rs:1://! The layer report (measurement only): `ZINNIA_LAYER_REPORT=<path>` appends
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/report.rs:90:        .unwrap_or_else(|e| panic!("ZINNIA_LAYER_REPORT: cannot open {}: {e}", path.display()));
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/report.rs:94:        .unwrap_or_else(|e| panic!("ZINNIA_LAYER_REPORT: cannot write {}: {e}", path.display()));
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/emit.rs:134:    /// `ZINNIA_LAYER_REPORT=<path>`: append what each lowering chose to this
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/emit.rs:146:            report: std::env::var_os("ZINNIA_LAYER_REPORT").filter(|p| !p.is_empty()).map(Into::into),
+
+exec
+/usr/bin/zsh -lc "cat > run.py <<'PY'
+#"'!/usr/bin/env python3
+import os, sys, json, re, subprocess, hashlib
+from pathlib import Path
+D=Path(__file__).resolve().parent
+WT=Path('"'/home/zhantong/Projects/zinnia-project/wt/npb-hw')
+os.environ['PYTHONDONTWRITEBYTECODE']='1'
+sys.dont_write_bytecode=True
+sys.path[:0]=[str(WT),str(WT/'benchmarking')]
+os.environ['ZINNIA_SKIP_RELEASE_BUILD']='1'
+os.environ['TMPDIR']=str(D/'tmp'); (D/'tmp').mkdir(exist_ok=True)
+FIG=WT.parents[1]/'zinnia-paper/oopsla-2027-r1/fig/tikz/walkthrough.tex'
+if len(sys.argv)==1:
+    text=FIG.read_text(); body=re.search(r'\\np = np.argsort.*?\\n\\\\end\\{lstlisting\\}',text,re.S)[0].split('\\\\end{lstlisting}')[0].strip()
+    source='def kernel(a: Integer[Array, \"5 6\"], key: Integer[Array, \"6\"]):\\n'+''.join('    '+s+'\\n' for s in body.splitlines())
+    (D/'kernel.py').write_text(source)
+    a=[[0]*6 for _ in range(5)]
+    for i,j in [(2,0),(3,0),(1,3),(3,3),(1,5),(2,5)]: a[i][j]=1
+    b=[[0]*6 for _ in range(5)]; b[4][2]=-7
+    fixture={'case':'walkthrough','function':'kernel','parameters':[{'name':'a','kind':'array','dtype':'int','shape':[5,6]},{'name':'key','kind':'array','dtype':'int','shape':[6]}], 'inputs':{'A':{'a':a,'key':[20,40,60,10,30,50]},'B':{'a':b,'key':[2,-1,2,0,-1,3]}}}
+    (D/'fixture.json').write_text(json.dumps(fixture,indent=2)+'\\n')
+    for mode in ['default','local']:
+        for target in ['halo2','noir']:
+            env=dict(os.environ)
+            for k in list(env):
+                if k.startswith('ZINNIA_ABLATE_') or k in ['ZINNIA_FORCE_CONSTRUCTION','ZINNIA_SMT_ENABLE','ZINNIA_REQ_DISABLE']: env.pop(k)
+            if mode=='local': env['ZINNIA_ABLATE_JOINT']='1'
+            subprocess.run(['systemd-run','--user','--scope','-q','-p','MemoryMax=16G',str(WT/'.venv/bin/python'),str(D/'run.py'),mode,target],env=env,cwd=D,check=True)
+    results={f'{m}_{t}':json.loads((D/f'{m}_{t}/result.json').read_text()) for m in ['default','local'] for t in ['halo2','noir']}
+    (D/'results.json').write_text(json.dumps(results,indent=2)+'\\n')
+    sys.exit()
+mode,target=sys.argv[1:]; out=D/f'{mode}_{target}'; out.mkdir(exist_ok=True)
+trace=out/'selection.jsonl'; trace.unlink(missing_ok=True)
+os.environ['ZINNIA_LAYER_REPORT']=str(trace)
+from zinnia import ZKCircuit
+from zinnia.config.zinnia_config import ZinniaConfig
+from benchmarking.harness.fixtures import load_fixture
+from benchmarking.harness.acceptance.validate import _mock_publics
+from benchmarking.harness.adapters.zinnia_common import describe_compiled,zinnia_publics
+from benchmarking.harness.reference import run_kernel_with_arguments
+from benchmarking.harness.outputs import reference_outputs,check_outputs
+from benchmarking.harness.case_sets import Tolerance
+from benchmarking.ablations.common import summarize_report
+compiled=ZKCircuit('kernel',(D/'kernel.py').read_text(),config=ZinniaConfig(backend=target)).compile()
+stmts=compiled.get_ir_stmts(); (out/'ir.json').write_text(json.dumps(stmts,indent=2))
+info=describe_compiled(compiled); (out/'layout.json').write_text(json.dumps(info,indent=2))
+fixture=load_fixture(D/'fixture.json'); checks={}
+for name in ['A','B']:
+    args=fixture.arguments(name)
+    mock=compiled.prove(*args,backend='mock') # mock interpreter only; no cryptographic proof or keys
+    values,satisfied=_mock_publics(mock)
+    returned,after=run_kernel_with_arguments(D/'kernel.py','kernel',args)
+    expected,shapes=reference_outputs(returned,after,args,info['output_layout'])
+    check=check_outputs(expected,zinnia_publics(values,info),Tolerance(0,0,'exact integer'),expected_shapes=shapes).to_json()
+    checks[name]={'satisfied':satisfied,'check':check,'numpy_result':returned.tolist(),'numpy_shape':list(returned.shape),'mock_publics':values}
+    assert satisfied and check['status']=='match', checks[name]
+result={'program':'walkthrough/kernel','mode':mode,'target':target,'commit':subprocess.check_output(['git','-C',str(WT),'rev-parse','HEAD'],text=True).strip(),'source_sha256':hashlib.sha256((D/'kernel.py').read_bytes()).hexdigest(),'checks':checks}
+if target=='halo2':
+    from zinnia._zinnia_core import halo2_base_cell_stats
+    result['stats']=json.loads(halo2_base_cell_stats(compiled._compiled_ir))
+    result['cells']=result['stats']['advice']+result['stats']['lookup']
+else:
+    from noir_gates import gate_count,NOIR_FPC,NARGO,BB
+    source=compiled.emit_structural(*fixture.arguments('B'),backend='noir'); (out/'main.nr').write_text(source)
+    result.update(gate_count(source,'noir_fpc',NOIR_FPC))
+    result['tools']={p:subprocess.check_output([p,'--version'],text=True,stderr=subprocess.STDOUT).strip() for p in [NARGO,BB]}
+result['layer']=summarize_report(trace.read_text().splitlines())
+(out/'result.json').write_text(json.dumps(result,indent=2)+'\\n')
+print(mode,target,json.dumps({k:v for k,v in result.items() if k not in ['layer','checks']}),flush=True)
+PY
+PYTHONDONTWRITEBYTECODE=1 /home/zhantong/Projects/zinnia-project/wt/npb-hw/.venv/bin/python run.py > run.log 2>&1" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 866ms:
+exec
+/usr/bin/zsh -lc 'cat run.log; ls -l results.json; cat default_halo2/selection.jsonl' in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 0ms:
+default halo2 {"program": "walkthrough/kernel", "mode": "default", "target": "halo2", "commit": "3ebe0558f25592a0c1f8b6cf9bf7ad09f3ddb1d1", "source_sha256": "9b8d8326d9b57f16d1385600473778b2d9c4800725154d191b68a986d514151b", "stats": {"advice": 5057, "challenges": 0, "committed_polys": 45, "fixed": 17, "instances": 33, "k": 8, "lookup": 437, "lookup_bits": 7, "poly_cost": 11520, "precision_bits": 32, "second_advice": 0}, "cells": 5494}
+default noir {"program": "walkthrough/kernel", "mode": "default", "target": "noir", "commit": "3ebe0558f25592a0c1f8b6cf9bf7ad09f3ddb1d1", "source_sha256": "9b8d8326d9b57f16d1385600473778b2d9c4800725154d191b68a986d514151b", "gates": 3997, "acir_opcodes": 776, "tools": {"/home/zhantong/.nargo/bin/nargo": "nargo version = 1.0.0-beta.20\nnoirc version = 1.0.0-beta.20+b4236c1957d0c26cb65d82adc9e5447b6ff1d629\n(git version hash: b4236c1957d0c26cb65d82adc9e5447b6ff1d629, is dirty: false)", "/home/zhantong/.bb/bb": "5.0.0-nightly.20260324"}}
+local halo2 {"program": "walkthrough/kernel", "mode": "local", "target": "halo2", "commit": "3ebe0558f25592a0c1f8b6cf9bf7ad09f3ddb1d1", "source_sha256": "9b8d8326d9b57f16d1385600473778b2d9c4800725154d191b68a986d514151b", "stats": {"advice": 5603, "challenges": 0, "committed_polys": 48, "fixed": 17, "instances": 33, "k": 8, "lookup": 443, "lookup_bits": 7, "poly_cost": 12288, "precision_bits": 32, "second_advice": 0}, "cells": 6046}
+local noir {"program": "walkthrough/kernel", "mode": "local", "target": "noir", "commit": "3ebe0558f25592a0c1f8b6cf9bf7ad09f3ddb1d1", "source_sha256": "9b8d8326d9b57f16d1385600473778b2d9c4800725154d191b68a986d514151b", "gates": 3974, "acir_opcodes": 799, "tools": {"/home/zhantong/.nargo/bin/nargo": "nargo version = 1.0.0-beta.20\nnoirc version = 1.0.0-beta.20+b4236c1957d0c26cb65d82adc9e5447b6ff1d629\n(git version hash: b4236c1957d0c26cb65d82adc9e5447b6ff1d629, is dirty: false)", "/home/zhantong/.bb/bb": "5.0.0-nightly.20260324"}}
+-rw-r--r-- 1 zhantong zhantong 35328 Oct  9 19:43 results.json
+{"estimated_cost":2704,"forcing":[],"groups":[{"applicable":["sort: network","sort: rank selectors","sort: permutation check","sort: pinned selection","sort: routed permutation","sort: grand-product permutation"],"chosen":["sort: permutation check"],"family":"sort","fixed_family":false,"forced":null,"group":0,"kind":"sort","lanes":6,"released":false},{"applicable":["gather: permutation scatter by hits","gather: permutation scatter by writes"],"chosen":["gather: permutation scatter by hits"],"family":"permutation scatter","fixed_family":false,"forced":null,"group":1,"kind":"permutation_scatter","lanes":6,"released":false},{"applicable":["gather: element by a recorded one-hot","gather: element by a select chain","gather: element by indicators","memory: element by index bits","memory: index bits","memory: element by table read"],"chosen":["gather: element by a recorded one-hot"],"family":"element","fixed_family":false,"forced":null,"group":2,"kind":"element","lanes":6,"released":false},{"applicable":["gather: element by a recorded one-hot","gather: element by a select chain","gather: element by indicators","memory: element by index bits","memory: element by table read"],"chosen":["gather: element by a recorded one-hot"],"family":"element","fixed_family":false,"forced":null,"group":3,"kind":"element","lanes":6,"released":false},{"applicable":["gather: element by a recorded one-hot","gather: element by a select chain","gather: element by indicators","memory: element by index bits","memory: element by table read"],"chosen":["gather: element by a recorded one-hot"],"family":"element","fixed_family":false,"forced":null,"group":4,"kind":"element","lanes":6,"released":false},{"applicable":["gather: element by a recorded one-hot","gather: element by a select chain","gather: element by indicators","memory: element by index bits","memory: element by table read"],"chosen":["gather: element by a recorded one-hot"],"family":"element","fixed_family":false,"forced":null,"group":5,"kind":"element","lanes":6,"released":false},{"applicable":["gather: element by a recorded one-hot","gather: element by a select chain","gather: element by indicators","memory: element by index bits","memory: element by table read"],"chosen":["gather: element by a recorded one-hot"],"family":"element","fixed_family":false,"forced":null,"group":6,"kind":"element","lanes":6,"released":false},{"applicable":["gather: element by a select chain","gather: element by indicators","memory: element by index bits","memory: index bits","memory: element by table read"],"chosen":["memory: element by index bits"],"family":"element","fixed_family":false,"forced":null,"group":7,"kind":"element","lanes":1,"released":false},{"applicable":["gather: element by a select chain","gather: element by indicators","memory: element by index bits","memory: index bits","memory: element by table read"],"chosen":["memory: element by index bits"],"family":"element","fixed_family":false,"forced":null,"group":8,"kind":"element","lanes":1,"released":false},{"applicable":["gather: window shift"],"chosen":["gather: window shift"],"family":"window","fixed_family":false,"forced":null,"group":9,"kind":"window","lanes":30,"released":false}],"local":false,"no_facts":false,"selected":[{"cost":623,"group":0,"name":"sort: permutation check"},{"cost":360,"group":1,"name":"gather: permutation scatter by hits"},{"cost":108,"group":2,"name":"gather: element by a recorded one-hot"},{"cost":108,"group":3,"name":"gather: element by a recorded one-hot"},{"cost":108,"group":4,"name":"gather: element by a recorded one-hot"},{"cost":108,"group":5,"name":"gather: element by a recorded one-hot"},{"cost":108,"group":6,"name":"gather: element by a recorded one-hot"},{"cost":1059,"group":9,"name":"gather: window shift"},{"cost":25,"group":7,"name":"memory: index bits"},{"cost":32,"group":7,"name":"memory: element by index bits"},{"cost":25,"group":8,"name":"memory: index bits"},{"cost":40,"group":8,"name":"memory: element by index bits"}],"target":"halo2"}
+{"estimated_cost":330,"forcing":[],"groups":[{"applicable":["gather: element by a select chain","gather: element by indicators","memory: element by index bits","memory: index bits","memory: element by table read"],"chosen":["memory: element by index bits"],"family":"element","fixed_family":false,"forced":null,"group":0,"kind":"element","lanes":6,"released":false}],"local":false,"no_facts":false,"selected":[{"cost":25,"group":0,"name":"memory: index bits"},{"cost":25,"group":0,"name":"memory: index bits"},{"cost":25,"group":0,"name":"memory: index bits"},{"cost":25,"group":0,"name":"memory: index bits"},{"cost":25,"group":0,"name":"memory: index bits"},{"cost":25,"group":0,"name":"memory: index bits"},{"cost":180,"group":0,"name":"memory: element by index bits"}],"target":"halo2"}
+
+exec
+/usr/bin/zsh -lc "rg -n 'halo2_base_cell_stats|second_advice' /home/zhantong/Projects/zinnia-project/wt/npb-hw/src -g '*.rs' | head -40; rg -n 'permutation check|permutation scatter by hits|recorded one-hot|window shift|nonempty' /home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower -g '*.rs' | head -90; head -60 default_halo2/ir.json; cat default_halo2/layout.json | head -50" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 0ms:
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/prove/halo2_base/python.rs:139:fn halo2_base_cell_stats(compiled_ir: &CompiledIR, params_json: Option<&str>) -> PyResult<String> {
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/prove/halo2_base/python.rs:151:        "second_advice": cells.second_advice,
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/prove/halo2_base/python.rs:281:    m.add_function(wrap_pyfunction!(halo2_base_cell_stats, m)?)?;
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/prove/halo2_base/mod.rs:359:        advice, second_advice, challenges, table_advice, table_rows, tables, ram_advice, ram_rows, ram_traces, lookup, fixed, instances,
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/prove/halo2_base/mod.rs:366:    let num_advice = (advice - second_advice - table_advice - ram_advice).div_ceil(usable).max(1);
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/prove/halo2_base/mod.rs:376:    let second_columns = if *challenges > 0 { second_advice.div_ceil(usable).max(1) + 1 } else { 0 };
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/prove/halo2_base/mod.rs:440:    pub second_advice: usize,
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/prove/halo2_base/mod.rs:477:    let second_advice = shape.advice + second.challenges();
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/prove/halo2_base/mod.rs:479:        advice: stats.gate.total_advice_per_phase.iter().sum::<usize>() + second_advice + tables.advice_cells() + ram.advice_cells(),
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/prove/halo2_base/mod.rs:486:        second_advice,
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/linear/tests.rs:309:                (stats.advice + stats.lookup, stats.second_advice)
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/grand_product_tests.rs:271:                (stats.advice + stats.lookup, stats.second_advice)
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/tests.rs:283:    // the permutation check on Noir.
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/test_support.rs:31:    /// One pinned run over every rank (the permutation check).
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/routed_tests.rs:213:/// the adjacent-swap network, rank selectors, the permutation check, the
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/routed.rs:25://!   comparisons. Not offered on Noir: there the permutation check reads
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/mod.rs:104:/// One run of pinned keys over every rank: the permutation check
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/mod.rs:175:        "sort: permutation check"
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/cost.rs:208:/// Noir: an argsort of 100 by the permutation check costs 1,520 gates (a
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/cost.rs:245:    // Not offered: the permutation check's native reads are linear in `n`.
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/cost.rs:324:    /// over every rank is the full permutation check, whose outputs the
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/cost.rs:696:/// Every rank as one pinned run (the permutation check); runtime-rank
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/permutation.rs:1://! The permutation check: `is_permutation(p)` (a `@requires` precondition),
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/permutation.rs:60:        "a hit-count permutation check needs as many values as distinct constant targets"
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/op.rs:120:    // ── permutation check (`lower::permutation`) ──────────────────────
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/memory/mod.rs:14://! index's equality bits, the inner product with a recorded one-hot, and the
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/gather/mod.rs:132:/// recorded one-hot, a multiplexer over its bits, or a table
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/gather/element.rs:8://! by a recorded one-hot:   x[i] = sum_k onehot[k] * x[k]
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/gather/cost.rs:121:/// The window shift over `dims` (`window.rs`): per axis its selectors and
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/gather/cost.rs:142:/// `x[i]` over `n` cells as an inner product with a recorded one-hot (a
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/gather/constructions.rs:394:        "gather: permutation scatter by hits"
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/gather/constructions.rs:408:        // The hits are the permutation check's equality tests when the
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/gather/constructions.rs:570:        "gather: window shift"
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/gather/constructions.rs:795:        "gather: element by a recorded one-hot"
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/forcing.rs:51:///   correlations by their product sums, permutation checks by hit counts,
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/array_facts_tests.rs:717:    // No permutation check: the argsort is one by definition.
+[
+  {
+    "arguments": [],
+    "ir_instance": {
+      "__class__": "ReadIntegerIR",
+      "ir_data": {
+        "is_public": false,
+        "path": {
+          "param": "a",
+          "segments": [
+            {
+              "Index": 0
+            }
+          ]
+        }
+      }
+    },
+    "stmt_id": 0
+  },
+  {
+    "arguments": [],
+    "ir_instance": {
+      "__class__": "ConstantIntIR",
+      "ir_data": {
+        "value": -9223372036854775808
+      }
+    },
+    "stmt_id": 1
+  },
+  {
+    "arguments": [
+      0,
+      1
+    ],
+    "ir_instance": {
+      "__class__": "GreaterThanOrEqualIIR",
+      "ir_data": {}
+    },
+    "stmt_id": 2
+  },
+  {
+    "arguments": [
+      2
+    ],
+    "ir_instance": {
+      "__class__": "AssertIR",
+      "ir_data": {}
+    },
+    "stmt_id": 3
+  },
+  {
+    "arguments": [],
+    "ir_instance": {
+      "__class__": "ConstantIntIR",
+      "ir_data": {
+        "value": 9223372036854775807
+      }
+    },
+    "stmt_id": 4
+  },
+{
+  "ir_sha256": "78ce0cea1a07f36883efe3461d56601ede69fcaa5ace1fd8e5789fd5803bc9cf",
+  "ir_statements": 1263,
+  "expose_kinds": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+  "elided": [],
+  "output_layout": [
+    {
+      "dynamic": {
+        "cells": [
+          {
+            "kind": "i",
+            "public": 3
+          },
+          {
+            "kind": "i",
+            "public": 4
+          },
+          {
+            "kind": "i",
+            "public": 5
+          },
+          {
+            "kind": "i",
+            "public": 6
+          },
+          {
+            "kind": "i",
+            "public": 7
+          },
+          {
+            "kind": "i",
+            "public": 8
+          },
+          {
+            "kind": "i",
+            "public": 9
+          },
+          {
+            "kind": "i",
+            "public": 10
+          },
+          {
+            "kind": "i",
+            "public": 11
+          },
+          {
+            "kind": "i",
+            "public": 12
+          },
+          {
+
+exec
+/usr/bin/zsh -lc "PYTHONDONTWRITEBYTECODE=1 /home/zhantong/Projects/zinnia-project/wt/npb-hw/.venv/bin/python - <<'PY'
+import json,collections
+for m in ['default','local']:
+ for t in ['halo2','noir']:
+  d=json.load(open(f'{m}_{t}/result.json')); print(m,t,d['layer']['chosen']); print(d['checks']['A']['numpy_result'],d['checks']['B']['numpy_result'])
+a=json.load(open('default_halo2/ir.json')); print(collections.Counter(x['ir_instance']['__class__'] for x in a))
+for x in a:
+ if any(s in str(x) for s in ['Assert','Hint','Scan','Nonzero']): print(x)
+PY" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 0ms:
+default halo2 {'element': {'gather: element by a recorded one-hot': 5, 'memory: element by index bits': 3}, 'permutation scatter': {'gather: permutation scatter by hits': 1}, 'sort': {'sort: permutation check': 1}, 'window': {'gather: window shift': 1}}
+[[1, 1, 0], [0, 1, 1], [1, 0, 1]] [[-7]]
+default noir {'element': {'gather: element by a recorded one-hot': 5, 'memory: element by index bits': 2, 'memory: element by table read': 1}, 'permutation scatter': {'gather: permutation scatter by hits': 1}, 'sort': {'sort: permutation check': 1}, 'window': {'gather: window shift': 1}}
+[[1, 1, 0], [0, 1, 1], [1, 0, 1]] [[-7]]
+local halo2 {'element': {'memory: element by index bits': 8}, 'permutation scatter': {'gather: permutation scatter by hits': 1}, 'sort': {'sort: permutation check': 1}, 'window': {'gather: window shift': 1}}
+[[1, 1, 0], [0, 1, 1], [1, 0, 1]] [[-7]]
+local noir {'element': {'memory: element by table read': 6, 'memory: element by index bits': 2}, 'permutation scatter': {'gather: permutation scatter by hits': 1}, 'sort': {'sort: permutation check': 1}, 'window': {'gather: window shift': 1}}
+[[1, 1, 0], [0, 1, 1], [1, 0, 1]] [[-7]]
+Counter({'MulIIR': 446, 'AddIIR': 330, 'SelectIIR': 80, 'AssertIR': 79, 'LogicalOrIR': 49, 'EqualIIR': 47, 'ReadIntegerIR': 36, 'GreaterThanOrEqualIIR': 36, 'LessThanOrEqualIIR': 36, 'ExposePublicIIR': 33, 'BoolCastIR': 30, 'AssertU128LtBitIR': 24, 'LessThanIBoundedIR': 11, 'ConstantIntIR': 9, 'HintIR': 6, 'KeyLessIR': 5, 'LessThanIIR': 4, 'SubIIR': 2})
+{'arguments': [2], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 3}
+{'arguments': [5], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 6}
+{'arguments': [8], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 9}
+{'arguments': [10], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 11}
+{'arguments': [13], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 14}
+{'arguments': [15], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 16}
+{'arguments': [18], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 19}
+{'arguments': [20], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 21}
+{'arguments': [23], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 24}
+{'arguments': [25], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 26}
+{'arguments': [28], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 29}
+{'arguments': [30], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 31}
+{'arguments': [33], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 34}
+{'arguments': [35], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 36}
+{'arguments': [38], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 39}
+{'arguments': [40], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 41}
+{'arguments': [43], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 44}
+{'arguments': [45], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 46}
+{'arguments': [48], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 49}
+{'arguments': [50], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 51}
+{'arguments': [53], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 54}
+{'arguments': [55], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 56}
+{'arguments': [58], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 59}
+{'arguments': [60], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 61}
+{'arguments': [63], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 64}
+{'arguments': [65], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 66}
+{'arguments': [68], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 69}
+{'arguments': [70], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 71}
+{'arguments': [73], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 74}
+{'arguments': [75], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 76}
+{'arguments': [78], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 79}
+{'arguments': [80], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 81}
+{'arguments': [83], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 84}
+{'arguments': [85], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 86}
+{'arguments': [88], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 89}
+{'arguments': [90], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 91}
+{'arguments': [93], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 94}
+{'arguments': [95], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 96}
+{'arguments': [98], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 99}
+{'arguments': [100], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 101}
+{'arguments': [103], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 104}
+{'arguments': [105], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 106}
+{'arguments': [108], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 109}
+{'arguments': [110], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 111}
+{'arguments': [113], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 114}
+{'arguments': [115], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 116}
+{'arguments': [118], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 119}
+{'arguments': [120], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 121}
+{'arguments': [123], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 124}
+{'arguments': [125], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 126}
+{'arguments': [128], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 129}
+{'arguments': [130], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 131}
+{'arguments': [133], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 134}
+{'arguments': [135], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 136}
+{'arguments': [138], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 139}
+{'arguments': [140], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 141}
+{'arguments': [143], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 144}
+{'arguments': [145], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 146}
+{'arguments': [148], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 149}
+{'arguments': [150], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 151}
+{'arguments': [153], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 154}
+{'arguments': [155], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 156}
+{'arguments': [158], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 159}
+{'arguments': [160], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 161}
+{'arguments': [163], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 164}
+{'arguments': [165], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 166}
+{'arguments': [168], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 169}
+{'arguments': [170], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 171}
+{'arguments': [173], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 174}
+{'arguments': [175], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 176}
+{'arguments': [178], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 179}
+{'arguments': [180], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 181}
+{'arguments': [152, 157, 162, 167, 172, 177, 182], 'ir_instance': {'__class__': 'HintIR', 'ir_data': {'kind': 'stable_argsort', 'len': 6}}, 'stmt_id': 183}
+{'arguments': [152, 157, 162, 167, 172, 177, 184], 'ir_instance': {'__class__': 'HintIR', 'ir_data': {'kind': 'stable_argsort', 'len': 6}}, 'stmt_id': 185}
+{'arguments': [152, 157, 162, 167, 172, 177, 186], 'ir_instance': {'__class__': 'HintIR', 'ir_data': {'kind': 'stable_argsort', 'len': 6}}, 'stmt_id': 187}
+{'arguments': [152, 157, 162, 167, 172, 177, 188], 'ir_instance': {'__class__': 'HintIR', 'ir_data': {'kind': 'stable_argsort', 'len': 6}}, 'stmt_id': 189}
+{'arguments': [152, 157, 162, 167, 172, 177, 190], 'ir_instance': {'__class__': 'HintIR', 'ir_data': {'kind': 'stable_argsort', 'len': 6}}, 'stmt_id': 191}
+{'arguments': [152, 157, 162, 167, 172, 177, 192], 'ir_instance': {'__class__': 'HintIR', 'ir_data': {'kind': 'stable_argsort', 'len': 6}}, 'stmt_id': 193}
+{'arguments': [183], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 0, 'bits': 3, 'hi': 6}}, 'stmt_id': 194}
+{'arguments': [183], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 1, 'bits': 3, 'hi': 6}}, 'stmt_id': 195}
+{'arguments': [183], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 2, 'bits': 3, 'hi': 6}}, 'stmt_id': 196}
+{'arguments': [185], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 0, 'bits': 3, 'hi': 6}}, 'stmt_id': 202}
+{'arguments': [185], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 1, 'bits': 3, 'hi': 6}}, 'stmt_id': 203}
+{'arguments': [185], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 2, 'bits': 3, 'hi': 6}}, 'stmt_id': 204}
+{'arguments': [187], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 0, 'bits': 3, 'hi': 6}}, 'stmt_id': 210}
+{'arguments': [187], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 1, 'bits': 3, 'hi': 6}}, 'stmt_id': 211}
+{'arguments': [187], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 2, 'bits': 3, 'hi': 6}}, 'stmt_id': 212}
+{'arguments': [189], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 0, 'bits': 3, 'hi': 6}}, 'stmt_id': 218}
+{'arguments': [189], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 1, 'bits': 3, 'hi': 6}}, 'stmt_id': 219}
+{'arguments': [189], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 2, 'bits': 3, 'hi': 6}}, 'stmt_id': 220}
+{'arguments': [191], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 0, 'bits': 3, 'hi': 6}}, 'stmt_id': 226}
+{'arguments': [191], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 1, 'bits': 3, 'hi': 6}}, 'stmt_id': 227}
+{'arguments': [191], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 2, 'bits': 3, 'hi': 6}}, 'stmt_id': 228}
+{'arguments': [193], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 0, 'bits': 3, 'hi': 6}}, 'stmt_id': 234}
+{'arguments': [193], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 1, 'bits': 3, 'hi': 6}}, 'stmt_id': 235}
+{'arguments': [193], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 2, 'bits': 3, 'hi': 6}}, 'stmt_id': 236}
+{'arguments': [242], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 243}
+{'arguments': [244], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 245}
+{'arguments': [246], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 247}
+{'arguments': [248], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 249}
+{'arguments': [250], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 251}
+{'arguments': [802], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 803}
+{'arguments': [805], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 0, 'bits': 3, 'hi': 5}}, 'stmt_id': 806}
+{'arguments': [805], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 1, 'bits': 3, 'hi': 5}}, 'stmt_id': 807}
+{'arguments': [805], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 2, 'bits': 3, 'hi': 5}}, 'stmt_id': 808}
+{'arguments': [814], 'ir_instance': {'__class__': 'AssertIR', 'ir_data': {}}, 'stmt_id': 815}
+{'arguments': [816], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 0, 'bits': 3, 'hi': 6}}, 'stmt_id': 817}
+{'arguments': [816], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 1, 'bits': 3, 'hi': 6}}, 'stmt_id': 818}
+{'arguments': [816], 'ir_instance': {'__class__': 'AssertU128LtBitIR', 'ir_data': {'bit': 2, 'bits': 3, 'hi': 6}}, 'stmt_id': 819}
+
+codex
+The counts are X = 5,494 and Y = 6,046 halo2-base cells. Noir has 3,997 gates with default selection and 3,974 with local selection. Both inputs match NumPy in all four configurations.
+
+The trace supports the sort and scatter-sharing claims, but it contains no scan groups. I’m checking the emitted IR to identify what the compiler does for the crop endpoints and index assertions.
+exec
+/usr/bin/zsh -lc "sed -n '390,470p' /home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/gather/constructions.rs; cat /home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/gather/window.rs | head -155; sed -n '155,220p' /home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/mod.rs; rg -n 'fn .*permutation|KeyLess|key_less' /home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/*.rs | head -25; sed -n '475,487p' /home/zhantong/Projects/zinnia-project/wt/npb-hw/src/prove/halo2_base/mod.rs" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 0ms:
+pub struct ScatterByHits;
+
+impl Construction for ScatterByHits {
+    fn name(&self) -> &'static str {
+        "gather: permutation scatter by hits"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        if group.kind != OpKind::PermutationScatter {
+            return Vec::new();
+        }
+        let n = group.shared.len() / 2;
+        let offset = scatter_offset(cx, group);
+        let mut post: Vec<Requirement> = lanes(group).collect();
+        if offset.is_some() {
+            post.push(Requirement::Shared { group: group.id, name: ENCODING });
+        }
+        let permutation = crate::lower::permutation::permutation_fact(&group.shared[..n]);
+        // The hits are the permutation check's equality tests when the
+        // program checks `p` (deduplicated); an argsort, a permutation by
+        // definition, has no check, and the scatter pays for them.
+        let checked = cx.sharing_groups(group).any(|g| g.kind == OpKind::IsPermutation && g.shared[..] == group.shared[..n]);
+        let tests = if checked { 0 } else { (n * n) as u64 * cost::units(cx.target).eq_const };
+        vec![Candidate {
+            pre: vec![Requirement::Fact(permutation)],
+            post,
+            cost: cost::permutation_scatter(n as u64, cx.target) + tests,
+            emitter: Box::new(ScatterEmitter { operands: group.shared.clone(), offset, hits: Vec::new(), cells: Vec::new() }),
+        }]
+    }
+}
+
+/// `c[p] = v` for a permutation `p` as `n` writes into a fresh array of `n`
+/// cells, its cells read at constant addresses: an array version chain the
+/// memory family lowers in the next round (a RAM trace on halo2-base, the
+/// native RAM on Noir, or an overlay of selects), linear in `n` where the
+/// hits are quadratic.
+///
+/// * Preconditions: `Permutation(p, 0..n)` (every write lands in the array,
+///   and every cell is written exactly once, so its value does not depend
+///   on the order of the writes or the initial zeros); on halo2-base the
+///   RAM trace (`memory::versions::RAM`, paid once), which the next round's
+///   lowering most likely uses (its estimate here).
+/// * Postconditions: every cell.
+/// * Soundness: the writes and reads are the array semantics the memory
+///   constructions implement; with `p` a permutation, cell `j` holds the
+///   `v_k` with `p_k = j` (NumPy's `c[p] = v`).
+/// * Cost: the memory family's estimate of the chain (`memory::versions`):
+///   halo2-base 8 cells per initial row and per access (`n` writes, `n`
+///   reads); Noir's native RAM `3n + 3.5n` gates per access.
+pub struct ScatterByWrites;
+
+impl Construction for ScatterByWrites {
+    fn name(&self) -> &'static str {
+        "gather: permutation scatter by writes"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        if group.kind != OpKind::PermutationScatter {
+            return Vec::new();
+        }
+        let n = group.shared.len() / 2;
+        let permutation = crate::lower::permutation::permutation_fact(&group.shared[..n]);
+        let (pre, cost) = match cx.target {
+            crate::lower::Target::Halo2Base => {
+                (vec![Requirement::Fact(permutation), crate::lower::memory::versions::RAM], 8 * 3 * n as u64)
+            }
+            crate::lower::Target::Noir => {
+                let n = n as u64;
+                (vec![Requirement::Fact(permutation)], 3 * n + (7 * n).div_ceil(2) * 2 * n)
+            }
+        };
+        vec![Candidate {
+            pre,
+            post: lanes(group).collect(),
+            cost,
+            emitter: Box::new(WritesEmitter { operands: group.shared.clone(), version: None }),
+        }]
+    }
+}
+
+//! Window gather: `x[s0:e0, s1:e1, ...]` with runtime bounds as a shift of
+//! the whole array by a shared one-hot per axis.
+//!
+//! The element-wise lowering read every output cell on its own: per output
+//! position a clamp, a box test, an address and a gather by indicators of
+//! the address, and a padding select (about 75 halo2-base cells per output
+//! of a 10x10 crop). Here the index map of each axis is affine with one
+//! runtime offset, `u -> start + u`, so one one-hot of `start` serves every
+//! output position of that axis:
+//!
+//! ```text
+//! y[.., u, ..] = sum_d sel[u][d] * x[.., u + d, ..]     (terms u + d >= n dropped)
+//! sel[u][d]    = [start == d] * [d + u < stop]
+//! ```
+//!
+//! applied to one axis at a time (rows, then columns, ...).
+//!
+//! **Preconditions.** Every axis has step 1 and `0 <= start <= n` (Python's
+//! slice normalization established it before the placeholder was emitted);
+//! `stop` is any integer. A start or stop encoding, when given, is exact
+//! (`scan.rs`). `padding_zero` only when every source cell at a position
+//! `>= stop` of the axis is 0 (`constructions::padding_is_zero`).
+//!
+//! **Postconditions.** `y` holds the window `x[start:stop]` at the top-left
+//! of a buffer of `x`'s shape and 0 everywhere else: the cells the
+//! element-wise lowering produced, so the recorded extents and the output
+//! layout are unchanged.
+//!
+//! **Soundness.** No prover hint: every selector is a product of exact
+//! indicator bits. Since `start` is in `[0, n]`, at most one `[start == d]`
+//! is 1, so each sum is either `x[.., start + u, ..]` (when `start + u <
+//! stop` and `start + u < n`) or 0. Without the mask (`padding_zero`), a
+//! position past `stop` reads a source cell at a position `>= stop`, which is
+//! 0 by the precondition; the shifts along the other axes only combine cells
+//! of one position of this axis, so that holds for every intermediate array.
+//!
+//! **Cost** (`cost::window_shift`) for an `R x C` window: `R(R+1)/2 C +
+//! C(C+1)/2 R` multiply-adds (3 halo2-base cells, 1 Noir gate each), plus per
+//! axis the selectors: equality tests unless the start's one-hot is given,
+//! and the mask (one product per selector, plus a comparison per position
+//! without a thermometer of `stop`; nothing when the padding is 0).
+
+use crate::builder::IRBuilder;
+use crate::helpers::shape_arith::{decode_coords, row_major_strides};
+use crate::types::{NumberType, ScalarValue, Value};
+
+use super::encoding::{onehot_over, IndexEncoding};
+
+/// One windowed axis: `start:stop` with step 1, `start` in `[0, n]`.
+pub struct AxisWindow {
+    pub axis: usize,
+    pub start: Value,
+    pub stop: Value,
+    /// The encoding of `start`, when a scan produced it.
+    pub start_encoding: Option<IndexEncoding>,
+    /// The encoding of `stop`, when it has a thermometer.
+    pub stop_encoding: Option<IndexEncoding>,
+    /// Every source cell past `stop` on this axis is 0: no mask.
+    pub padding_zero: bool,
+}
+
+/// The window of `cells` (row-major over `shape`, integer or float) given by
+/// `windows`, at the top-left of a buffer of `shape` padded with 0.
+pub fn window_shift(
+    b: &mut IRBuilder,
+    cells: Vec<Value>,
+    shape: &[usize],
+    windows: &[AxisWindow],
+    dtype: NumberType,
+) -> Vec<Value> {
+    let strides = row_major_strides(shape);
+    let mut cells = cells;
+    for window in windows {
+        let selectors = axis_selectors(b, shape[window.axis], window);
+        cells = shift_axis(b, &cells, shape, &strides, window.axis, &selectors, dtype);
+    }
+    cells
+}
+
+/// `sel[u][d] = [start == d] * [d + u < stop]` for `u + d < n` (the second
+/// factor dropped when it is always 1 on the selected terms or the padding
+/// is 0 anyway).
+fn axis_selectors(b: &mut IRBuilder, n: usize, window: &AxisWindow) -> Vec<Vec<Value>> {
+    let at = onehot_over(b, &window.start, window.start_encoding.as_ref(), 0, n);
+    let mask = StopMask::new(b, n, window);
+    (0..n)
+        .map(|u| (0..n - u).map(|d| mask.select(b, &at[d], d, u)).collect())
+        .collect()
+}
+
+/// How a selector learns `[d + u < stop]` (for the `d` whose bit is set).
+enum StopMask {
+    /// `stop >= n` (every kept term is inside the window), or the cells past
+    /// `stop` are 0.
+    Unneeded,
+    /// A thermometer of `stop`: the bit is free.
+    Thermometer(IndexEncoding),
+    /// One comparison per output position, `[start + u < stop]`.
+    Compared(Vec<Value>),
+}
+
+impl StopMask {
+    fn new(b: &mut IRBuilder, n: usize, window: &AxisWindow) -> StopMask {
+        if window.padding_zero || window.stop.int_val().is_some_and(|s| s >= n as i64) {
+            return StopMask::Unneeded;
+        }
+        if let Some(enc) = window.stop_encoding.clone().filter(|e| e.below.is_some()) {
+            return StopMask::Thermometer(enc);
+        }
+        let masks = (0..n)
+            .map(|u| {
+                let u_v = b.ir_constant_int(u as i64);
+                let position = b.ir_add_i(&window.start, &u_v);
+                b.ir_less_than_i_bounded(&position, &window.stop)
+            })
+            .collect();
+        StopMask::Compared(masks)
+    }
+
+    /// `at_d * [d + u < stop]`, given `at_d = [start == d]`.
+    fn select(&self, b: &mut IRBuilder, at_d: &Value, d: usize, u: usize) -> Value {
+        match self {
+            StopMask::Unneeded => at_d.clone(),
+            StopMask::Compared(masks) => b.ir_mul_i(at_d, &masks[u]),
+            StopMask::Thermometer(enc) => {
+                // [t < stop] = 1 - [stop < t + 1].
+                let stop_le_t = enc.less_than(b, (d + u) as i64 + 1).expect("the encoding has a thermometer");
+                stop_le_t.not().and(b, at_d)
+            }
+        }
+    }
+}
+
+/// One shift along `axis`: `y[.., u, ..] = sum_d sel[u][d] * x[.., u + d, ..]`.
+fn shift_axis(
+    b: &mut IRBuilder,
+    cells: &[Value],
+    shape: &[usize],
+    strides: &[usize],
+    axis: usize,
+    selectors: &[Vec<Value>],
+    dtype: NumberType,
+) -> Vec<Value> {
+    (0..cells.len())
+        .map(|flat| {
+            let u = decode_coords(flat, shape, strides)[axis];
+            let terms: Vec<Value> = selectors[u]
+                .iter()
+                .enumerate()
+                .map(|(d, sel)| scale_by_bit(b, sel, &cells[flat + d * strides[axis]], dtype))
+                .collect();
+            sum_typed(b, terms, dtype)
+        })
+        .collect()
+}
+        "sort: network"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        plans(group, cx, cost::network_plans)
+    }
+}
+
+impl Construction for RankSelection {
+    fn name(&self) -> &'static str {
+        "sort: rank selectors"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        plans(group, cx, |demand, costs| vec![cost::rank_selector_plan(demand, costs)])
+    }
+}
+
+impl Construction for PermutationCheck {
+    fn name(&self) -> &'static str {
+        "sort: permutation check"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        plans(group, cx, |demand, costs| cost::full_permutation(demand, costs).into_iter().collect())
+    }
+}
+
+impl Construction for PinnedSelection {
+    fn name(&self) -> &'static str {
+        "sort: pinned selection"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        plans(group, cx, cost::selection_plans)
+    }
+}
+
+/// The candidates of the plans `offer` prices for `group`'s live lanes, each
+/// producing every lane.
+fn plans(group: &Group, cx: &Context, offer: impl Fn(&Demand, &UnitCosts) -> Vec<(Plan, u64)>) -> Vec<Candidate> {
+    if group.kind != OpKind::Sort {
+        return Vec::new();
+    }
+    let demand = demand(group, cx);
+    let range = narrow_range(group, cx);
+    // The count lanes, one comparison per element each in every plan
+    // (`counts::count_query`), priced so that a plan answering them by
+    // positions in its sorted values (`SortCountsByPosition`) compares.
+    let float = group.shared.iter().any(|&s| search::is_float_stmt(cx, s));
+    let counts = count_lanes(group) * group.shared.len() as u64 * search::count_cost_per_entry(cx.target, float);
+    offer(&demand, &cost::unit_costs(cx.target))
+        .into_iter()
+        .map(|(plan, cost)| {
+            let mut candidate = plan_candidate(group, demand.clone(), plan, cost + counts, range.map(|(lo, hi, _)| (lo, hi)));
+            candidate.pre.extend(range.map(|(_, _, fact)| Requirement::Fact(fact)));
+            candidate
+        })
+        .collect()
+}
+
+/// The number of count lanes of a sort (`COUNT_AT_MOST`, `COUNT_BELOW`).
+fn count_lanes(group: &Group) -> u64 {
+    group.lanes.iter().filter(|lane| lane.output == COUNT_AT_MOST || lane.output == COUNT_BELOW).count() as u64
+}
+
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/waksman.rs:177:    fn permutations(n: usize) -> Vec<Vec<usize>> {
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/waksman.rs:207:    fn every_permutation_is_routed_exhaustively_up_to_8() {
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/waksman.rs:219:    fn random_permutations_are_routed_up_to_600() {
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/waksman.rs:243:    fn every_setting_is_a_permutation() {
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/tests.rs:46:fn merge_exchange_sorts_permutations_of_larger_sizes() {
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/tests.rs:370:fn permutation_check_rejects_every_other_index() {
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/cost.rs:40:    /// tie-break (`IR::KeyLess`) and four selects.
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/cost.rs:141:/// (78.5 per exchange with the `KeyLess` tie-break), 67,800 on packed keys
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/cost.rs:148:/// slot; `KeyLess` is about 55 cells; an order statistic 56 cells per
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/cost.rs:209:/// native read per key, the array built once, an asserted `KeyLess` per
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/cost.rs:698:pub(super) fn full_permutation(demand: &Demand, costs: &UnitCosts) -> Option<(Plan, u64)> {
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/grand_product.rs:19://!   increasing (`IR::PackedKeyLess` under `IR::Assert`, after the check,
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/grand_product.rs:40://!    (`IR::KeyLess`); by 1 every `y_r` is one of them (in the packed-key
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/grand_product.rs:107:        let increasing = b.ir_packed_key_less(&pair[0], &pair[1], bits);
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/routed.rs:17://!   strictly, `K'_r < K'_{r+1}` (`IR::PackedKeyLess` under `IR::Assert`),
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/routed.rs:45://!    lexicographic order of `(a_j, j)` (`IR::KeyLess`), so exactly one
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/routed.rs:125:        let increasing = b.ir_packed_key_less(&pair[0].key, &pair[1].key, bits);
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/packed.rs:11://!   merge exchange compares two packed keys (`IR::PackedKeyLess`) and
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/packed.rs:25://! lexicographic order of `(a_j, j)` (`IR::KeyLess`), whose ascending order
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/packed.rs:54:        let swap = b.ir_packed_key_less(&keys[j], &keys[i], bits);
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/emit.rs:62:    /// `[(v1, i1) < (v2, i2)]` lexicographically (`IR::KeyLess`); every
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/emit.rs:65:    fn key_less(&self, b: &mut IRBuilder, v1: &Value, i1: &Value, v2: &Value, i2: &Value) -> Value {
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/emit.rs:66:        b.ir_key_less(v1, i1, v2, i2, self.index_bits())
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/emit.rs:117:/// lexicographically (`IR::KeyLess`, whose index bound holds because every
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/emit.rs:142:            elements.key_less(b, &keys[j], &indices[j], &keys[i], &indices[i])
+    let stats = builder.statistics();
+    let shape = second.shape();
+    let second_advice = shape.advice + second.challenges();
+    let cells = CellStats {
+        advice: stats.gate.total_advice_per_phase.iter().sum::<usize>() + second_advice + tables.advice_cells() + ram.advice_cells(),
+        ram_advice: ram.advice_cells(),
+        ram_rows: ram.rows_needed(),
+        ram_traces: ram.traces.len(),
+        table_advice: tables.advice_cells(),
+        table_rows: tables.rows_needed(),
+        tables: tables.shape(),
+        second_advice,
+        challenges: second.challenges(),
+
+exec
+/usr/bin/zsh -lc "PYTHONDONTWRITEBYTECODE=1 /home/zhantong/Projects/zinnia-project/wt/npb-hw/.venv/bin/python - <<'PY'
+import json
+s=json.load(open('default_halo2/ir.json'))
+for x in s:
+ if 620<=x['stmt_id']<=850: print(x['stmt_id'],x['ir_instance']['__class__'],x['arguments'],x['ir_instance']['ir_data'])
+PY" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 0ms:
+620 LogicalOrIR [618, 619] {}
+621 BoolCastIR [320] {}
+622 LogicalOrIR [620, 621] {}
+623 BoolCastIR [331] {}
+624 LogicalOrIR [622, 623] {}
+625 BoolCastIR [342] {}
+626 LogicalOrIR [624, 625] {}
+627 BoolCastIR [353] {}
+628 LogicalOrIR [626, 627] {}
+629 BoolCastIR [364] {}
+630 BoolCastIR [375] {}
+631 LogicalOrIR [629, 630] {}
+632 BoolCastIR [386] {}
+633 LogicalOrIR [631, 632] {}
+634 BoolCastIR [397] {}
+635 LogicalOrIR [633, 634] {}
+636 BoolCastIR [408] {}
+637 LogicalOrIR [635, 636] {}
+638 BoolCastIR [419] {}
+639 LogicalOrIR [637, 638] {}
+640 BoolCastIR [430] {}
+641 BoolCastIR [441] {}
+642 LogicalOrIR [640, 641] {}
+643 BoolCastIR [452] {}
+644 LogicalOrIR [642, 643] {}
+645 BoolCastIR [463] {}
+646 LogicalOrIR [644, 645] {}
+647 BoolCastIR [474] {}
+648 LogicalOrIR [646, 647] {}
+649 BoolCastIR [485] {}
+650 LogicalOrIR [648, 649] {}
+651 BoolCastIR [496] {}
+652 BoolCastIR [507] {}
+653 LogicalOrIR [651, 652] {}
+654 BoolCastIR [518] {}
+655 LogicalOrIR [653, 654] {}
+656 BoolCastIR [529] {}
+657 LogicalOrIR [655, 656] {}
+658 BoolCastIR [540] {}
+659 LogicalOrIR [657, 658] {}
+660 BoolCastIR [551] {}
+661 LogicalOrIR [659, 660] {}
+662 BoolCastIR [562] {}
+663 BoolCastIR [573] {}
+664 LogicalOrIR [662, 663] {}
+665 BoolCastIR [584] {}
+666 LogicalOrIR [664, 665] {}
+667 BoolCastIR [595] {}
+668 LogicalOrIR [666, 667] {}
+669 BoolCastIR [606] {}
+670 LogicalOrIR [668, 669] {}
+671 BoolCastIR [617] {}
+672 LogicalOrIR [670, 671] {}
+673 SelectIIR [628, 182, 184] {}
+674 SelectIIR [639, 628, 182] {}
+675 SelectIIR [639, 673, 628] {}
+676 SelectIIR [639, 182, 673] {}
+677 SelectIIR [650, 186, 182] {}
+678 SelectIIR [650, 674, 182] {}
+679 SelectIIR [650, 675, 674] {}
+680 SelectIIR [650, 676, 675] {}
+681 SelectIIR [650, 182, 676] {}
+682 SelectIIR [661, 188, 182] {}
+683 SelectIIR [661, 678, 182] {}
+684 SelectIIR [661, 679, 678] {}
+685 SelectIIR [661, 680, 679] {}
+686 SelectIIR [661, 681, 680] {}
+687 SelectIIR [661, 182, 681] {}
+688 SelectIIR [672, 190, 182] {}
+689 MulIIR [673, 639] {}
+690 MulIIR [676, 677] {}
+691 AddIIR [689, 690] {}
+692 MulIIR [681, 682] {}
+693 AddIIR [691, 692] {}
+694 MulIIR [687, 688] {}
+695 AddIIR [693, 694] {}
+696 MulIIR [628, 639] {}
+697 MulIIR [675, 677] {}
+698 AddIIR [696, 697] {}
+699 MulIIR [680, 682] {}
+700 AddIIR [698, 699] {}
+701 MulIIR [686, 688] {}
+702 AddIIR [700, 701] {}
+703 MulIIR [674, 677] {}
+704 MulIIR [679, 682] {}
+705 AddIIR [703, 704] {}
+706 MulIIR [685, 688] {}
+707 AddIIR [705, 706] {}
+708 MulIIR [678, 682] {}
+709 MulIIR [684, 688] {}
+710 AddIIR [708, 709] {}
+711 MulIIR [683, 688] {}
+712 AddIIR [628, 639] {}
+713 AddIIR [712, 650] {}
+714 AddIIR [713, 661] {}
+715 AddIIR [714, 672] {}
+716 LogicalOrIR [618, 629] {}
+717 LogicalOrIR [716, 640] {}
+718 LogicalOrIR [717, 651] {}
+719 LogicalOrIR [718, 662] {}
+720 LogicalOrIR [619, 630] {}
+721 LogicalOrIR [720, 641] {}
+722 LogicalOrIR [721, 652] {}
+723 LogicalOrIR [722, 663] {}
+724 LogicalOrIR [621, 632] {}
+725 LogicalOrIR [724, 643] {}
+726 LogicalOrIR [725, 654] {}
+727 LogicalOrIR [726, 665] {}
+728 LogicalOrIR [623, 634] {}
+729 LogicalOrIR [728, 645] {}
+730 LogicalOrIR [729, 656] {}
+731 LogicalOrIR [730, 667] {}
+732 LogicalOrIR [625, 636] {}
+733 LogicalOrIR [732, 647] {}
+734 LogicalOrIR [733, 658] {}
+735 LogicalOrIR [734, 669] {}
+736 LogicalOrIR [627, 638] {}
+737 LogicalOrIR [736, 649] {}
+738 LogicalOrIR [737, 660] {}
+739 LogicalOrIR [738, 671] {}
+740 SelectIIR [719, 182, 184] {}
+741 SelectIIR [723, 719, 182] {}
+742 SelectIIR [723, 740, 719] {}
+743 SelectIIR [723, 182, 740] {}
+744 SelectIIR [727, 186, 182] {}
+745 SelectIIR [727, 741, 182] {}
+746 SelectIIR [727, 742, 741] {}
+747 SelectIIR [727, 743, 742] {}
+748 SelectIIR [727, 182, 743] {}
+749 SelectIIR [731, 188, 182] {}
+750 SelectIIR [731, 745, 182] {}
+751 SelectIIR [731, 746, 745] {}
+752 SelectIIR [731, 747, 746] {}
+753 SelectIIR [731, 748, 747] {}
+754 SelectIIR [731, 182, 748] {}
+755 SelectIIR [735, 190, 182] {}
+756 SelectIIR [735, 750, 182] {}
+757 SelectIIR [735, 751, 750] {}
+758 SelectIIR [735, 752, 751] {}
+759 SelectIIR [735, 753, 752] {}
+760 SelectIIR [735, 754, 753] {}
+761 SelectIIR [735, 182, 754] {}
+762 SelectIIR [739, 192, 182] {}
+763 MulIIR [740, 723] {}
+764 MulIIR [743, 744] {}
+765 AddIIR [763, 764] {}
+766 MulIIR [748, 749] {}
+767 AddIIR [765, 766] {}
+768 MulIIR [754, 755] {}
+769 AddIIR [767, 768] {}
+770 MulIIR [761, 762] {}
+771 AddIIR [769, 770] {}
+772 MulIIR [719, 723] {}
+773 MulIIR [742, 744] {}
+774 AddIIR [772, 773] {}
+775 MulIIR [747, 749] {}
+776 AddIIR [774, 775] {}
+777 MulIIR [753, 755] {}
+778 AddIIR [776, 777] {}
+779 MulIIR [760, 762] {}
+780 AddIIR [778, 779] {}
+781 MulIIR [741, 744] {}
+782 MulIIR [746, 749] {}
+783 AddIIR [781, 782] {}
+784 MulIIR [752, 755] {}
+785 AddIIR [783, 784] {}
+786 MulIIR [759, 762] {}
+787 AddIIR [785, 786] {}
+788 MulIIR [745, 749] {}
+789 MulIIR [751, 755] {}
+790 AddIIR [788, 789] {}
+791 MulIIR [758, 762] {}
+792 AddIIR [790, 791] {}
+793 MulIIR [750, 755] {}
+794 MulIIR [757, 762] {}
+795 AddIIR [793, 794] {}
+796 MulIIR [756, 762] {}
+797 AddIIR [719, 723] {}
+798 AddIIR [797, 727] {}
+799 AddIIR [798, 731] {}
+800 AddIIR [799, 735] {}
+801 AddIIR [800, 739] {}
+802 LessThanIIR [182, 715] {}
+803 AssertIR [802] {}
+804 ConstantIntIR [] {'value': -1}
+805 AddIIR [715, 804] {}
+806 AssertU128LtBitIR [805] {'bit': 0, 'bits': 3, 'hi': 5}
+807 AssertU128LtBitIR [805] {'bit': 1, 'bits': 3, 'hi': 5}
+808 AssertU128LtBitIR [805] {'bit': 2, 'bits': 3, 'hi': 5}
+809 SelectIIR [806, 702, 695] {}
+810 SelectIIR [806, 710, 707] {}
+811 SelectIIR [807, 810, 809] {}
+812 SelectIIR [808, 711, 811] {}
+813 AddIIR [812, 184] {}
+814 LessThanIIR [182, 801] {}
+815 AssertIR [814] {}
+816 AddIIR [801, 804] {}
+817 AssertU128LtBitIR [816] {'bit': 0, 'bits': 3, 'hi': 6}
+818 AssertU128LtBitIR [816] {'bit': 1, 'bits': 3, 'hi': 6}
+819 AssertU128LtBitIR [816] {'bit': 2, 'bits': 3, 'hi': 6}
+820 SelectIIR [817, 780, 771] {}
+821 SelectIIR [817, 792, 787] {}
+822 SelectIIR [817, 796, 795] {}
+823 SelectIIR [818, 821, 820] {}
+824 SelectIIR [819, 822, 823] {}
+825 AddIIR [824, 184] {}
+826 EqualIIR [695, 182] {}
+827 EqualIIR [695, 184] {}
+828 EqualIIR [695, 186] {}
+829 EqualIIR [695, 188] {}
+830 EqualIIR [695, 190] {}
+831 LessThanIBoundedIR [695, 813] {}
+832 AddIIR [695, 184] {}
+833 LessThanIBoundedIR [832, 813] {}
+834 AddIIR [695, 186] {}
+835 LessThanIBoundedIR [834, 813] {}
+836 AddIIR [695, 188] {}
+837 LessThanIBoundedIR [836, 813] {}
+838 AddIIR [695, 190] {}
+839 LessThanIBoundedIR [838, 813] {}
+840 MulIIR [826, 831] {}
+841 MulIIR [827, 831] {}
+842 MulIIR [828, 831] {}
+843 MulIIR [829, 831] {}
+844 MulIIR [830, 831] {}
+845 MulIIR [826, 833] {}
+846 MulIIR [827, 833] {}
+847 MulIIR [828, 833] {}
+848 MulIIR [829, 833] {}
+849 MulIIR [826, 835] {}
+850 MulIIR [827, 835] {}
+
+exec
+/usr/bin/zsh -lc "sed -n '205,295p' /home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/sort/emit.rs; rg -n 'struct ScatterEmitter|impl.*ScatterEmitter|fn onehot_over' /home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/gather/{constructions,encoding}.rs; sed -n '470,555p' /home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/gather/constructions.rs; sed -n '487,494p' /home/zhantong/Projects/zinnia-project/wt/npb-hw/src/prove/halo2_base/mod.rs; rg -n 'flatnonzero|Nonzero|nonzero' /home/zhantong/Projects/zinnia-project/wt/npb-hw/src/stdlib -g '*.rs' | head -20" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 0ms:
+        let by_rank: Vec<Value> = match bits.as_slice() {
+            [] => vec![one.clone()],
+            [p] => vec![b.ir_sub_i(&one, p), p.clone()],
+            [p, q] => {
+                let (not_p, not_q) = (b.ir_sub_i(&one, p), b.ir_sub_i(&one, q));
+                let first = b.ir_mul_i(&not_p, &not_q);
+                let last = b.ir_mul_i(p, q);
+                let ends = b.ir_add_i(&first, &last);
+                vec![first, b.ir_sub_i(&one, &ends), last]
+            }
+            _ => {
+                let rank = bits[1..].iter().fold(bits[0].clone(), |acc, bit| b.ir_add_i(&acc, bit));
+                (0..n)
+                    .map(|r| {
+                        let r = b.ir_constant_int(r as i64);
+                        b.ir_equal_i(&rank, &r)
+                    })
+                    .collect()
+            }
+        };
+        for (r, selector) in by_rank.into_iter().enumerate() {
+            selectors[r].push(selector);
+        }
+    }
+    selectors
+}
+
+/// `sum_k selectors[k] * values[k]` (the entry of the selected element).
+pub(super) fn select_by(b: &mut IRBuilder, selectors: &[Value], values: &[Value], dtype: NumberType) -> Value {
+    let terms = selectors
+        .iter()
+        .zip(values)
+        .map(|(bit, value)| crate::lower::gather::window::scale_by_bit(b, bit, value, dtype))
+        .collect();
+    crate::lower::gather::window::sum_typed(b, terms, dtype)
+}
+
+// ── Hinted keys ─────────────────────────────────────────────────────────
+
+/// A key: a value and the index of an element.
+#[derive(Clone)]
+pub(super) struct Key {
+    pub value: Value,
+    pub index: Value,
+}
+
+/// The elements in a memory segment, for the reads through hinted indices.
+#[derive(Clone, Copy)]
+pub(super) struct ElementMemory {
+    segment: u32,
+}
+
+impl ElementMemory {
+    pub(super) fn new(b: &mut IRBuilder, elements: &Elements) -> ElementMemory {
+        let segment =
+            crate::helpers::segment::alloc_and_write_values(b, elements.values, elements.dtype);
+        ElementMemory { segment }
+    }
+
+    /// The key of the element at the hinted index `p`: `p` is asserted to
+    /// lie in `[0, n)` and the value is read at `p`, so the key is the key
+    /// of an element (`a_p`, `p`), whatever the prover chose.
+    fn key_at(&self, b: &mut IRBuilder, elements: &Elements, p: Value) -> Key {
+        let n = b.ir_constant_int(elements.len() as i64);
+        b.ir_assert_u128_lt(&p, &n);
+        let value = crate::helpers::segment::read_typed(b, self.segment, &p, elements.dtype);
+        elements.bound(b, &value);
+        Key { value, index: p }
+    }
+}
+
+/// `x < y` for keys: `x.value < y.value`, or equal values and
+/// `x.index < y.index` (both indices lie in `[0, n)`: asserted, or
+/// constants).
+fn key_less(b: &mut IRBuilder, elements: &Elements, x: &Key, y: &Key) -> Value {
+    elements.key_less(b, &x.value, &x.index, &y.value, &y.index)
+}
+
+/// The number of elements whose key lies below `key` (`above`: above it).
+fn count_keys_beyond(b: &mut IRBuilder, elements: &Elements, key: &Key, above: bool) -> Value {
+    let bits: Vec<Value> = (0..elements.len())
+        .map(|j| {
+            let element = Key {
+                value: elements.values[j].clone(),
+                index: b.ir_constant_int(j as i64),
+            };
+            if above {
+                key_less(b, elements, key, &element)
+            } else {
+                key_less(b, elements, &element, key)
+            }
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/gather/encoding.rs:115:pub fn onehot_over(b: &mut IRBuilder, v: &Value, encoding: Option<&IndexEncoding>, lo: i64, len: usize) -> Vec<Value> {
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/gather/constructions.rs:502:struct ScatterEmitter {
+/home/zhantong/Projects/zinnia-project/wt/npb-hw/src/lower/gather/constructions.rs:510:impl Emitter for ScatterEmitter {
+
+struct WritesEmitter {
+    operands: Vec<StmtId>,
+    /// The array after the writes.
+    version: Option<(Value, crate::ir_array::ArrayElem)>,
+}
+
+impl Emitter for WritesEmitter {
+    fn begin(&mut self, b: &mut IRBuilder, cx: &mut EmitCx) {
+        use crate::ir_array::{ArrayAccess, ArrayElem};
+        let values = cx.values(&self.operands);
+        let n = values.len() / 2;
+        let (p, v) = values.split_at(n);
+        let elem = if dtype_of(v) == NumberType::Float { ArrayElem::Float } else { ArrayElem::Int };
+        let zeros: Vec<Value> =
+            (0..n).map(|_| if elem == ArrayElem::Float { b.ir_constant_float(0.0) } else { b.ir_constant_int(0) }).collect();
+        let always = b.ir_constant_bool(true);
+        let mut version = b.ir_array_init(&zeros, elem);
+        for (pk, vk) in p.iter().zip(v) {
+            version = b.ir_array_write(&version, ArrayAccess::flat(n as u32, elem), std::slice::from_ref(pk), vk, &always);
+        }
+        self.version = Some((version, elem));
+    }
+
+    fn lane(&mut self, b: &mut IRBuilder, _cx: &mut EmitCx, lane: &Lane) -> Value {
+        let (version, elem) = self.version.clone().expect("begin ran");
+        let n = self.operands.len() / 2;
+        let j = lane.position.expect("a scatter cell has a position");
+        b.ir_array_read(&version, crate::ir_array::ArrayAccess::constant(n as u32, elem, j), &[])
+    }
+}
+
+struct ScatterEmitter {
+    operands: Vec<StmtId>,
+    offset: Option<i64>,
+    /// `hits[j][k] = [p[k] == j]`.
+    hits: Vec<Vec<Value>>,
+    cells: Vec<Value>,
+}
+
+impl Emitter for ScatterEmitter {
+    fn begin(&mut self, b: &mut IRBuilder, cx: &mut EmitCx) {
+        let values = cx.values(&self.operands);
+        let n = values.len() / 2;
+        let (p, v) = values.split_at(n);
+        let dtype = dtype_of(v);
+        self.hits = (0..n)
+            .map(|j| {
+                let target = b.ir_constant_int(j as i64);
+                p.iter().map(|pk| b.ir_equal_i(pk, &target)).collect()
+            })
+            .collect();
+        self.cells = self
+            .hits
+            .iter()
+            .map(|hits| {
+                let terms = hits.iter().zip(v).map(|(h, vk)| super::window::scale_by_bit(b, h, vk, dtype)).collect();
+                super::window::sum_typed(b, terms, dtype)
+            })
+            .collect();
+    }
+
+    fn lane(&mut self, _b: &mut IRBuilder, _cx: &mut EmitCx, lane: &Lane) -> Value {
+        self.cells[lane.position.expect("a scatter lane has a position") as usize].clone()
+    }
+
+    fn shared(&mut self, _b: &mut IRBuilder, _cx: &mut EmitCx, _group: GroupId, _name: &'static str) -> Rc<dyn Any> {
+        let lo = self.offset.expect("values k + c");
+        let encodings: Encodings =
+            self.hits.iter().map(|hits| IndexEncoding { lo, onehot: hits.clone(), below: None }).collect();
+        Rc::new(encodings)
+    }
+}
+
+// ── Windows ───────────────────────────────────────────────────────────
+
+/// `window::window_shift`. Two candidates: selectors from equality tests
+/// and comparisons only, and (when a start or stop is a scan's result plus a
+/// constant) selectors read off the scans' encodings, with the padding mask
+/// dropped where `vanishing` shows the padding is 0. Cost
+/// `cost::window_shift`.
+pub struct WindowShift;
+
+/// One axis of a window group: its length and bound statements.
+struct WindowAxis {
+    n: usize,
+        challenges: second.challenges(),
+        lookup: stats.total_lookup_advice_per_phase.iter().sum(),
+        fixed: stats.gate.total_fixed + shape.constants,
+        instances,
+    };
+    builder.clear();
+    Ok(cells)
+}
+rg: /home/zhantong/Projects/zinnia-project/wt/npb-hw/src/stdlib: IO error for operation on /home/zhantong/Projects/zinnia-project/wt/npb-hw/src/stdlib: No such file or directory (os error 2)
+
+exec
+/usr/bin/zsh -lc "PYTHONDONTWRITEBYTECODE=1 /home/zhantong/Projects/zinnia-project/wt/npb-hw/.venv/bin/python - <<'PY'
+import json
+s=json.load(open('default_halo2/ir.json'))
+for x in s:
+ if 242<=x['stmt_id']<=309 or (x['ir_instance']['__class__']=='EqualIIR' and x['stmt_id']>820): print(x['stmt_id'],x['ir_instance']['__class__'],x['arguments'])
+PY" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 0ms:
+242 KeyLessIR [201, 183, 209, 185]
+243 AssertIR [242]
+244 KeyLessIR [209, 185, 217, 187]
+245 AssertIR [244]
+246 KeyLessIR [217, 187, 225, 189]
+247 AssertIR [246]
+248 KeyLessIR [225, 189, 233, 191]
+249 AssertIR [248]
+250 KeyLessIR [233, 191, 241, 193]
+251 AssertIR [250]
+252 EqualIIR [183, 182]
+253 EqualIIR [185, 182]
+254 EqualIIR [187, 182]
+255 EqualIIR [189, 182]
+256 EqualIIR [191, 182]
+257 EqualIIR [193, 182]
+258 EqualIIR [183, 184]
+259 EqualIIR [185, 184]
+260 EqualIIR [187, 184]
+261 EqualIIR [189, 184]
+262 EqualIIR [191, 184]
+263 EqualIIR [193, 184]
+264 EqualIIR [183, 186]
+265 EqualIIR [185, 186]
+266 EqualIIR [187, 186]
+267 EqualIIR [189, 186]
+268 EqualIIR [191, 186]
+269 EqualIIR [193, 186]
+270 EqualIIR [183, 188]
+271 EqualIIR [185, 188]
+272 EqualIIR [187, 188]
+273 EqualIIR [189, 188]
+274 EqualIIR [191, 188]
+275 EqualIIR [193, 188]
+276 EqualIIR [183, 190]
+277 EqualIIR [185, 190]
+278 EqualIIR [187, 190]
+279 EqualIIR [189, 190]
+280 EqualIIR [191, 190]
+281 EqualIIR [193, 190]
+282 EqualIIR [183, 192]
+283 EqualIIR [185, 192]
+284 EqualIIR [187, 192]
+285 EqualIIR [189, 192]
+286 EqualIIR [191, 192]
+287 EqualIIR [193, 192]
+288 MulIIR [252, 0]
+289 MulIIR [253, 7]
+290 MulIIR [254, 12]
+291 MulIIR [255, 17]
+292 MulIIR [256, 22]
+293 MulIIR [257, 27]
+294 AddIIR [288, 289]
+295 AddIIR [294, 290]
+296 AddIIR [295, 291]
+297 AddIIR [296, 292]
+298 AddIIR [297, 293]
+299 MulIIR [258, 0]
+300 MulIIR [259, 7]
+301 MulIIR [260, 12]
+302 MulIIR [261, 17]
+303 MulIIR [262, 22]
+304 MulIIR [263, 27]
+305 AddIIR [299, 300]
+306 AddIIR [305, 301]
+307 AddIIR [306, 302]
+308 AddIIR [307, 303]
+309 AddIIR [308, 304]
+826 EqualIIR [695, 182]
+827 EqualIIR [695, 184]
+828 EqualIIR [695, 186]
+829 EqualIIR [695, 188]
+830 EqualIIR [695, 190]
+1005 EqualIIR [771, 182]
+1006 EqualIIR [771, 184]
+1007 EqualIIR [771, 186]
+1008 EqualIIR [771, 188]
+1009 EqualIIR [771, 190]
+1010 EqualIIR [771, 192]
+
+exec
+/usr/bin/zsh -lc "cat > summarize.py <<'PY'
+#"'!/usr/bin/env python3
+"""Rebuild human-readable evidence and report from run.py'"'s saved measurements.\"\"\"
+import json
+from pathlib import Path
+from collections import Counter
+D=Path(__file__).resolve().parent
+r=json.loads((D/'results.json').read_text())
+for tag in r:
+    statements=json.loads((D/tag/'ir.json').read_text())
+    (D/tag/'ir.txt').write_text(''.join(f\"{s['stmt_id']}: {s['ir_instance']['__class__']} {s['arguments']} {s['ir_instance']['ir_data']}\\n\" for s in statements))
+lines=['# Selection evidence\\n','Every group in every lowering round is listed below. Group IDs restart in each round. "'`selection.jsonl` also lists every selected helper node and its estimated cost; these estimates are not measured cell counts.'"\\n']
+for tag in r:
+    lines += [f'## {tag}\\n','| Round | Group | Family | Lanes | Chosen |','|---|---|---|---|---|']
+    for i,line in enumerate((D/tag/'selection.jsonl').read_text().splitlines(),1):
+        rd=json.loads(line)
+        for g in rd['groups']:
+            lines.append(f\"| {i} | {g['group']} | {g['family']} | {g['lanes']} | {', '.join(g['chosen'])} |\")
+    lines.append('')
+(D/'SELECTION.md').write_text('\\n'.join(lines))
+x,y=r['default_halo2'],r['local_halo2']
+rows=[]
+for mode in ['default','local']:
+    h=r[mode+'_halo2']; s=h['stats']; n=r[mode+'_noir']
+    rows.append(f\"| walkthrough/kernel | {mode} | {s['advice']:,} | {s['lookup']:,} | {h['cells']:,} | {s['k']} / {s['lookup_bits']} | {s['second_advice']} | {n['gates']:,} | {n['acir_opcodes']:,} |\")
+report=f'''# Task D: walkthrough circuit
+
+**X = {x['cells']:,}; Y = {y['cells']:,} halo2-base advice + lookup cells.** The numerical comparison holds, but the draft's scan explanation does not describe this compiler's circuit.
+
+## Definition and per-program counts
+
+The sole program in every count is "'`walkthrough/kernel`, saved as [kernel.py](kernel.py). `run.py` extracts the body verbatim from the listing in `zinnia-paper/oopsla-2027-r1/fig/tikz/walkthrough.tex`, then adds `def kernel(a: Integer[Array, "5 6"], key: Integer[Array, "6"]):`. The figure contains no signature or type annotations; the signature follows the task'"'s explicit types and the figure's array dimensions. No imports are passed to "'`ZKCircuit`.
+
+Compiler worktree: `/home/zhantong/Projects/zinnia-project/wt/npb-hw`; HEAD `{x['"'commit']}"'`. Source SHA-256: `{x['"'source_sha256']}"'`. Default means all ablation switches unset; local means only `ZINNIA_ABLATE_JOINT=1`. Each target is compiled separately with its own backend cost model.
+
+Cells are `halo2_base_cell_stats(compiled._compiled_ir)`'"'s "'`advice + lookup`, at its automatically chosen parameters. `advice` already includes both phases and auxiliary advice; `lookup` sums lookup advice over phases (implementation: `src/prove/halo2_base/mod.rs`, `CellStats` construction). Do not add `second_advice` again. Neither circuit uses second-phase advice or challenges. These are used cells, not allocated column capacity; fixed cells and public instances are excluded.
+
+| Program | Selection | Advice, both phases | Lookup, both phases | Cells | k / lookup bits | Second advice (included) | Noir gates | ACIR opcodes |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+{chr(10).join(rows)}
+
+Default saves {y['"'cells']-x['cells']:,} halo2-base cells ({100*(y['cells']-x['cells'])/y['cells']:.2f}% of local). The lookup widths coincide, so a common-width comparison gives exactly the same numbers. Alternative fixed-inclusive counting gives {x['cells']+x['stats']['fixed']:,} / {y['cells']+y['stats']['fixed']:,} cells (default/local); this is **not** the requested metric. Raw fixed, instance, polynomial and parameter data are retained in [results.json](results.json).
+
+Noir gates mean "'`bb gates`'"'s "'`functions[0].circuit_size`, using the harness'"'s "'`ultra_honk` scheme and `noir-recursive` verifier target; they do not mean ACIR opcode counts (the alternative counts are given in the table). The harness'"'s "'`noir_gates.gate_count` stages a copy of `noir_fpc`, runs `nargo compile`, then `bb gates`. Nargo is `1.0.0-beta.20`, commit `b4236c1957d0c26cb65d82adc9e5447b6ff1d629`; bb is `5.0.0-nightly.20260324`. Exact version outputs are saved. Noir default is {r['"'default_noir']['gates']-r['local_noir']['gates']} gates larger than local: the halo2 improvement must not be claimed for Noir.
+
+## NumPy checks
+
+[fixture.json](fixture.json) supplies both inputs through the existing harness fixture loader. All four compiled variants were run through the **mock interpreter only**, on both inputs, and compared using the harness's public-output decoder, dynamic shape layout and exact integer tolerance. Every mock reported satisfied constraints, and every comparison reported "'`match`, including shapes. No cryptographic proof, key generation, setup, or timing benchmark was run.
+
+* A uses the figure'"'s key "'`[20,40,60,10,30,50]` and its pictured nonzero cells, assigned value one. NumPy and every mock produce `[[1,1,0],[0,1,1],[1,0,1]]`, shape `[3,3]`.
+* B uses duplicate and negative keys `[2,-1,2,0,-1,3]` and a single pixel `a[4,2] = -7`, all others zero. NumPy and every mock produce `[[-7]]`, shape `[1,1]`. This also exercises stable tie ordering, a boundary row, negative pixel values, and a different dynamic output shape.
+
+The complete inputs, returned values, public vectors and comparison records are saved. Output padding is decoded using the harness layout; it is not mistaken for part of NumPy'"'s result. These two honest-input tests are not a proof of soundness or an adversarial witness test.
+
+## Claims checked against the compiled circuit
+
+The following findings concern **default halo2-base**, the walkthrough's stated target. [SELECTION.md](SELECTION.md) lists every selected group, for every configuration and lowering round; raw traces are in each configuration's "'`selection.jsonl`. [default_halo2/ir.txt](default_halo2/ir.txt) is a compact statement-ID listing of the final IR, generated directly from `ir.json`.
+
+| Draft claim | Verdict | Trace and IR evidence |
+|---|---|---|
+| Sort checks a prover-supplied stable order and establishes permutation | Holds | First round, group 0 selects `sort: permutation check`. IR statements 183, 185, 187, 189, 191, 193 are `stable_argsort` hints. The hinted indices are range-checked and used to read keys; statements 242, 244, 246, 248, 250 are `KeyLessIR` comparisons, each asserted immediately afterward. Strict lexicographic order on `(key,index)` forces distinct indices; with all indices in range, the full order is a permutation, including tie-breaking. |
+| Scatter-add shares `[p_k = j]` as one-hot vectors for reads | Holds | First round group 1 selects `gather: permutation scatter by hits`; groups 2–6 select `gather: element by a recorded one-hot`. IR 252–287 are the shared equality matrix. The following multiply/add blocks read image columns directly with these tests (e.g. 288–298); there is no intervening computation of rank values `c`. |
+| Endpoint reads become scans using running products | Does not hold | Neither lowering round contains a scan group or selected scan construction. The final IR builds compacted row/column index values with selects and sums (673–715 and 740–801); first endpoints are 695 and 771, while last endpoints are reads at runtime `length - 1`, lowered by index bits (first-round groups 7 and 8). |
+| Scan sum-to-one checks make `len >= 1` assertions unselected | Does not hold | Row length is statement 715, the sum of row flags; column length is 801, the sum of column flags. IR 802/803 compare `0 < 715` and assert it; 814/815 do the same for 801. Thus both nonempty assertions remain. Scalar assertions need not appear as their own groups in the selection report, so this conclusion uses final IR as well as the absence of scan nodes. |
+| Window reuses the scans'"' one-hot vectors | Does not hold | First-round group 9 selects "'`gather: window shift`, but no scan encoding exists. IR 826–830 freshly compare row start 695 with each position; 1005–1010 do the same for column start 771. The window uses its own equality selectors and stop-bound comparisons. A window-shift node alone is not evidence of scan sharing. |
+| Local selection would choose select-chain scans, unlike default | Does not hold | Local also has no scan groups. It keeps the same sort, scatter-by-hits and window families, but the five image-read groups use `memory: element by index bits` instead of recorded one-hot reads. The measured improvement is consistent with scatter/read sharing, not the claimed change of scan construction. |
+
+Source interpretation is corroborated by `src/lower/sort/emit.rs` (`ElementMemory::key_at`, lexicographic comparison), `src/lower/gather/constructions.rs` (`ScatterByHits`, `ScatterEmitter::shared`), and `src/lower/gather/window.rs` / `encoding.rs` (fresh equalities when an encoding is absent). These files were read, not modified. The figure itself labels its construction graph a draft awaiting compiler support. Its claim that `rows` is never built is also inconsistent with this emitted compacted-index computation.
+
+The final output still has the bounded dynamic layout expected by the figure: capacity for the original array and runtime dimensions, verified on both input shapes. This does not rescue the unsupported scan-selection explanation.
+
+## Reproduction and artifacts
+
+From this task directory:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 /home/zhantong/Projects/zinnia-project/wt/npb-hw/.venv/bin/python run.py > run.log 2>&1
+PYTHONDONTWRITEBYTECODE=1 /home/zhantong/Projects/zinnia-project/wt/npb-hw/.venv/bin/python summarize.py
+```
+
+`run.py` launches one measurement process at a time under `systemd-run --user --scope -q -p MemoryMax=16G`. It uses the requested venv and source-based `ZKCircuit(...).compile()`, reuses the harness fixture/reference/output code and Noir gate counter, and puts temporary Noir packages under `D/tmp`. Python bytecode writes are disabled. All scripts and outputs are inside D; no worktree or paper files are edited.
+
+Each of `default_halo2`, `local_halo2`, `default_noir`, `local_noir` contains `result.json`, `selection.jsonl`, `ir.json`, `ir.txt`, and `layout.json`; the Noir folders also retain `main.nr`. [results.json](results.json) combines the measurements. [SELECTION.md](SELECTION.md) is the complete per-program/per-group list behind the selection findings. `summarize.py` rebuilds this report and the readable evidence without compiling again.
+
+The historical acceptance account is not used as a source of these numbers: this task measures the exact walkthrough body on the requested final compiler. The body, types, backend, local-selection definition and gate-tool versions above are part of the reproducibility contract.
+'"'''
+(D/'REPORT.md').write_text(report)
+PY
+PYTHONDONTWRITEBYTECODE=1 /home/zhantong/Projects/zinnia-project/wt/npb-hw/.venv/bin/python summarize.py" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 0ms:
+codex
+The IR confirms that both nonempty assertions remain and the window builds fresh equality tests for its start positions. The default compiler does share the scatter’s one-hot vectors with the image reads; local selection uses index-bit reads instead. I’ve written the report with the counts, claim-by-claim findings, traces, IR, fixtures, and reproduction scripts.
+exec
+/usr/bin/zsh -lc "PYTHONDONTWRITEBYTECODE=1 /home/zhantong/Projects/zinnia-project/wt/npb-hw/.venv/bin/python - <<'PY'
+import json
+from pathlib import Path
+r=json.loads(Path('results.json').read_text())
+for tag,d in r.items():
+ assert d['commit'].startswith('3ebe0558')
+ assert all(c['satisfied'] and c['check']['status']=='match' for c in d['checks'].values())
+ assert 'error' not in d
+for p in ['REPORT.md','SELECTION.md','run.py','summarize.py','kernel.py','fixture.json']:
+ assert Path(p).is_file()
+s={v['stmt_id']:v for v in json.loads(Path('default_halo2/ir.json').read_text())}
+assert s[803]['arguments']==[802] and s[802]['arguments']==[182,715]
+assert s[815]['arguments']==[814] and s[814]['arguments']==[182,801]
+assert s[182]['ir_instance']['ir_data']['value']==0
+print('Verified four results, all mock comparisons, report artifacts, and retained nonempty assertions.')
+PY" in /home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D
+ succeeded in 0ms:
+Verified four results, all mock comparisons, report artifacts, and retained nonempty assertions.
+
+codex
+Completed [REPORT.md](/home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D/REPORT.md).
+
+| Metric | Default | Local |
+|---|---:|---:|
+| Halo2-base cells | **5,494 (X)** | **6,046 (Y)** |
+| Noir gates | 3,997 | 3,974 |
+
+Both inputs match NumPy in all four configurations.
+
+Sort verification and scatter one-hot sharing hold. The scan claims do not: no scans are selected, both nonempty assertions remain, and the window builds fresh equality tests.
+
+Reproduction scripts and complete evidence are saved in D/.
+tokens used
+70,573
+Completed [REPORT.md](/home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/D/REPORT.md).
+
+| Metric | Default | Local |
+|---|---:|---:|
+| Halo2-base cells | **5,494 (X)** | **6,046 (Y)** |
+| Noir gates | 3,997 | 3,974 |
+
+Both inputs match NumPy in all four configurations.
+
+Sort verification and scatter one-hot sharing hold. The scan claims do not: no scans are selected, both nonempty assertions remain, and the window builds fresh equality tests.
+
+Reproduction scripts and complete evidence are saved in D/.

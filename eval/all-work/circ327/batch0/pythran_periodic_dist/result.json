@@ -1,0 +1,27 @@
+{
+  "program": "pythran_periodic_dist",
+  "category": "needs_gadget: sqrt",
+  "as_written": {
+    "status": "needs gadget",
+    "error": "kernel.py:27: np.sqrt(dx ** 2 + dy ** 2 + dz ** 2).",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "needs gadget",
+    "error": "needs gadget: sqrt",
+    "constraints": null,
+    "rewrites": [],
+    "bound_argument": "Replace masked assignments with 16x16 guarded elementwise loops if needed; the final real square root still needs a gadget."
+  },
+  "correctness": {
+    "A": {
+      "status": "not applicable",
+      "reason": "No accepted full translation."
+    },
+    "B": {
+      "status": "not applicable",
+      "reason": "No accepted full translation."
+    }
+  },
+  "notes": "Replace masked assignments with 16x16 guarded elementwise loops if needed; the final real square root still needs a gadget. Not compiled: the brief forbids implementing this missing gadget."
+}

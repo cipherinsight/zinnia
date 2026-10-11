@@ -1,0 +1,54 @@
+{
+  "program": "pythran_lapl2d",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not expressible",
+    "error": "for it in range(0, niter), line 13",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 1967264,
+    "seconds": 54.151878118515015,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch5/pythran_lapl2d/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Unroll to 1024 with it < niter guards, directly justified by the declared 0 <= niter <= 1024 precondition.",
+      "Expose both original mutated input buffers, preserving local In/Out swaps; h2 is exactly 1/16 and Q32 rescaling uses a sign-extended right shift."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "elements": 32,
+      "actual_elements": 32,
+      "max_abs_error": 0.0
+    },
+    "B": {
+      "status": "pass",
+      "elements": 32,
+      "actual_elements": 32,
+      "max_abs_error": 2.3751112188108436e-10
+    }
+  },
+  "notes": "",
+  "source": {
+    "kernel": "benchmarking/datasets/pythran/pythran_lapl2d/kernel.py",
+    "function": "lapl2d",
+    "sha256": "7faff43a3d58a3cc81d6e5c4806c80db6c76de2930eb57378089b3ec55375a66"
+  },
+  "encoding": "Private inputs; public return value. Real numbers are rounded to scale 2^32. Native u64 values use signed two-complement interpretation; integer arithmetic is used for candidate full-width Q32 products to avoid truncating them to 64 bits before rescaling.",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/pythran/pythran_lapl2d/fixture.json",
+  "reason": "Guarded 1,024-step loop from the explicit precondition; retain both buffers."
+}

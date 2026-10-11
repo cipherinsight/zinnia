@@ -1,0 +1,18 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+struct Result {
+    u64[16] a
+    u64[16] b
+}
+def main(private u64[16] x1, private u64[16] x2, private u64[16] y_1, private u64[16] y_2, private u64[16][16] A) -> Result:
+    for u32 i in 0..16 do
+        u64 p = 0u64
+        u64 q = 0u64
+        for u32 j in 0..16 do
+            p = (p + mulq(A[i][j], y_1[j]))
+            q = (q + mulq(y_2[j], A[j][i]))
+        endfor
+        x1[i] = (x1[i] + p)
+        x2[i] = (x2[i] + q)
+    endfor
+    return Result {a: x1, b: x2}

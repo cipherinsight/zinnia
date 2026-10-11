@@ -1,0 +1,13 @@
+// Reals are encoded at scale 2^32; signed field values use centered residues.
+def main(private u64[16] data, private u64 poly) -> u64:
+    u64 crc = 65535
+    for u32 i in 0..16 do
+        u64 cur_byte = 255 & data[i]
+        for u32 k in 0..8 do
+            crc = if ((crc & 1) ^ (cur_byte & 1)) != 0 then (crc >> 1) ^ poly else crc >> 1 fi
+            cur_byte = cur_byte >> 1
+        endfor
+    endfor
+    crc = (!crc) & 65535
+    crc = (crc << 8) | ((crc >> 8) & 255)
+    return crc & 65535

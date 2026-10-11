@@ -1,0 +1,1045 @@
+{
+  "id": "pythran__pythran_deuxd_convolution__conv",
+  "sites": {
+    "22:13:22:29:Call": "np.zeros_like(x)"
+  },
+  "numpy": {
+    "A": [
+      {
+        "site": "22:13:22:29:Call",
+        "value": {
+          "shape": [
+            16,
+            16
+          ],
+          "length": 256
+        }
+      }
+    ],
+    "B": [
+      {
+        "site": "22:13:22:29:Call",
+        "value": {
+          "shape": [
+            16,
+            16
+          ],
+          "length": 256
+        }
+      }
+    ]
+  },
+  "selected": [
+    "22:13:22:29:Call"
+  ],
+  "source": "def conv(x: Float[Array, '16 16'], weights: Float[Array, '5 5']):\n    bprobe_trace = []\n    sx = x.shape\n    sw = weights.shape\n    bprobe_v0 = np.zeros_like(x)\n    bprobe_trace.append((0, bprobe_v0))\n    result = bprobe_v0\n    for i in range(sx[0]):\n        for j in range(sx[1]):\n            for ii in range(sw[0]):\n                for jj in range(sw[1]):\n                    idx = (clamp(i, ii - sw[0] // 2, sw[0]), clamp(j, jj - sw[0] // 2, sw[0]))\n                    result[i, j] += x[idx] * weights[ii, jj]\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [
+        {
+          "constant": 0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          0
+        ]
+      },
+      "shape": [
+        16
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          1
+        ]
+      },
+      "shape": [
+        16
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          2
+        ]
+      },
+      "shape": [
+        16
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          3
+        ]
+      },
+      "shape": [
+        16
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          4
+        ]
+      },
+      "shape": [
+        16
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          5
+        ]
+      },
+      "shape": [
+        16
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          6
+        ]
+      },
+      "shape": [
+        16
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          7
+        ]
+      },
+      "shape": [
+        16
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          8
+        ]
+      },
+      "shape": [
+        16
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          9
+        ]
+      },
+      "shape": [
+        16
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          10
+        ]
+      },
+      "shape": [
+        16
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          11
+        ]
+      },
+      "shape": [
+        16
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          12
+        ]
+      },
+      "shape": [
+        16
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          13
+        ]
+      },
+      "shape": [
+        16
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          14
+        ]
+      },
+      "shape": [
+        16
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        },
+        {
+          "constant": 0.0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          15
+        ]
+      },
+      "shape": [
+        16
+      ]
+    }
+  ],
+  "dynamic": []
+}

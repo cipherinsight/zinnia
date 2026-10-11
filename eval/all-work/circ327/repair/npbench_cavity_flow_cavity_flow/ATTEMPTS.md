@@ -1,0 +1,2 @@
+kernel.py:42 b=np.zeros((ny,nx)): nx and ny are unbounded private integers. nt=0 is explicitly valid and permits arbitrarily large b, so the declared 16x16 u/v/p buffers do not bound this intermediate allocation for every valid input. The nt and nit loops themselves can be guarded at 1024; native arithmetic removes their division blocker, but does not bound b as written. Minimal rewrite can eliminate b entirely on nt=0 and use the required 16x16 shape on active executions; see rewrite.zok for that attempt.
+No dummy arithmetic-only program is counted as the kernel.

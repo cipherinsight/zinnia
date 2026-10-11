@@ -1,0 +1,24 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+struct Output {
+    u64[1024][1024] values
+    u32 length
+}
+def main(private u32 N, private u32 Niter) -> Output:
+    assert(N <= 1024)
+    assert(Niter <= 1024)
+    u64[1024][1024] u = [[0u64;1024];1024]
+    for u32 j in 0..1024 do
+        u[0][j] = if (j < N) then 4294967296u64 else 0u64 fi
+    endfor
+    for u32 t in 0..1024 do
+        for u32 i in 1..1023 do
+            for u32 j in 1..1023 do
+                bool active = (((t < Niter) && ((i + 1) < N)) && ((j + 1) < N))
+                u64 num = (mulq((u[(i + 1)][j] + u[(i - 1)][j]), 42949673) + mulq((u[i][(j + 1)] + u[i][(j - 1)]), 42949673))
+                u64 v = divq(num, 171798692)
+                u[i][j] = if active then v else u[i][j] fi
+            endfor
+        endfor
+    endfor
+    return Output {values: u, length: N}

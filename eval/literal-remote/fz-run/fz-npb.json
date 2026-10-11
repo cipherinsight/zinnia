@@ -1,0 +1,2241 @@
+{
+ "case_set": "npbench_pythran_perf",
+ "version": 1,
+ "description": "The NPBench and Pythran entry functions Zinnia accepts that have an audited SP1/RISC Zero port: the zkVM performance comparison beyond DS-1000. Written by datasets/tools/npbench_pythran_perf.py; do not edit.",
+ "rules": {
+  "status_order": "The author RQ1 acceptance expansion in rq1_selection_overrides takes precedence; otherwise: A case gets the first status whose rule applies, in this order: not_in_acceptance_results, zinnia_rejects, no_zkvm_port, port_excluded, port_not_audited, perf.",
+  "not_in_acceptance_results": "The acceptance results given to the generator have no row for the entry function.",
+  "zinnia_rejects": "The acceptance run did not accept the entry function with outputs equal to NumPy's (its outcome and construct are in the reason).",
+  "no_zkvm_port": "The program's zkvm.rs has no module for the function, or the zkVM crates do not register it (run baselines/zkvm_common/sync_cases.py).",
+  "port_excluded": "The port audit excludes the port (reason in the audit record).",
+  "port_not_audited": "The port audit does not cover the current zkvm.rs (new entry, or the file changed since the audit): review it and update the audit record.",
+  "perf": "Measured: Zinnia accepts the function, and its SP1/RISC Zero port is audited.",
+  "sizes": "Shapes and scalar values are the acceptance fixture's (acceptance.json `sizing`: every dimension and size scalar at most 16); keys come from input A, proofs from input B.",
+  "mutated_outputs": "A function that returns None outputs the array arguments it writes, in parameter order (the port's `// outputs: mutated` line, checked against NumPy on inputs A and B).",
+  "data_movement_only": "true when the outputs depend on private inputs only by copying them; such cases stay perf and are reported apart."
+ },
+ "sources": {
+  "acceptance_results": [
+   {
+    "path": "/home/zhantong/Projects/zinnia-project/eval-redo/fix/accept-triage-data/accept-triage-combined.json",
+    "sha256": "cb530a8becf9b50a4c48ff38deefb7abc3f7fde09f0ab02d85f74b0fd8dfac39"
+   }
+  ],
+  "acceptance_case_set": {
+   "path": "datasets/case_sets/acceptance.json",
+   "sha256": "d49c3701f2ce54684a1d365e1b221b66b10e26d76e027e75a5a49954f2547f39"
+  },
+  "port_audit": {
+   "path": "datasets/tools/npbench_pythran_port_audit.json",
+   "sha256": "68bb2df06ac0619018e53a41729a2b8ea4c5dea2b15b825a0cc97e934da94d1a"
+  }
+ },
+ "counts": {
+  "npbench": {
+   "zinnia_rejects": 22,
+   "perf": 32
+  },
+  "pythran": {
+   "perf": 50,
+   "zinnia_rejects": 60
+  }
+ },
+ "cases": [
+  {
+   "case": "npbench_compute_compute__compute",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_compute_compute",
+   "function": "compute",
+   "path": "datasets/npbench/npbench_compute_compute",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_compute_compute/zkvm.rs",
+    "sha256": "cc7a53029977161fc8fd77716ec1dc266811648a645306aa1e64cc93d8443b18"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_crc16_crc16__crc16",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_crc16_crc16",
+   "function": "crc16",
+   "path": "datasets/npbench/npbench_crc16_crc16",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_crc16_crc16/zkvm.rs",
+    "sha256": "2183151ec2b93dea9de6efcced641babcfb3dda76b9b6a239616f3ec6acc0399"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_deep_learning_conv2d_bias_conv2d__conv2d_bias",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_deep_learning_conv2d_bias_conv2d",
+   "function": "conv2d_bias",
+   "path": "datasets/npbench/npbench_deep_learning_conv2d_bias_conv2d",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_deep_learning_conv2d_bias_conv2d/zkvm.rs",
+    "sha256": "23bac62a05adea3a67e988c7a885631e828cc26d0bb4313bb669ead49430ab43"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_deep_learning_mlp_mlp__mlp",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_deep_learning_mlp_mlp",
+   "function": "mlp",
+   "path": "datasets/npbench/npbench_deep_learning_mlp_mlp",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_deep_learning_mlp_mlp/zkvm.rs",
+    "sha256": "0ec02b6f87b5699f6a076a1d587228944e4b30c77664a1890abeadc62199cf72"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_deep_learning_resnet_resnet__resnet_basicblock",
+   "status": "perf",
+   "reason": "accepted in RQ1; author decision 2026-10-09 to include every accepted program",
+   "group": "npbench",
+   "program": "npbench_deep_learning_resnet_resnet",
+   "function": "resnet_basicblock",
+   "path": "datasets/npbench/npbench_deep_learning_resnet_resnet",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 2e-06,
+    "rtol": 1e-06,
+    "measure": "float64_buffers",
+    "reason": "conv2d writes its result into a float32 buffer (np.empty(..., dtype=np.float32)), which Q32 cannot imitate: the float32 rounding alone moves the output by up to 1.7e-6",
+    "measured_max_abs_difference": 1.67e-06
+   },
+   "acceptance": {
+    "outcome": "rejected_resource_limit",
+    "construct": "compile time over 300 s"
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_deep_learning_resnet_resnet/zkvm.rs",
+    "sha256": "913476c34f9f0339de43ff6faf80684807896186a85b32c2bf7b9edb86b5b7b6"
+   },
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s",
+   "decision_source": "author RQ1 acceptance expansion (ALL_SETUP.md); existing acceptance fields are historical"
+  },
+  {
+   "case": "npbench_deep_learning_softmax_softmax__softmax",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_deep_learning_softmax_softmax",
+   "function": "softmax",
+   "path": "datasets/npbench/npbench_deep_learning_softmax_softmax",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_deep_learning_softmax_softmax/zkvm.rs",
+    "sha256": "8108e2cd7d626e36e90b0926e2ad7f1849335c21cc772d09285e959cf01b98f1"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_go_fast_go_fast__go_fast",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_go_fast_go_fast",
+   "function": "go_fast",
+   "path": "datasets/npbench/npbench_go_fast_go_fast",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_go_fast_go_fast/zkvm.rs",
+    "sha256": "ca69a9b11a00abbbe01dfba976dc3f7534507a75758ccb6af8ef0978dee58dcb"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_polybench_atax_atax__kernel",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_polybench_atax_atax",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_atax_atax",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_atax_atax/zkvm.rs",
+    "sha256": "78888cccf6c3afea0d067c963142dc12db2b65753cb0f8dfecb5cbd8944968c8"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_polybench_bicg_bicg__kernel",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_polybench_bicg_bicg",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_bicg_bicg",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_bicg_bicg/zkvm.rs",
+    "sha256": "29e7b51d04408c751943dace9c3ec4d5edb5425e39aed3c2f44945ed67ecda54"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_polybench_cholesky_cholesky__kernel",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_polybench_cholesky_cholesky",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_cholesky_cholesky",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [
+    "A"
+   ],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_cholesky_cholesky/zkvm.rs",
+    "sha256": "2d530af6d97ed0a78113edced77157fe21d422d9f7f580eac591530766d98dd6"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_polybench_covariance2_covariance2__kernel",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_polybench_covariance2_covariance2",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_covariance2_covariance2",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_covariance2_covariance2/zkvm.rs",
+    "sha256": "4f93b69e23984fd20e410a7134a8d06cd08b9efa79d21c4475aaaca9f0fedeec"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_polybench_deriche_deriche__kernel",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_polybench_deriche_deriche",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_deriche_deriche",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_deriche_deriche/zkvm.rs",
+    "sha256": "281d58041cc2c9b4822502c66088a5b6f969a77cb72e7efcec09671d74993ac5"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_polybench_durbin_durbin__kernel",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_polybench_durbin_durbin",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_durbin_durbin",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_durbin_durbin/zkvm.rs",
+    "sha256": "242e20baba3dabd0430ebf100adc3c0bc27de3358dde8ee36253b8f1c0de72e1"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_polybench_floyd_warshall_floyd_warshall__kernel",
+   "status": "perf",
+   "reason": "accepted in RQ1; author decision 2026-10-09 to include every accepted program",
+   "group": "npbench",
+   "program": "npbench_polybench_floyd_warshall_floyd_warshall",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_floyd_warshall_floyd_warshall",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [
+    "path"
+   ],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "rejected_resource_limit",
+    "construct": "compile time over 300 s"
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_floyd_warshall_floyd_warshall/zkvm.rs",
+    "sha256": "54c55ab95a66035436ab843a1f14b0a35e386cc9c2725cdf7bf052fcba78d674"
+   },
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s",
+   "decision_source": "author RQ1 acceptance expansion (ALL_SETUP.md); existing acceptance fields are historical"
+  },
+  {
+   "case": "npbench_polybench_gemm_gemm__kernel",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_polybench_gemm_gemm",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_gemm_gemm",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [
+    "C"
+   ],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_gemm_gemm/zkvm.rs",
+    "sha256": "1d44dceb7e27926df028894184b1b7a3d8c8da979494133d45d1b994f272f52f"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_polybench_gemver_gemver__kernel",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_polybench_gemver_gemver",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_gemver_gemver",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [
+    "A",
+    "w",
+    "x"
+   ],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_gemver_gemver/zkvm.rs",
+    "sha256": "01eeefdd9d557c620718ce75667688fb7e1241cb4e05f09dc46d8e9ac13c65b9"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_polybench_gesummv_gesummv__kernel",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_polybench_gesummv_gesummv",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_gesummv_gesummv",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_gesummv_gesummv/zkvm.rs",
+    "sha256": "1d795068ef98e5993f2e1e712dbad268b6798eebaf0f9c2f12b5533fe024d81c"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_polybench_gramschmidt_gramschmidt__kernel",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_polybench_gramschmidt_gramschmidt",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_gramschmidt_gramschmidt",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_gramschmidt_gramschmidt/zkvm.rs",
+    "sha256": "1b8b67f6f62ddcdfe5bc06582d99d932f7187d0254e4dd8235d815a950bdc7c6"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_polybench_k2mm_k2mm__kernel",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_polybench_k2mm_k2mm",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_k2mm_k2mm",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [
+    "D"
+   ],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_k2mm_k2mm/zkvm.rs",
+    "sha256": "5770094b775ae0c358bccab6a08288b79c35b816e1dbc9f6ca64a4dbe12d3665"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_polybench_k3mm_k3mm__kernel",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_polybench_k3mm_k3mm",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_k3mm_k3mm",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_k3mm_k3mm/zkvm.rs",
+    "sha256": "02ab9abbecbeb288b62062cbe4579151922438d05cd660c85987d451e6e28ee0"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_polybench_lu_lu__kernel",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_polybench_lu_lu",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_lu_lu",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [
+    "A"
+   ],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_lu_lu/zkvm.rs",
+    "sha256": "05d38300a2b95d149065b75a3854d8383713a5e14f54c3729e2af0ac043cd5b5"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_polybench_ludcmp_ludcmp__kernel",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_polybench_ludcmp_ludcmp",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_ludcmp_ludcmp",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_ludcmp_ludcmp/zkvm.rs",
+    "sha256": "ea481097cd3b7a89944b8adc828838858a53546c35f48a74a9b78bcfbaef550f"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_polybench_mvt_mvt__kernel",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_polybench_mvt_mvt",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_mvt_mvt",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [
+    "x1",
+    "x2"
+   ],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_mvt_mvt/zkvm.rs",
+    "sha256": "b822521dd11099d9deedff9df517b9453f3468f755472b5afdc34ecacc907680"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_polybench_symm_symm__kernel",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_polybench_symm_symm",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_symm_symm",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [
+    "C"
+   ],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_symm_symm/zkvm.rs",
+    "sha256": "370febcd94d2eebffadd140276b4d309c29744028a4e5d6621c8577d4fddca75"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_polybench_syr2k_syr2k__kernel",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_polybench_syr2k_syr2k",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_syr2k_syr2k",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [
+    "C"
+   ],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_syr2k_syr2k/zkvm.rs",
+    "sha256": "b5ad51c78264cb43b8242a3f41b9b63b748bcb9f485ae3a1e3395d7017764164"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_polybench_syrk_syrk__kernel",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_polybench_syrk_syrk",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_syrk_syrk",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [
+    "C"
+   ],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_syrk_syrk/zkvm.rs",
+    "sha256": "2cced0a77c16ebebdba228c5c0330e1b30c7aa7a0ad6223f45f654847d409851"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_polybench_trisolv_trisolv__kernel",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_polybench_trisolv_trisolv",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_trisolv_trisolv",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [
+    "x"
+   ],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_trisolv_trisolv/zkvm.rs",
+    "sha256": "3ed7b4243c59a5f4efe6fe9049df0f60a6477716db86930577eb2b2b7e98a4ee"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_polybench_trmm_trmm__kernel",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_polybench_trmm_trmm",
+   "function": "kernel",
+   "path": "datasets/npbench/npbench_polybench_trmm_trmm",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [
+    "B"
+   ],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_polybench_trmm_trmm/zkvm.rs",
+    "sha256": "1dcc953d9391b6f488d797b04ed1cfa80cb7264daecb8943bea2e29d89899aae"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_pythran_arc_distance_arc_distance__arc_distance",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_pythran_arc_distance_arc_distance",
+   "function": "arc_distance",
+   "path": "datasets/npbench/npbench_pythran_arc_distance_arc_distance",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_pythran_arc_distance_arc_distance/zkvm.rs",
+    "sha256": "c939fcea0be1d5e0f58b3e560db290d0076bd06599144b2afedd0f42a76f45b4"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_scattering_self_energies_scattering_self_energies__scattering_self_energies",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_scattering_self_energies_scattering_self_energies",
+   "function": "scattering_self_energies",
+   "path": "datasets/npbench/npbench_scattering_self_energies_scattering_self_energies",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [
+    "Sigma"
+   ],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_scattering_self_energies_scattering_self_energies/zkvm.rs",
+    "sha256": "5ee263f2ff2daaf09a4ed330816593c45e9f4a4f0cf7b2b70af2f2990184f619"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_weather_stencils_hdiff_hdiff__hdiff",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_weather_stencils_hdiff_hdiff",
+   "function": "hdiff",
+   "path": "datasets/npbench/npbench_weather_stencils_hdiff_hdiff",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [
+    "out_field"
+   ],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_weather_stencils_hdiff_hdiff/zkvm.rs",
+    "sha256": "2b646fc78ad9c99eea36b5883d55589df3f563b249e3be653106579912a63f69"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "npbench_weather_stencils_vadv_vadv__vadv",
+   "status": "perf",
+   "reason": null,
+   "group": "npbench",
+   "program": "npbench_weather_stencils_vadv_vadv",
+   "function": "vadv",
+   "path": "datasets/npbench/npbench_weather_stencils_vadv_vadv",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [
+    "utens_stage"
+   ],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/npbench/npbench_weather_stencils_vadv_vadv/zkvm.rs",
+    "sha256": "5195975970f4f89fb0a8bc5f634e17a7eb927b79d781967326b7491d715c1b57"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_allpairs__sqr_dists",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_allpairs",
+   "function": "sqr_dists",
+   "path": "datasets/pythran/pythran_allpairs",
+   "fixture": "fixture.sqr_dists.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_allpairs/zkvm.rs",
+    "sha256": "6b90f4f2da8af78c07dae6ee799a25a533b6a57e4a35543eb4753c35662e1ed2"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_allpairs__sqr_dists_loops",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_allpairs",
+   "function": "sqr_dists_loops",
+   "path": "datasets/pythran/pythran_allpairs",
+   "fixture": "fixture.sqr_dists_loops.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_allpairs/zkvm.rs",
+    "sha256": "6b90f4f2da8af78c07dae6ee799a25a533b6a57e4a35543eb4753c35662e1ed2"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_arc_distance__arc_distance",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_arc_distance",
+   "function": "arc_distance",
+   "path": "datasets/pythran/pythran_arc_distance",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_arc_distance/zkvm.rs",
+    "sha256": "dabd0a380e2887a97f014bed7150a5973a780e5b129cebc1cc3b19867c0e2d14"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_bubble_sort__bubble_sort",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_bubble_sort",
+   "function": "bubble_sort",
+   "path": "datasets/pythran/pythran_bubble_sort",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_bubble_sort/zkvm.rs",
+    "sha256": "53f7140ef44d3b9f4a63698e3866c41c4ec8d75a08b910e90e3e9f7a706d3564"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_ccopy__CCOPY",
+   "status": "perf",
+   "reason": "accepted in RQ1; author decision 2026-10-09 to include every accepted program",
+   "group": "pythran",
+   "program": "pythran_ccopy",
+   "function": "CCOPY",
+   "path": "datasets/pythran/pythran_ccopy",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [
+    "CY"
+   ],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "rejected_resource_limit",
+    "construct": "compile time over 300 s"
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_ccopy/zkvm.rs",
+    "sha256": "75a0184bfce5e23ac7f13ce87f2bbb0aa0a39a3e385217c6c6ac713ea569faa7"
+   },
+   "former_status": "zinnia_rejects",
+   "former_duplicate_of": null,
+   "former_reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s",
+   "decision_source": "author RQ1 acceptance expansion (ALL_SETUP.md); existing acceptance fields are historical"
+  },
+  {
+   "case": "pythran_clip__clip",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_clip",
+   "function": "clip",
+   "path": "datasets/pythran/pythran_clip",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_clip/zkvm.rs",
+    "sha256": "909bd127d82cf621f8d929a18e2692f44c6ac717dd0aef6e8dbf1b5a1015fffb"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_create_grid__create_grid",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_create_grid",
+   "function": "create_grid",
+   "path": "datasets/pythran/pythran_create_grid",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": true,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_create_grid/zkvm.rs",
+    "sha256": "f6a55cdcc8b3b5951e6935a4d9e1938b124de777cf30e9fc218761113f91ce61"
+   },
+   "data_movement": "copies x into two columns of a grid of zeros"
+  },
+  {
+   "case": "pythran_cronbach__cronbach",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_cronbach",
+   "function": "cronbach",
+   "path": "datasets/pythran/pythran_cronbach",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_cronbach/zkvm.rs",
+    "sha256": "1937243dcb0fde0a42e253eb027b49f4ab23e89b26a0f304fe041b29e8d80fc3"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_crotg__CROTG",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_crotg",
+   "function": "CROTG",
+   "path": "datasets/pythran/pythran_crotg",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_crotg/zkvm.rs",
+    "sha256": "ec9f346a84f721787ec581e54e9eafb6ba5db290a666d52f6768d0f979da180e"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_d2q9_nxnyns__one_time_step",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_d2q9_nxnyns",
+   "function": "one_time_step",
+   "path": "datasets/pythran/pythran_d2q9_nxnyns",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_d2q9_nxnyns/zkvm.rs",
+    "sha256": "421df67f8e02d3dee0e684c1a1d2a0b3e09e77e1f4a7f51f74dc4df66704fa98"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_deuxd_convolution__conv",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_deuxd_convolution",
+   "function": "conv",
+   "path": "datasets/pythran/pythran_deuxd_convolution",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_deuxd_convolution/zkvm.rs",
+    "sha256": "7616cf79eec1980ca382c8c2c3b3b9e5ca30bd648b13e8025e1b1436223ca124"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_euclidean_distance_square__euclidean_distance_square",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_euclidean_distance_square",
+   "function": "euclidean_distance_square",
+   "path": "datasets/pythran/pythran_euclidean_distance_square",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_euclidean_distance_square/zkvm.rs",
+    "sha256": "19c40f84030dd66bf5e7beb3fe392d6330b555fe9388b3c4617d7dd1f4423d04"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_fbcorr__fbcorr",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_fbcorr",
+   "function": "fbcorr",
+   "path": "datasets/pythran/pythran_fbcorr",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [
+    "output"
+   ],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_fbcorr/zkvm.rs",
+    "sha256": "449016c27fb341446d88ce0e59d48fdea5d5c0c0dc7edb2eb24f01f802faed57"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_fibo_seq__fibo",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_fibo_seq",
+   "function": "fibo",
+   "path": "datasets/pythran/pythran_fibo_seq",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_fibo_seq/zkvm.rs",
+    "sha256": "3488c74a42aba72bc87f87b68c1b490a19a8338c9733d0702535b08191c2f0b3"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_goodexpomeasure__goodExpoMeasure",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_goodexpomeasure",
+   "function": "goodExpoMeasure",
+   "path": "datasets/pythran/pythran_goodexpomeasure",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_goodexpomeasure/zkvm.rs",
+    "sha256": "69c74324712954f2558aef9373d60fdce54e234fbfe8d4ac73859fcba8fd6e8d"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_harris__harris",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_harris",
+   "function": "harris",
+   "path": "datasets/pythran/pythran_harris",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_harris/zkvm.rs",
+    "sha256": "ff99cbcf00c73b6ea572bc9508f631a9b184addc1a1bef9ae12f62d8a32cbd81"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_hasting__fweb",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_hasting",
+   "function": "fweb",
+   "path": "datasets/pythran/pythran_hasting",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_hasting/zkvm.rs",
+    "sha256": "91a459e8be8faeab14fbfbccf5c4abcfe1bac381ea75c404bae2b081620cd4ab"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_insertion_sort__insertion_sort",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_insertion_sort",
+   "function": "insertion_sort",
+   "path": "datasets/pythran/pythran_insertion_sort",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [
+    "list2"
+   ],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_insertion_sort/zkvm.rs",
+    "sha256": "4435565442745702833f85d1842d78a447f859ad0b0c243af759c12bf1e7d1bf"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_ising__ising_step",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_ising",
+   "function": "ising_step",
+   "path": "datasets/pythran/pythran_ising",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_ising/zkvm.rs",
+    "sha256": "a5c92983c237121ae1eb9c70bb0eeb1fe7574805dcd53dff79e3c88857d6e55a"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_l2norm__l2_norm",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_l2norm",
+   "function": "l2_norm",
+   "path": "datasets/pythran/pythran_l2norm",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_l2norm/zkvm.rs",
+    "sha256": "a8bd95cbc0a898d40195ebe3be4772adc886885b0c00f62ef296c9632f864e2e"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_lap__laplacian",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_lap",
+   "function": "laplacian",
+   "path": "datasets/pythran/pythran_lap",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_lap/zkvm.rs",
+    "sha256": "d064212d566159e717509696acedc094d6f8dc9fca912b9321e05e5fdaed3551"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_lapl3d__laplacien",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_lapl3d",
+   "function": "laplacien",
+   "path": "datasets/pythran/pythran_lapl3d",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_lapl3d/zkvm.rs",
+    "sha256": "1ba30771938fd4d92896ce62b279e9f476438f1adcfd08289696ef32aeb6d67a"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_ln__ln",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_ln",
+   "function": "ln",
+   "path": "datasets/pythran/pythran_ln",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_ln/zkvm.rs",
+    "sha256": "0f901c1b45974a5c1713950c95ccf4ce873a5a5129265c270225e17fed1483e4"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_log_likelihood__log_likelihood",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_log_likelihood",
+   "function": "log_likelihood",
+   "path": "datasets/pythran/pythran_log_likelihood",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_log_likelihood/zkvm.rs",
+    "sha256": "eb780f380615d3c3f53250cbb743602bd734a8f678f6ad86805be52920182816"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_lu__factorMatrix0",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_lu",
+   "function": "factorMatrix0",
+   "path": "datasets/pythran/pythran_lu",
+   "fixture": "fixture.factorMatrix0.json",
+   "shape_generic": true,
+   "mutated_outputs": [
+    "M"
+   ],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_lu/zkvm.rs",
+    "sha256": "db4e5ce413d1f2141729c56e0f5f2d9659a49765cda2a9b0b75726554bcfd19e"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_lu__factorMatrix1",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_lu",
+   "function": "factorMatrix1",
+   "path": "datasets/pythran/pythran_lu",
+   "fixture": "fixture.factorMatrix1.json",
+   "shape_generic": true,
+   "mutated_outputs": [
+    "M"
+   ],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_lu/zkvm.rs",
+    "sha256": "db4e5ce413d1f2141729c56e0f5f2d9659a49765cda2a9b0b75726554bcfd19e"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_make_decision__md",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_make_decision",
+   "function": "md",
+   "path": "datasets/pythran/pythran_make_decision",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_make_decision/zkvm.rs",
+    "sha256": "477b8d0c7d38d528dd4539de9e0eb8dd43e502a962d9f8387262697084462812"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_matmul__matrix_multiply",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_matmul",
+   "function": "matrix_multiply",
+   "path": "datasets/pythran/pythran_matmul",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_matmul/zkvm.rs",
+    "sha256": "017cf130f606ab26b4741dc364ad698b5d9d4c0941d692385258ec3e455d8eb9"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_multi_export__a",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_multi_export",
+   "function": "a",
+   "path": "datasets/pythran/pythran_multi_export",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": true,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_multi_export/zkvm.rs",
+    "sha256": "e75d3f4ea71d8710bd50d89544d255a84102bfda326b33042aa6add75af46753"
+   },
+   "data_movement": "returns its argument"
+  },
+  {
+   "case": "pythran_multitype__check",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_multitype",
+   "function": "check",
+   "path": "datasets/pythran/pythran_multitype",
+   "fixture": "fixture.check.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_multitype/zkvm.rs",
+    "sha256": "ad3fc0cb3f95509541cb409d2ddd47540481917aa884d7a51a5940c74e430e14"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_multitype__check2",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_multitype",
+   "function": "check2",
+   "path": "datasets/pythran/pythran_multitype",
+   "fixture": "fixture.check2.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_multitype/zkvm.rs",
+    "sha256": "ad3fc0cb3f95509541cb409d2ddd47540481917aa884d7a51a5940c74e430e14"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_multitype__times",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_multitype",
+   "function": "times",
+   "path": "datasets/pythran/pythran_multitype",
+   "fixture": "fixture.times.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_multitype/zkvm.rs",
+    "sha256": "ad3fc0cb3f95509541cb409d2ddd47540481917aa884d7a51a5940c74e430e14"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_pairwise__pairwise",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_pairwise",
+   "function": "pairwise",
+   "path": "datasets/pythran/pythran_pairwise",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_pairwise/zkvm.rs",
+    "sha256": "5a84b1502058be5093e9ce3c2bf26b26a6ccb1357cc8eeb493002b07f8e81194"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_periodic_bc__periodic_bc",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_periodic_bc",
+   "function": "periodic_bc",
+   "path": "datasets/pythran/pythran_periodic_bc",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": true,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_periodic_bc/zkvm.rs",
+    "sha256": "f1087758a6174b2e0a144037f9d9d2642de06f15572ac6d07052b6389f25e6f4"
+   },
+   "data_movement": "copies one plane of f onto another"
+  },
+  {
+   "case": "pythran_periodic_dist__dist",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_periodic_dist",
+   "function": "dist",
+   "path": "datasets/pythran/pythran_periodic_dist",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_periodic_dist/zkvm.rs",
+    "sha256": "f85acb1eeeb20ba9ed997607dab47154d653a9d5bdfdfbd869824cbb95f0322f"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_perm__permutations",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_perm",
+   "function": "permutations",
+   "path": "datasets/pythran/pythran_perm",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": true,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_perm/zkvm.rs",
+    "sha256": "7a25bfb23da72c979c4c25a02b7dc6e046990fd1410491e9760e65e5493b2d2e"
+   },
+   "data_movement": "lists the permutations of the input (fixed positions)"
+  },
+  {
+   "case": "pythran_projection_simplex__projection_simplex",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_projection_simplex",
+   "function": "projection_simplex",
+   "path": "datasets/pythran/pythran_projection_simplex",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_projection_simplex/zkvm.rs",
+    "sha256": "30283af22c036886ade28b262f84ad1c666904e85ba4fcbfb7bfc5837b0bb647"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_pythagorean_triples__next_pythagorean_triples",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_pythagorean_triples",
+   "function": "next_pythagorean_triples",
+   "path": "datasets/pythran/pythran_pythagorean_triples",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_pythagorean_triples/zkvm.rs",
+    "sha256": "5347bbe5e6026f9ce9284a42cc7cbdb04f35ff32c79f9bc915a4d73683667fed"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_reverse_cumsum__reverse_cumsum",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_reverse_cumsum",
+   "function": "reverse_cumsum",
+   "path": "datasets/pythran/pythran_reverse_cumsum",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_reverse_cumsum/zkvm.rs",
+    "sha256": "5693fd7bc2696544142edb0b199fd5e874ed30a31ca8dec86f2483e5621f2093"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_rosen__rosen",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_rosen",
+   "function": "rosen",
+   "path": "datasets/pythran/pythran_rosen",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_rosen/zkvm.rs",
+    "sha256": "cfe9c0c8990f9ab1e30e9c6bf658ccb0cc4004998352513019ab732a59aa4f0b"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_smoothing__smoothing",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_smoothing",
+   "function": "smoothing",
+   "path": "datasets/pythran/pythran_smoothing",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_smoothing/zkvm.rs",
+    "sha256": "6ec27d3a234e2e55127d76b4ef8342ac892b8c6a7a44f4e3eb5145c80b91b0f5"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_specialconvolve__specialconvolve",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_specialconvolve",
+   "function": "specialconvolve",
+   "path": "datasets/pythran/pythran_specialconvolve",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_specialconvolve/zkvm.rs",
+    "sha256": "4d6969827ddb1e91be3688c33239e9618fd6d8bfb80577a0789e55b293bcadd2"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_spectraldns__add_pressure_diffusion",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_spectraldns",
+   "function": "add_pressure_diffusion",
+   "path": "datasets/pythran/pythran_spectraldns",
+   "fixture": "fixture.add_pressure_diffusion.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_spectraldns/zkvm.rs",
+    "sha256": "190e8d1b1666bb62ac059fda47cac90d3c8d802dbe6a340a5c8407d31c8c00ce"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_spectraldns__cross2",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_spectraldns",
+   "function": "cross2",
+   "path": "datasets/pythran/pythran_spectraldns",
+   "fixture": "fixture.cross2.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_spectraldns/zkvm.rs",
+    "sha256": "190e8d1b1666bb62ac059fda47cac90d3c8d802dbe6a340a5c8407d31c8c00ce"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_sumarray3d__summation",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_sumarray3d",
+   "function": "summation",
+   "path": "datasets/pythran/pythran_sumarray3d",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_sumarray3d/zkvm.rs",
+    "sha256": "23ebe6c23220ea27d0c92d3e70b7255ae76812ea66997d213c1af9f34ebeff07"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_tax__tax",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_tax",
+   "function": "tax",
+   "path": "datasets/pythran/pythran_tax",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_tax/zkvm.rs",
+    "sha256": "55e88a1429cb942684defe97a6f553b5f154aaba6adc463a225a190c6076a25f"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_value_index__tri",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_value_index",
+   "function": "tri",
+   "path": "datasets/pythran/pythran_value_index",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_value_index/zkvm.rs",
+    "sha256": "762c0f60ef1defb8747b0979b56e1807a7bf691196022dc4d055d81c4552439e"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_vibr_energy__calculate_vibr_energy",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_vibr_energy",
+   "function": "calculate_vibr_energy",
+   "path": "datasets/pythran/pythran_vibr_energy",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_vibr_energy/zkvm.rs",
+    "sha256": "618eb5a5a85ef886b30c14ce129e7d8d3ec5a3bd8d62f9a7ffc2d1b59b5f2136"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_wdist__slow_wdist",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_wdist",
+   "function": "slow_wdist",
+   "path": "datasets/pythran/pythran_wdist",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_wdist/zkvm.rs",
+    "sha256": "8e5a5698b9ffc2193115eb4ffec5f5fb49a83c0e5157c993b92aaefe5b3c9f60"
+   },
+   "data_movement": null
+  },
+  {
+   "case": "pythran_weights__weights",
+   "status": "perf",
+   "reason": null,
+   "group": "pythran",
+   "program": "pythran_weights",
+   "function": "weights",
+   "path": "datasets/pythran/pythran_weights",
+   "fixture": "fixture.json",
+   "shape_generic": true,
+   "mutated_outputs": [],
+   "data_movement_only": false,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
+   "acceptance": {
+    "outcome": "accepted_correct",
+    "construct": ""
+   },
+   "zkvm_port": {
+    "file": "datasets/pythran/pythran_weights/zkvm.rs",
+    "sha256": "4ee061e1eba33834574a5aeaf9401616668d8281c213c2d9955105ec2cbc2030"
+   },
+   "data_movement": null
+  }
+ ],
+ "rq1_selection_overrides": {
+  "date": "2026-10-09",
+  "cases": [
+   "npbench_deep_learning_resnet_resnet__resnet_basicblock",
+   "npbench_polybench_floyd_warshall_floyd_warshall__kernel",
+   "pythran_ccopy__CCOPY"
+  ],
+  "reason": "include every RQ1-accepted program; retain former status and historical acceptance observations; no new compiler or proof run"
+ }
+}

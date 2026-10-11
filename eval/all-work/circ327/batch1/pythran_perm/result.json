@@ -1,0 +1,46 @@
+{
+  "program": "pythran_perm",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:11,19: growing list and while 1 with break/for-else.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 92,
+    "returncode": 0,
+    "seconds": 0.028,
+    "rewrites": [
+      "Allocate exactly 4!=24 outputs; replace while/break/for-else with 23 guarded successor iterations after the first output, as implied by the four-element input. Preserve the source cycles algorithm."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "expected_elements": 96,
+      "actual_elements": 96,
+      "max_absolute_error": 0.0,
+      "rtol": 1e-06,
+      "atol": 1e-06
+    },
+    "B": {
+      "status": "pass",
+      "expected_elements": 96,
+      "actual_elements": 96,
+      "max_absolute_error": 0.0,
+      "rtol": 1e-06,
+      "atol": 1e-06
+    }
+  },
+  "notes": [
+    "Preserve cycles algorithm; exactly 4! outputs from a four-element input.",
+    "A/B checked with zxi against undecorated original NumPy source; rtol=atol=1e-6. Reals use scale 2^32; signed field values use centered residues."
+  ],
+  "accepted_attempt": "rewrite",
+  "source": {
+    "kernel": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch1/pythran_perm/kernel.py",
+    "function": "permutations"
+  }
+}

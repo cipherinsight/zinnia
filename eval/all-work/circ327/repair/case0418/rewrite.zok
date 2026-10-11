@@ -1,0 +1,16 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[8][6] data, private u64 bin_size) -> u64[49]:
+    u64 count = 6u64/bin_size
+    u64[49] out = [0u64; 49]
+    out[0] = count
+    for u32 i in 0..8 do
+        for u64 j in 0..6 do
+            u64 total = 0u64
+            for u64 k in 0..6 do
+                total = total + if k >= j*bin_size && k < (j+1u64)*bin_size then data[i][5u64-k] else 0u64 fi
+            endfor
+            out[1u64+it(i)*6u64+j] = if j < count then divc(total,bin_size) else 0u64 fi
+        endfor
+    endfor
+    return out

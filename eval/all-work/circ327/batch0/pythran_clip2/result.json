@@ -1,0 +1,28 @@
+{
+  "program": "pythran_clip2",
+  "category": "needs_gadget: sqrt",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:19-20: complex magnitude mask and dynamically selected z; helper lines 11,14 use magnitude and division.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "needs gadget",
+    "error": "needs gadget: sqrt; Complex absolute value requires sqrt and helper normalization needs fixed-point division.",
+    "constraints": null,
+    "rewrites": [
+      "Use a capacity of two for selected z, with guards, since its declared input length is two."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "not applicable",
+      "reason": "No accepted full translation."
+    },
+    "B": {
+      "status": "not applicable",
+      "reason": "No accepted full translation."
+    }
+  },
+  "notes": "Complex absolute value requires sqrt and helper normalization needs fixed-point division. Bounded rewrite analyzed but not emitted as a dummy executable; missing gadget explicitly prohibited."
+}

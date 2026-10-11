@@ -1,0 +1,40 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def positive_product(u64 a, u64 b) -> bool:
+    return a != 0u64 && b != 0u64 && neg(a) == neg(b)
+
+def main(private u64[15][15][10] in_field, private u64[11][11][10] out_field, private u64[11][11][10] coeff) -> u64[11][11][10]:
+    u64[13][13][10] lap = [[[0u64;10];13];13]
+    for u32 i in 0..13 do
+        for u32 j in 0..13 do
+            for u32 k in 0..10 do
+                lap[i][j][k] = ((4u64 * in_field[(i + 1u32)][(j + 1u32)][k]) - (((in_field[(i + 2u32)][(j + 1u32)][k] + in_field[i][(j + 1u32)][k]) + in_field[(i + 1u32)][(j + 2u32)][k]) + in_field[(i + 1u32)][j][k]))
+            endfor
+        endfor
+    endfor
+    u64[12][11][10] flx = [[[0u64;10];11];12]
+    u64[11][12][10] fly = [[[0u64;10];12];11]
+    for u32 i in 0..12 do
+        for u32 j in 0..11 do
+            for u32 k in 0..10 do
+                u64 res = (lap[(i + 1u32)][(j + 1u32)][k] - lap[i][(j + 1u32)][k])
+                flx[i][j][k] = if positive_product(res, in_field[i+2u32][j+2u32][k]-in_field[i+1u32][j+2u32][k]) then 0u64 else res fi
+            endfor
+        endfor
+    endfor
+    for u32 i in 0..11 do
+        for u32 j in 0..12 do
+            for u32 k in 0..10 do
+                u64 res = (lap[(i + 1u32)][(j + 1u32)][k] - lap[(i + 1u32)][j][k])
+                fly[i][j][k] = if positive_product(res, in_field[i+2u32][j+2u32][k]-in_field[i+2u32][j+1u32][k]) then 0u64 else res fi
+            endfor
+        endfor
+    endfor
+    for u32 i in 0..11 do
+        for u32 j in 0..11 do
+            for u32 k in 0..10 do
+                out_field[i][j][k] = (in_field[(i + 2u32)][(j + 2u32)][k] - mulq(coeff[i][j][k], (((flx[(i + 1u32)][j][k] - flx[i][j][k]) + fly[i][(j + 1u32)][k]) - fly[i][j][k])))
+            endfor
+        endfor
+    endfor
+    return out_field

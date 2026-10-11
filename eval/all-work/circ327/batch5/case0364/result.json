@@ -1,0 +1,46 @@
+{
+  "program": "case0364",
+  "category": "accepted_as_written",
+  "as_written": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 339581,
+    "seconds": 6.700104475021362,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch5/case0364/as_written.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ]
+  },
+  "rewrite": null,
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "elements": 1010,
+      "actual_elements": 1010,
+      "max_abs_error": 1.1623335627319875e-10
+    },
+    "B": {
+      "status": "pass",
+      "elements": 1010,
+      "actual_elements": 1010,
+      "max_abs_error": 1.1632494967273033e-10
+    }
+  },
+  "notes": "Scalar insertion always has shape 101x10; normalize valid negative positions. Guard unused gather index at inserted final row.",
+  "source": {
+    "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0364/kernel.py",
+    "function": "kernel",
+    "sha256": "1273220c5f72828bfbbe10d4f5b22c87584a88a029642336118ba9c48530b69a"
+  },
+  "encoding": "Private inputs; public return value. Real numbers are rounded to scale 2^32. Native u64 values use signed two-complement interpretation; integer arithmetic is used for candidate full-width Q32 products to avoid truncating them to 64 bits before rescaling.",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/ds1000_numpy/generated/case0364/fixture.json",
+  "reason": "Native dynamic gather for scalar insertion; result is 101x10."
+}

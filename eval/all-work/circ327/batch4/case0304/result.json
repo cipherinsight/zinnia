@@ -1,0 +1,31 @@
+{
+  "program": "case0304",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:12-13 private-dependent slice and reshape.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 3432,
+    "elapsed_seconds": 0.031,
+    "exit_code": 0,
+    "rewrites": [
+      "Store the reversed slice in capacity 23 with logical row/column dimensions; the slice never contains more than the 23 input values, even when ncol>23 gives zero rows.",
+      "Pack the buffer and logical dimensions into one public return array (Z# permits one return value)."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "max_absolute_error": 1.0921796800289485e-10
+    },
+    "B": {
+      "status": "pass",
+      "max_absolute_error": 1.1308731728831845e-10
+    }
+  },
+  "notes": "kernel.py:12-13 private-dependent slice and reshape."
+}

@@ -1,0 +1,40 @@
+// kernel.py:12 reshape/bin count is private-dependent; capacity 8x6 from input shape.
+from "EMBED" import u64_to_field
+from "EMBED" import u32_to_u64
+from "EMBED" import unpack
+from "EMBED" import u64_from_bits
+
+def lt(u64 a, u64 b) -> bool:
+    return (a ^ 9223372036854775808u64) < (b ^ 9223372036854775808u64)
+
+def mul(u64 a, u64 b) -> u64:
+    bool sa = a >= 9223372036854775808u64
+    bool sb = b >= 9223372036854775808u64
+    u64 aa = if sa then 0u64-a else a fi
+    u64 bb = if sb then 0u64-b else b fi
+    bool[128] bits = unpack::<128>(u64_to_field(aa)*u64_to_field(bb))
+    u64 v = u64_from_bits(bits[32..96])
+    return if sa != sb then 0u64-v else v fi
+
+def main(private u64[8][6] data, private u64 bin_size) -> u64[50]:
+    u64 cols = 6u64/bin_size
+    u64[50] packed = [0u64;50]
+    for u64 i in 0u64..8u64 do
+        for u64 j in 0u64..6u64 do
+            bool keep = j < cols
+            u64 b = if keep then cols-1u64-j else 0u64 fi
+            u64 sum = 0
+            for u64 k in 0u64..6u64 do
+                bool active = keep && k < bin_size
+                u64 idx = if active then 5u64-b*bin_size-k else 0u64 fi
+                sum = sum+(if active then data[i][idx] else 0u64 fi)
+            endfor
+            bool negative = lt(sum,0u64)
+            u64 magnitude = if negative then 0u64-sum else sum fi
+            u64 mean = magnitude/bin_size
+            packed[i*6u64+j] = if negative then 0u64-mean else mean fi
+        endfor
+    endfor
+    packed[48] = 8
+    packed[49] = cols
+    return packed

@@ -1,0 +1,81 @@
+{
+  "id": "pythran__pythran_clip__clip",
+  "sites": {
+    "17:10:17:42:Call": "np.empty(z.shape, dtype=z.dtype)"
+  },
+  "numpy": {
+    "A": [
+      {
+        "site": "17:10:17:42:Call",
+        "value": {
+          "shape": [
+            2
+          ],
+          "length": 2
+        }
+      }
+    ],
+    "B": [
+      {
+        "site": "17:10:17:42:Call",
+        "value": {
+          "shape": [
+            2
+          ],
+          "length": 2
+        }
+      }
+    ]
+  },
+  "selected": [
+    "17:10:17:42:Call"
+  ],
+  "source": "def clip(z: Complex[Array, '2'], _max: Float):\n    bprobe_trace = []\n    bprobe_v0 = np.empty(z.shape, dtype=z.dtype)\n    bprobe_trace.append((0, bprobe_v0))\n    out = bprobe_v0\n    for i in range(len(z)):\n        if abs(z[i]) > _max:\n            out[i] = limit1(z[i]) * _max\n        else:\n            out[i] = z[i]\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [
+        {
+          "constant": 0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 0
+        },
+        {
+          "kind": "f",
+          "public": 1
+        },
+        {
+          "kind": "f",
+          "public": 2
+        },
+        {
+          "kind": "f",
+          "public": 3
+        }
+      ],
+      "complex": true,
+      "output": {
+        "return": [
+          0,
+          1
+        ]
+      },
+      "shape": [
+        2
+      ]
+    }
+  ],
+  "dynamic": []
+}

@@ -1,0 +1,22 @@
+{
+  "id": "pythran__pythran_fbcorr__fbcorr",
+  "sites": {},
+  "numpy": {
+    "A": [],
+    "B": []
+  },
+  "selected": [],
+  "source": "def fbcorr(imgs: Float[Array, '4 8 8 3'], filters: Float[Array, '6 5 5 3'], output: Float[Array, '4 6 4 4']):\n    bprobe_trace = []\n    n_imgs, n_rows, n_cols, n_channels = imgs.shape\n    n_filters, height, width, n_ch2 = filters.shape\n    'omp parallel for'\n    for ii in range(n_imgs):\n        for rr in range(n_rows - height + 1):\n            for cc in range(n_cols - width + 1):\n                for hh in range(height):\n                    for ww in range(width):\n                        for jj in range(n_channels):\n                            for ff in range(n_filters):\n                                imgval = imgs[ii, rr + hh, cc + ww, jj]\n                                filterval = filters[ff, hh, ww, jj]\n                                output[ii, ff, rr, cc] += imgval * filterval\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [],
+      "output": {
+        "return": []
+      },
+      "shape": [
+        0
+      ]
+    }
+  ],
+  "dynamic": []
+}

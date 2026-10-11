@@ -1,0 +1,21 @@
+const field HALF = 26217937587563095239723870254092982918845276250263818911301829349969290592256
+def lt(field x, field y) -> bool:
+    return x + HALF < y + HALF
+struct Output {
+    field[20][10] values
+    field width
+}
+def main(private field[20][10] a, private field low, private field high) -> Output:
+    field lo = if low > HALF then low+10 else low fi
+    field hi = if high > HALF then high+10 else high fi
+    lo = if lt(lo, 0) then 0 else if lo > 10 then 10 else lo fi fi
+    hi = if lt(hi, 0) then 0 else if hi > 10 then 10 else hi fi fi
+    field width = if hi > lo then hi-lo else 0 fi
+    field[20][10] result = [[0; 10]; 20]
+    for field i in 0..20 do
+        for field j in 0..10 do
+            field ix = if j < width then lo+j else 0 fi
+            result[i][j] = if j < width then a[i][ix] else 0 fi
+        endfor
+    endfor
+    return Output {values: result, width: width}

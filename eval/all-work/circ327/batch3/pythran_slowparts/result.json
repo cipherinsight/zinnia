@@ -1,0 +1,38 @@
+{
+  "program": "pythran_slowparts",
+  "category": "needs_gadget: tanh",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:12: tanh is required on private real array elements. Nonempty valid assignments at line 16 imply d=8,re=5 from the 9x5 RHS; d=0 skips the loop and has empty output with variable shape metadata. A 9x5x16x8 capacity plus shape metadata suffices, but tanh remains necessary.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "needs_gadget",
+    "error": "kernel.py:12: tanh is required on private real array elements. Nonempty valid assignments at line 16 imply d=8,re=5 from the 9x5 RHS; d=0 skips the loop and has empty output with variable shape metadata. A 9x5x16x8 capacity plus shape metadata suffices, but tanh remains necessary.",
+    "constraints": null,
+    "rewrites": [
+      "No prohibited numerical/sorting gadget was hand-written."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "not_run",
+      "reason": "No R1CS-accepted attempt; no circuit acceptance claimed."
+    },
+    "B": {
+      "status": "not_run",
+      "reason": "No R1CS-accepted attempt; no circuit acceptance claimed."
+    }
+  },
+  "notes": "kernel.py:12: tanh is required on private real array elements. Nonempty valid assignments at line 16 imply d=8,re=5 from the 9x5 RHS; d=0 skips the loop and has empty output with variable shape metadata. A 9x5x16x8 capacity plus shape metadata suffices, but tanh remains necessary.",
+  "kernel": "benchmarking/datasets/pythran/pythran_slowparts/kernel.py",
+  "numeric_encoding": {
+    "modulus": "52435875175126190479447740508185965837690552500527637822603658699938581184513",
+    "real_scale": 4294967296,
+    "signed_encoding": "centered field residues; no unsigned-only interpretation of negative fixtures",
+    "validation_tolerance": {
+      "rtol": 1e-06,
+      "atol": 1e-06
+    }
+  }
+}

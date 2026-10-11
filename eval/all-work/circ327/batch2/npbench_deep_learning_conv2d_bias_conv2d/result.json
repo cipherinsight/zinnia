@@ -1,0 +1,46 @@
+{
+  "program": "npbench_deep_learning_conv2d_bias_conv2d",
+  "category": "needs_gadget: fixed-point multiplication/rescaling",
+  "as_written": {
+    "status": "rejected",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\n\nthread 'main' (150074) panicked at src/target/r1cs/trans.rs:387:18:\ninternal error: entered unreachable code: Unhandled variable operator return.0.0.0.0\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    "constraints": null,
+    "seconds": 7.526760548000311,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch2/npbench_deep_learning_conv2d_bias_conv2d/as_written.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ]
+  },
+  "rewrite": {
+    "status": "needs gadget",
+    "error": "fixed-point multiplication/rescaling",
+    "constraints": null,
+    "rewrites": []
+  },
+  "correctness": {
+    "A": "not run: no accepted translation",
+    "B": "not run: no accepted translation"
+  },
+  "notes": "Static convolution then bias, using native integer Q32 multiply/rescale. Source float32 storage represented in the brief-mandated fixed point.",
+  "source": "benchmarking/datasets/npbench/npbench_deep_learning_conv2d_bias_conv2d/kernel.py",
+  "function": "conv2d_bias",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/npbench/npbench_deep_learning_conv2d_bias_conv2d/fixture.json",
+  "source_sha256": "8965ee68182fbf18a9897dc9cc473f432120583e642dd3fdaa20becec82b80cd",
+  "encoding": "Real and complex components rounded to nearest integer at scale 2^32; centered field residues for field translations; native arbitrary-precision integers for integer translations. Public return includes all logical output values; padded returns include shape/presence metadata.",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh"
+  },
+  "translation_sha256": {
+    "as_written": "f9ba6c375f93dd723d3e4cac775426d6dbc80c81a98e19c1e5cf30cb86737d48"
+  }
+}

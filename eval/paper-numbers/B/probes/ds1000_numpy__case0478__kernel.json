@@ -1,0 +1,143 @@
+{
+  "id": "ds1000_numpy__case0478__kernel",
+  "sites": {
+    "11:13:11:34:Call": "np.einsum('ii->i', a)",
+    "12:11:12:24:Call": "result.copy()"
+  },
+  "numpy": {
+    "A": [
+      {
+        "site": "11:13:11:34:Call",
+        "value": {
+          "shape": [
+            4
+          ],
+          "length": 4
+        }
+      },
+      {
+        "site": "12:11:12:24:Call",
+        "value": {
+          "shape": [
+            4
+          ],
+          "length": 4
+        }
+      }
+    ],
+    "B": [
+      {
+        "site": "11:13:11:34:Call",
+        "value": {
+          "shape": [
+            4
+          ],
+          "length": 4
+        }
+      },
+      {
+        "site": "12:11:12:24:Call",
+        "value": {
+          "shape": [
+            4
+          ],
+          "length": 4
+        }
+      }
+    ]
+  },
+  "selected": [
+    "11:13:11:34:Call",
+    "12:11:12:24:Call"
+  ],
+  "source": "def kernel(a: Integer[Array, '4 4']):\n    bprobe_trace = []\n    bprobe_v0 = np.einsum('ii->i', a)\n    bprobe_trace.append((0, bprobe_v0))\n    result = bprobe_v0\n    bprobe_v1 = result.copy()\n    bprobe_trace.append((1, bprobe_v1))\n    save = bprobe_v1\n    a[...] = 0\n    result[...] = save\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [
+        {
+          "constant": 0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 0
+        },
+        {
+          "kind": "i",
+          "public": 1
+        },
+        {
+          "kind": "i",
+          "public": 2
+        },
+        {
+          "kind": "i",
+          "public": 3
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1
+        ]
+      },
+      "shape": [
+        4
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 1
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 4
+        },
+        {
+          "kind": "i",
+          "public": 5
+        },
+        {
+          "kind": "i",
+          "public": 6
+        },
+        {
+          "kind": "i",
+          "public": 7
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1
+        ]
+      },
+      "shape": [
+        4
+      ]
+    }
+  ],
+  "dynamic": []
+}

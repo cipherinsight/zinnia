@@ -1,0 +1,1 @@
+kernel.py:12: tanh is required on private real array elements. Nonempty valid assignments at line 16 imply d=8,re=5 from the 9x5 RHS; d=0 skips the loop and has empty output with variable shape metadata. A 9x5x16x8 capacity plus shape metadata suffices, but tanh remains necessary.

@@ -1,0 +1,105 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[2][16][16][1] input, private u64[5][5][1][6] conv1, private u64[6] conv1bias, private u64[5][5][6][16] conv2, private u64[16] conv2bias, private u64[16][120] fc1w, private u64[120] fc1b, private u64[120][84] fc2w, private u64[84] fc2b, private u64[84][10] fc3w, private u64[10] fc3b, private u64 N, private u64 C_before_fc1) -> u64[2][10]:
+    assert(N == 2)
+    assert(C_before_fc1 == 16)
+    u64[2][12][12][6] c1 = [[[[0;6];12];12];2]
+    for u32 i in 0..12 do
+        for u32 j in 0..12 do
+            for u32 n in 0..2 do
+                for u32 co in 0..6 do
+                    u64 sum = 0
+                    for u32 ki in 0..5 do
+                        for u32 kj in 0..5 do
+                            sum = (sum + mulq(input[n][(i + ki)][(j + kj)][0], conv1[ki][kj][0][co]))
+                        endfor
+                    endfor
+                    sum = (sum + conv1bias[co])
+                    c1[n][i][j][co] = if neg(sum) then 0 else sum fi
+                endfor
+            endfor
+        endfor
+    endfor
+    u64[2][6][6][6] p1 = [[[[0;6];6];6];2]
+    for u32 i in 0..6 do
+        for u32 j in 0..6 do
+            for u32 n in 0..2 do
+                for u32 co in 0..6 do
+                    u64 best = c1[n][(2 * i)][(2 * j)][co]
+                    for u32 ki in 0..2 do
+                        for u32 kj in 0..2 do
+                            u64 v = c1[n][((2 * i) + ki)][((2 * j) + kj)][co]
+                            best = if lt(best, v) then v else best fi
+                        endfor
+                    endfor
+                    p1[n][i][j][co] = best
+                endfor
+            endfor
+        endfor
+    endfor
+    u64[2][2][2][16] c2 = [[[[0;16];2];2];2]
+    for u32 i in 0..2 do
+        for u32 j in 0..2 do
+            for u32 n in 0..2 do
+                for u32 co in 0..16 do
+                    u64 sum = 0
+                    for u32 ki in 0..5 do
+                        for u32 kj in 0..5 do
+                            for u32 ci in 0..6 do
+                                sum = (sum + mulq(p1[n][(i + ki)][(j + kj)][ci], conv2[ki][kj][ci][co]))
+                            endfor
+                        endfor
+                    endfor
+                    sum = (sum + conv2bias[co])
+                    c2[n][i][j][co] = if neg(sum) then 0 else sum fi
+                endfor
+            endfor
+        endfor
+    endfor
+    u64[2][16] flat = [[0;16];2]
+    for u32 n in 0..2 do
+        for u32 co in 0..16 do
+            u64 best = c2[n][0][0][co]
+            for u32 i in 0..2 do
+                for u32 j in 0..2 do
+                    u64 v = c2[n][i][j][co]
+                    best = if lt(best, v) then v else best fi
+                endfor
+            endfor
+            flat[n][co] = best
+        endfor
+    endfor
+    u64[2][120] f1 = [[0;120];2]
+    for u32 n in 0..2 do
+        for u32 j in 0..120 do
+            u64 sum = 0
+            for u32 k in 0..16 do
+                sum = (sum + mulq(flat[n][k], fc1w[k][j]))
+            endfor
+            sum = (sum + fc1b[j])
+            f1[n][j] = if neg(sum) then 0 else sum fi
+        endfor
+    endfor
+    u64[2][84] f2 = [[0;84];2]
+    for u32 n in 0..2 do
+        for u32 j in 0..84 do
+            u64 sum = 0
+            for u32 k in 0..120 do
+                sum = (sum + mulq(f1[n][k], fc2w[k][j]))
+            endfor
+            sum = (sum + fc2b[j])
+            f2[n][j] = if neg(sum) then 0 else sum fi
+        endfor
+    endfor
+    u64[2][10] f3 = [[0;10];2]
+    for u32 n in 0..2 do
+        for u32 j in 0..10 do
+            u64 sum = 0
+            for u32 k in 0..84 do
+                sum = (sum + mulq(f2[n][k], fc3w[k][j]))
+            endfor
+            sum = (sum + fc3b[j])
+            f3[n][j] = sum
+        endfor
+    endfor
+    return f3

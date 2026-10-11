@@ -1,0 +1,38 @@
+{
+  "program": "case0334",
+  "as_written": {
+    "status": "rejected",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\n\nthread 'main' (149037) panicked at circ_fields/src/lib.rs:571:56:\ncalled `Option::unwrap()` on a `None` value\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "rejected",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\n\nthread 'main' (150654) panicked at src/target/r1cs/trans.rs:387:18:\ninternal error: entered unreachable code: Unhandled variable operator return.0\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    "constraints": null,
+    "rewrites": [
+      "Use native arbitrary integer Q32 arithmetic instead of native field remainder; no custom gadget or new bound."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "not_run",
+      "reason": "No R1CS-accepted attempt; no circuit acceptance claimed."
+    },
+    "B": {
+      "status": "not_run",
+      "reason": "No R1CS-accepted attempt; no circuit acceptance claimed."
+    }
+  },
+  "notes": "Scale 2^32; signed field residues. Native arithmetic and array operations only.\nNative field remainder crashes; alternate arbitrary-integer Q32 arithmetic also rejected.",
+  "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0334/kernel.py",
+  "category": "circ_error",
+  "numeric_encoding": {
+    "modulus": "52435875175126190479447740508185965837690552500527637822603658699938581184513",
+    "real_scale": 4294967296,
+    "signed_encoding": "centered field residues; no unsigned-only interpretation of negative fixtures",
+    "validation_tolerance": {
+      "rtol": 1e-06,
+      "atol": 1e-06
+    }
+  }
+}

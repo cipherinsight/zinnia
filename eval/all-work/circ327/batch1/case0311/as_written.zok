@@ -1,0 +1,23 @@
+struct Result {
+    u32 v0
+    u32 v1
+}
+
+// Reals are encoded at scale 2^32; signed field values use centered residues.
+def lt(field a, field b) -> bool:
+    bool an = a > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+    bool bn = b > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+    return if an == bn then a < b else an fi
+
+
+def main(private field[8][6] a) -> Result:
+    field best = a[0][0]
+    u32 idx = 0
+    for u32 i in 0..8 do
+        for u32 j in 0..6 do
+            bool bigger = lt(best, a[i][j])
+            idx = if bigger then i * 6 + j else idx fi
+            best = if bigger then a[i][j] else best fi
+        endfor
+    endfor
+    return Result { v0: idx % 8, v1: idx / 8 }

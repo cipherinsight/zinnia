@@ -1,0 +1,20 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[100][200] a, private u64 patch_size) -> u64[20003]:
+    u64 nr = divc(100, patch_size)
+    u64 nc = divc(200, patch_size)
+    u64 total = (((nr * nc) * patch_size) * patch_size)
+    u64[20003] out = [0;20003]
+    out[0] = (nr * nc)
+    out[1] = patch_size
+    out[2] = patch_size
+    for u64 k in 0..20000 do
+        bool active = lt(k, total)
+        u64 q = divc(k, (patch_size * patch_size))
+        u64 ri = ((divc(q, if (nc == 0) then 1 else nc fi) * patch_size) + (divc(k, patch_size) % patch_size))
+        u64 cj = (((q % if (nc == 0) then 1 else nc fi) * patch_size) + (k % patch_size))
+        ri = if active then ri else 0 fi
+        cj = if active then cj else 0 fi
+        out[k+3] = if active then a[ri][cj] else 0 fi
+    endfor
+    return out

@@ -1,0 +1,9 @@
+// Reals are encoded at scale 2^32; signed field values use centered residues.
+def main(private field[5] dims, private field[8][9][8][8][8] a, private field[5] index) -> field:
+    field result = 0
+    field stride = 1
+    for u32 i in 0..5 do
+        result = result + index[i]*stride
+        stride = stride*dims[i]
+    endfor
+    return result

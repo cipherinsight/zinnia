@@ -1,0 +1,48 @@
+{
+  "program": "pythran_fibo",
+  "category": "circ_error",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:12-13,23-24: input-dependent recursion; @requires n<=1024 permits bounded recurrence. Preserve arbitrary integer result (F1024 exceeds a field).",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "rejected",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\n\nthread 'main' (150502) panicked at src/target/r1cs/trans.rs:387:18:\ninternal error: entered unreachable code: Unhandled variable operator return\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    "constraints": null,
+    "seconds": 0.05057908100206987,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch2/pythran_fibo/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Replace recursive Fibonacci evaluation by the equivalent recurrence with 1024 guarded iterations."
+    ]
+  },
+  "correctness": {
+    "A": "not run: no accepted translation",
+    "B": "not run: no accepted translation"
+  },
+  "notes": "kernel.py:12-13,23-24: input-dependent recursion; @requires n<=1024 permits bounded recurrence. Preserve arbitrary integer result (F1024 exceeds a field).",
+  "source": "benchmarking/datasets/pythran/pythran_fibo/kernel.py",
+  "function": "test",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/pythran/pythran_fibo/fixture.json",
+  "source_sha256": "72adfaeb1c68e9dcbee9dfbf3f09f76a5480f00b1e48ad1c1d1d629221622e96",
+  "encoding": "Real and complex components rounded to nearest integer at scale 2^32; centered field residues for field translations; native arbitrary-precision integers for integer translations. Public return includes all logical output values; padded returns include shape/presence metadata.",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh"
+  },
+  "translation_sha256": {
+    "rewrite": "cfea0ae8572c18aa1963293db84db5728206657f7271214ec60d510cc513ec04"
+  }
+}

@@ -1,0 +1,14 @@
+const field HALF = 26217937587563095239723870254092982918845276250263818911301829349969290592256
+def main(private field[8][6] a, private field[6] permutation) -> field[8][6]:
+    field[6] c = [0; 6]
+    for field i in 0..6 do
+        field ix = if permutation[i] > HALF then permutation[i] + 6 else permutation[i] fi
+        c[ix] = i
+    endfor
+    field[8][6] result = [[0; 6]; 8]
+    for field i in 0..8 do
+        for field j in 0..6 do
+            result[i][j] = a[i][c[j]]
+        endfor
+    endfor
+    return result

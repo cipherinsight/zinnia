@@ -1,0 +1,12 @@
+// Reals are encoded at scale 2^32; signed field values use centered residues.
+def main(private field[8][6][8] a, private field[8] permutation) -> field[8][6][8]:
+    field[8] c = [0; 8]
+    for field i in 0..8 do
+        field idx = if permutation[i] > 7 then permutation[i] + 8 else permutation[i] fi
+        c[idx] = i
+    endfor
+    field[8][6][8] result = a
+    for u32 i in 0..8 do
+        result[i] = a[c[i]]
+    endfor
+    return result

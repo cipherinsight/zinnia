@@ -1,0 +1,25 @@
+from "EMBED" import u32_to_field
+from "utils/casts/field_to_u32" import main as idx
+
+def neg(field x) -> bool:
+    return x > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+
+def lt(field x, field y) -> bool:
+    return if neg(x) != neg(y) then neg(x) else x < y fi
+
+def ab(field x) -> field:
+    return if neg(x) then -x else x fi
+
+def main(private field[20] A, private field nrow) -> field[22]:
+    field rows = if nrow == -1 then 1 else nrow fi
+    field cols = 0
+    for u32 i in 1..21 do
+        cols = if rows*u32_to_field(i) == 20 then u32_to_field(i) else cols fi
+    endfor
+    field[22] result = [0; 22]
+    result[0] = rows*4294967296
+    result[1] = cols*4294967296
+    for u32 i in 0..20 do
+        result[i+2] = A[i]
+    endfor
+    return result

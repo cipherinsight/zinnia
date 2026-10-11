@@ -1,0 +1,67 @@
+{
+  "program": "npbench_polybench_k3mm_k3mm",
+  "function": "kernel",
+  "category": "timeout_or_oom",
+  "as_written": {
+    "status": "out_of_memory",
+    "constraints": null,
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend",
+    "seconds": 27.22502052799973,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_polybench_k3mm_k3mm/as_written.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ]
+  },
+  "rewrite": {
+    "status": "timeout",
+    "constraints": null,
+    "error": "Running frontend",
+    "seconds": 300.05067105299895,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_polybench_k3mm_k3mm/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Use wide native field products, then native bit unpacking for the Q32 shift; retain native unsigned division and all loop bounds. This avoids bit-blasting every accumulation into a u64 adder."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "not_run",
+      "reason": "No accepted compilation"
+    },
+    "B": {
+      "status": "not_run",
+      "reason": "No accepted compilation"
+    }
+  },
+  "notes": "Q32 values use signed u64; native operations, explicit signs and 32-bit product parts. No arbitrary-integer backend operations.",
+  "source": {
+    "program": "npbench_polybench_k3mm_k3mm",
+    "dataset": "npbench",
+    "kernel": "benchmarking/datasets/npbench/npbench_polybench_k3mm_k3mm/kernel.py",
+    "function": "kernel"
+  },
+  "numeric_encoding": {
+    "real_scale": 4294967296,
+    "signed": "two-complement u64",
+    "rtol": 1e-06,
+    "atol": 1e-06
+  }
+}

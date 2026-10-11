@@ -1,0 +1,40 @@
+from "EMBED" import int_to_bits, u32_from_bits, field_to_integer, u32_to_field
+
+def ui(integer x) -> u32:
+    return u32_from_bits(int_to_bits::<32>(x))
+
+def it(u32 x) -> integer:
+    return field_to_integer(u32_to_field(x))
+
+def mul(integer x, integer y) -> integer:
+    return (x*y)/4294967296
+
+def main(private integer[4][16][16][2] input, private integer[2][2][2][8] weights, private integer[8] bias) -> integer[4][15][15][8]:
+    integer[4][15][15][8] output = [[[[0; 8]; 15]; 15]; 4]
+    for u32 i in 0..15 do
+        for u32 j in 0..15 do
+            for u32 n in 0..4 do
+                for u32 c in 0..8 do
+                    integer total = 0
+                    for u32 di in 0..2 do
+                        for u32 dj in 0..2 do
+                            for u32 k in 0..2 do
+                                total = total+mul(input[n][i+di][j+dj][k],weights[di][dj][k][c])
+                            endfor
+                        endfor
+                    endfor
+                    output[n][i][j][c] = total
+                endfor
+            endfor
+        endfor
+    endfor
+    for u32 n in 0..4 do
+        for u32 i in 0..15 do
+            for u32 j in 0..15 do
+                for u32 c in 0..8 do
+                    output[n][i][j][c] = output[n][i][j][c]+bias[c]
+                endfor
+            endfor
+        endfor
+    endfor
+    return output

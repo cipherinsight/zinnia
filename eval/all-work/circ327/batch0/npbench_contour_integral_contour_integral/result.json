@@ -1,0 +1,29 @@
+{
+  "program": "npbench_contour_integral_contour_integral",
+  "category": "needs_gadget: complex pow and linear solve",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:10-15: arrays and loop bound depend on NR, NM and slab_per_bc; lines 15,18,20 use complex powers/inverse/solve.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "needs gadget",
+    "error": "needs gadget: complex pow and linear solve; The bounded rewrite still requires complex exponentiation and a matrix inverse/linear solve, including real division.",
+    "constraints": null,
+    "rewrites": [
+      "Use 5x5 Tz and a 5x15 output capacity with public dimensions: valid addition to Ham[n] forces NR=5, and successful accumulation forces NM=5 (inverse branch) or NM=15 (solve branch).",
+      "Guard at most three slab iterations, as indexing Ham[n] requires slab_per_bc <= 2 on valid executions."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "not applicable",
+      "reason": "No accepted full translation."
+    },
+    "B": {
+      "status": "not applicable",
+      "reason": "No accepted full translation."
+    }
+  },
+  "notes": "The bounded rewrite still requires complex exponentiation and a matrix inverse/linear solve, including real division. Bounded rewrite analyzed but not emitted as a dummy executable; missing gadget explicitly prohibited."
+}

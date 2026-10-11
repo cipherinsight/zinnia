@@ -1,0 +1,53 @@
+{
+  "program": "case0442",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not expressible",
+    "error": "C = A[~np.in1d(A,B)]",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 8000,
+    "seconds": 0.12336611747741699,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch5/case0442/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Replace boolean-indexed output with capacity 20, masked stable compaction, and public logical length; at most all 20 entries of A survive."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "elements": 12,
+      "actual_elements": 12,
+      "max_abs_error": 0.0
+    },
+    "B": {
+      "status": "pass",
+      "elements": 17,
+      "actual_elements": 17,
+      "max_abs_error": 0.0
+    }
+  },
+  "notes": "",
+  "source": {
+    "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0442/kernel.py",
+    "function": "kernel",
+    "sha256": "203d0ff788ac2b0c5c37f12fe94f140d72eeef18b5460fb8c9467abc79ad0001"
+  },
+  "encoding": "Private inputs; public return value. Real numbers are rounded to scale 2^32. Native u64 values use signed two-complement interpretation; integer arithmetic is used for candidate full-width Q32 products to avoid truncating them to 64 bits before rescaling.",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/ds1000_numpy/generated/case0442/fixture.json",
+  "reason": "Stable masked compaction into capacity 20, with logical length."
+}

@@ -1,0 +1,21 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[4][8][8][3] imgs, private u64[6][5][5][3] filters, private u64[4][6][4][4] output) -> u64[4][6][4][4]:
+    for u32 ii in 0..4 do
+        for u32 rr in 0..4 do
+            for u32 cc in 0..4 do
+                for u32 hh in 0..5 do
+                    for u32 ww in 0..5 do
+                        for u32 jj in 0..3 do
+                            for u32 ff in 0..6 do
+                                u64 imgval = imgs[ii][(rr + hh)][(cc + ww)][jj]
+                                u64 filterval = filters[ff][hh][ww][jj]
+                                output[ii][ff][rr][cc] = (output[ii][ff][rr][cc] + mulq(imgval, filterval))
+                            endfor
+                        endfor
+                    endfor
+                endfor
+            endfor
+        endfor
+    endfor
+    return output

@@ -1,0 +1,31 @@
+// kernel.py:12-13 private-dependent slice and reshape.
+from "EMBED" import u64_to_field
+from "EMBED" import u32_to_u64
+from "EMBED" import unpack
+from "EMBED" import u64_from_bits
+
+def lt(u64 a, u64 b) -> bool:
+    return (a ^ 9223372036854775808u64) < (b ^ 9223372036854775808u64)
+
+def mul(u64 a, u64 b) -> u64:
+    bool sa = a >= 9223372036854775808u64
+    bool sb = b >= 9223372036854775808u64
+    u64 aa = if sa then 0u64-a else a fi
+    u64 bb = if sb then 0u64-b else b fi
+    bool[128] bits = unpack::<128>(u64_to_field(aa)*u64_to_field(bb))
+    u64 v = u64_from_bits(bits[32..96])
+    return if sa != sb then 0u64-v else v fi
+
+def main(private u64[23] A, private u64 ncol) -> u64[25]:
+    u64 col = (23u64/ncol)*ncol
+    u64[23] result = [0u64;23]
+    for u64 i in 0u64..23u64 do
+        result[i] = if i < col then A[22u64-i] else 0u64 fi
+    endfor
+    u64[25] packed = [0u64;25]
+    for u32 i in 0..23 do
+        packed[i] = result[i]
+    endfor
+    packed[23] = 23u64/ncol
+    packed[24] = ncol
+    return packed

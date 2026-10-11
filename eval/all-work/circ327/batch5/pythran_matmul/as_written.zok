@@ -1,0 +1,12 @@
+def main(private integer[16][16] m0, private integer[16][16] m1) -> integer[16][16]:
+    integer[16][16] result = [[0int; 16]; 16]
+    for u32 i in 0..16 do
+        for u32 j in 0..16 do
+            integer r = 0int
+            for u32 k in 0..16 do
+                r = r + m0[i][k]*m1[k][j]/4294967296int
+            endfor
+            result[i][j] = r
+        endfor
+    endfor
+    return result

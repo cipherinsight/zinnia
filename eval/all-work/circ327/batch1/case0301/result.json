@@ -1,0 +1,46 @@
+{
+  "program": "case0301",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:11: reshape has value-dependent dimensions (-1, ncol).",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 4,
+    "returncode": 0,
+    "seconds": 0.028,
+    "rewrites": [
+      "Replace value-dependent reshape by its 20 elements plus public row/column dimensions; 20 source elements bound the output size."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "expected_elements": 20,
+      "actual_elements": 20,
+      "max_absolute_error": 1.162426821466056e-10,
+      "rtol": 1e-06,
+      "atol": 1e-06
+    },
+    "B": {
+      "status": "pass",
+      "expected_elements": 20,
+      "actual_elements": 20,
+      "max_absolute_error": 1.1365774987837085e-10,
+      "rtol": 1e-06,
+      "atol": 1e-06
+    }
+  },
+  "notes": [
+    "Twenty values plus public row/column metadata preserve the dynamic reshape.",
+    "A/B checked with zxi against undecorated original NumPy source; rtol=atol=1e-6. Reals use scale 2^32; signed field values use centered residues."
+  ],
+  "accepted_attempt": "rewrite",
+  "source": {
+    "kernel": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch1/case0301/kernel.py",
+    "function": "kernel"
+  }
+}

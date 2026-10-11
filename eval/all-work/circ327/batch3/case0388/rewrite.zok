@@ -1,0 +1,34 @@
+// benchmarking/datasets/ds1000_numpy/generated/case0388/kernel.py
+// Signed integers use their canonical field residues; real inputs are Q32.
+def neg(field x) -> bool:
+    return x > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+def absv(field x) -> field:
+    return if neg(x) then -x else x fi
+def lt(field a, field b) -> bool:
+    return if neg(a) != neg(b) then neg(a) else a < b fi
+// Constant integer rescaling uses native remainder and field division only.
+def divc(field x, field c) -> field:
+    field m = absv(x)
+    field q = (m - m % c) / c
+    return if neg(x) then -q else q fi
+def mulq(field a, field b) -> field:
+    return divc(a * b, 4294967296)
+
+def main(private field[100][200] a, private field patch_size) -> field[20003]:
+    field nr = divc(100, patch_size)
+    field nc = divc(200, patch_size)
+    field total = nr * nc * patch_size * patch_size
+    field[20003] out = [0; 20003]
+    out[0] = nr * nc
+    out[1] = patch_size
+    out[2] = patch_size
+    for field k in 0..20000 do
+        bool active = k < total
+        field q = divc(k, patch_size * patch_size)
+        field ri = divc(q, if nc == 0 then 1 else nc fi) * patch_size + divc(k, patch_size) % patch_size
+        field cj = (q % (if nc == 0 then 1 else nc fi)) * patch_size + k % patch_size
+        ri = if active then ri else 0 fi
+        cj = if active then cj else 0 fi
+        out[k+3] = if active then a[ri][cj] else 0 fi
+    endfor
+    return out

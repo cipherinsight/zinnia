@@ -1,0 +1,25 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[5][5] M) -> u64[5][5]:
+    for u32 line in 0..4 do
+        u32 cmax = line
+        u64 vmax = absv(M[line][line])
+        for u32 i in line..5 do
+            bool take = absv(M[i][line]) > vmax
+            cmax = if take then i else cmax fi
+            vmax = if take then absv(M[i][line]) else vmax fi
+        endfor
+        for u32 j in 0..5 do
+            u64 t = M[line][j]
+            M[line][j] = M[cmax][j]
+            M[cmax][j] = t
+        endfor
+        u64 pivot = M[line][line]
+        for u32 j in line+1u32..5 do
+            u64 v = divq(M[j][line],pivot)
+            for u32 k in line..5 do
+                M[j][k] = M[j][k]-mulq(v,M[line][k])
+            endfor
+        endfor
+    endfor
+    return M

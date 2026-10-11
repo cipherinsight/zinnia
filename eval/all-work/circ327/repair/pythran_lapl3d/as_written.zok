@@ -1,0 +1,23 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[16][16][3] image) -> u64[14][14][3]:
+    u64[14][14][3] out = [[[0;3];14];14]
+    u64 valmax = 0
+    for u32 i in 0..14 do
+        for u32 j in 0..14 do
+            for u32 k in 0..3 do
+                u64 v = (((((4 * image[(i + 1)][(j + 1)][k]) - image[i][(j + 1)][k]) - image[(i + 2)][(j + 1)][k]) - image[(i + 1)][j][k]) - image[(i + 1)][(j + 2)][k])
+                out[i][j][k] = if neg(v) then (0u64-v) else v fi
+                valmax = if lt(valmax, out[i][j][k]) then out[i][j][k] else valmax fi
+            endfor
+        endfor
+    endfor
+    valmax = (if lt(4294967296, valmax) then valmax else 4294967296 fi + 4)
+    for u32 i in 0..14 do
+        for u32 j in 0..14 do
+            for u32 k in 0..3 do
+                out[i][j][k] = divq(out[i][j][k], valmax)
+            endfor
+        endfor
+    endfor
+    return out

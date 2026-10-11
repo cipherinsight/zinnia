@@ -1,0 +1,21 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[16] r) -> u64[16]:
+    u64[16] y = [0u64; 16]
+    u64 alpha = 0u64-r[0]
+    u64 beta = 4294967296u64
+    y[0] = alpha
+    for u32 k in 1..16 do
+        beta = mulq(beta,4294967296u64-mulq(alpha,alpha))
+        u64 dot = 0u64
+        for u32 j in 0..k do
+            dot = dot+mulq(r[k-1u32-j],y[j])
+        endfor
+        alpha = 0u64-divq(r[k]+dot,beta)
+        u64[16] old = y
+        for u32 j in 0..k do
+            y[j] = y[j]+mulq(alpha,old[k-1u32-j])
+        endfor
+        y[k] = alpha
+    endfor
+    return y

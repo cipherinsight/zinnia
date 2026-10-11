@@ -1,0 +1,29 @@
+{
+ "case": "pythran_monte_carlo",
+ "function": "montecarlo_integration",
+ "parameters": [
+  {"name": "xmin", "kind": "scalar", "dtype": "float"},
+  {"name": "xmax", "kind": "scalar", "dtype": "float"},
+  {"name": "numSteps", "kind": "scalar", "dtype": "int"},
+  {"name": "rand", "kind": "array", "dtype": "float", "shape": [16]},
+  {"name": "randsize", "kind": "scalar", "dtype": "int"}
+ ],
+ "constants": {},
+ "inputs": {
+  "A": {
+   "xmin": 1.0,
+   "xmax": 10.0,
+   "numSteps": 16,
+   "rand": [0.0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.11, 0.12, 0.13, 0.14, 0.15],
+   "randsize": 16
+  },
+  "B": {
+   "xmin": 1.0105395660667094,
+   "xmax": 11.048011241911182,
+   "numSteps": 16,
+   "rand": [-0.0013636600889137254, -0.002483594891867903, 0.018075318199387267, 0.012562205435824082, 0.04545301916836108, 0.051455498404951276, 0.05822077311047255, 0.0652566002408392, 0.07160342243630198, 0.11956439988020635, 0.10937295743293063, 0.0892801627501943, 0.1275176758398742, 0.15285803125101002, 0.15484448086700692, 0.16228109768301552],
+   "randsize": 16
+  }
+ },
+ "notes": "A is the arguments of the example call `montecarlo_integration(1.,10.,16,[x/100. for x in range(16)],16)`. B is a seeded perturbation of A (numpy RandomState(4485005)): noise 10 % of the largest magnitude; integer arrays redrawn in their range."
+}

@@ -1,0 +1,48 @@
+from "../native_v1" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64 n, private u64[4][4] a, private u64[4] b) -> u64[4]:
+    u64[16] flat_a = [0u64; 16]
+    for u32 row in 0..4 do
+        for u32 col in 0..4 do
+            flat_a[row*4u32+col] = a[row][col]
+        endfor
+    endfor
+    for u64 i in 1..5 do
+        bool active = i <= n
+        u64 i0 = i
+        u64 amp0 = absv(flat_a[(i-1u64)*4u64+(i-1u64)])
+        for u64 j in 1..5 do
+            bool take = active && j > i && j <= n && absv(flat_a[(i-1u64)*4u64+(j-1u64)]) > amp0
+            i0 = if take then j else i0 fi
+            amp0 = if take then absv(flat_a[(i-1u64)*4u64+(j-1u64)]) else amp0 fi
+        endfor
+        u64 temp = b[i-1u64]
+        b[i-1u64] = if active && i < n then b[i0-1u64] else b[i-1u64] fi
+        b[i0-1u64] = if active && i < n then temp else b[i0-1u64] fi
+        for u64 j in 1..5 do
+            u64 t = flat_a[(j-1u64)*4u64+(i-1u64)]
+            bool go = active && i < n && j >= i && j <= n
+            flat_a[(j-1u64)*4u64+(i-1u64)] = if go then flat_a[(j-1u64)*4u64+(i0-1u64)] else flat_a[(j-1u64)*4u64+(i-1u64)] fi
+            flat_a[(j-1u64)*4u64+(i0-1u64)] = if go then t else flat_a[(j-1u64)*4u64+(i0-1u64)] fi
+        endfor
+        u64 divisor = if active then flat_a[(i-1u64)*4u64+(i-1u64)] else 4294967296u64 fi
+        flat_a[(i-1u64)*4u64+(i-1u64)] = if active then divq(4294967296u64,divisor) else flat_a[(i-1u64)*4u64+(i-1u64)] fi
+        b[i-1u64] = if active then mulq(b[i-1u64],flat_a[(i-1u64)*4u64+(i-1u64)]) else b[i-1u64] fi
+        for u64 j in 1..5 do
+            flat_a[(j-1u64)*4u64+(i-1u64)] = if active && j > i && j <= n then mulq(flat_a[(j-1u64)*4u64+(i-1u64)],flat_a[(i-1u64)*4u64+(i-1u64)]) else flat_a[(j-1u64)*4u64+(i-1u64)] fi
+        endfor
+        for u64 k in 1..5 do
+            bool go = active && k > i && k <= n
+            b[k-1u64] = if go then b[k-1u64]-mulq(flat_a[(i-1u64)*4u64+(k-1u64)],b[i-1u64]) else b[k-1u64] fi
+            for u64 j in 1..5 do
+                flat_a[(j-1u64)*4u64+(k-1u64)] = if go && j > i && j <= n then flat_a[(j-1u64)*4u64+(k-1u64)]-mulq(flat_a[(i-1u64)*4u64+(k-1u64)],flat_a[(j-1u64)*4u64+(i-1u64)]) else flat_a[(j-1u64)*4u64+(k-1u64)] fi
+            endfor
+        endfor
+    endfor
+    for u64 rev in 0..3 do
+        u64 i = 3u64-rev
+        for u64 j in 1..4 do
+            b[i-1u64] = if i < n && j >= i && j < n then b[i-1u64]-mulq(flat_a[(j)*4u64+(i-1u64)],b[j]) else b[i-1u64] fi
+        endfor
+    endfor
+    return b

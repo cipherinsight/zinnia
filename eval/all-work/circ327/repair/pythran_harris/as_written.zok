@@ -1,0 +1,17 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[4][6] I) -> u64[3][5]:
+    u64[3][5] out = [[0;5];3]
+    for u32 i in 0..3 do
+        for u32 j in 0..5 do
+            u64 dx = (I[(i + 1)][(j + 1)] - I[i][(j + 1)])
+            u64 dy = (I[(i + 1)][(j + 1)] - I[(i + 1)][j])
+            u64 A = mulq(dx, dx)
+            u64 B = mulq(dy, dy)
+            u64 C = mulq(dx, dy)
+            u64 tr = (A + B)
+            u64 det = (mulq(A, B) - mulq(C, C))
+            out[i][j] = (det - mulq(mulq(214748365, tr), tr))
+        endfor
+    endfor
+    return out

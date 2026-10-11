@@ -1,0 +1,22 @@
+{
+  "program": "pythran_mandel",
+  "category": "not_expressible: dynamic loop",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:11 output shape depends on size; line 18 while loop depends on max_iteration.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "not_expressible",
+    "error": "kernel.py:18 while loop has private max_iteration without upper bound; size<=1024 bounds only image shape.",
+    "constraints": null,
+    "rewrites": [
+      "Pad image to 1024x1024 using the size contract; no finite iteration bound follows for max_iteration."
+    ]
+  },
+  "correctness": {
+    "A": null,
+    "B": null
+  },
+  "notes": "kernel.py:18 while loop has private max_iteration without upper bound; size<=1024 bounds only image shape."
+}

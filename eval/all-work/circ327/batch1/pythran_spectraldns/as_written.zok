@@ -1,0 +1,20 @@
+struct Result {
+    integer[2][5][7][2] v0
+    integer[3][2][5][7][2] v1
+}
+
+// Reals are encoded at scale 2^32; signed field values use centered residues.
+def main(private integer[3][2][5][7][2] dU, private integer[3][2][5][7][2] U_hat, private integer[2][5][7] K2, private integer[3][2][5][7] K, private integer[2][5][7][2] P_hat, private integer[3][2][5][7] K_over_K2, private integer nu) -> Result:
+    for u32 i in 0..2 do
+        for u32 j in 0..5 do
+            for u32 k in 0..7 do
+                for u32 c in 0..2 do
+                    P_hat[i][j][k][c] = dU[0][i][j][k][c]*K_over_K2[0][i][j][k]/4294967296 + dU[1][i][j][k][c]*K_over_K2[1][i][j][k]/4294967296 + dU[2][i][j][k][c]*K_over_K2[2][i][j][k]/4294967296
+                    for u32 a in 0..3 do
+                        dU[a][i][j][k][c] = dU[a][i][j][k][c] - P_hat[i][j][k][c]*K[a][i][j][k]/4294967296 - (nu*K2[i][j][k]/4294967296)*U_hat[a][i][j][k][c]/4294967296
+                    endfor
+                endfor
+            endfor
+        endfor
+    endfor
+    return Result { v0: P_hat, v1: dU }

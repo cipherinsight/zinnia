@@ -1,0 +1,12 @@
+struct Output {
+    field[1024][1024] values
+    field size
+}
+def main(private field size) -> Output:
+    field[1024][1024] result = [[0; 1024]; 1024]
+    for field i in 0..1024 do
+        for field j in 0..1024 do
+            result[i][j] = if i < size && j < size then i+j else 0 fi
+        endfor
+    endfor
+    return Output {values: result, size: size}

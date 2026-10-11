@@ -1,0 +1,38 @@
+{
+  "program": "pythran_compute_subpix_2d_gaussian2",
+  "category": "needs_gadget: log",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:10-12: crop/where lists are dynamic but at most 4x4; masks and padding can bound them. Lines 21-26 call log on private crop entries; lines 28-29 additionally need fixed-point division.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "needs_gadget",
+    "error": "kernel.py:10-12: crop/where lists are dynamic but at most 4x4; masks and padding can bound them. Lines 21-26 call log on private crop entries; lines 28-29 additionally need fixed-point division.",
+    "constraints": null,
+    "rewrites": [
+      "No prohibited numerical/sorting gadget was hand-written."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "not_run",
+      "reason": "No R1CS-accepted attempt; no circuit acceptance claimed."
+    },
+    "B": {
+      "status": "not_run",
+      "reason": "No R1CS-accepted attempt; no circuit acceptance claimed."
+    }
+  },
+  "notes": "kernel.py:10-12: crop/where lists are dynamic but at most 4x4; masks and padding can bound them. Lines 21-26 call log on private crop entries; lines 28-29 additionally need fixed-point division.",
+  "kernel": "benchmarking/datasets/pythran/pythran_compute_subpix_2d_gaussian2/kernel.py",
+  "numeric_encoding": {
+    "modulus": "52435875175126190479447740508185965837690552500527637822603658699938581184513",
+    "real_scale": 4294967296,
+    "signed_encoding": "centered field residues; no unsigned-only interpretation of negative fixtures",
+    "validation_tolerance": {
+      "rtol": 1e-06,
+      "atol": 1e-06
+    }
+  }
+}

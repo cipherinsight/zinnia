@@ -1,0 +1,40 @@
+{
+  "program": "pythran_quicksort",
+  "category": "timeout_or_oom",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:13-29: data-dependent partition while loops; lines 37-38: private recursion. The input has ten entries, and valid Python indices are -10..9.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "timeout",
+    "error": "Running frontend",
+    "constraints": null,
+    "rewrites": [
+      "Keep the source partition algorithm, replacing each moving-pointer while loop by twenty guarded steps, since the logical index interval is within -10..9.",
+      "Replace recursive calls by an explicit stack of 21 ranges and forty guarded pop steps (at most 39 nodes for a logical interval of twenty positions, including negative Python indices).",
+      "Expose the mutated array as the public result. No sorting network or new sorting algorithm is introduced."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "not_run",
+      "reason": "No R1CS-accepted attempt; no circuit acceptance claimed."
+    },
+    "B": {
+      "status": "not_run",
+      "reason": "No R1CS-accepted attempt; no circuit acceptance claimed."
+    }
+  },
+  "notes": "kernel.py:13-29: data-dependent partition while loops; lines 37-38: private recursion. The input has ten entries, and valid Python indices are -10..9.\nOriginal partition plus bounded stack/loops; see resource result; zxi matches A/B.",
+  "kernel": "benchmarking/datasets/pythran/pythran_quicksort/kernel.py",
+  "numeric_encoding": {
+    "modulus": "52435875175126190479447740508185965837690552500527637822603658699938581184513",
+    "real_scale": 4294967296,
+    "signed_encoding": "centered field residues; no unsigned-only interpretation of negative fixtures",
+    "validation_tolerance": {
+      "rtol": 1e-06,
+      "atol": 1e-06
+    }
+  }
+}

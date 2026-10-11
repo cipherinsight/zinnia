@@ -1,0 +1,22 @@
+{
+  "program": "pythran_sum_primes",
+  "category": "needs_gadget: sqrt",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:27 value-dependent range and filtered list; helper line 17 while.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "needs_gadget",
+    "error": "kernel.py:15 math.sqrt(n) and ceil require a square-root gadget.",
+    "constraints": null,
+    "rewrites": [
+      "n<=1024 bounds candidate and divisor loops by 1024; mask the sum instead of building the filtered list. Square root remains required."
+    ]
+  },
+  "correctness": {
+    "A": null,
+    "B": null
+  },
+  "notes": "kernel.py:15 math.sqrt(n) and ceil require a square-root gadget."
+}

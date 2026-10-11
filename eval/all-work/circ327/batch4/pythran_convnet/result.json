@@ -1,0 +1,22 @@
+{
+  "program": "pythran_convnet",
+  "category": "needs_gadget: tanh",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:17,20 private-dependent reshape and allocations.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "needs_gadget",
+    "error": "kernel.py:18 tanh and helper line 10 exp/division require gadgets.",
+    "constraints": null,
+    "rewrites": [
+      "Nonempty valid reshape fixes length*batch_size*state_size=4, bounding positive dimensions by 4; pad and guard. tanh/exp remain required."
+    ]
+  },
+  "correctness": {
+    "A": null,
+    "B": null
+  },
+  "notes": "kernel.py:18 tanh and helper line 10 exp/division require gadgets."
+}

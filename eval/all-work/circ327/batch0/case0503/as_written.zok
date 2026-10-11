@@ -1,0 +1,10 @@
+const field HALF = 26217937587563095239723870254092982918845276250263818911301829349969290592256
+def main(private field[13][13][5] a, private field[13][13] b) -> field[13][13]:
+    field[13][13] result = [[0; 13]; 13]
+    for field i in 0..13 do
+        for field j in 0..13 do
+            field ix = if b[i][j] > HALF then b[i][j] + 5 else b[i][j] fi
+            result[i][j] = a[i][j][ix]
+        endfor
+    endfor
+    return result

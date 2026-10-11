@@ -1,0 +1,54 @@
+{
+  "program": "case0414",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not expressible",
+    "error": "data[:(data.size // bin_size) * bin_size].reshape(-1, bin_size), line 11",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 13629,
+    "seconds": 0.11650753021240234,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch5/case0414/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Pad the result to eight bins with a public logical count; at most eight nonempty bins fit in eight input elements.",
+      "Replace dynamic reshape and row means by guarded static reductions over the eight input elements. Division of a Q32 sum by a positive integer uses CirC native unsigned integer division with sign conversion; it requires no wide Q32-by-Q32 division gadget."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "elements": 2,
+      "actual_elements": 2,
+      "max_abs_error": 1.7208612312913374e-10
+    },
+    "B": {
+      "status": "pass",
+      "elements": 2,
+      "actual_elements": 2,
+      "max_abs_error": 1.9418544550120487e-10
+    }
+  },
+  "notes": "",
+  "source": {
+    "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0414/kernel.py",
+    "function": "kernel",
+    "sha256": "701469a83238696886372e61b82a44c35373f5753e920c0b17613e22c36a8e42"
+  },
+  "encoding": "Private inputs; public return value. Real numbers are rounded to scale 2^32. Native u64 values use signed two-complement interpretation; integer arithmetic is used for candidate full-width Q32 products to avoid truncating them to 64 bits before rescaling.",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/ds1000_numpy/generated/case0414/fixture.json",
+  "reason": "Eight-bin capacity; guarded sums and native integer division by bin size."
+}

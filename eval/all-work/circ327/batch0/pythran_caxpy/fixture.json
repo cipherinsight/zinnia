@@ -1,0 +1,32 @@
+{
+ "case": "pythran_caxpy",
+ "function": "CAXPY",
+ "parameters": [
+  {"name": "N", "kind": "scalar", "dtype": "int"},
+  {"name": "CA", "kind": "scalar", "dtype": "complex"},
+  {"name": "CX", "kind": "array", "dtype": "complex", "shape": [4]},
+  {"name": "INCX", "kind": "scalar", "dtype": "int"},
+  {"name": "CY", "kind": "array", "dtype": "complex", "shape": [4]},
+  {"name": "INCY", "kind": "scalar", "dtype": "int"}
+ ],
+ "constants": {},
+ "inputs": {
+  "A": {
+   "N": 2,
+   "CA": [1.1, 2.3],
+   "CX": [[1.0, 2.0], [2.0, 3.0], [3.0, 4.0], [5.0, 6.0]],
+   "INCX": 2,
+   "CY": [[3.0, 4.0], [1.0, 2.0], [2.0, 3.0], [5.0, 6.0]],
+   "INCY": 3
+  },
+  "B": {
+   "N": 2,
+   "CA": [1.416083796060983, 2.1191812929628187],
+   "CX": [[0.9498638152060166, 0.9349882418767212], [2.275853345754775, 3.6850730945993466], [3.0473748054011933, 3.7706073792153374], [5.8335517794100396, 5.920316289152246]],
+   "INCX": 2,
+   "CY": [[3.593608799867087, 3.7968585996539512], [0.6716159048082402, 1.860962870185162], [1.9244088023612949, 3.456528279200848], [4.544344622837788, 6.112707291052083]],
+   "INCY": 3
+  }
+ },
+ "notes": "A is the arguments of the example call `CAXPY(2,complex(1.1,2.3),[complex(1,2),complex(2,3),complex(3,4),complex(5,6)],2,[complex(3,4),complex(1,2),complex(2,3),complex(5,6)],3)`. B is a seeded perturbation of A (numpy RandomState(1869677)): noise 10 % of the largest magnitude; integer arrays redrawn in their range."
+}

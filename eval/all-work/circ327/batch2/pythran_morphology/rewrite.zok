@@ -1,0 +1,39 @@
+from "EMBED" import u32_to_field
+from "utils/casts/field_to_u32" import main as idx
+
+def neg(field x) -> bool:
+    return x > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+
+def lt(field x, field y) -> bool:
+    return x+26217937587563095239723870254092982918845276250263818911301829349969290592256 < y+26217937587563095239723870254092982918845276250263818911301829349969290592256
+
+def ab(field x) -> field:
+    return if neg(x) then -x else x fi
+
+def main(private field[8][16] x, private field k) -> field[8][16]:
+    u32 radius = idx(k)/2
+    field[8][16] y = [[0; 16]; 8]
+    for u32 i in 0..8 do
+        for u32 j in 0..16 do
+            u32 left = if i > radius then i-radius else 0 fi
+            u32 right = if i+radius+1 < 8 then i+radius+1 else 8 fi
+            field currmax = x[left][j]
+            for u32 ii in 0..8 do
+                currmax = if ii > left && ii < right && lt(currmax,x[ii][j]) then x[ii][j] else currmax fi
+            endfor
+            y[i][j] = currmax
+        endfor
+    endfor
+    field[8][16] z = [[0; 16]; 8]
+    for u32 i in 0..8 do
+        for u32 j in 0..16 do
+            u32 left = if j > radius then j-radius else 0 fi
+            u32 right = if j+radius+1 < 16 then j+radius+1 else 16 fi
+            field currmax = y[i][left]
+            for u32 jj in 0..16 do
+                currmax = if jj > left && jj < right && lt(currmax,y[i][jj]) then y[i][jj] else currmax fi
+            endfor
+            z[i][j] = currmax
+        endfor
+    endfor
+    return z

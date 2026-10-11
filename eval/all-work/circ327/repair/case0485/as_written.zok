@@ -1,0 +1,14 @@
+from "../native_v1" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[5][6][3] A, private u64[3][3] B) -> u64[5][6][3]:
+    u64[5][6][3] result = [[[0;3];6];5]
+    for u32 i in 0..5 do
+        for u32 j in 0..6 do
+            for u32 k in 0..3 do
+                for u32 l in 0..3 do
+                    result[i][j][k] = (result[i][j][k] + mulq(A[i][j][l], B[l][k]))
+                endfor
+            endfor
+        endfor
+    endfor
+    return result

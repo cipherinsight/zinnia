@@ -1,0 +1,24 @@
+// Reals are encoded at scale 2^32; signed field values use centered residues.
+def lt(field a, field b) -> bool:
+    bool an = a > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+    bool bn = b > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+    return if an == bn then a < b else an fi
+
+
+def main(private field N, private field[4][2] CX, private field INCX, private field[4][2] CY, private field INCY) -> field[4][2]:
+    assert(N <= 1024)
+    field IX = if lt(INCX,0) then (1-N)*INCX else 0 fi
+    field IY = if lt(INCY,0) then (1-N)*INCY else 0 fi
+    for field I in 0..1024 do
+        bool active = I < N
+        field sx = if INCX == 1 && INCY == 1 then I else IX fi
+        field sy = if INCX == 1 && INCY == 1 then I else IY fi
+        sx = if active then sx else 0 fi
+        sy = if active then sy else 0 fi
+        sx = if lt(sx,0) then sx+4 else sx fi
+        sy = if lt(sy,0) then sy+4 else sy fi
+        CY[sy] = if active then CX[sx] else CY[sy] fi
+        IX = IX+INCX
+        IY = IY+INCY
+    endfor
+    return CY

@@ -1,0 +1,55 @@
+from "EMBED" import int_to_bits, u32_from_bits, field_to_integer, u32_to_field
+
+def ui(integer x) -> u32:
+    return u32_from_bits(int_to_bits::<32>(x))
+
+def it(u32 x) -> integer:
+    return field_to_integer(u32_to_field(x))
+
+def mul(integer x, integer y) -> integer:
+    return (x*y)/4294967296
+
+def main(private integer[6][2] neigh_idx, private integer[6][2][2][3][3][2] dH, private integer[2][4][6][3][3][2] G, private integer[2][2][6][2][2][2][2] D, private integer[2][4][6][3][3][2] Sigma) -> integer[2][4][6][3][3][2]:
+    for u32 k in 0..2 do
+        for u32 E in 0..4 do
+            for u32 q in 0..2 do
+                for u32 w in 0..2 do
+                    for u32 i in 0..2 do
+                        for u32 j in 0..2 do
+                            for u32 a in 0..6 do
+                                for u32 b in 0..2 do
+                                    integer nb = if neigh_idx[a][b] < 0 then neigh_idx[a][b]+6 else neigh_idx[a][b] fi
+                                    u32 ew = if E >= w then E-w else 0 fi
+                                    integer[3][3][2] dHG = [[[0; 2]; 3]; 3]
+                                    integer[3][3][2] dHD = [[[0; 2]; 3]; 3]
+                                    for u32 r in 0..3 do
+                                        for u32 s in 0..3 do
+                                            for u32 t in 0..3 do
+                                                dHG[r][s][0] = dHG[r][s][0]+mul(G[k][ew][ui(nb)][r][t][0],dH[a][b][i][t][s][0])-mul(G[k][ew][ui(nb)][r][t][1],dH[a][b][i][t][s][1])
+                                                dHG[r][s][1] = dHG[r][s][1]+mul(G[k][ew][ui(nb)][r][t][0],dH[a][b][i][t][s][1])+mul(G[k][ew][ui(nb)][r][t][1],dH[a][b][i][t][s][0])
+                                            endfor
+                                            dHD[r][s][0] = mul(dH[a][b][j][r][s][0],D[q][w][a][b][i][j][0])-mul(dH[a][b][j][r][s][1],D[q][w][a][b][i][j][1])
+                                            dHD[r][s][1] = mul(dH[a][b][j][r][s][0],D[q][w][a][b][i][j][1])+mul(dH[a][b][j][r][s][1],D[q][w][a][b][i][j][0])
+                                        endfor
+                                    endfor
+                                    for u32 r in 0..3 do
+                                        for u32 s in 0..3 do
+                                            integer real = 0
+                                            integer imag = 0
+                                            for u32 t in 0..3 do
+                                                real = real+mul(dHG[r][t][0],dHD[t][s][0])-mul(dHG[r][t][1],dHD[t][s][1])
+                                                imag = imag+mul(dHG[r][t][0],dHD[t][s][1])+mul(dHG[r][t][1],dHD[t][s][0])
+                                            endfor
+                                            Sigma[k][E][a][r][s][0] = if E >= w then Sigma[k][E][a][r][s][0]+real else Sigma[k][E][a][r][s][0] fi
+                                            Sigma[k][E][a][r][s][1] = if E >= w then Sigma[k][E][a][r][s][1]+imag else Sigma[k][E][a][r][s][1] fi
+                                        endfor
+                                    endfor
+                                endfor
+                            endfor
+                        endfor
+                    endfor
+                endfor
+            endfor
+        endfor
+    endfor
+    return Sigma

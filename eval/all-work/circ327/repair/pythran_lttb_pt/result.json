@@ -1,0 +1,96 @@
+{
+  "program": "pythran_lttb_pt",
+  "function": "downsample",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:24: data_bins = np.array_split(data[1:len(data) - 1], n_bins). Private n_out controls array_split bin shapes and output length; successful source executions require 3<=n_out<=16.",
+    "constraints": null,
+    "source_file": "pythran_lttb_pt/as_written.zok",
+    "artifact_sha256": "71791ff115c0614f2e42488360b7ce5474c45b39f3a1977b15a9228f926ca3d3"
+  },
+  "rewrite": {
+    "status": "accepted",
+    "constraints": 1157115,
+    "error": null,
+    "seconds": 21.330959573002474,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_lttb_pt/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Valid returns require 3<=n_out<=16 by explicit source exceptions. Pad the output to sixteen points and guard at most fourteen array_split bins; preserve larger first bins, mean and first argmax tie-breaking."
+    ],
+    "source_file": "pythran_lttb_pt/rewrite.zok",
+    "artifact_sha256": "030c6b155a0fbca9889aa90734ec3deb36505843608372ed9cb3a3c50e9cef78"
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "expected_elements": 16,
+      "actual_elements": 16,
+      "max_abs_error": 0.0,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_lttb_pt/rewrite.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_lttb_pt/A.pin"
+      ]
+    },
+    "B": {
+      "status": "pass",
+      "expected_elements": 16,
+      "actual_elements": 16,
+      "max_abs_error": 1.1470291383375297e-10,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_lttb_pt/rewrite.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_lttb_pt/B.pin"
+      ]
+    }
+  },
+  "notes": "Native u64 Q32 arithmetic with explicit signs, wide product parts, and quotient/remainder digits; all source outputs retained.",
+  "source": {
+    "program": "pythran_lttb_pt",
+    "dataset": "pythran",
+    "kernel": "benchmarking/datasets/pythran/pythran_lttb_pt/kernel.py",
+    "function": "downsample",
+    "sha256": "ac9209aa9a9c32c14b9560808c03b248f3824dc9eb0eec3e83384067c3e62283"
+  },
+  "numeric_encoding": {
+    "real_scale": 4294967296,
+    "rtol": 1e-06,
+    "atol": 1e-06,
+    "representation": "signed two-complement u64 with native wide products",
+    "helper": {
+      "file": "native_v1.zok",
+      "sha256": "8e37dc19d2ec49c06392f37e5a4f379a8a76d3db6ed33c9224f6e9398e76f987"
+    }
+  },
+  "old_category": "needs_gadget: division",
+  "old_result": "batch5/pythran_lttb_pt/result.json",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+    "tmpdir": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/tmp"
+  },
+  "fixture": {
+    "path": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/pythran/pythran_lttb_pt/fixture.json",
+    "sha256": "3de74c6228ab83451f8251a8c6bafd13206383df6f42446fbce0807cc1394010"
+  },
+  "reason": "Valid returns require 3<=n_out<=16 by explicit source exceptions. Pad the output to sixteen points and guard at most fourteen array_split bins; preserve larger first bins, mean and first argmax tie-breaking. A/B pass."
+}

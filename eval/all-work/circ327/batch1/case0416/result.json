@@ -1,0 +1,29 @@
+{
+  "program": "case0416",
+  "category": "needs_gadget: division",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:11: The dynamic reshape can be padded to 8x6 (six columns bound the number of bins), but mean(axis=-1) then needs signed fixed-point division by bin_size.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "needs_gadget",
+    "error": "The dynamic reshape can be padded to 8x6 (six columns bound the number of bins), but mean(axis=-1) then needs signed fixed-point division by bin_size.",
+    "constraints": null,
+    "rewrites": [
+      "Pad to 8x6 and preserve logical shape, capacity implied by six input columns."
+    ]
+  },
+  "correctness": {
+    "A": "not run: no accepted attempt",
+    "B": "not run: no accepted attempt"
+  },
+  "notes": [
+    "The dynamic reshape can be padded to 8x6 (six columns bound the number of bins), but mean(axis=-1) then needs signed fixed-point division by bin_size."
+  ],
+  "source": {
+    "kernel": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch1/case0416/kernel.py",
+    "function": "kernel",
+    "line": 11
+  }
+}

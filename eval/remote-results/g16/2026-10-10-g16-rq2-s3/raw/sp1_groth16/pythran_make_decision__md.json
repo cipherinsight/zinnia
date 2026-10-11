@@ -1,0 +1,312 @@
+{
+ "schema": 1,
+ "system": "sp1_groth16",
+ "case": "pythran_make_decision__md",
+ "description": "SP1 6.8.1, Groth16-wrapped proof, Q32 guest",
+ "windows": {
+  "prove_core": "client.prove in groth16 mode (prove); SP1's SDK proves from the program and its input, so execution happens inside the prove call and cannot be excluded",
+  "end_to_end": "client.prove (prove), which includes execution",
+  "verify": "client.verify (verify)"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/pythran/pythran_make_decision/kernel.py": "e5e08bd1b6719a6441d72266c154545370f5deece0b2727c182e029195a352cc",
+  "benchmarking/datasets/pythran/pythran_make_decision/fixture.json": "8bb8b904a14cf1644f00af95b8298687d63d6a52494e28a04c0fafc172ad5802",
+  "benchmarking/datasets/pythran/pythran_make_decision/zkvm.rs": "477b8d0c7d38d528dd4539de9e0eb8dd43e502a962d9f8387262697084462812",
+  "benchmarking/baselines/sp1/target/release/sp1-baseline": "65e77c96da5e2637bd23b4f3d28c164da7810e2ae644c55443537c04888efd01"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-10T16:22:36+0000",
+  "loadavg": [
+   8.37548828125,
+   8.1279296875,
+   8.1005859375
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "client_init": 25.850455139,
+    "setup": 1.6613623610000001,
+    "process_wall": 27.801872809417546
+   },
+   "details": {
+    "case": "pythran_make_decision/md",
+    "input": "A",
+    "mode": "setup",
+    "peak_rss_mib": 7175.0,
+    "proof_path": null,
+    "sdk_version": "6.8.1",
+    "system": "sp1",
+    "vk_hash": "0x007c909f34da43b0b68727f6dc39ea34cead7f930260b2e02d0328b792ea0eb2",
+    "vk_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s3/work/sp1_groth16/pythran_make_decision__md/program/vk.bin"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 27.903329646214843,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 7549300736,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   47.9921875,
+   25.29736328125,
+   14.5068359375
+  ],
+  "child": {
+   "wall_s": 363.5411872509867,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 28889223168,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 337.054981417,
+   "end_to_end_s": 337.054981417,
+   "proof_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s3/work/sp1_groth16/pythran_make_decision__md/proofs/warmup/program/proof-groth16-B.bin",
+   "proof_bytes": 1982,
+   "timings_s": {
+    "client_init": 25.402423203,
+    "execute": 0.015336469,
+    "prove": 337.054981417,
+    "process_wall": 363.3682695310563
+   },
+   "details": {
+    "case": "pythran_make_decision/md",
+    "cycles": 63280,
+    "gas": 68474,
+    "input": "B",
+    "input_shapes": [
+     16,
+     8
+    ],
+    "mode": "prove",
+    "peak_rss_mib": 27519.0,
+    "proof_mode": "groth16",
+    "proof_size_bytes": 1982,
+    "sdk_version": "6.8.1",
+    "syscalls": 10,
+    "system": "sp1"
+   },
+   "proof_sha256": "0c661e34c182b82e7c8751db7833a49b24ba37b8009c9bd89e0572b922e4f467"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 32 elements differ",
+   "expected_count": 32,
+   "actual_count": 32,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "cdc55230134009018f79e324e5253b700d8f48d8ed910650b4deb9cdabfcda70",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    -0.6396330702118576,
+    0.34999986132606864,
+    1.4841083665378392,
+    0.2966846488416195,
+    1.4841083665378392,
+    0.2966846488416195,
+    4.855399752501398,
+    4.290172959212214,
+    5.970213683787733,
+    7.154794074362144,
+    4.855399752501398,
+    4.290172959212214,
+    7.704878398915753,
+    8.424722916912287,
+    5.970213683787733,
+    7.154794074362144,
+    7.704878398915753,
+    8.424722916912287,
+    7.704878398915753,
+    8.424722916912287,
+    7.704878398915753,
+    8.424722916912287,
+    12.086947478586808,
+    9.069776249816641,
+    11.947002389235422,
+    12.520455876598135,
+    11.947002389235422,
+    12.520455876598135,
+    12.086947478586808,
+    9.069776249816641,
+    14.452625177334994,
+    13.990956678288057
+   ],
+   "elided": [],
+   "shapes": null
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    52.30712890625,
+    49.83447265625,
+    29.7001953125
+   ],
+   "child": {
+    "wall_s": 368.9863376747817,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 29407420416,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 342.895845204,
+    "end_to_end_s": 342.895845204,
+    "proof_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s3/work/sp1_groth16/pythran_make_decision__md/proofs/sample-1/program/proof-groth16-B.bin",
+    "proof_bytes": 1982,
+    "timings_s": {
+     "client_init": 24.683974342,
+     "execute": 0.015286113,
+     "prove": 342.895845204,
+     "process_wall": 368.84513399843127
+    },
+    "details": {
+     "case": "pythran_make_decision/md",
+     "cycles": 63280,
+     "gas": 68474,
+     "input": "B",
+     "input_shapes": [
+      16,
+      8
+     ],
+     "mode": "prove",
+     "peak_rss_mib": 28013.0,
+     "proof_mode": "groth16",
+     "proof_size_bytes": 1982,
+     "sdk_version": "6.8.1",
+     "syscalls": 10,
+     "system": "sp1"
+    },
+    "proof_sha256": "984e9938356ce9b734abeaaa1d4374c184e5ef87bfe96c59d6540c01e9c5ff25"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 32 elements differ",
+    "expected_count": 32,
+    "actual_count": 32,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "cdc55230134009018f79e324e5253b700d8f48d8ed910650b4deb9cdabfcda70",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     -0.6396330702118576,
+     0.34999986132606864,
+     1.4841083665378392,
+     0.2966846488416195,
+     1.4841083665378392,
+     0.2966846488416195,
+     4.855399752501398,
+     4.290172959212214,
+     5.970213683787733,
+     7.154794074362144,
+     4.855399752501398,
+     4.290172959212214,
+     7.704878398915753,
+     8.424722916912287,
+     5.970213683787733,
+     7.154794074362144,
+     7.704878398915753,
+     8.424722916912287,
+     7.704878398915753,
+     8.424722916912287,
+     7.704878398915753,
+     8.424722916912287,
+     12.086947478586808,
+     9.069776249816641,
+     11.947002389235422,
+     12.520455876598135,
+     11.947002389235422,
+     12.520455876598135,
+     12.086947478586808,
+     9.069776249816641,
+     14.452625177334994,
+     13.990956678288057
+    ],
+    "elided": [],
+    "shapes": null
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.447584235,
+     "not_applicable": null,
+     "timings_s": {
+      "client_init": 0.542708364,
+      "verify": 0.447584235,
+      "process_wall": 1.0014550108462572
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 1.1213768040761352,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 88764416,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 1.5086e-05,
+    "not_applicable": null,
+    "timings_s": {
+     "client_init": 0.537790654,
+     "verify": 1.5086e-05,
+     "process_wall": 0.5487490240484476
+    },
+    "details": {
+     "error": null
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.7046187371015549,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 79142912,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

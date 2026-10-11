@@ -1,0 +1,424 @@
+{
+ "epoch": "2026-10-08-fin-zn-s5",
+ "systems": [
+  "zinnia_halo2",
+  "zinnia_noir"
+ ],
+ "coverage": {
+  "zinnia_halo2": {
+   "cases": 10,
+   "ok": 10,
+   "by_status": {
+    "ok": 10
+   },
+   "failures": []
+  },
+  "zinnia_noir": {
+   "cases": 10,
+   "ok": 10,
+   "by_status": {
+    "ok": 10
+   },
+   "failures": []
+  }
+ },
+ "end_to_end_witness_step": {
+  "zinnia_noir": {
+   "noir-execute": 10
+  }
+ },
+ "all_supported_subset": [
+  "npbench_go_fast_go_fast__go_fast",
+  "npbench_polybench_gemver_gemver__kernel",
+  "npbench_polybench_symm_symm__kernel",
+  "npbench_weather_stencils_vadv_vadv__vadv",
+  "pythran_crotg__CROTG",
+  "pythran_hasting__fweb",
+  "pythran_lu__factorMatrix0",
+  "pythran_pairwise__pairwise",
+  "pythran_smoothing__smoothing",
+  "pythran_wdist__slow_wdist"
+ ],
+ "headline_subset": [
+  "npbench_go_fast_go_fast__go_fast",
+  "npbench_polybench_gemver_gemver__kernel",
+  "npbench_polybench_symm_symm__kernel",
+  "npbench_weather_stencils_vadv_vadv__vadv",
+  "pythran_crotg__CROTG",
+  "pythran_hasting__fweb",
+  "pythran_lu__factorMatrix0",
+  "pythran_pairwise__pairwise",
+  "pythran_smoothing__smoothing",
+  "pythran_wdist__slow_wdist"
+ ],
+ "data_movement_subset": [],
+ "comparisons_headline": [],
+ "comparisons_data_movement": [],
+ "comparisons_all_supported": [],
+ "comparisons_pairwise": [],
+ "comparisons_by_group": {
+  "npbench": {
+   "headline_subset": [
+    "npbench_go_fast_go_fast__go_fast",
+    "npbench_polybench_gemver_gemver__kernel",
+    "npbench_polybench_symm_symm__kernel",
+    "npbench_weather_stencils_vadv_vadv__vadv"
+   ],
+   "comparisons": []
+  },
+  "pythran": {
+   "headline_subset": [
+    "pythran_crotg__CROTG",
+    "pythran_hasting__fweb",
+    "pythran_lu__factorMatrix0",
+    "pythran_pairwise__pairwise",
+    "pythran_smoothing__smoothing",
+    "pythran_wdist__slow_wdist"
+   ],
+   "comparisons": []
+  }
+ },
+ "excluded_cases": [
+  {
+   "case": "npbench_azimint_hist_azimint_hist__azimint_hist",
+   "reason": "rejected_compiler_limitation (np.histogram of runtime data): ZinniaException: IR generation failed: histogram: first slice supports compile-time-data histogram only; runtime/private values are not supported"
+  },
+  {
+   "case": "npbench_azimint_naive_azimint_naive__azimint_naive",
+   "reason": "rejected_no_provable_bound (array shape from a runtime value): ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int"
+  },
+  {
+   "case": "npbench_cavity_flow_cavity_flow__cavity_flow",
+   "reason": "rejected_no_provable_bound (array shape from a runtime value): ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int"
+  },
+  {
+   "case": "npbench_channel_flow_channel_flow__channel_flow",
+   "reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s"
+  },
+  {
+   "case": "npbench_contour_integral_contour_integral__contour_integral",
+   "reason": "rejected_no_provable_bound (array shape from a runtime value): ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int"
+  },
+  {
+   "case": "npbench_deep_learning_lenet_lenet__lenet5",
+   "reason": "rejected_compiler_limitation (operation on a runtime-shaped array): ZinniaException: IR generation failed: this operation is not supported on an array with a runtime shape (the result of a boolean mask, nonzero/argwhere/unique, or a slice with runtime bounds)"
+  },
+  {
+   "case": "npbench_deep_learning_resnet_resnet__resnet_basicblock",
+   "reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s"
+  },
+  {
+   "case": "npbench_mandelbrot1_mandelbrot1__mandelbrot",
+   "reason": "rejected_no_provable_bound (np.linspace num from a runtime value): ZinniaException: IR generation failed: linspace `num` must be a compile-time constant int"
+  },
+  {
+   "case": "npbench_mandelbrot2_mandelbrot2__mandelbrot",
+   "reason": "rejected_unsupported_construct (assignment to an Attribute): ZinniaException:   In method \"mandelbrot\", line 10\n        Xi.shape = Yi.shape = C.shape = xn * yn\n        ^^^^^^^^\nInvalidAssignStatementException: Unsupported assignment target `Attribute`; only nam"
+  },
+  {
+   "case": "npbench_nbody_nbody__nbody",
+   "reason": "rejected_compiler_limitation (precondition of `pow_f` neither proved nor checkable in the circuit): ZinniaException: IR generation failed: op `pow_f` requires precondition `BoolComb { op: Or, operands: [Cmp { op: Ne, lhs: Var(Value(ValueId(48545))), rhs: LitFloat(ContractFloat(0.0)) }, Cmp { op: Ge,"
+  },
+  {
+   "case": "npbench_polybench_adi_adi__kernel",
+   "reason": "rejected_no_provable_bound (range() trip count): ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value wit"
+  },
+  {
+   "case": "npbench_polybench_cholesky2_cholesky2__kernel",
+   "reason": "rejected_compiler_limitation (np.linalg.cholesky (result-returning linear algebra)): ZinniaException: IR generation failed: np.linalg.cholesky: implicit result-returning linear algebra is deferred because @zk_external currently returns one scalar, not an array witness; supply an expli"
+  },
+  {
+   "case": "npbench_polybench_correlation_correlation__kernel",
+   "reason": "rejected_no_provable_bound (array shape from a runtime value): ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int"
+  },
+  {
+   "case": "npbench_polybench_covariance_covariance__kernel",
+   "reason": "rejected_no_provable_bound (array shape from a runtime value): ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int"
+  },
+  {
+   "case": "npbench_polybench_doitgen_doitgen__kernel",
+   "reason": "rejected_compiler_limitation (operation on a runtime-shaped array): ZinniaException: IR generation failed: this operation is not supported on an array with a runtime shape (the result of a boolean mask, nonzero/argwhere/unique, or a slice with runtime bounds)"
+  },
+  {
+   "case": "npbench_polybench_fdtd_2d_fdtd_2d__kernel",
+   "reason": "rejected_no_provable_bound (range() trip count): ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value wit"
+  },
+  {
+   "case": "npbench_polybench_floyd_warshall_floyd_warshall__kernel",
+   "reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s"
+  },
+  {
+   "case": "npbench_polybench_heat_3d_heat_3d__kernel",
+   "reason": "rejected_no_provable_bound (range() trip count): ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value wit"
+  },
+  {
+   "case": "npbench_polybench_jacobi_1d_jacobi_1d__kernel",
+   "reason": "rejected_no_provable_bound (range() trip count): ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value wit"
+  },
+  {
+   "case": "npbench_polybench_jacobi_2d_jacobi_2d__kernel",
+   "reason": "rejected_no_provable_bound (range() trip count): ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value wit"
+  },
+  {
+   "case": "npbench_polybench_nussinov_nussinov__kernel",
+   "reason": "rejected_no_provable_bound (array shape from a runtime value): ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int"
+  },
+  {
+   "case": "npbench_polybench_seidel_2d_seidel_2d__kernel",
+   "reason": "rejected_no_provable_bound (range() trip count): ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value wit"
+  },
+  {
+   "case": "npbench_spmv_spmv__spmv",
+   "reason": "rejected_compiler_limitation (matmul of a runtime-shaped array): ZinniaException: IR generation failed: DynamicNDArray matmul is not yet supported for bounded-dynamic arrays; use static arrays or keep matmul outside the bounded-dynamic surface"
+  },
+  {
+   "case": "npbench_stockham_fft_stockham_fft__stockham_fft",
+   "reason": "rejected_unsupported_construct (np.mgrid): ZinniaException: IR generation failed: np.mgrid is not implemented"
+  },
+  {
+   "case": "pythran_allpairs_distances__allpairs_distances",
+   "reason": "rejected_no_provable_bound (np.arange length from a runtime value): ZinniaException: IR generation failed: range stop must be a compile-time constant int"
+  },
+  {
+   "case": "pythran_allpairs_distances_loops__allpairs_distances_loops",
+   "reason": "rejected_no_provable_bound (array shape from a runtime value): ZinniaException: IR generation failed: shape element at axis 1 must be a compile-time constant int"
+  },
+  {
+   "case": "pythran_another_quicksort__QuickSort",
+   "reason": "rejected_no_provable_bound (while-loop trip count): ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: the `while` condition was not proven false within loop_limit=1000 unrolled iterations. Bound the "
+  },
+  {
+   "case": "pythran_approximated_callgraph__approximated_callgraph",
+   "reason": "rejected_compiler_limitation (list() of a runtime-shaped array): ZinniaException: IR generation failed: list() of an array with a runtime shape is not supported: its length is not a compile-time number"
+  },
+  {
+   "case": "pythran_babylonian__is_square",
+   "reason": "rejected_unsupported_construct (set): ZinniaException:   In method \"is_square\", line 5\n        seen = {x}\n               ^^^\nUnsupportedLangFeatureException: Set literals are not supported inside @zk_circuit because circuits have no set t"
+  },
+  {
+   "case": "pythran_blacksholes__BlackScholes",
+   "reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s"
+  },
+  {
+   "case": "pythran_calculate_u__timeloop",
+   "reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s"
+  },
+  {
+   "case": "pythran_caxpy__CAXPY",
+   "reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s"
+  },
+  {
+   "case": "pythran_ccopy__CCOPY",
+   "reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s"
+  },
+  {
+   "case": "pythran_cdotc__CDOTC",
+   "reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s"
+  },
+  {
+   "case": "pythran_cdotu__CDOTU",
+   "reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s"
+  },
+  {
+   "case": "pythran_check_mask__check_mask",
+   "reason": "rejected_unsupported_construct (np.bitwise_and): ZinniaException: IR generation failed: np.bitwise_and is not implemented"
+  },
+  {
+   "case": "pythran_clip2__clip",
+   "reason": "rejected_compiler_limitation (shape element from a bounded runtime value where a constant is needed): ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int (it is a runtime value in [0, 2]; a runtime size is not supported here)"
+  },
+  {
+   "case": "pythran_collatz__collatz",
+   "reason": "rejected_compiler_limitation (operation on a runtime-shaped array): ZinniaException: IR generation failed: this operation is not supported on an array with a runtime shape (the result of a boolean mask, nonzero/argwhere/unique, or a slice with runtime bounds)"
+  },
+  {
+   "case": "pythran_collatz_modified__collatz_modified",
+   "reason": "rejected_no_provable_bound (while-loop trip count): ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: the `while` condition was not proven false within loop_limit=1000 unrolled iterations. Bound the "
+  },
+  {
+   "case": "pythran_compute_subpix_2d_gaussian2__compute_subpix_2d_gaussian2",
+   "reason": "rejected_compiler_limitation (np.nonzero of a runtime-shaped array): ZinniaException: IR generation failed: nonzero: DynamicNDArray input is deferred; use static numeric arrays for now"
+  },
+  {
+   "case": "pythran_convnet__convnet",
+   "reason": "rejected_compiler_limitation (precondition of `div_f` neither proved nor checkable in the circuit): ZinniaException: IR generation failed: op `div_f` requires precondition `Cmp { op: Ne, lhs: Var(Value(ValueId(2013))), rhs: LitFloat(ContractFloat(0.0)) }` could not be lowered to a witness constraint"
+  },
+  {
+   "case": "pythran_deriv__deriv",
+   "reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s"
+  },
+  {
+   "case": "pythran_diffusion__diffuseNumpy",
+   "reason": "rejected_no_provable_bound (range() trip count): ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value wit"
+  },
+  {
+   "case": "pythran_emin__run",
+   "reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s"
+  },
+  {
+   "case": "pythran_euler_challenge14__euler14",
+   "reason": "rejected_unsupported_construct (dict): ZinniaException:   In method \"euler14\", line 5\n        lengths = {1: 0}\n                  ^^^^^^\nUnsupportedLangFeatureException: Dict literals are not supported inside @zk_circuit because mapping typ"
+  },
+  {
+   "case": "pythran_factorize_naive__factorize_naive",
+   "reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s"
+  },
+  {
+   "case": "pythran_fannkuch__fannkuch2",
+   "reason": "rejected_compiler_limitation (range() with a runtime bound used as a value): ZinniaException: IR generation failed: range() with a runtime argument is only supported as the iterable of a `for` loop or comprehension (got a Integer that is not a compile-time constant)"
+  },
+  {
+   "case": "pythran_fdtd__fdtd",
+   "reason": "rejected_no_provable_bound (range() trip count): ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value wit"
+  },
+  {
+   "case": "pythran_fft__fft",
+   "reason": "rejected_unsupported_construct (call of `fft` (no builtin, chip or numpy function of that name in scope)): ZinniaException: IR generation failed: Unknown function `fft` in @zk_circuit. If `fft` is a helper you defined, decorate it with @zk_chip (or @zk_external for off-circuit witness functions). no @zk_ch"
+  },
+  {
+   "case": "pythran_fibo__test",
+   "reason": "rejected_compiler_limitation (recursion deeper than the inlining limit (16)): ZinniaException: IR generation failed: RecursionLimitExceededError: recursion limit (16) exceeded while inlining @zk_chip `rfibo`. Each recursive call into a chip is unrolled at compile time; if your "
+  },
+  {
+   "case": "pythran_gauss__gauss",
+   "reason": "rejected_compiler_limitation (chip that returns on some paths only): ZinniaException: IR generation failed: Chip return inference does not support partial returns without an explicit return annotation"
+  },
+  {
+   "case": "pythran_grouping__grouping",
+   "reason": "rejected_compiler_limitation (np.concatenate/np.stack of nested lists): ZinniaException: IR generation failed: concatenate/stack: unsupported element type List { elements: [Integer] }"
+  },
+  {
+   "case": "pythran_growcut__test",
+   "reason": "rejected_resource_limit (compile memory over 8G): out of memory after 56s"
+  },
+  {
+   "case": "pythran_guerre__guerre",
+   "reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s"
+  },
+  {
+   "case": "pythran_histogram__histogram",
+   "reason": "rejected_no_provable_bound (list repetition with a runtime count): ZinniaException: IR generation failed: sequence repetition `seq * n` with a runtime count `n` is not supported: a list's length must be known at compile time (use np.zeros/np.full with a bounded shape"
+  },
+  {
+   "case": "pythran_hyantes_core__run",
+   "reason": "rejected_no_provable_bound (range() trip count): ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value wit"
+  },
+  {
+   "case": "pythran_lapl2d__lapl2d",
+   "reason": "rejected_compiler_limitation (array name bound to different arrays on runtime paths, then written): ZinniaException: IR generation failed: Reading `In` is not supported here: a name that refers to this array on some paths and to another array on others (bound under a runtime condition) was used to m"
+  },
+  {
+   "case": "pythran_laplace__calc",
+   "reason": "rejected_no_provable_bound (list repetition with a runtime count): ZinniaException: IR generation failed: sequence repetition `seq * n` with a runtime count `n` is not supported: a list's length must be known at compile time (use np.zeros/np.full with a bounded shape"
+  },
+  {
+   "case": "pythran_ldpc_decoder__Decoding_logBP",
+   "reason": "rejected_unsupported_construct (method or attribute `.dot`): ZinniaException: IR generation failed: Named attribute `X.dot` not yet implemented in Rust IR generator"
+  },
+  {
+   "case": "pythran_lttb_pt__downsample",
+   "reason": "rejected_compiler_limitation (split sections from a bounded runtime value where a constant is needed): ZinniaException: IR generation failed: split sections must be a compile-time constant int (it is a runtime value in [-2, 1022]; a runtime size is not supported here)"
+  },
+  {
+   "case": "pythran_make_circle_two_points___make_circle_one_point",
+   "reason": "rejected_unsupported_construct (`is` / `is not`): ZinniaException:   In method \"make_circle_two_points\", line 13\n            if c is None:\n               ^^^^^^^^^\nUnsupportedOperatorException: `is` / `is not` compare object identity, which circuit v"
+  },
+  {
+   "case": "pythran_mandel__mandel",
+   "reason": "rejected_resource_limit (compile memory over 8G): out of memory after 24s"
+  },
+  {
+   "case": "pythran_matrix_class_distance__matrix_class_distance",
+   "reason": "rejected_no_provable_bound (range() trip count): ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value wit"
+  },
+  {
+   "case": "pythran_monte_carlo__montecarlo_integration",
+   "reason": "rejected_no_provable_bound (range() trip count): ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value wit"
+  },
+  {
+   "case": "pythran_morphology__dilate_decompose_loops",
+   "reason": "rejected_no_provable_bound (range() trip count (proven bound too large to unroll)): ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: the proven bound on the number of iterations of range() is 9223372036854775806, more than the 167"
+  },
+  {
+   "case": "pythran_mulmod__gf2mulmod",
+   "reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s"
+  },
+  {
+   "case": "pythran_nd_local_maxima__local_maxima",
+   "reason": "rejected_unsupported_construct (unannotated entry parameter): ZinniaException:   In method \"local_maxima\", line 2\n    def local_maxima(data: Float[Array, '8 6 4 2'], mode=wrap):\n                                                    ^^^^\nInvalidCircuitInputExceptio"
+  },
+  {
+   "case": "pythran_nqueens__n_queens",
+   "reason": "rejected_unsupported_construct (`is` / `is not`): ZinniaException:   In method \"permutations\", line 6\n        if r is None:\n           ^^^^^^^^^\nUnsupportedOperatorException: `is` / `is not` compare object identity, which circuit values do not have; "
+  },
+  {
+   "case": "pythran_pivot__pivot",
+   "reason": "rejected_no_provable_bound (range() trip count): ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value wit"
+  },
+  {
+   "case": "pythran_primes_sieve2__get_primes7",
+   "reason": "rejected_compiler_limitation (range() with a runtime bound used as a value): ZinniaException: IR generation failed: range() with a runtime argument is only supported as the iterable of a `for` loop or comprehension (got a Integer that is not a compile-time constant)"
+  },
+  {
+   "case": "pythran_primes_sieve__primes_sieve",
+   "reason": "rejected_no_provable_bound (list repetition with a runtime count): ZinniaException: IR generation failed: sequence repetition `seq * n` with a runtime count `n` is not supported: a list's length must be known at compile time (use np.zeros/np.full with a bounded shape"
+  },
+  {
+   "case": "pythran_pselect__pselect",
+   "reason": "rejected_unsupported_construct (function used as a value): ZinniaException: IR generation failed: functions as values are not supported: `sel0` is used without being called (circuits have no function values; call it directly)"
+  },
+  {
+   "case": "pythran_queens_numba__solve",
+   "reason": "rejected_unsupported_construct (list mutated through a second name (aliasing)): ZinniaException: IR generation failed: mutating this list through `queens_x` is not supported: the same list is also reachable through `queens_x` (Python shares a list on assignment, argument passing "
+  },
+  {
+   "case": "pythran_quicksort__quicksort",
+   "reason": "rejected_no_provable_bound (while-loop trip count): ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: the `while` condition was not proven false within loop_limit=1000 unrolled iterations. Bound the "
+  },
+  {
+   "case": "pythran_repeating__repeating",
+   "reason": "rejected_no_provable_bound (array shape from a runtime value): ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int"
+  },
+  {
+   "case": "pythran_sexy_primes__primes_below",
+   "reason": "rejected_no_provable_bound (range() trip count): ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value wit"
+  },
+  {
+   "case": "pythran_shallow_water__run",
+   "reason": "rejected_no_provable_bound (array shape from a runtime value): ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int"
+  },
+  {
+   "case": "pythran_slowparts__slowparts",
+   "reason": "rejected_no_provable_bound (array shape from a runtime value): ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int"
+  },
+  {
+   "case": "pythran_sobelfilter__sobelFilter",
+   "reason": "rejected_no_provable_bound (range() trip count): ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value wit"
+  },
+  {
+   "case": "pythran_stone__whetstone",
+   "reason": "rejected_no_provable_bound (range() trip count): ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value wit"
+  },
+  {
+   "case": "pythran_sum_primes__sum_primes",
+   "reason": "rejected_unsupported_construct (np.ceil): ZinniaException: IR generation failed: np.ceil is not implemented"
+  },
+  {
+   "case": "pythran_train_eq__train_eq",
+   "reason": "rejected_no_provable_bound (array shape from a runtime value): ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int"
+  },
+  {
+   "case": "pythran_train_eq__train_eq2",
+   "reason": "rejected_no_provable_bound (array shape from a runtime value): ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int"
+  },
+  {
+   "case": "pythran_wave_simulation__test",
+   "reason": "rejected_no_provable_bound (array shape from a runtime value): ZinniaException: IR generation failed: shape element at axis 1 must be a compile-time constant int"
+  },
+  {
+   "case": "pythran_zero__zero",
+   "reason": "rejected_resource_limit (compile memory over 8G): out of memory after 22s"
+  }
+ ],
+ "acceptance": null
+}

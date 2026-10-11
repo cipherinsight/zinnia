@@ -1,0 +1,280 @@
+{
+  "id": "ds1000_numpy__case0369__kernel",
+  "sites": {
+    "11:26:11:33:Subscript": "a[:, 0]",
+    "11:26:11:48:Call": "a[:, 0].reshape(-1, 1)",
+    "11:12:11:57:Call": "np.isclose(a, a[:, 0].reshape(-1, 1), atol=0)"
+  },
+  "numpy": {
+    "A": [
+      {
+        "site": "11:26:11:33:Subscript",
+        "value": {
+          "shape": [
+            3
+          ],
+          "length": 3
+        }
+      },
+      {
+        "site": "11:26:11:48:Call",
+        "value": {
+          "shape": [
+            3,
+            1
+          ],
+          "length": 3
+        }
+      },
+      {
+        "site": "11:12:11:57:Call",
+        "value": {
+          "shape": [
+            3,
+            3
+          ],
+          "length": 9
+        }
+      }
+    ],
+    "B": [
+      {
+        "site": "11:26:11:33:Subscript",
+        "value": {
+          "shape": [
+            3
+          ],
+          "length": 3
+        }
+      },
+      {
+        "site": "11:26:11:48:Call",
+        "value": {
+          "shape": [
+            3,
+            1
+          ],
+          "length": 3
+        }
+      },
+      {
+        "site": "11:12:11:57:Call",
+        "value": {
+          "shape": [
+            3,
+            3
+          ],
+          "length": 9
+        }
+      }
+    ]
+  },
+  "selected": [
+    "11:12:11:57:Call",
+    "11:26:11:33:Subscript",
+    "11:26:11:48:Call"
+  ],
+  "source": "def kernel(a: Float[Array, '3 3']):\n    bprobe_trace = []\n    bprobe_v0 = a[:, 0]\n    bprobe_trace.append((1, bprobe_v0))\n    bprobe_v1 = bprobe_v0.reshape(-1, 1)\n    bprobe_trace.append((2, bprobe_v1))\n    bprobe_v2 = np.isclose(a, bprobe_v1, atol=0)\n    bprobe_trace.append((0, bprobe_v2))\n    result = bprobe_v2.all()\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [
+        {
+          "constant": 1
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 0
+        },
+        {
+          "kind": "f",
+          "public": 1
+        },
+        {
+          "kind": "f",
+          "public": 2
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1
+        ]
+      },
+      "shape": [
+        3
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 2
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 3
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1,
+          0
+        ]
+      },
+      "shape": [
+        1
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 4
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1,
+          1
+        ]
+      },
+      "shape": [
+        1
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 5
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1,
+          2
+        ]
+      },
+      "shape": [
+        1
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 6
+        },
+        {
+          "kind": "i",
+          "public": 7
+        },
+        {
+          "kind": "i",
+          "public": 8
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1,
+          0
+        ]
+      },
+      "shape": [
+        3
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 9
+        },
+        {
+          "kind": "i",
+          "public": 10
+        },
+        {
+          "kind": "i",
+          "public": 11
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1,
+          1
+        ]
+      },
+      "shape": [
+        3
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 12
+        },
+        {
+          "kind": "i",
+          "public": 13
+        },
+        {
+          "kind": "i",
+          "public": 14
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1,
+          2
+        ]
+      },
+      "shape": [
+        3
+      ]
+    }
+  ],
+  "dynamic": []
+}

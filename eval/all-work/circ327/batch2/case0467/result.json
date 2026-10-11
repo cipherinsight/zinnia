@@ -1,0 +1,57 @@
+{
+  "program": "case0467",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:22: private slice sizes make a ragged list; each slice has at most 4x4 elements from the declared source shape.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 76134,
+    "seconds": 1.3027562190000026,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch2/case0467/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Pad each of 16 windows to 4x4 and retain its two dimensions.",
+      "Clamp radius magnitude at 16 before endpoint normalization: beyond it all positive-radius windows are full and negative-radius windows empty."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "elements": 100,
+      "max_abs_error": 0.0
+    },
+    "B": {
+      "status": "pass",
+      "elements": 100,
+      "max_abs_error": 0.0
+    }
+  },
+  "notes": "kernel.py:22: private slice sizes make a ragged list; each slice has at most 4x4 elements from the declared source shape.",
+  "source": "benchmarking/datasets/ds1000_numpy/generated/case0467/kernel.py",
+  "function": "kernel",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/ds1000_numpy/generated/case0467/fixture.json",
+  "source_sha256": "ad5b0a19bb6369b8a7b00490fd4890a7be8f3419df8f3ee9ee283e3e16961e46",
+  "encoding": "Real and complex components rounded to nearest integer at scale 2^32; centered field residues for field translations; native arbitrary-precision integers for integer translations. Public return includes all logical output values; padded returns include shape/presence metadata.",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh"
+  },
+  "translation_sha256": {
+    "rewrite": "676d4d22e899d07e90084675d46e797df262d2d791e35ee460a182533ad2e460"
+  }
+}

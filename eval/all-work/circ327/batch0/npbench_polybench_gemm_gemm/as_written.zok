@@ -1,0 +1,17 @@
+def main(private integer alpha, private integer beta, private integer[14][15] C, private integer[14][16] A, private integer[16][15] B) -> integer[14][15]:
+    integer[14][16] scaled = [[0; 16]; 14]
+    for u32 i in 0..14 do
+        for u32 j in 0..16 do
+            scaled[i][j] = alpha*A[i][j]/4294967296
+        endfor
+    endfor
+    integer[14][15] product = [[0; 15]; 14]
+    for u32 i in 0..14 do
+        for u32 j in 0..15 do
+            for u32 k in 0..16 do
+                product[i][j] = product[i][j] + scaled[i][k]*B[k][j]/4294967296
+            endfor
+            C[i][j] = product[i][j] + beta*C[i][j]/4294967296
+        endfor
+    endfor
+    return C

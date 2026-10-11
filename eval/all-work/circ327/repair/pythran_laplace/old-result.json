@@ -1,0 +1,30 @@
+{
+  "program": "pythran_laplace",
+  "category": "timeout_or_oom",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:25-28: private grid dimensions and Niter loop bound.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "out of memory",
+    "error": "Running frontend",
+    "constraints": null,
+    "returncode": -9,
+    "seconds": 86.681,
+    "rewrites": [
+      "Pad the NxN grid to 1024x1024 and bound time iterations at 1024, guarding all work by N and Niter from the two @requires clauses; expose N for decoding."
+    ]
+  },
+  "correctness": {
+    "A": "not run: no accepted attempt",
+    "B": "not run: no accepted attempt"
+  },
+  "notes": [
+    "1024x1024 grid and 1024 time steps; killed under the 8 GB cap."
+  ],
+  "source": {
+    "kernel": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch1/pythran_laplace/kernel.py",
+    "function": "calc"
+  }
+}

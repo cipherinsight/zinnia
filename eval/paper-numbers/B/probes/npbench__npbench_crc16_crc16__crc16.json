@@ -1,0 +1,22 @@
+{
+  "id": "npbench__npbench_crc16_crc16__crc16",
+  "sites": {},
+  "numpy": {
+    "A": [],
+    "B": []
+  },
+  "selected": [],
+  "source": "def crc16(data: Integer[Array, '16'], poly: Integer=33800):\n    bprobe_trace = []\n    '\\n    CRC-16-CCITT Algorithm\\n    '\n    crc = 65535\n    for b in data:\n        cur_byte = 255 & b\n        for _ in range(0, 8):\n            if crc & 1 ^ cur_byte & 1:\n                crc = crc >> 1 ^ poly\n            else:\n                crc >>= 1\n            cur_byte >>= 1\n    crc = ~crc & 65535\n    crc = crc << 8 | crc >> 8 & 255\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [],
+      "output": {
+        "return": []
+      },
+      "shape": [
+        0
+      ]
+    }
+  ],
+  "dynamic": []
+}

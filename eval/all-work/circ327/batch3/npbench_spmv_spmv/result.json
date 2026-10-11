@@ -1,0 +1,38 @@
+{
+  "program": "npbench_spmv_spmv",
+  "category": "circ_error",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:12-14: private CSR row pointers create dynamic slices, each with at most 16 entries.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "rejected",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\n\nthread 'main' (150666) panicked at circ_fields/src/lib.rs:571:56:\ncalled `Option::unwrap()` on a `None` value\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    "constraints": null,
+    "rewrites": [
+      "Normalize Python slice endpoints into [0,16] and replace each slice dot product with 16 guarded multiply-accumulate steps. The source arrays have 16 entries."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "not_run",
+      "reason": "No R1CS-accepted attempt; no circuit acceptance claimed."
+    },
+    "B": {
+      "status": "not_run",
+      "reason": "No R1CS-accepted attempt; no circuit acceptance claimed."
+    }
+  },
+  "notes": "kernel.py:12-14: private CSR row pointers create dynamic slices, each with at most 16 entries.\nSixteen guarded sparse terms; native Q32 rescaling crashes.",
+  "kernel": "benchmarking/datasets/npbench/npbench_spmv_spmv/kernel.py",
+  "numeric_encoding": {
+    "modulus": "52435875175126190479447740508185965837690552500527637822603658699938581184513",
+    "real_scale": 4294967296,
+    "signed_encoding": "centered field residues; no unsigned-only interpretation of negative fixtures",
+    "validation_tolerance": {
+      "rtol": 1e-06,
+      "atol": 1e-06
+    }
+  }
+}

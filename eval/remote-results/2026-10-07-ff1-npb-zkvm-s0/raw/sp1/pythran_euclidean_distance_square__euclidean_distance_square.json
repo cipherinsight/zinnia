@@ -1,0 +1,262 @@
+{
+ "schema": 1,
+ "system": "sp1",
+ "case": "pythran_euclidean_distance_square__euclidean_distance_square",
+ "description": "SP1 6.8.1, core (STARK) proof, Q32 guest",
+ "windows": {
+  "prove_core": "client.prove (prove); SP1's SDK proves from the program and its input, so execution happens inside the prove call and cannot be excluded",
+  "end_to_end": "client.prove (prove), which includes execution",
+  "verify": "client.verify (verify)"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/pythran/pythran_euclidean_distance_square/kernel.py": "fab1d977003452ea2231e3a56a92df40b6a59866c776bec09a51fc46f9977893",
+  "benchmarking/datasets/pythran/pythran_euclidean_distance_square/fixture.json": "0aab613722f31b67fa828e828d01204407d80c1cd9385fdb010d2a15e21b0827",
+  "benchmarking/datasets/pythran/pythran_euclidean_distance_square/zkvm.rs": "19c40f84030dd66bf5e7beb3fe392d6330b555fe9388b3c4617d7dd1f4423d04",
+  "benchmarking/baselines/sp1/target/release/sp1-baseline": "8b11da92afce32f313dba253a6bfad7596b88f6aceacc1ae4b688118a5b5de40"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-07T21:20:40+0000",
+  "loadavg": [
+   33.3955078125,
+   28.1328125,
+   22.970703125
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "client_init": 27.795417326,
+    "setup": 2.471066476,
+    "process_wall": 30.48855183366686
+   },
+   "details": {
+    "case": "pythran_euclidean_distance_square/euclidean_distance_square",
+    "input": "A",
+    "mode": "setup",
+    "peak_rss_mib": 7102.0,
+    "proof_path": null,
+    "sdk_version": "6.8.1",
+    "system": "sp1",
+    "vk_hash": "0x003d85e795c9758972ffb6646d06abf499a87002fd2d7d68e8f5db8f9d1063b5",
+    "vk_path": "/home/zhantong/zinnia-eval-run/zinnia-src/benchmarking/results/2026-10-07-ff1-npb-zkvm-s0/work/sp1/pythran_euclidean_distance_square__euclidean_distance_square/program/vk.bin"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 30.58177801966667,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 7480262656,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   33.73486328125,
+   28.84716796875,
+   23.4287109375
+  ],
+  "child": {
+   "wall_s": 53.67231098562479,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 10204344320,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 25.335721278,
+   "end_to_end_s": 25.335721278,
+   "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-src/benchmarking/results/2026-10-07-ff1-npb-zkvm-s0/work/sp1/pythran_euclidean_distance_square__euclidean_distance_square/proofs/warmup/program/proof-core-B.bin",
+   "proof_bytes": 2791063,
+   "timings_s": {
+    "client_init": 27.531764122,
+    "execute": 0.012765474,
+    "prove": 25.335721278,
+    "process_wall": 53.57744236383587
+   },
+   "details": {
+    "case": "pythran_euclidean_distance_square/euclidean_distance_square",
+    "cycles": 9609,
+    "gas": 12272,
+    "input": "B",
+    "input_shapes": [
+     1,
+     3,
+     5,
+     3
+    ],
+    "mode": "prove",
+    "peak_rss_mib": 9700.0,
+    "proof_mode": "core",
+    "proof_size_bytes": 2791063,
+    "sdk_version": "6.8.1",
+    "syscalls": 4,
+    "system": "sp1"
+   },
+   "proof_sha256": "9b4cb0b9033bc51ab617c1076ff4a747f849850042846262c1f9cead5f6873a9"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 5 elements differ",
+   "expected_count": 5,
+   "actual_count": 5,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "b676d1a033d1df1e8b4958828b8ba18585ac8ce78d700e83333de805eef81d94",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    0.8150695862714201,
+    2.5049087768420577,
+    15.802505487110466,
+    47.5241283478681,
+    37.78825265285559
+   ],
+   "elided": [],
+   "shapes": null
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    34.9365234375,
+    30.28466796875,
+    24.25146484375
+   ],
+   "child": {
+    "wall_s": 51.19740847684443,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 10171518976,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 22.835807368,
+    "end_to_end_s": 22.835807368,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-src/benchmarking/results/2026-10-07-ff1-npb-zkvm-s0/work/sp1/pythran_euclidean_distance_square__euclidean_distance_square/proofs/sample-1/program/proof-core-B.bin",
+    "proof_bytes": 2791063,
+    "timings_s": {
+     "client_init": 27.556829986,
+     "execute": 0.013828335,
+     "prove": 22.835807368,
+     "process_wall": 51.075984217226505
+    },
+    "details": {
+     "case": "pythran_euclidean_distance_square/euclidean_distance_square",
+     "cycles": 9609,
+     "gas": 12272,
+     "input": "B",
+     "input_shapes": [
+      1,
+      3,
+      5,
+      3
+     ],
+     "mode": "prove",
+     "peak_rss_mib": 9669.0,
+     "proof_mode": "core",
+     "proof_size_bytes": 2791063,
+     "sdk_version": "6.8.1",
+     "syscalls": 4,
+     "system": "sp1"
+    },
+    "proof_sha256": "e272387935d45ac3f972518474a9b13b787f7f7ca25b8c81feab89134947b3e6"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 5 elements differ",
+    "expected_count": 5,
+    "actual_count": 5,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "b676d1a033d1df1e8b4958828b8ba18585ac8ce78d700e83333de805eef81d94",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     0.8150695862714201,
+     2.5049087768420577,
+     15.802505487110466,
+     47.5241283478681,
+     37.78825265285559
+    ],
+    "elided": [],
+    "shapes": null
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.089750425,
+     "not_applicable": null,
+     "timings_s": {
+      "client_init": 0.355001886,
+      "verify": 0.089750425,
+      "process_wall": 0.6104719815775752
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.7100223489105701,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 91860992,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 9.918e-06,
+    "not_applicable": null,
+    "timings_s": {
+     "client_init": 0.355565777,
+     "verify": 9.918e-06,
+     "process_wall": 0.5292226886376739
+    },
+    "details": {
+     "error": null
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.6200680807232857,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 82788352,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

@@ -1,0 +1,402 @@
+{
+ "schema": 1,
+ "system": "zinnia_halo2",
+ "case": "pythran_euclidean_distance_square__euclidean_distance_square",
+ "description": "Zinnia -> halo2-base backend (IPA/BN254, Blake2b transcript)",
+ "windows": {
+  "setup": "compile + parameter choice + witness-free keygen (ParamsIPA::new, keygen_vk, keygen_pk) + writing params/pk/vk to the key directory",
+  "prove_core": "prove_s: create_proof + transcript finalize (halo2_hw's prove_s covers the same calls)",
+  "end_to_end": "preprocess_s (IR evaluation resolving external calls) + witness_s (synthesis into the builder pinned to keygen's layout) + prove_s; params and proving key read from files beforehand, untimed (load_params_s, load_pk_s), as halo2_hw",
+  "verify": "verify_s: transcript + verify_proof against the verifying key read from the key directory (load_params_s, load_vk_s untimed), as halo2_hw"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/pythran/pythran_euclidean_distance_square/kernel.py": "fab1d977003452ea2231e3a56a92df40b6a59866c776bec09a51fc46f9977893",
+  "benchmarking/datasets/pythran/pythran_euclidean_distance_square/fixture.json": "0aab613722f31b67fa828e828d01204407d80c1cd9385fdb010d2a15e21b0827"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-09T08:45:26+0000",
+  "loadavg": [
+   12.53662109375,
+   10.76806640625,
+   11.46826171875
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "compile": 0.03924630582332611,
+    "keygen_s": 0.115019089,
+    "write_s": 0.0008823825046420097
+   },
+   "details": {
+    "params": {
+     "k": 7,
+     "lookup_bits": 6,
+     "precision_bits": 32
+    },
+    "params_source": "Zinnia estimate_params",
+    "cells": "advice=[1559] lookup=[425, 0, 0] fixed=17 instances=5 second_phase=PhaseShape { advice: 0, constants: 0 }",
+    "key_file_bytes": {
+     "keys.json": 393,
+     "params.bin": 8260,
+     "pk.bin": 936907,
+     "vk.bin": 2551
+    },
+    "exposed_outputs": 5,
+    "elided_outputs": 0,
+    "ir_sha256": "c5579d772c16b6f8644552fbd1f9ab2a7293daa51d7c4b7fc53e9f6816b69221"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 0.2651926511898637,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 71135232,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   12.53662109375,
+   10.76806640625,
+   11.46826171875
+  ],
+  "child": {
+   "wall_s": 0.2649053893983364,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 73101312,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 0.097935378,
+   "end_to_end_s": 0.098730645,
+   "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-npb-s0/work/zinnia_halo2/pythran_euclidean_distance_square__euclidean_distance_square/proofs/warmup/proof.bin",
+   "proof_bytes": 7136,
+   "timings_s": {
+    "load_pk_s": 0.001080684,
+    "load_params_s": 0.004236805,
+    "parse_inputs_s": 1.7947e-05,
+    "preprocess_s": 0.000131251,
+    "witness_s": 0.000664016,
+    "thread_pool_s": 0.000465259,
+    "prove_s": 0.097935378,
+    "prove_call_s": 0.1002787072211504
+   },
+   "details": {
+    "k": 7
+   },
+   "proof_sha256": "092da5766fb761bfde3360c6a53bd56f5f9b31efe850b2da6c3afad4b150228b"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 5 elements differ",
+   "expected_count": 5,
+   "actual_count": 5,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "f4862b0eac0e54a2c8672d14dead5c92e75adbe45575536be5105e3a0c7585a3",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    0.8150695865042508,
+    2.5049087775405496,
+    15.802505487576127,
+    47.52412834833376,
+    37.78825265332125
+   ],
+   "elided": [],
+   "shapes": [
+    [
+     1,
+     5
+    ]
+   ]
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    12.3330078125,
+    10.7548828125,
+    11.4599609375
+   ],
+   "child": {
+    "wall_s": 0.2646238151937723,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 78249984,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.115002603,
+    "end_to_end_s": 0.11569706099999999,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-npb-s0/work/zinnia_halo2/pythran_euclidean_distance_square__euclidean_distance_square/proofs/sample-1/proof.bin",
+    "proof_bytes": 7136,
+    "timings_s": {
+     "load_pk_s": 0.001032226,
+     "load_params_s": 0.003823159,
+     "parse_inputs_s": 1.8222e-05,
+     "preprocess_s": 0.000116716,
+     "witness_s": 0.000577742,
+     "thread_pool_s": 0.000370406,
+     "prove_s": 0.115002603,
+     "prove_call_s": 0.11730827018618584
+    },
+    "details": {
+     "k": 7
+    },
+    "proof_sha256": "878d36c48711e347aaf9e78fe542587076d409fb84d84604c592e63851610600"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 5 elements differ",
+    "expected_count": 5,
+    "actual_count": 5,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "f4862b0eac0e54a2c8672d14dead5c92e75adbe45575536be5105e3a0c7585a3",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     0.8150695865042508,
+     2.5049087775405496,
+     15.802505487576127,
+     47.52412834833376,
+     37.78825265332125
+    ],
+    "elided": [],
+    "shapes": [
+     [
+      1,
+      5
+     ]
+    ]
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.00690543,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.004266933,
+      "load_vk_s": 0.000248811,
+      "verify_call_s": 0.0069644274190068245,
+      "verify_s": 0.00690543
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.10879364423453808,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 38158336,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-2",
+   "loadavg_before": [
+    12.3330078125,
+    10.7548828125,
+    11.4599609375
+   ],
+   "child": {
+    "wall_s": 0.26580230612307787,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 72495104,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.09354985,
+    "end_to_end_s": 0.094248368,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-npb-s0/work/zinnia_halo2/pythran_euclidean_distance_square__euclidean_distance_square/proofs/sample-2/proof.bin",
+    "proof_bytes": 7136,
+    "timings_s": {
+     "load_params_s": 0.003803136,
+     "load_pk_s": 0.001023508,
+     "parse_inputs_s": 1.9494e-05,
+     "preprocess_s": 0.000114522,
+     "witness_s": 0.000583996,
+     "thread_pool_s": 0.000398356,
+     "prove_s": 0.09354985,
+     "prove_call_s": 0.09557679202407598
+    },
+    "details": {
+     "k": 7
+    },
+    "proof_sha256": "c8326639e5238c2f2b155dde7b802eb09b6e0b8ef03e2c77ed6840321807d3ba"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 5 elements differ",
+    "expected_count": 5,
+    "actual_count": 5,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "f4862b0eac0e54a2c8672d14dead5c92e75adbe45575536be5105e3a0c7585a3",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.007353519,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.004305648,
+      "load_vk_s": 0.000213563,
+      "verify_call_s": 0.007408577017486095,
+      "verify_s": 0.007353519
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.10442261677235365,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 38178816,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-3",
+   "loadavg_before": [
+    12.8671875,
+    10.89208984375,
+    11.50048828125
+   ],
+   "child": {
+    "wall_s": 0.26490143686532974,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 73195520,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.100307627,
+    "end_to_end_s": 0.10105399799999999,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-npb-s0/work/zinnia_halo2/pythran_euclidean_distance_square__euclidean_distance_square/proofs/sample-3/proof.bin",
+    "proof_bytes": 7136,
+    "timings_s": {
+     "load_params_s": 0.004284811,
+     "load_pk_s": 0.001096444,
+     "parse_inputs_s": 2.106e-05,
+     "preprocess_s": 0.000126255,
+     "witness_s": 0.000620116,
+     "thread_pool_s": 0.000350373,
+     "prove_s": 0.100307627,
+     "prove_call_s": 0.1023925207555294
+    },
+    "details": {
+     "k": 7
+    },
+    "proof_sha256": "d8c0a12b58b0a9180d356ce93f4536fb1aa49f9cf0412e6834064f7bfd7066f4"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 5 elements differ",
+    "expected_count": 5,
+    "actual_count": 5,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "f4862b0eac0e54a2c8672d14dead5c92e75adbe45575536be5105e3a0c7585a3",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.006723866,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.0042835,
+      "load_vk_s": 0.000198538,
+      "verify_call_s": 0.006789238192141056,
+      "verify_s": 0.006723866
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.10431784950196743,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 38002688,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 0.005504896,
+    "not_applicable": null,
+    "timings_s": {
+     "load_vk_s": 0.000204974,
+     "load_params_s": 0.004270491,
+     "verify_call_s": 0.005565471947193146,
+     "verify_s": 0.005504896
+    },
+    "details": {
+     "error": "halo2-base verify_proof failed: ConstraintSystemFailure"
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.10452726483345032,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 38526976,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

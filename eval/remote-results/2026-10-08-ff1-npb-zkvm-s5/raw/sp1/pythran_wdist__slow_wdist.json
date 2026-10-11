@@ -1,0 +1,274 @@
+{
+ "schema": 1,
+ "system": "sp1",
+ "case": "pythran_wdist__slow_wdist",
+ "description": "SP1 6.8.1, core (STARK) proof, Q32 guest",
+ "windows": {
+  "prove_core": "client.prove (prove); SP1's SDK proves from the program and its input, so execution happens inside the prove call and cannot be excluded",
+  "end_to_end": "client.prove (prove), which includes execution",
+  "verify": "client.verify (verify)"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/pythran/pythran_wdist/kernel.py": "bd4bf903855cd6f5f6976e02cefcc5c7f340dbec0a1a9a87398e628ac9e8cf49",
+  "benchmarking/datasets/pythran/pythran_wdist/fixture.json": "27e7d53c586307d11a3953aaec3a46334a10bce9ded38e6a46bfa1cf3bf66310",
+  "benchmarking/datasets/pythran/pythran_wdist/zkvm.rs": "8e5a5698b9ffc2193115eb4ffec5f5fb49a83c0e5157c993b92aaefe5b3c9f60",
+  "benchmarking/baselines/sp1/target/release/sp1-baseline": "8b11da92afce32f313dba253a6bfad7596b88f6aceacc1ae4b688118a5b5de40"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-08T01:27:53+0000",
+  "loadavg": [
+   17.33740234375,
+   22.78369140625,
+   27.60791015625
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "client_init": 25.420791416,
+    "setup": 2.111750858,
+    "process_wall": 27.722241113893688
+   },
+   "details": {
+    "case": "pythran_wdist/slow_wdist",
+    "input": "A",
+    "mode": "setup",
+    "peak_rss_mib": 7176.0,
+    "proof_path": null,
+    "sdk_version": "6.8.1",
+    "system": "sp1",
+    "vk_hash": "0x0009753b83010c4d2c7e435f99dff302505dcebb244bec7e8690c3fa86a09975",
+    "vk_path": "/home/zhantong/zinnia-eval-run/zinnia-src/benchmarking/results/2026-10-08-ff1-npb-zkvm-s5/work/sp1/pythran_wdist__slow_wdist/program/vk.bin"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 27.843792874366045,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 7551713280,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   15.642578125,
+   21.82275390625,
+   27.13232421875
+  ],
+  "child": {
+   "wall_s": 46.71846189163625,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 10137579520,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 21.473639559,
+   "end_to_end_s": 21.473639559,
+   "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-src/benchmarking/results/2026-10-08-ff1-npb-zkvm-s5/work/sp1/pythran_wdist__slow_wdist/proofs/warmup/program/proof-core-B.bin",
+   "proof_bytes": 2791111,
+   "timings_s": {
+    "client_init": 24.462544415,
+    "execute": 0.012665816,
+    "prove": 21.473639559,
+    "process_wall": 46.623659739270806
+   },
+   "details": {
+    "case": "pythran_wdist/slow_wdist",
+    "cycles": 24371,
+    "gas": 26201,
+    "input": "B",
+    "input_shapes": [
+     2,
+     3,
+     2,
+     3,
+     2,
+     3
+    ],
+    "mode": "prove",
+    "peak_rss_mib": 9637.0,
+    "proof_mode": "core",
+    "proof_size_bytes": 2791111,
+    "sdk_version": "6.8.1",
+    "syscalls": 6,
+    "system": "sp1"
+   },
+   "proof_sha256": "f42e6b442cb4d61e8a3d2ec5549abb21ac2980c8b8507e15d9d6c94ef54abb18"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 9 elements differ",
+   "expected_count": 9,
+   "actual_count": 9,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "4bed537c68eaeeefd352ee1c595e3adf2622d023ef50e6bd312a79bb3c62a6d6",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    0.6403171233832836,
+    1.5505950290244073,
+    2.3758117787074298,
+    0.25659362971782684,
+    0.37833762634545565,
+    0.5016266261227429,
+    0.35593777359463274,
+    0.123420640360564,
+    0.2060951399616897
+   ],
+   "elided": [],
+   "shapes": null
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    16.7529296875,
+    20.8701171875,
+    26.41357421875
+   ],
+   "child": {
+    "wall_s": 46.85777192842215,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 10283778048,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 21.63518156,
+    "end_to_end_s": 21.63518156,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-src/benchmarking/results/2026-10-08-ff1-npb-zkvm-s5/work/sp1/pythran_wdist__slow_wdist/proofs/sample-1/program/proof-core-B.bin",
+    "proof_bytes": 2791111,
+    "timings_s": {
+     "client_init": 24.414821717,
+     "execute": 0.013354031,
+     "prove": 21.63518156,
+     "process_wall": 46.73743734508753
+    },
+    "details": {
+     "case": "pythran_wdist/slow_wdist",
+     "cycles": 24371,
+     "gas": 26201,
+     "input": "B",
+     "input_shapes": [
+      2,
+      3,
+      2,
+      3,
+      2,
+      3
+     ],
+     "mode": "prove",
+     "peak_rss_mib": 9776.0,
+     "proof_mode": "core",
+     "proof_size_bytes": 2791111,
+     "sdk_version": "6.8.1",
+     "syscalls": 6,
+     "system": "sp1"
+    },
+    "proof_sha256": "0f4f589240458fd004bdb70cef8c21ce123183921a20c852efcac4e3a4971d93"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 9 elements differ",
+    "expected_count": 9,
+    "actual_count": 9,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "4bed537c68eaeeefd352ee1c595e3adf2622d023ef50e6bd312a79bb3c62a6d6",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     0.6403171233832836,
+     1.5505950290244073,
+     2.3758117787074298,
+     0.25659362971782684,
+     0.37833762634545565,
+     0.5016266261227429,
+     0.35593777359463274,
+     0.123420640360564,
+     0.2060951399616897
+    ],
+    "elided": [],
+    "shapes": null
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.091244962,
+     "not_applicable": null,
+     "timings_s": {
+      "client_init": 0.389872335,
+      "verify": 0.091244962,
+      "process_wall": 0.6586576998233795
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.773704239167273,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 90472448,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 1.2937e-05,
+    "not_applicable": null,
+    "timings_s": {
+     "client_init": 0.390741602,
+     "verify": 1.2937e-05,
+     "process_wall": 0.5708715068176389
+    },
+    "details": {
+     "error": null
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.6710064085200429,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 82829312,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

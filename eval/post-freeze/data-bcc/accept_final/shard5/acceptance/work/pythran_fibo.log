@@ -1,0 +1,5 @@
+$ choom -n 1000 -- /home/zhantong/zinnia-eval-run/zinnia-post/.venv/bin/python -m benchmarking.harness.acceptance.validate --child /home/zhantong/zinnia-eval-run/post-freeze/data-bcc/accept_final/shard5/acceptance/work/pythran_fibo.request.json /home/zhantong/zinnia-eval-run/post-freeze/data-bcc/accept_final/shard5/acceptance/work/pythran_fibo.response.json
+
+thread 'zinnia-compile' (2186969) panicked at src/ir_gen/chip_external.rs:153:13:
+RecursionLimitExceededError: recursion limit (16) exceeded while inlining @zk_chip `rfibo`. Each recursive call into a chip is unrolled at compile time; if your chip recurses with multiple call sites per level (e.g. fibo(n-1) + fibo(n-2)), the unrolled depth grows exponentially. Either reduce the recursion in the chip body or raise ZinniaConfig.recursion_limit (current default is intentionally small).
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

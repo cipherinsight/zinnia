@@ -1,0 +1,174 @@
+{
+ "schema": 1,
+ "system": "cairo",
+ "case": "pythran_multitype__check",
+ "description": "Cairo (Scarb 2.20.1, Stwo), Q32",
+ "windows": {
+  "prove_core": "`scarb prove` process wall clock (includes start-up)",
+  "end_to_end": "`scarb execute` + `scarb prove` process wall clocks",
+  "verify": "`scarb verify` process wall clock"
+ },
+ "status": "wrong_output",
+ "failure": {
+  "class": "wrong_output",
+  "step": "warmup",
+  "detail": "output shapes [[1]], reference [[1], []]"
+ },
+ "files": {
+  "benchmarking/datasets/pythran/pythran_multitype/kernel.py": "5297e050850ff982cf1a5da58aeaf3c28f42bbefe58e4f082490eb91f9cb20a3",
+  "benchmarking/datasets/pythran/pythran_multitype/fixture.check.json": "232801ba395d75216974b8d2ac728b2529578f4c81da7a7718595ca76771f18a",
+  "benchmarking/datasets/pythran/pythran_multitype/cairo/check.cairo": "9e8ed5648eda40e21562b8df2a49df18a58baeaa308cdcbf400da23348a67531",
+  "benchmarking/baselines/cairo/cairo_baseline.py": "d652fd51d6d23afdcbec825da52f25358b2d6e51cc2d2889902126ab59ffa80c"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-11T09:59:52+0000",
+  "loadavg": [
+   11.55908203125,
+   11.93115234375,
+   10.36669921875
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "build": 0.08288966957479715,
+    "process_wall": 0.14073203410953283
+   },
+   "details": {
+    "system": "cairo",
+    "scarb": "/home/zhantong/.local/share/scarb/scarb-v2.20.1-x86_64-unknown-linux-gnu/bin/scarb",
+    "case": "pythran_multitype__check",
+    "input": "A",
+    "mode": "setup",
+    "proof_mode": "stwo",
+    "proof_path": null,
+    "peak_rss_mib": 108
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 0.2350329076871276,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 162254848,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   11.55908203125,
+   11.93115234375,
+   10.36669921875
+  ],
+  "child": {
+   "wall_s": 78.72194647137076,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 14843625472,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 38.22090306505561,
+   "end_to_end_s": 38.35646491032094,
+   "proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-pythran_multitype__check-zkvm/work/cairo/pythran_multitype__check/proofs/warmup/program/proof-stwo-B.bin",
+   "proof_bytes": 954455,
+   "timings_s": {
+    "execute": 0.13556184526532888,
+    "prove": 38.22090306505561,
+    "prove_json_copy": 40.1413175072521,
+    "process_wall": 78.60382554214448
+   },
+   "details": {
+    "system": "cairo",
+    "scarb": "/home/zhantong/.local/share/scarb/scarb-v2.20.1-x86_64-unknown-linux-gnu/bin/scarb",
+    "case": "pythran_multitype__check",
+    "input": "B",
+    "mode": "prove",
+    "proof_mode": "stwo",
+    "public_words": [
+     1,
+     1,
+     1,
+     6668293068,
+     2
+    ],
+    "input_shapes": [
+     1
+    ],
+    "output_shape": [
+     1
+    ],
+    "resources": {
+     "n_steps": 21732,
+     "n_memory_holes": 10,
+     "builtin_instance_counter": [
+      [
+       "range_check_builtin",
+       1274
+      ],
+      [
+       "output_builtin",
+       9
+      ]
+     ],
+     "syscalls": [],
+     "memory_segment_sizes": [
+      [
+       "execution",
+       15902
+      ],
+      [
+       "range_check",
+       1274
+      ],
+      [
+       "output",
+       9
+      ]
+     ],
+     "max_memory_address": 21131
+    },
+    "proof_size_bytes": 954455,
+    "json_proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-pythran_multitype__check-zkvm/work/cairo/pythran_multitype__check/proofs/warmup/program/proof-stwo-B.json",
+    "json_proof_size_bytes": 11218292,
+    "peak_rss_mib": 14107
+   },
+   "proof_sha256": "2a7e0b7f385bdece05fbc5f7035226008ae8672f272629bb4a415e9f902a8465"
+  },
+  "output_check": {
+   "status": "mismatch",
+   "detail": "output shapes [[1]], reference [[1], []]",
+   "expected_count": 2,
+   "actual_count": 2,
+   "mismatches": [],
+   "tolerance": null
+  },
+  "publics_sha256": "652a0b09e68fc01d53b8e8fbb089d222f0a322ce075c78a72cea002feafce863",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    1.552582967095077,
+    2
+   ],
+   "elided": [],
+   "shapes": [
+    [
+     1
+    ]
+   ]
+  }
+ },
+ "samples": [],
+ "tamper": null
+}

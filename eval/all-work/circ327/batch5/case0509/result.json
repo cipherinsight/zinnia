@@ -1,0 +1,54 @@
+{
+  "program": "case0509",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not expressible",
+    "error": "rows/cols = np.flatnonzero(...), and value-dependent crop at source lines 12-18",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 106832,
+    "seconds": 1.6073832511901855,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch5/case0509/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Replace variable-length nonzero-index lists by guarded min/max reductions over the 10 rows/columns.",
+      "Pad the crop to a 10x10 rectangle with public logical height and width; each dimension of a crop of a 10x10 input is at most 10."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "elements": 48,
+      "actual_elements": 48,
+      "max_abs_error": 0.0
+    },
+    "B": {
+      "status": "pass",
+      "elements": 72,
+      "actual_elements": 72,
+      "max_abs_error": 0.0
+    }
+  },
+  "notes": "",
+  "source": {
+    "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0509/kernel.py",
+    "function": "kernel",
+    "sha256": "183b138152ba59d6069fd6f9d5b8e23c3b478aa92d445776f21a8050af4c2f28"
+  },
+  "encoding": "Private inputs; public return value. Real numbers are rounded to scale 2^32. Native u64 values use signed two-complement interpretation; integer arithmetic is used for candidate full-width Q32 products to avoid truncating them to 64 bits before rescaling.",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/ds1000_numpy/generated/case0509/fixture.json",
+  "reason": "Bounded min/max and padded 10x10 crop with logical dimensions."
+}

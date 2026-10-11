@@ -1,0 +1,24 @@
+def main(private integer M, private integer float_n, private integer[16][14] data) -> integer[14][14]:
+    integer[14] mean = [0int; 14]
+    for u32 j in 0..14 do
+        for u32 i in 0..16 do
+            mean[j] = mean[j]+data[i][j]
+        endfor
+        mean[j] = mean[j]/16int
+    endfor
+    integer[16][14] centered = data
+    for u32 i in 0..16 do
+        for u32 j in 0..14 do
+            centered[i][j] = data[i][j]-mean[j]
+        endfor
+    endfor
+    integer[14][14] out = [[0int; 14]; 14]
+    for u32 i in 0..14 do
+        for u32 j in 0..14 do
+            for u32 k in 0..16 do
+                out[i][j] = out[i][j]+centered[k][i]*centered[k][j]/4294967296int
+            endfor
+            out[i][j] = out[i][j]/15int
+        endfor
+    endfor
+    return out

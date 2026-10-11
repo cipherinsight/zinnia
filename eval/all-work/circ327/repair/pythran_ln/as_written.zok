@@ -1,0 +1,17 @@
+from "../native_v1" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[16] X, private u64[16] Y) -> u64[16]:
+    for u32 i in 0..16 do
+        u64 z = (X[i] - 4294967296)
+        u64 acc = z
+        acc = (acc - divc(mulq(z, z), 2))
+        acc = (acc + divc(mulq(mulq(z, z), z), 3))
+        acc = (acc - divc(mulq(mulq(mulq(z, z), z), z), 4))
+        acc = (acc + divc(mulq(mulq(mulq(mulq(z, z), z), z), z), 5))
+        acc = (acc - divc(mulq(mulq(mulq(mulq(mulq(z, z), z), z), z), z), 6))
+        acc = (acc + divc(mulq(mulq(mulq(mulq(mulq(mulq(z, z), z), z), z), z), z), 7))
+        acc = (acc - divc(mulq(mulq(mulq(mulq(mulq(mulq(mulq(z, z), z), z), z), z), z), z), 8))
+        acc = (acc + divc(mulq(mulq(mulq(mulq(mulq(mulq(mulq(mulq(z, z), z), z), z), z), z), z), z), 9))
+        Y[i] = acc
+    endfor
+    return Y

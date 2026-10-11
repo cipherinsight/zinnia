@@ -1,0 +1,449 @@
+{
+ "config": {
+  "timeout_s": 300.0,
+  "memory_max": "8G",
+  "retry_smt_budget_ms": 5000
+ },
+ "results": [
+  {
+   "program": "case0309",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0309/kernel.py",
+   "function": "kernel",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 1 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.038798702880740166,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 1 elements differ",
+     "expected_count": 1,
+     "actual_count": 1,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "case0327",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0327/kernel.py",
+   "function": "kernel",
+   "outcome": "rejected_no_provable_bound",
+   "construct": "np.pad width from a runtime value",
+   "detail": "ZinniaException: IR generation failed: np.pad: pad width is not statically bounded \u2014 its value at runtime could be anything. The previous compiler revision silently capped it at 128 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal pad width, or annotate the kernel inputs that drive the pad width with `@requires(lambda x: x <= K)` so the compiler can derive a tight, sound upper bound.",
+   "response": {
+    "stage": "compile",
+    "error": "ZinniaException: IR generation failed: np.pad: pad width is not statically bounded \u2014 its value at runtime could be anything. The previous compiler revision silently capped it at 128 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal pad width, or annotate the kernel inputs that drive the pad width with `@requires(lambda x: x <= K)` so the compiler can derive a tight, sound upper bound."
+   },
+   "retry_with_larger_smt_budget": {
+    "budget_ms": 5000,
+    "outcome": "rejected_no_provable_bound"
+   }
+  },
+  {
+   "program": "case0345",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0345/kernel.py",
+   "function": "kernel",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 8 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.11998198181390762,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 8 elements differ",
+     "expected_count": 8,
+     "actual_count": 8,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "case0364",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0364/kernel.py",
+   "function": "kernel",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 1010 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.8741825455799699,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 1010 elements differ",
+     "expected_count": 1010,
+     "actual_count": 1010,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "case0388",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0388/kernel.py",
+   "function": "kernel",
+   "outcome": "rejected_compiler_limitation",
+   "construct": "reshape of a runtime-shaped array",
+   "detail": "ZinniaException: IR generation failed: reshape is not supported on an array with a runtime shape held in a padded buffer (a bounded input with per-axis bounds, or a slice with runtime bounds on an inner axis): its elements are not contiguous in C order",
+   "response": {
+    "stage": "compile",
+    "error": "ZinniaException: IR generation failed: reshape is not supported on an array with a runtime shape held in a padded buffer (a bounded input with per-axis bounds, or a slice with runtime bounds on an inner axis): its elements are not contiguous in C order"
+   }
+  },
+  {
+   "program": "case0409",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0409/kernel.py",
+   "function": "kernel",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 48 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.0188466627150774,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 48 elements differ",
+     "expected_count": 48,
+     "actual_count": 48,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "case0429",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0429/kernel.py",
+   "function": "kernel",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 2 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.03689940087497234,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 2 elements differ",
+     "expected_count": 2,
+     "actual_count": 2,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "case0449",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0449/kernel.py",
+   "function": "kernel",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 24 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.01405387930572033,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 24 elements differ",
+     "expected_count": 24,
+     "actual_count": 24,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "case0478",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0478/kernel.py",
+   "function": "kernel",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 16 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.013947105966508389,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 16 elements differ",
+     "expected_count": 16,
+     "actual_count": 16,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "case0502",
+   "dataset": "ds1000_numpy",
+   "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0502/kernel.py",
+   "function": "kernel",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 169 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 2.109307700768113,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 169 elements differ",
+     "expected_count": 169,
+     "actual_count": 169,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "npbench_deep_learning_lenet_lenet",
+   "dataset": "npbench",
+   "kernel": "benchmarking/datasets/npbench/npbench_deep_learning_lenet_lenet/kernel.py",
+   "function": "lenet5",
+   "outcome": "rejected_compiler_limitation",
+   "construct": "operation on a runtime-shaped array",
+   "detail": "ZinniaException: IR generation failed: this operation is not supported on an array with a runtime shape (the result of a boolean mask, nonzero/argwhere/unique, or a slice with runtime bounds)",
+   "response": {
+    "stage": "compile",
+    "error": "ZinniaException: IR generation failed: this operation is not supported on an array with a runtime shape (the result of a boolean mask, nonzero/argwhere/unique, or a slice with runtime bounds)"
+   }
+  },
+  {
+   "program": "npbench_polybench_deriche_deriche",
+   "dataset": "npbench",
+   "kernel": "benchmarking/datasets/npbench/npbench_polybench_deriche_deriche/kernel.py",
+   "function": "kernel",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 128 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.08434578590095043,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 128 elements differ",
+     "expected_count": 128,
+     "actual_count": 128,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "npbench_polybench_mvt_mvt",
+   "dataset": "npbench",
+   "kernel": "benchmarking/datasets/npbench/npbench_polybench_mvt_mvt/kernel.py",
+   "function": "kernel",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 32 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.02809881791472435,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 32 elements differ",
+     "expected_count": 32,
+     "actual_count": 32,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "pythran_allpairs_distances_loops",
+   "dataset": "pythran",
+   "kernel": "benchmarking/datasets/pythran/pythran_allpairs_distances_loops/kernel.py",
+   "function": "allpairs_distances_loops",
+   "outcome": "rejected_no_provable_bound",
+   "construct": "array shape from a runtime value",
+   "detail": "ZinniaException: IR generation failed: shape element at axis 1 must be a compile-time constant int",
+   "response": {
+    "stage": "compile",
+    "error": "ZinniaException: IR generation failed: shape element at axis 1 must be a compile-time constant int"
+   },
+   "retry_with_larger_smt_budget": {
+    "budget_ms": 5000,
+    "outcome": "rejected_no_provable_bound"
+   }
+  },
+  {
+   "program": "pythran_collatz_modified",
+   "dataset": "pythran",
+   "kernel": "benchmarking/datasets/pythran/pythran_collatz_modified/kernel.py",
+   "function": "collatz_modified",
+   "outcome": "rejected_no_provable_bound",
+   "construct": "while-loop trip count",
+   "detail": "ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: the `while` condition was not proven false within loop_limit=1000 unrolled iterations. Bound the values the condition depends on (a bounded array annotation or a `requires` precondition), or raise ZinniaConfig loop_limit if a larger bound exists",
+   "response": {
+    "stage": "compile",
+    "error": "ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: the `while` condition was not proven false within loop_limit=1000 unrolled iterations. Bound the values the condition depends on (a bounded array annotation or a `requires` precondition), or raise ZinniaConfig loop_limit if a larger bound exists"
+   },
+   "retry_with_larger_smt_budget": {
+    "budget_ms": 5000,
+    "outcome": "rejected_no_provable_bound"
+   }
+  },
+  {
+   "program": "pythran_fdtd",
+   "dataset": "pythran",
+   "kernel": "benchmarking/datasets/pythran/pythran_fdtd/kernel.py",
+   "function": "fdtd",
+   "outcome": "rejected_no_provable_bound",
+   "construct": "range() trip count",
+   "detail": "ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value without known bounds. Give the bound a maximum, e.g. a bounded array annotation (Integer[Array, \"N<=8\"]) or a precondition (@zk_circuit(requires=[lambda n: 0 <= n <= 8]))",
+   "response": {
+    "stage": "compile",
+    "error": "ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value without known bounds. Give the bound a maximum, e.g. a bounded array annotation (Integer[Array, \"N<=8\"]) or a precondition (@zk_circuit(requires=[lambda n: 0 <= n <= 8]))"
+   },
+   "retry_with_larger_smt_budget": {
+    "budget_ms": 5000,
+    "outcome": "rejected_no_provable_bound"
+   }
+  },
+  {
+   "program": "pythran_lap",
+   "dataset": "pythran",
+   "kernel": "benchmarking/datasets/pythran/pythran_lap/kernel.py",
+   "function": "laplacian",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 16 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.09260422736406326,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 16 elements differ",
+     "expected_count": 16,
+     "actual_count": 16,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  },
+  {
+   "program": "pythran_mulmod",
+   "dataset": "pythran",
+   "kernel": "benchmarking/datasets/pythran/pythran_mulmod/kernel.py",
+   "function": "gf2mulmod",
+   "outcome": "rejected_no_provable_bound",
+   "construct": "while-loop trip count",
+   "detail": "ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: the `while` condition was not proven false within loop_limit=1000 unrolled iterations. Bound the values the condition depends on (a bounded array annotation or a `requires` precondition), or raise ZinniaConfig loop_limit if a larger bound exists",
+   "response": {
+    "stage": "compile",
+    "error": "ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: the `while` condition was not proven false within loop_limit=1000 unrolled iterations. Bound the values the condition depends on (a bounded array annotation or a `requires` precondition), or raise ZinniaConfig loop_limit if a larger bound exists"
+   },
+   "retry_with_larger_smt_budget": {
+    "budget_ms": 5000,
+    "outcome": "rejected_no_provable_bound"
+   }
+  },
+  {
+   "program": "pythran_quicksort",
+   "dataset": "pythran",
+   "kernel": "benchmarking/datasets/pythran/pythran_quicksort/kernel.py",
+   "function": "quicksort",
+   "outcome": "rejected_no_provable_bound",
+   "construct": "while-loop trip count",
+   "detail": "ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: the `while` condition was not proven false within loop_limit=1000 unrolled iterations. Bound the values the condition depends on (a bounded array annotation or a `requires` precondition), or raise ZinniaConfig loop_limit if a larger bound exists",
+   "response": {
+    "stage": "compile",
+    "error": "ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: the `while` condition was not proven false within loop_limit=1000 unrolled iterations. Bound the values the condition depends on (a bounded array annotation or a `requires` precondition), or raise ZinniaConfig loop_limit if a larger bound exists"
+   },
+   "retry_with_larger_smt_budget": {
+    "budget_ms": 5000,
+    "outcome": "rejected_no_provable_bound"
+   }
+  },
+  {
+   "program": "pythran_value_index",
+   "dataset": "pythran",
+   "kernel": "benchmarking/datasets/pythran/pythran_value_index/kernel.py",
+   "function": "tri",
+   "outcome": "accepted_correct",
+   "construct": "",
+   "detail": "logical outputs: 0 of 100 elements differ",
+   "response": {
+    "stage": "checked",
+    "compile_s": 0.11820282973349094,
+    "input": "B",
+    "output_check": {
+     "status": "match",
+     "detail": "logical outputs: 0 of 100 elements differ",
+     "expected_count": 100,
+     "actual_count": 100,
+     "mismatches": [],
+     "tolerance": {
+      "abs": 1e-06,
+      "rel": 1e-06,
+      "source": "case set"
+     }
+    }
+   }
+  }
+ ]
+}

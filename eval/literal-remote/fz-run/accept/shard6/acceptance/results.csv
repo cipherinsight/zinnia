@@ -1,0 +1,21 @@
+program,dataset,function,outcome,class,construct,detail
+case0300,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 1 elements differ
+case0322,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 6 elements differ
+case0339,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 16 elements differ
+case0359,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 6 elements differ
+case0383,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 7 elements differ
+case0403,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 1 elements differ
+case0422,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 50 elements differ
+case0441,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 1 elements differ
+case0467,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 100 elements differ
+case0497,ds1000_numpy,kernel,rejected_no_provable_bound,no_provable_bound,np.pad width from a runtime value,"ZinniaException: IR generation failed: np.pad: pad width is not statically bounded — its value at runtime could be anything. The previous compiler revision silently capped it at 128 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal pad width, or annotate the kernel inputs that drive the pad width with `@requires(lambda x: x <= K)` so the compiler can derive a tight, sound upper bound."
+npbench_channel_flow_channel_flow,npbench,channel_flow,rejected_resource_limit,resource_limit,compile time over 300 s,timeout after 300s
+npbench_polybench_cholesky2_cholesky2,npbench,kernel,rejected_compiler_limitation,compiler_limitation,np.linalg.cholesky (result-returning linear algebra),"ZinniaException: IR generation failed: np.linalg.cholesky: implicit result-returning linear algebra is deferred because @zk_external currently returns one scalar, not an array witness; supply an explicit witness and call np.linalg.verify_inverse/verify_solve/verify_cholesky"
+npbench_polybench_jacobi_2d_jacobi_2d,npbench,kernel,rejected_no_provable_bound,no_provable_bound,range() trip count,"ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value without known bounds. Give the bound a maximum, e.g. a bounded array annotation (Integer[Array, ""N<=8""]) or a precondition (@zk_circuit(requires=[lambda n: 0 <= n <= 8]))"
+npbench_stockham_fft_stockham_fft,npbench,stockham_fft,rejected_unsupported_construct,unsupported_construct,np.mgrid,ZinniaException: IR generation failed: np.mgrid is not implemented
+pythran_cdotu,pythran,CDOTU,rejected_unclassified,unclassified,,ZinniaException: IR generation failed: Circuit return inference does not allow mixing bare returns with value returns
+pythran_euclidean_distance_square,pythran,euclidean_distance_square,accepted_correct,,,logical outputs: 0 of 5 elements differ
+pythran_histogram,pythran,histogram,rejected_no_provable_bound,no_provable_bound,list repetition with a runtime count,"ZinniaException: IR generation failed: sequence repetition `seq * n` with a runtime count `n` is not supported: a list's length must be known at compile time (use np.zeros/np.full with a bounded shape, or a compile-time count)"
+pythran_mandel,pythran,mandel,rejected_resource_limit,resource_limit,compile memory over 8G,out of memory after 24s
+pythran_primes_sieve2,pythran,get_primes7,rejected_compiler_limitation,compiler_limitation,range() with a runtime bound used as a value,ZinniaException: IR generation failed: range() with a runtime argument is only supported as the iterable of a `for` loop or comprehension (got a Integer that is not a compile-time constant)
+pythran_stone,pythran,whetstone,rejected_no_provable_bound,no_provable_bound,range() trip count,"ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value without known bounds. Give the bound a maximum, e.g. a bounded array annotation (Integer[Array, ""N<=8""]) or a precondition (@zk_circuit(requires=[lambda n: 0 <= n <= 8]))"

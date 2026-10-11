@@ -1,0 +1,14 @@
+def lt(u64 a, u64 b) -> bool:
+    return (a ^ 0x8000000000000000) < (b ^ 0x8000000000000000)
+
+def main(private u64[16][16] path) -> u64[16][16]:
+    for u32 k in 0..16 do
+        u64[16][16] old = path
+        for u32 i in 0..16 do
+            for u32 j in 0..16 do
+                u64 v = old[i][k]+old[k][j]
+                path[i][j] = if lt(v, old[i][j]) then v else old[i][j] fi
+            endfor
+        endfor
+    endfor
+    return path

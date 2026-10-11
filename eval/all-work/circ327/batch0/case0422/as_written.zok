@@ -1,0 +1,17 @@
+def main(private integer[50] a, private integer[50] b) -> integer[50]:
+    integer[99] joined = [0; 99]
+    for u32 i in 0..49 do
+        joined[i] = b[i+1]
+    endfor
+    for u32 i in 0..50 do
+        joined[i+49] = b[i]
+    endfor
+    integer[50] result = [0; 50]
+    for u32 i in 0..50 do
+        integer acc = 0
+        for u32 j in 0..50 do
+            acc = acc + a[j]*joined[49-i+j]/4294967296
+        endfor
+        result[i] = acc
+    endfor
+    return result

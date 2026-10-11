@@ -1,0 +1,19 @@
+struct Result {
+    u64 a
+    u64 b
+    u64[20000] c
+}
+def main(private u64[100][200] a, private u64 patch_size) -> Result:
+    u64 p = if patch_size > 100u64 then 1u64 else patch_size fi
+    u64 nr = 100u64 / p
+    u64 nc = 200u64 / p
+    u64[20000] result = [0u64; 20000]
+    for u64 i in 0..100 do
+        for u64 j in 0..200 do
+            bool active = patch_size <= 100u64 && i < nr*p && j < nc*p
+            u64 dest = ((j/p)*nr+i/p)*p*p+(i%p)*p+j%p
+            dest = if active then dest else 19999u64 fi
+            result[dest] = if active then a[i][j] else result[dest] fi
+        endfor
+    endfor
+    return Result {a: if patch_size > 100u64 then 0u64 else nr*nc fi, b: patch_size, c: result}

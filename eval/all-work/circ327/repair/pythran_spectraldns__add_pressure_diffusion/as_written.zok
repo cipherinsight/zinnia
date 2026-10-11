@@ -1,0 +1,20 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+struct Result {
+    u64[2][5][7][2] v0
+    u64[3][2][5][7][2] v1
+}
+def main(private u64[3][2][5][7][2] dU, private u64[3][2][5][7][2] U_hat, private u64[2][5][7] K2, private u64[3][2][5][7] K, private u64[2][5][7][2] P_hat, private u64[3][2][5][7] K_over_K2, private u64 nu) -> Result:
+    for u32 i in 0..2 do
+        for u32 j in 0..5 do
+            for u32 k in 0..7 do
+                for u32 c in 0..2 do
+                    P_hat[i][j][k][c] = ((mulq(dU[0][i][j][k][c], K_over_K2[0][i][j][k]) + mulq(dU[1][i][j][k][c], K_over_K2[1][i][j][k])) + mulq(dU[2][i][j][k][c], K_over_K2[2][i][j][k]))
+                    for u32 a in 0..3 do
+                        dU[a][i][j][k][c] = ((dU[a][i][j][k][c] - mulq(P_hat[i][j][k][c], K[a][i][j][k])) - mulq(mulq(nu, K2[i][j][k]), U_hat[a][i][j][k][c]))
+                    endfor
+                endfor
+            endfor
+        endfor
+    endfor
+    return Result {v0: P_hat, v1: dU}

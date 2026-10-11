@@ -1,0 +1,28 @@
+from "../native_v1" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[13][15] A, private u64[15][14] B, private u64[14][16] C, private u64[16][16] D) -> u64[13][16]:
+    u64[13][14] E = [[0;14];13]
+    for u32 i in 0..13 do
+        for u32 j in 0..14 do
+            for u32 k in 0..15 do
+                E[i][j] = (E[i][j] + mul(A[i][k], B[k][j]))
+            endfor
+        endfor
+    endfor
+    u64[13][16] F = [[0;16];13]
+    for u32 i in 0..13 do
+        for u32 j in 0..16 do
+            for u32 k in 0..14 do
+                F[i][j] = (F[i][j] + mul(E[i][k], C[k][j]))
+            endfor
+        endfor
+    endfor
+    u64[13][16] result = [[0;16];13]
+    for u32 i in 0..13 do
+        for u32 j in 0..16 do
+            for u32 k in 0..16 do
+                result[i][j] = (result[i][j] + mul(F[i][k], D[k][j]))
+            endfor
+        endfor
+    endfor
+    return result

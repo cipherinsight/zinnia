@@ -1,0 +1,31 @@
+// benchmarking/datasets/ds1000_numpy/generated/case0418/kernel.py
+// Signed integers use their canonical field residues; real inputs are Q32.
+def neg(field x) -> bool:
+    return x > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+def absv(field x) -> field:
+    return if neg(x) then -x else x fi
+def lt(field a, field b) -> bool:
+    return if neg(a) != neg(b) then neg(a) else a < b fi
+// Constant integer rescaling uses native remainder and field division only.
+def divc(field x, field c) -> field:
+    field m = absv(x)
+    field q = (m - m % c) / c
+    return if neg(x) then -q else q fi
+def mulq(field a, field b) -> field:
+    return divc(a * b, 4294967296)
+
+def main(private field[8][6] data, private field bin_size) -> field[49]:
+    field nb = divc(6, bin_size)
+    field[49] out = [0; 49]
+    out[0] = nb
+    for field i in 0..8 do
+        for field j in 0..6 do
+            field sum = 0
+            for field k in 0..6 do
+                bool take = j < nb && k >= j*bin_size && k < (j+1)*bin_size
+                sum = sum + if take then data[i][5-k] else 0 fi
+            endfor
+            out[1+i*6+j] = if j < nb then divc(sum, bin_size) else 0 fi
+        endfor
+    endfor
+    return out

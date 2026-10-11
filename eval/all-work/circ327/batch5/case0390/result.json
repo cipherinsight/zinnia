@@ -1,0 +1,44 @@
+{
+  "program": "case0390",
+  "category": "timeout_or_oom",
+  "as_written": {
+    "status": "not expressible",
+    "error": "x = a[:a.shape[0] // patch_size * patch_size, ...]; dynamic reshape on lines 11-12",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "out of memory",
+    "error": "Running frontend\nRunning IR optimizations",
+    "constraints": null,
+    "seconds": 35.93522667884827,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch5/case0390/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Use a flat padded output capacity 20000, with public patch count and patch side; retained patches contain no more elements than the 100x200 input.",
+      "Guard source elements outside whole patches and scatter to the exact transpose/reshape order. Treat patch_size > 100 as empty output without squaring the unbounded side."
+    ]
+  },
+  "correctness": {
+    "A": "not run",
+    "B": "not run"
+  },
+  "notes": "",
+  "source": {
+    "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0390/kernel.py",
+    "function": "kernel",
+    "sha256": "a8bc14f88cce48b000325ff109d4e003b824c42781394445a817891c6cc0119c"
+  },
+  "encoding": "Private inputs; public return value. Real numbers are rounded to scale 2^32. Native u64 values use signed two-complement interpretation; integer arithmetic is used for candidate full-width Q32 products to avoid truncating them to 64 bits before rescaling.",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/ds1000_numpy/generated/case0390/fixture.json",
+  "reason": "20,000-element padded patch scatter exceeded the 8 GB cap."
+}

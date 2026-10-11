@@ -1,0 +1,16 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[13][16] A, private u64[16] x) -> u64[16]:
+    u64[13] tmp = [0;13]
+    for u32 i in 0..13 do
+        for u32 j in 0..16 do
+            tmp[i] = (tmp[i] + mulq(A[i][j], x[j]))
+        endfor
+    endfor
+    u64[16] result = [0;16]
+    for u32 j in 0..16 do
+        for u32 i in 0..13 do
+            result[j] = (result[j] + mulq(tmp[i], A[i][j]))
+        endfor
+    endfor
+    return result

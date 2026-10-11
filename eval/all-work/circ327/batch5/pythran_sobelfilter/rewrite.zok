@@ -1,0 +1,50 @@
+def lt(u64 a, u64 b) -> bool:
+    return (a ^ 0x8000000000000000) < (b ^ 0x8000000000000000)
+
+def norm(u64 x) -> u64:
+    return if lt(x, 0u64) then x+16u64 else x fi
+
+def clamp(u64 x) -> u64:
+    return if lt(x, 0u64) then 0u64 else if lt(255u64, x) then 255u64 else x fi fi
+
+def main(private u64[16] original_image, private u64 cols, private u64 rows) -> u64[16]:
+    u64[16] edge = [0u64,1u64,2u64,3u64,4u64,5u64,6u64,7u64,8u64,9u64,10u64,11u64,12u64,13u64,14u64,15u64]
+    // For cols == 0, every iteration writes the same two positions.
+    bool repeat_zero = cols == 0u64 && lt(0u64, rows)
+    edge[0] = if repeat_zero then 255u64 else edge[0] fi
+    edge[15] = if repeat_zero then 255u64 else edge[15] fi
+    for u64 i in 0..16 do
+        bool active = cols != 0u64 && lt(i, rows)
+        u64 a = if active then norm(i*cols) else 0u64 fi
+        u64 b = if active then norm((i+1u64)*cols-1u64) else 0u64 fi
+        edge[a] = if active then 255u64 else edge[a] fi
+        edge[b] = if active then 255u64 else edge[b] fi
+    endfor
+    for u64 i in 1..17 do
+        bool active = lt(i+1u64, cols)
+        u64 a = if active then i else 0u64 fi
+        u64 b = if active then norm(i+(rows-1u64)*cols) else 0u64 fi
+        edge[a] = if active then 255u64 else edge[a] fi
+        edge[b] = if active then 255u64 else edge[b] fi
+    endfor
+    for u64 iy in 1..16 do
+        for u64 ix in 1..16 do
+            bool active = lt(iy+1u64, rows) && lt(ix+1u64, cols)
+            u64 p00 = if active then norm(ix-1u64+(iy-1u64)*cols) else 0u64 fi
+            u64 p01 = if active then norm(ix+(iy-1u64)*cols) else 0u64 fi
+            u64 p02 = if active then norm(ix+1u64+(iy-1u64)*cols) else 0u64 fi
+            u64 p10 = if active then norm(ix-1u64+iy*cols) else 0u64 fi
+            u64 p12 = if active then norm(ix+1u64+iy*cols) else 0u64 fi
+            u64 p20 = if active then norm(ix-1u64+(iy+1u64)*cols) else 0u64 fi
+            u64 p21 = if active then norm(ix+(iy+1u64)*cols) else 0u64 fi
+            u64 p22 = if active then norm(ix+1u64+(iy+1u64)*cols) else 0u64 fi
+            u64 sx = 0u64-original_image[p00]-2u64*original_image[p01]-original_image[p02]+original_image[p20]+2u64*original_image[p21]+original_image[p22]
+            sx = clamp(sx)
+            u64 sy = original_image[p00]-original_image[p02]+2u64*original_image[p10]-2u64*original_image[p12]+original_image[p20]-original_image[p22]
+            sy = clamp(sy)
+            u64 sum = sx+sy
+            u64 pos = if active then norm(ix+iy*cols) else 0u64 fi
+            edge[pos] = if active then 255u64-(255u64 & sum) else edge[pos] fi
+        endfor
+    endfor
+    return edge

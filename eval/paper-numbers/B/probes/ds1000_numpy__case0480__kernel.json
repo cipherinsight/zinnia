@@ -1,0 +1,254 @@
+{
+  "id": "ds1000_numpy__case0480__kernel",
+  "sites": {
+    "11:15:11:21:Compare": "x == a",
+    "11:26:11:32:Compare": "y == b",
+    "11:14:11:33:BinOp": "(x == a) & (y == b)"
+  },
+  "numpy": {
+    "A": [
+      {
+        "site": "11:15:11:21:Compare",
+        "value": {
+          "shape": [
+            8
+          ],
+          "length": 8
+        }
+      },
+      {
+        "site": "11:26:11:32:Compare",
+        "value": {
+          "shape": [
+            8
+          ],
+          "length": 8
+        }
+      },
+      {
+        "site": "11:14:11:33:BinOp",
+        "value": {
+          "shape": [
+            8
+          ],
+          "length": 8
+        }
+      }
+    ],
+    "B": [
+      {
+        "site": "11:15:11:21:Compare",
+        "value": {
+          "shape": [
+            8
+          ],
+          "length": 8
+        }
+      },
+      {
+        "site": "11:26:11:32:Compare",
+        "value": {
+          "shape": [
+            8
+          ],
+          "length": 8
+        }
+      },
+      {
+        "site": "11:14:11:33:BinOp",
+        "value": {
+          "shape": [
+            8
+          ],
+          "length": 8
+        }
+      }
+    ]
+  },
+  "selected": [
+    "11:14:11:33:BinOp",
+    "11:15:11:21:Compare",
+    "11:26:11:32:Compare"
+  ],
+  "source": "def kernel(x: Integer[Array, '8'], y: Integer[Array, '8'], a: Integer, b: Integer):\n    bprobe_trace = []\n    bprobe_v0 = x == a\n    bprobe_trace.append((1, bprobe_v0))\n    bprobe_v1 = y == b\n    bprobe_trace.append((2, bprobe_v1))\n    bprobe_v2 = bprobe_v0 & bprobe_v1\n    bprobe_trace.append((0, bprobe_v2))\n    result = bprobe_v2.argmax()\n    if x[result] != a or y[result] != b:\n        result = -1\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [
+        {
+          "constant": 1
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 0
+        },
+        {
+          "kind": "i",
+          "public": 1
+        },
+        {
+          "kind": "i",
+          "public": 2
+        },
+        {
+          "kind": "i",
+          "public": 3
+        },
+        {
+          "kind": "i",
+          "public": 4
+        },
+        {
+          "kind": "i",
+          "public": 5
+        },
+        {
+          "kind": "i",
+          "public": 6
+        },
+        {
+          "kind": "i",
+          "public": 7
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1
+        ]
+      },
+      "shape": [
+        8
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 2
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 8
+        },
+        {
+          "kind": "i",
+          "public": 9
+        },
+        {
+          "kind": "i",
+          "public": 10
+        },
+        {
+          "kind": "i",
+          "public": 11
+        },
+        {
+          "kind": "i",
+          "public": 12
+        },
+        {
+          "kind": "i",
+          "public": 13
+        },
+        {
+          "kind": "i",
+          "public": 14
+        },
+        {
+          "kind": "i",
+          "public": 15
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1
+        ]
+      },
+      "shape": [
+        8
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 16
+        },
+        {
+          "kind": "i",
+          "public": 17
+        },
+        {
+          "kind": "i",
+          "public": 18
+        },
+        {
+          "kind": "i",
+          "public": 19
+        },
+        {
+          "kind": "i",
+          "public": 20
+        },
+        {
+          "kind": "i",
+          "public": 21
+        },
+        {
+          "kind": "i",
+          "public": 22
+        },
+        {
+          "kind": "i",
+          "public": 23
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1
+        ]
+      },
+      "shape": [
+        8
+      ]
+    }
+  ],
+  "dynamic": []
+}

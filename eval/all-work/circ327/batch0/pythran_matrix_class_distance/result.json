@@ -1,0 +1,29 @@
+{
+  "program": "pythran_matrix_class_distance",
+  "category": "needs_gadget: sqrt",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:11-12: runtime iteration bound and filtered row count.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "needs gadget",
+    "error": "needs gadget: sqrt; The norm over ten columns needs a real sqrt gadget.",
+    "constraints": null,
+    "rewrites": [
+      "Guard at most 16 iterations: every positive iteration unconditionally reads dat_points[i], so valid inputs require iterations <= 16 (nonpositive iterations return zero).",
+      "Use sixteen row slots and masks for filtering the sixteen input rows."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "not applicable",
+      "reason": "No accepted full translation."
+    },
+    "B": {
+      "status": "not applicable",
+      "reason": "No accepted full translation."
+    }
+  },
+  "notes": "The norm over ten columns needs a real sqrt gadget. Bounded rewrite analyzed but not emitted as a dummy executable; missing gadget explicitly prohibited."
+}

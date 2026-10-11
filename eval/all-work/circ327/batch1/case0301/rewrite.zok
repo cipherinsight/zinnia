@@ -1,0 +1,11 @@
+struct Result {
+    field[20] v0
+    field v1
+    field v2
+}
+
+// Reals are encoded at scale 2^32; signed field values use centered residues.
+def main(private field[20] A, private field ncol) -> Result:
+    field cols = if ncol == -1 then 20 else ncol fi
+    field rows = 20 / cols
+    return Result { v0: A, v1: rows, v2: cols }

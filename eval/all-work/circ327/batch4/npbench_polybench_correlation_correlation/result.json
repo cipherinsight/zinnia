@@ -1,0 +1,22 @@
+{
+  "program": "npbench_polybench_correlation_correlation",
+  "category": "needs_gadget: sqrt",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:15 np.eye(M) and line 16 loop depend on private M.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "needs_gadget",
+    "error": "kernel.py:11,14 standard deviation and sqrt(float_n) require square root and division.",
+    "constraints": null,
+    "rewrites": [
+      "Valid indexed columns imply M<=14 except degenerate nonpositive sizes; capacity 14 and guarded loops suffice; sqrt remains required."
+    ]
+  },
+  "correctness": {
+    "A": null,
+    "B": null
+  },
+  "notes": "kernel.py:11,14 standard deviation and sqrt(float_n) require square root and division."
+}

@@ -1,0 +1,23 @@
+{
+ "case": "pythran_wdist",
+ "function": "slow_wdist",
+ "parameters": [
+  {"name": "A", "kind": "array", "dtype": "float", "shape": [2, 3]},
+  {"name": "B", "kind": "array", "dtype": "float", "shape": [2, 3]},
+  {"name": "W", "kind": "array", "dtype": "float", "shape": [2, 3]}
+ ],
+ "constants": {},
+ "inputs": {
+  "A": {
+   "A": [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]],
+   "B": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+   "W": [[2.0, 3.0, 4.0], [5.0, 6.0, 7.0]]
+  },
+  "B": {
+   "A": [[0.6942684341486322, 1.9000229483568405, 2.713954277068719], [2.3591059409589157, 3.629852605893006, 4.669342359929167]],
+   "B": [[1.2946023982799404, 2.4566671965928117, 3.534168910313444], [4.649755406086286, 5.4442119521008685, 4.765230080383843]],
+   "W": [[1.215212384474679, 3.610224991764777, 3.9877518082251604], [5.6229480977431425, 5.251490969092274, 7.364725414751843]]
+  }
+ },
+ "notes": "A is the arguments of the example call `import numpy as np ; A = np.arange(6.).reshape((2,3)) ; B =  np.arange(1,7.).reshape((2,3)) ; W = np.arange(2,8.).reshape((2,3)) ; slow_wdist(A,B,W)`. B is a seeded perturbation of A (numpy RandomState(2596157)): noise 10 % of the largest magnitude; integer arrays redrawn in their range."
+}

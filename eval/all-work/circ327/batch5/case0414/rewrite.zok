@@ -1,0 +1,20 @@
+struct Result {
+    u64 a
+    u64[8] b
+}
+def main(private u64[8] data, private u64 bin_size) -> Result:
+    u64 bs = if bin_size > 8u64 then 1u64 else bin_size fi
+    u64 n = if bin_size > 8u64 then 0u64 else 8u64/bs fi
+    u64[8] result = [0u64; 8]
+    for u64 i in 0..8 do
+        u64 total = 0u64
+        for u64 j in 0..8 do
+            bool selected = i < n && j >= i*bs && j < (i+1u64)*bs
+            total = total + if selected then data[j] else 0u64 fi
+        endfor
+        bool neg = (total & 0x8000000000000000) != 0u64
+        u64 magnitude = if neg then 0u64-total else total fi
+        u64 quotient = magnitude/bs
+        result[i] = if neg then 0u64-quotient else quotient fi
+    endfor
+    return Result {a: n, b: result}

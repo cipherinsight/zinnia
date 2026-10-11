@@ -1,0 +1,12 @@
+def main(private u64[8][8] a) -> u64[8]:
+    u64[8][8] flipped = [[0u64; 8]; 8]
+    for u32 i in 0..8 do
+        for u32 j in 0..8 do
+            flipped[i][j] = a[i][7u32-j]
+        endfor
+    endfor
+    u64[8] result = [0u64; 8]
+    for u32 i in 0..8 do
+        result[i] = flipped[i][i]
+    endfor
+    return result

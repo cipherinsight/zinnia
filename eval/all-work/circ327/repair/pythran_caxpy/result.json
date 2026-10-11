@@ -1,0 +1,97 @@
+{
+  "program": "pythran_caxpy",
+  "function": "CAXPY",
+  "category": "timeout_or_oom",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:16: for I in range(N):. Private N controls the source loops; the explicit contract supplies the 1024 bound. Early None returns require a presence tag.",
+    "constraints": null,
+    "source_file": "pythran_caxpy/as_written.zok",
+    "artifact_sha256": "e40f08b05e4137610727dc61845c220fc06e15c11542fad193ce3927c759ca8c"
+  },
+  "rewrite": {
+    "status": "out_of_memory",
+    "constraints": null,
+    "error": "Running frontend\nRunning IR optimizations",
+    "seconds": 135.94734843600236,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_caxpy/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Guard 1024 source iterations by the explicit 0<=N<=1024 contract, normalize negative valid indices, and expose a return-presence tag for early None returns. Test abs(CA)==0 by both components equaling zero.",
+      "Use wide native field products, then native bit unpacking for the Q32 shift; retain native unsigned division and all loop bounds. This avoids bit-blasting every accumulation into a u64 adder."
+    ],
+    "source_file": "pythran_caxpy/rewrite.zok",
+    "artifact_sha256": "3eea11d1b85be695ba7f348a7396a4a2d90bf8bb48b995b529c6decae931ca4b"
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "expected_elements": 8,
+      "actual_elements": 8,
+      "max_abs_error": 5.122267054957774e-10,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_caxpy/rewrite.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_caxpy/A.pin"
+      ]
+    },
+    "B": {
+      "status": "pass",
+      "expected_elements": 8,
+      "actual_elements": 8,
+      "max_abs_error": 6.902611815462478e-10,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_caxpy/rewrite.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_caxpy/B.pin"
+      ]
+    }
+  },
+  "notes": "Wide native field products and accumulation; native unpacking implements the Q32 shift, native unsigned division handles quotients. All source loops and outputs are retained.",
+  "source": {
+    "program": "pythran_caxpy",
+    "dataset": "pythran",
+    "kernel": "benchmarking/datasets/pythran/pythran_caxpy/kernel.py",
+    "function": "CAXPY",
+    "sha256": "77c5208061d5689b209b1b4a46d85c7fe3d10046a49416c565f028f55bf106ee"
+  },
+  "numeric_encoding": {
+    "real_scale": 4294967296,
+    "rtol": 1e-06,
+    "atol": 1e-06,
+    "representation": "centered field residues with native unsigned division",
+    "helper": {
+      "file": "native_field.zok",
+      "sha256": "9479d28a511e5492cf372fe2e6416134dbfcf0d2e4e7b5b8848ab5712234ba8e"
+    }
+  },
+  "old_category": "needs_gadget: fixed-point multiplication",
+  "old_result": "batch0/pythran_caxpy/result.json",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+    "tmpdir": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/tmp"
+  },
+  "fixture": {
+    "path": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/pythran/pythran_caxpy/fixture.json",
+    "sha256": "06f50cc6b64f09eba00f10f2373b4391f7e974bef11a8b4aacc4daafe152f608"
+  },
+  "reason": "Native-arithmetic out of memory under 300 s / 8 GB; no arithmetic gadget blocker."
+}

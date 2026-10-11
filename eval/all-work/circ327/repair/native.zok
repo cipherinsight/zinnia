@@ -1,0 +1,51 @@
+// Q32 signed values use two's-complement u64. All operations are native Z#.
+from "utils/casts/u32_to_u64" import main as it
+from "EMBED" import u64_to_bits, u32_from_bits, u64_to_field, unpack, u64_from_bits
+
+def ui(u64 x) -> u32:
+    bool[64] b = u64_to_bits(x)
+    return u32_from_bits(b[32..64])
+
+def neg(u64 x) -> bool:
+    return x >= 0x8000000000000000
+
+def absv(u64 x) -> u64:
+    return if neg(x) then 0u64-x else x fi
+
+def ab(u64 x) -> u64:
+    return absv(x)
+
+def lt(u64 a, u64 b) -> bool:
+    return (a ^ 0x8000000000000000) < (b ^ 0x8000000000000000)
+
+def divc(u64 a, u64 b) -> u64:
+    u64 q = absv(a) / absv(b)
+    return if neg(a) != neg(b) then 0u64-q else q fi
+
+def mulq(u64 a, u64 b) -> u64:
+    u64 x = absv(a)
+    u64 y = absv(b)
+    field wide = u64_to_field(x)*u64_to_field(y)
+    bool[128] bits = unpack(wide)
+    u64 q = u64_from_bits(bits[32..96])
+    return if neg(a) != neg(b) then 0u64-q else q fi
+
+def mul(u64 a, u64 b) -> u64:
+    return mulq(a,b)
+
+def divq(u64 a, u64 b) -> u64:
+    u64 x = absv(a)
+    u64 y = absv(b)
+    u64 q = x/y
+    u64 r = x%y
+    // Native quotient/remainder digits avoid overflowing x << 32.
+    // r < y <= 2^63, so each doubled remainder fits u64.
+    for u32 k in 0..32 do
+        u64 d = r << 1u32
+        q = (q << 1u32) + d/y
+        r = d%y
+    endfor
+    return if neg(a) != neg(b) then 0u64-q else q fi
+
+def integer_to_field(u64 x) -> u64:
+    return x

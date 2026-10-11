@@ -1,0 +1,674 @@
+{
+ "schema": 1,
+ "system": "zinnia_halo2",
+ "case": "pythran_spectraldns__add_pressure_diffusion",
+ "description": "Zinnia -> halo2-base backend (IPA/BN254, Blake2b transcript)",
+ "windows": {
+  "setup": "compile + parameter choice + witness-free keygen (ParamsIPA::new, keygen_vk, keygen_pk) + writing params/pk/vk to the key directory",
+  "prove_core": "prove_s: create_proof + transcript finalize (halo2_hw's prove_s covers the same calls)",
+  "end_to_end": "preprocess_s (IR evaluation resolving external calls) + witness_s (synthesis into the builder pinned to keygen's layout) + prove_s; params and proving key read from files beforehand, untimed (load_params_s, load_pk_s), as halo2_hw",
+  "verify": "verify_s: transcript + verify_proof against the verifying key read from the key directory (load_params_s, load_vk_s untimed), as halo2_hw"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/pythran/pythran_spectraldns/kernel.py": "7468c037b11510552b893e731f9cbde5edeb3221482db2c6152f04dc3e423768",
+  "benchmarking/datasets/pythran/pythran_spectraldns/fixture.add_pressure_diffusion.json": "3163b8aa6e0c1f4f6ac89e634485cd2a4d3ca21cd19d2e5ec7e7035a46d4f074"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-09T10:04:37+0000",
+  "loadavg": [
+   15.42138671875,
+   13.84130859375,
+   13.02001953125
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "compile": 0.1419028639793396,
+    "keygen_s": 0.744035001,
+    "write_s": 0.014141935855150223
+   },
+   "details": {
+    "params": {
+     "k": 9,
+     "lookup_bits": 8,
+     "precision_bits": 32
+    },
+    "params_source": "Zinnia estimate_params",
+    "cells": "advice=[36471] lookup=[10080, 0, 0] fixed=10 instances=140 second_phase=PhaseShape { advice: 0, constants: 0 }",
+    "key_file_bytes": {
+     "keys.json": 630,
+     "params.bin": 32836,
+     "pk.bin": 16827671,
+     "vk.bin": 15623
+    },
+    "exposed_outputs": 140,
+    "elided_outputs": 0,
+    "ir_sha256": "af87facd28371139b32e8ff2cd3d95b381436a6c27fc8d901ae3c66883a24cc7"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 1.2755971597507596,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 99303424,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   14.53759765625,
+   13.77001953125,
+   13.0244140625
+  ],
+  "child": {
+   "wall_s": 1.10814128536731,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 106475520,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 0.760276455,
+   "end_to_end_s": 0.7783453029999999,
+   "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-npb-s7/work/zinnia_halo2/pythran_spectraldns__add_pressure_diffusion/proofs/warmup/proof.bin",
+   "proof_bytes": 31424,
+   "timings_s": {
+    "load_params_s": 0.016895711,
+    "load_pk_s": 0.016352082,
+    "parse_inputs_s": 0.000109721,
+    "preprocess_s": 0.002439759,
+    "witness_s": 0.015629089,
+    "thread_pool_s": 0.001195086,
+    "prove_s": 0.760276455,
+    "prove_call_s": 0.7999141374602914
+   },
+   "details": {
+    "k": 9
+   },
+   "proof_sha256": "263cac67a58449836fd616ad2c0876215873b5d4f8981d8d083ad1dd7b03b0e2"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 140 elements differ",
+   "expected_count": 140,
+   "actual_count": 140,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "55fb1f4ba19b61511ca4aa73011b8a54821c3f8c13398b6cf3c7a50a9c01d133",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    221.14691468328238,
+    14.873465411830693,
+    286.2666325743776,
+    -21.895749845076352,
+    216.86276650847867,
+    3.927969882497564,
+    261.60440229438245,
+    -11.989808015991002,
+    209.59159638383426,
+    -14.111516859382391,
+    168.69241050444543,
+    14.925019953865558,
+    250.38566277758218,
+    -1.3276456836611032,
+    332.8578705305699,
+    -10.127646282548085,
+    232.11977912276052,
+    9.65233425796032,
+    267.95712271053344,
+    18.920957972761244,
+    352.048371814657,
+    46.89508587005548,
+    275.4969588352833,
+    6.334433352574706,
+    265.7121173273772,
+    8.460304767126217,
+    261.40005253558047,
+    6.900308641139418,
+    268.59843159560114,
+    26.15561749530025,
+    330.1849647194613,
+    14.760642515029758,
+    400.3801936786622,
+    2.89202239876613,
+    294.74649851140566,
+    31.635709397494793,
+    289.7844149034936,
+    -36.64169804658741,
+    274.6057230178267,
+    -14.036844317801297,
+    233.77841841219924,
+    -17.40673414687626,
+    304.1934263955336,
+    4.555475286440924,
+    278.78884850488976,
+    -13.043790492927656,
+    255.39799587684684,
+    1.5421798550523818,
+    333.87235709652305,
+    -1.863117377506569,
+    318.44569087726995,
+    8.920201634289697,
+    322.93248793738894,
+    0.18568800296634436,
+    336.8640622163657,
+    -19.622381784487516,
+    273.1854836894199,
+    -9.103462765691802,
+    336.7053598794155,
+    -8.653198956279084,
+    267.95972043136135,
+    -25.967343466356397,
+    337.1147645856254,
+    38.233034699456766,
+    339.6691169287078,
+    12.930627081077546,
+    388.26029090047814,
+    34.756938306149095,
+    303.9448168417439,
+    -35.66635355516337,
+    296.91177388862707,
+    31.956777579849586,
+    373.3287975245621,
+    -9.276422573020682,
+    405.69243660615757,
+    -9.136248144321144,
+    280.9749185128603,
+    -21.258558109402657,
+    387.45172588853166,
+    6.571664748247713,
+    341.72094133356586,
+    -19.26969521306455,
+    337.5136081168894,
+    -20.419740699697286,
+    303.0017375804018,
+    -17.554124606540427,
+    414.1784421354532,
+    2.445170031161979,
+    409.3733215434477,
+    -41.28658385714516,
+    397.4394279390108,
+    -58.027747619198635,
+    341.358169086976,
+    19.162177605787292,
+    334.5224914108403,
+    -48.63306321040727,
+    439.6827629816253,
+    -1.6916771880351007,
+    427.1276312812697,
+    52.99088805215433,
+    437.1636544831563,
+    -0.35608718753792346,
+    314.7366187807638,
+    0.07816676399670541,
+    395.2349836600479,
+    -4.087407554499805,
+    452.2386247571558,
+    -14.166259209625423,
+    368.1051445903722,
+    24.926554227946326,
+    420.7847844392527,
+    24.697602034313604,
+    463.6566288881004,
+    10.668357867281884,
+    394.2773556925822,
+    8.058555093593895,
+    378.04506182973273,
+    9.831118104746565,
+    415.06428772676736,
+    -15.74290184630081,
+    409.2098649647087,
+    5.61982367024757,
+    377.2120885918848,
+    -7.071278027724475,
+    478.3592956273351,
+    -54.05426395381801,
+    472.6528223103378,
+    -28.000742162577808,
+    443.0661336951889,
+    -12.210828836541623,
+    480.5945018453058,
+    18.375835549551994,
+    444.8097814023495,
+    41.39899713988416,
+    363.2265329777729,
+    39.03129724878818,
+    443.57448698207736,
+    17.497912022052333,
+    467.4291765023954,
+    -34.19981335476041
+   ],
+   "elided": [],
+   "shapes": [
+    [
+     2,
+     5,
+     7
+    ]
+   ]
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    14.73486328125,
+    13.82373046875,
+    13.0458984375
+   ],
+   "child": {
+    "wall_s": 1.2427586363628507,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 106860544,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.885464102,
+    "end_to_end_s": 0.903529652,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-npb-s7/work/zinnia_halo2/pythran_spectraldns__add_pressure_diffusion/proofs/sample-1/proof.bin",
+    "proof_bytes": 31424,
+    "timings_s": {
+     "load_pk_s": 0.016154594,
+     "load_params_s": 0.016960401,
+     "parse_inputs_s": 0.000117752,
+     "preprocess_s": 0.002441592,
+     "witness_s": 0.015623958,
+     "thread_pool_s": 0.001125346,
+     "prove_s": 0.885464102,
+     "prove_call_s": 0.9254671325907111
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "b6fd7588aef5bea8431b2768a13e0b53eadc570f1d11d096d6aec552713c413d"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 140 elements differ",
+    "expected_count": 140,
+    "actual_count": 140,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "55fb1f4ba19b61511ca4aa73011b8a54821c3f8c13398b6cf3c7a50a9c01d133",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     221.14691468328238,
+     14.873465411830693,
+     286.2666325743776,
+     -21.895749845076352,
+     216.86276650847867,
+     3.927969882497564,
+     261.60440229438245,
+     -11.989808015991002,
+     209.59159638383426,
+     -14.111516859382391,
+     168.69241050444543,
+     14.925019953865558,
+     250.38566277758218,
+     -1.3276456836611032,
+     332.8578705305699,
+     -10.127646282548085,
+     232.11977912276052,
+     9.65233425796032,
+     267.95712271053344,
+     18.920957972761244,
+     352.048371814657,
+     46.89508587005548,
+     275.4969588352833,
+     6.334433352574706,
+     265.7121173273772,
+     8.460304767126217,
+     261.40005253558047,
+     6.900308641139418,
+     268.59843159560114,
+     26.15561749530025,
+     330.1849647194613,
+     14.760642515029758,
+     400.3801936786622,
+     2.89202239876613,
+     294.74649851140566,
+     31.635709397494793,
+     289.7844149034936,
+     -36.64169804658741,
+     274.6057230178267,
+     -14.036844317801297,
+     233.77841841219924,
+     -17.40673414687626,
+     304.1934263955336,
+     4.555475286440924,
+     278.78884850488976,
+     -13.043790492927656,
+     255.39799587684684,
+     1.5421798550523818,
+     333.87235709652305,
+     -1.863117377506569,
+     318.44569087726995,
+     8.920201634289697,
+     322.93248793738894,
+     0.18568800296634436,
+     336.8640622163657,
+     -19.622381784487516,
+     273.1854836894199,
+     -9.103462765691802,
+     336.7053598794155,
+     -8.653198956279084,
+     267.95972043136135,
+     -25.967343466356397,
+     337.1147645856254,
+     38.233034699456766,
+     339.6691169287078,
+     12.930627081077546,
+     388.26029090047814,
+     34.756938306149095,
+     303.9448168417439,
+     -35.66635355516337,
+     296.91177388862707,
+     31.956777579849586,
+     373.3287975245621,
+     -9.276422573020682,
+     405.69243660615757,
+     -9.136248144321144,
+     280.9749185128603,
+     -21.258558109402657,
+     387.45172588853166,
+     6.571664748247713,
+     341.72094133356586,
+     -19.26969521306455,
+     337.5136081168894,
+     -20.419740699697286,
+     303.0017375804018,
+     -17.554124606540427,
+     414.1784421354532,
+     2.445170031161979,
+     409.3733215434477,
+     -41.28658385714516,
+     397.4394279390108,
+     -58.027747619198635,
+     341.358169086976,
+     19.162177605787292,
+     334.5224914108403,
+     -48.63306321040727,
+     439.6827629816253,
+     -1.6916771880351007,
+     427.1276312812697,
+     52.99088805215433,
+     437.1636544831563,
+     -0.35608718753792346,
+     314.7366187807638,
+     0.07816676399670541,
+     395.2349836600479,
+     -4.087407554499805,
+     452.2386247571558,
+     -14.166259209625423,
+     368.1051445903722,
+     24.926554227946326,
+     420.7847844392527,
+     24.697602034313604,
+     463.6566288881004,
+     10.668357867281884,
+     394.2773556925822,
+     8.058555093593895,
+     378.04506182973273,
+     9.831118104746565,
+     415.06428772676736,
+     -15.74290184630081,
+     409.2098649647087,
+     5.61982367024757,
+     377.2120885918848,
+     -7.071278027724475,
+     478.3592956273351,
+     -54.05426395381801,
+     472.6528223103378,
+     -28.000742162577808,
+     443.0661336951889,
+     -12.210828836541623,
+     480.5945018453058,
+     18.375835549551994,
+     444.8097814023495,
+     41.39899713988416,
+     363.2265329777729,
+     39.03129724878818,
+     443.57448698207736,
+     17.497912022052333,
+     467.4291765023954,
+     -34.19981335476041
+    ],
+    "elided": [],
+    "shapes": [
+     [
+      2,
+      5,
+      7
+     ]
+    ]
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.014488199,
+     "not_applicable": null,
+     "timings_s": {
+      "load_vk_s": 0.001209997,
+      "load_params_s": 0.016955532,
+      "verify_call_s": 0.014673914760351181,
+      "verify_s": 0.014488199
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.16424844600260258,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 36388864,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-2",
+   "loadavg_before": [
+    15.1953125,
+    13.9775390625,
+    13.109375
+   ],
+   "child": {
+    "wall_s": 1.1150034321472049,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 105697280,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.781582014,
+    "end_to_end_s": 0.799656205,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-npb-s7/work/zinnia_halo2/pythran_spectraldns__add_pressure_diffusion/proofs/sample-2/proof.bin",
+    "proof_bytes": 31424,
+    "timings_s": {
+     "load_pk_s": 0.015943698,
+     "load_params_s": 0.016924436,
+     "parse_inputs_s": 0.000111683,
+     "preprocess_s": 0.002448449,
+     "witness_s": 0.015625742,
+     "thread_pool_s": 0.001109906,
+     "prove_s": 0.781582014,
+     "prove_call_s": 0.8213550932705402
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "b5d278a4a91ea4c54d39c795dfc60e6bc05b9c87d203eb62d20b02488c68e4b3"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 140 elements differ",
+    "expected_count": 140,
+    "actual_count": 140,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "55fb1f4ba19b61511ca4aa73011b8a54821c3f8c13398b6cf3c7a50a9c01d133",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.016318673,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.016940589,
+      "load_vk_s": 0.001256612,
+      "verify_call_s": 0.016516092233359814,
+      "verify_s": 0.016318673
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.16549054440110922,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 36409344,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-3",
+   "loadavg_before": [
+    14.61669921875,
+    13.89501953125,
+    13.09130859375
+   ],
+   "child": {
+    "wall_s": 1.0243379892781377,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 105566208,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.674315399,
+    "end_to_end_s": 0.692962438,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-tw1-npb-s7/work/zinnia_halo2/pythran_spectraldns__add_pressure_diffusion/proofs/sample-3/proof.bin",
+    "proof_bytes": 31424,
+    "timings_s": {
+     "load_params_s": 0.016882037,
+     "load_pk_s": 0.017025909,
+     "parse_inputs_s": 0.000112143,
+     "preprocess_s": 0.002488734,
+     "witness_s": 0.016158305,
+     "thread_pool_s": 0.000643096,
+     "prove_s": 0.674315399,
+     "prove_call_s": 0.7143163131549954
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "73e0f38aa712b8c181e9a7eef2e1a4ff842239106e6a53de1a19c2b7cd030c13"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 140 elements differ",
+    "expected_count": 140,
+    "actual_count": 140,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "55fb1f4ba19b61511ca4aa73011b8a54821c3f8c13398b6cf3c7a50a9c01d133",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.018803425,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.016933602,
+      "load_vk_s": 0.001235414,
+      "verify_call_s": 0.018985139206051826,
+      "verify_s": 0.018803425
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.16560489870607853,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 36339712,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 0.018248034,
+    "not_applicable": null,
+    "timings_s": {
+     "load_vk_s": 0.001233964,
+     "load_params_s": 0.016881115,
+     "verify_call_s": 0.01843169890344143,
+     "verify_s": 0.018248034
+    },
+    "details": {
+     "error": "halo2-base verify_proof failed: ConstraintSystemFailure"
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.1652520839124918,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 36458496,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

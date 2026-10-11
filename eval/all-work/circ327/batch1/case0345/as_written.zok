@@ -1,0 +1,16 @@
+// Reals are encoded at scale 2^32; signed field values use centered residues.
+from "EMBED" import integer_to_field
+
+def main(private integer[8][6] a, private integer col, private integer multiply_number) -> integer[8]:
+    integer idx = col - 1
+    field ci = integer_to_field(if idx < 0 then idx + 6 else idx fi)
+    for u32 i in 0..8 do
+        a[i][ci] = a[i][ci] * multiply_number / 4294967296
+    endfor
+    integer[8] r = [0int; 8]
+    integer acc = 0
+    for u32 i in 0..8 do
+        acc = acc + a[i][ci]
+        r[i] = acc
+    endfor
+    return r

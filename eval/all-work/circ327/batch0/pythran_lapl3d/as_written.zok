@@ -1,0 +1,21 @@
+def main(private integer[16][16][3] image) -> integer[14][14][3]:
+    integer[14][14][3] out = [[[0; 3]; 14]; 14]
+    integer valmax = 0
+    for u32 i in 0..14 do
+        for u32 j in 0..14 do
+            for u32 k in 0..3 do
+                integer v = 4*image[i+1][j+1][k]-image[i][j+1][k]-image[i+2][j+1][k]-image[i+1][j][k]-image[i+1][j+2][k]
+                out[i][j][k] = if v < 0 then -v else v fi
+                valmax = if out[i][j][k] > valmax then out[i][j][k] else valmax fi
+            endfor
+        endfor
+    endfor
+    valmax = (if valmax > 4294967296 then valmax else 4294967296 fi)+4
+    for u32 i in 0..14 do
+        for u32 j in 0..14 do
+            for u32 k in 0..3 do
+                out[i][j][k] = out[i][j][k]*4294967296/valmax
+            endfor
+        endfor
+    endfor
+    return out

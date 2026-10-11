@@ -1,0 +1,87 @@
+{
+  "program": "pythran_lap",
+  "function": "laplacian",
+  "category": "accepted_as_written",
+  "as_written": {
+    "status": "accepted",
+    "constraints": 263142,
+    "error": null,
+    "seconds": 3.2347357040016504,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_lap/as_written.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "source_file": "pythran_lap/as_written.zok",
+    "artifact_sha256": "500e14949c81b8885dc98fd8b4250895b757d8bf41711078b106a8b64b6fe979"
+  },
+  "rewrite": null,
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "expected_elements": 16,
+      "actual_elements": 16,
+      "max_abs_error": 1.7695128917694092e-06,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_lap/as_written.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_lap/A.pin"
+      ]
+    },
+    "B": {
+      "status": "pass",
+      "expected_elements": 16,
+      "actual_elements": 16,
+      "max_abs_error": 3.2363227546738926e-05,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_lap/as_written.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_lap/B.pin"
+      ]
+    }
+  },
+  "notes": "Native u64 Q32 arithmetic with explicit signs, wide product parts, and quotient/remainder digits; all source outputs retained.",
+  "source": {
+    "program": "pythran_lap",
+    "dataset": "pythran",
+    "kernel": "benchmarking/datasets/pythran/pythran_lap/kernel.py",
+    "function": "laplacian",
+    "sha256": "93f5a1f606decc96070fbaff571da0afeb4129fe5dcc323f064cd7c2801bdf4e"
+  },
+  "numeric_encoding": {
+    "real_scale": 4294967296,
+    "rtol": 1e-06,
+    "atol": 1e-06,
+    "representation": "signed two-complement u64 with native wide products",
+    "helper": {
+      "file": "native.zok",
+      "sha256": "230210f08577e08c6d8067d12af2de953bb0d8a1227875d2288459a4e80ac9ab"
+    }
+  },
+  "old_category": "needs_gadget: division",
+  "old_result": "batch4/pythran_lap/result.json",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+    "tmpdir": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/tmp"
+  },
+  "fixture": {
+    "path": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/pythran/pythran_lap/fixture.json",
+    "sha256": "db926fe83ea519a58d95957142cafbcc9ce5b12d6883748c188006c476ab8b57"
+  },
+  "reason": "Native signed Q32 arithmetic compiles; both fixtures pass."
+}

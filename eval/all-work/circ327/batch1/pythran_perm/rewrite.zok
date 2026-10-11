@@ -1,0 +1,33 @@
+// Reals are encoded at scale 2^32; signed field values use centered residues.
+def main(private field[4] iterable) -> field[24][4]:
+    field[4] pool = iterable
+    field[4] indices = [0,1,2,3]
+    field[4] cycles = [4,3,2,1]
+    field[24][4] out = [[0; 4]; 24]
+    out[0] = iterable
+    for field step in 1..24 do
+        bool done = false
+        for field rev in 0..4 do
+            field i = 3-rev
+            bool active = !done
+            cycles[i] = if active then cycles[i]-1 else cycles[i] fi
+            bool rotate = active && cycles[i] == 0
+            field old = indices[i]
+            for field k in 0..3 do
+                indices[k] = if rotate && k >= i then indices[k+1] else indices[k] fi
+            endfor
+            indices[3] = if rotate then old else indices[3] fi
+            cycles[i] = if rotate then 4-i else cycles[i] fi
+            bool swap = active && !rotate
+            field j = if swap then 4-cycles[i] else 0 fi
+            field a = indices[i]
+            field b = indices[j]
+            indices[i] = if swap then b else a fi
+            indices[j] = if swap then a else indices[j] fi
+            done = done || swap
+        endfor
+        for field k in 0..4 do
+            out[step][k] = pool[indices[k]]
+        endfor
+    endfor
+    return out

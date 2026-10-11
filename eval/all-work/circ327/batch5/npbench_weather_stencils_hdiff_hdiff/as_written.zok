@@ -1,0 +1,35 @@
+def main(private integer[15][15][10] in_field, private integer[11][11][10] out_field, private integer[11][11][10] coeff) -> integer[11][11][10]:
+    integer[13][13][10] lap = [[[0int; 10]; 13]; 13]
+    for u32 i in 0..13 do
+        for u32 j in 0..13 do
+            for u32 k in 0..10 do
+                lap[i][j][k] = 4int*in_field[i+1u32][j+1u32][k]-(in_field[i+2u32][j+1u32][k]+in_field[i][j+1u32][k]+in_field[i+1u32][j+2u32][k]+in_field[i+1u32][j][k])
+            endfor
+        endfor
+    endfor
+    integer[12][11][10] flx = [[[0int; 10]; 11]; 12]
+    integer[11][12][10] fly = [[[0int; 10]; 12]; 11]
+    for u32 i in 0..12 do
+        for u32 j in 0..11 do
+            for u32 k in 0..10 do
+                integer res = lap[i+1u32][j+1u32][k]-lap[i][j+1u32][k]
+                flx[i][j][k] = if res*(in_field[i+2u32][j+2u32][k]-in_field[i+1u32][j+2u32][k]) > 0int then 0int else res fi
+            endfor
+        endfor
+    endfor
+    for u32 i in 0..11 do
+        for u32 j in 0..12 do
+            for u32 k in 0..10 do
+                integer res = lap[i+1u32][j+1u32][k]-lap[i+1u32][j][k]
+                fly[i][j][k] = if res*(in_field[i+2u32][j+2u32][k]-in_field[i+2u32][j+1u32][k]) > 0int then 0int else res fi
+            endfor
+        endfor
+    endfor
+    for u32 i in 0..11 do
+        for u32 j in 0..11 do
+            for u32 k in 0..10 do
+                out_field[i][j][k] = in_field[i+2u32][j+2u32][k]-coeff[i][j][k]*(flx[i+1u32][j][k]-flx[i][j][k]+fly[i][j+1u32][k]-fly[i][j][k])/4294967296int
+            endfor
+        endfor
+    endfor
+    return out_field

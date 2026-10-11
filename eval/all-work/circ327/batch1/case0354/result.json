@@ -1,0 +1,46 @@
+{
+  "program": "case0354",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:12-13: Boolean selections and append have value-dependent row counts.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 25810,
+    "returncode": 0,
+    "seconds": 0.314,
+    "rewrites": [
+      "Pad both Boolean selections and concatenation to 9 rows and return logical length; 2+7 input rows bound the capacity."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "expected_elements": 21,
+      "actual_elements": 21,
+      "max_absolute_error": 0.0,
+      "rtol": 1e-06,
+      "atol": 1e-06
+    },
+    "B": {
+      "status": "pass",
+      "expected_elements": 18,
+      "actual_elements": 18,
+      "max_absolute_error": 0.0,
+      "rtol": 1e-06,
+      "atol": 1e-06
+    }
+  },
+  "notes": [
+    "Pad symmetric row difference to nine rows and expose logical length.",
+    "A/B checked with zxi against undecorated original NumPy source; rtol=atol=1e-6. Reals use scale 2^32; signed field values use centered residues."
+  ],
+  "accepted_attempt": "rewrite",
+  "source": {
+    "kernel": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch1/case0354/kernel.py",
+    "function": "kernel"
+  }
+}

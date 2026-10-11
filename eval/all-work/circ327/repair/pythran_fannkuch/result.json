@@ -1,0 +1,93 @@
+{
+  "program": "pythran_fannkuch",
+  "function": "fannkuch2",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:9,14-16 dynamic lists and nested while loops; bounded rewrite needs factorial-sized unrolling.",
+    "constraints": null,
+    "source_file": "pythran_fannkuch/as_written.zok",
+    "artifact_sha256": "a752b6159395daf0c136148c350c316bf1b34da31f76a17b6803206fb7e29807"
+  },
+  "rewrite": {
+    "status": "accepted",
+    "constraints": 196,
+    "error": null,
+    "seconds": 0.01801546099886764,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_fannkuch/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Delete the pure, unused fannkuch(n) call in fannkuch2 (kernel.py:44). It returns a value discarded by the entry and mutates only locally allocated lists; the observable result is None for every successful input.",
+      "Represent None by a false public presence tag (CirC rejects a literal zero-length array) and preserve the original n=0 IndexError as an assertion failure. For 1<=n<=1024 the permutation enumeration terminates and has no externally visible effects."
+    ],
+    "source_file": "pythran_fannkuch/rewrite.zok",
+    "artifact_sha256": "b950473eb64a0d855eb2ef20a60f8f70e56eac1048c4fcfdfa915cc73ad77369"
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "expected_elements": 0,
+      "actual_elements": 0,
+      "max_abs_error": 0,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_fannkuch/rewrite.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_fannkuch/A.pin"
+      ]
+    },
+    "B": {
+      "status": "pass",
+      "expected_elements": 0,
+      "actual_elements": 0,
+      "max_abs_error": 0,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_fannkuch/rewrite.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_fannkuch/B.pin"
+      ]
+    }
+  },
+  "notes": "This rewrite removes no returned output: the declared entry is fannkuch2, not the helper fannkuch. Both full bounded native translations and their resource diagnostics are preserved under ungrouped.* and bounded.*.",
+  "source": {
+    "program": "pythran_fannkuch",
+    "dataset": "pythran",
+    "kernel": "benchmarking/datasets/pythran/pythran_fannkuch/kernel.py",
+    "function": "fannkuch2",
+    "sha256": "71e255d5347ef079f797889e5640a9240318d8d6e2f49e53a350177bb223ff91"
+  },
+  "numeric_encoding": {
+    "real_scale": 4294967296,
+    "rtol": 1e-06,
+    "atol": 1e-06,
+    "representation": "signed two-complement u64 with native wide products"
+  },
+  "old_category": "circ_error",
+  "old_result": "batch4/pythran_fannkuch/result.json",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+    "tmpdir": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/tmp"
+  },
+  "fixture": {
+    "path": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/pythran/pythran_fannkuch/fixture.json",
+    "sha256": "ccca0edba004c0c862c3c45fec3cfe6f37f78167da49449705a19c9663c340a3"
+  },
+  "reason": "Delete the pure, unused fannkuch(n) call in fannkuch2 (kernel.py:44). It returns a value discarded by the entry and mutates only locally allocated lists; the observable result is None for every successful input.; Represent None by a false public presence tag (CirC rejects a literal zero-length array) and preserve the original n=0 IndexError as an assertion failure. For 1<=n<=1024 the permutation enumeration terminates and has no externally visible effects. A/B pass."
+}

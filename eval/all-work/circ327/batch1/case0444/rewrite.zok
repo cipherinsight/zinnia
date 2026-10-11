@@ -1,0 +1,20 @@
+// Reals are encoded at scale 2^32; signed field values use centered residues.
+def lt(field a, field b) -> bool:
+    bool an = a > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+    bool bn = b > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+    return if an == bn then a < b else an fi
+
+
+struct Output {
+    field[20] values
+    field length
+}
+def main(private field[20] A, private field[3] B) -> Output:
+    field[20] r = [0; 20]
+    field n = 0
+    for u32 i in 0..20 do
+        bool keep = (lt(B[0], A[i]) && lt(A[i], B[1])) || (lt(B[1], A[i]) && lt(A[i], B[2]))
+        r[n] = if keep then A[i] else r[n] fi
+        n = n + if keep then 1 else 0 fi
+    endfor
+    return Output { values: r, length: n }

@@ -1,0 +1,16 @@
+from "../native_v1" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[10] d) -> u64:
+    u64 total = 0u64
+    u64 denom = 0u64
+    for u32 i in 0..10 do
+        u64 x = d[i]
+        u64 s3 = x-59137326579712u64
+        u64 s4 = x-37881611550720u64
+        u64 p3 = mulq(s3,9610u64)+1029503661u64
+        u64 p4 = mulq(s4,43262u64)+601295421u64
+        u64 v = if lt(1100817682853888u64,x) then mulq(x,1932735283u64)-69426127705211u64 else if lt(232173047119872u64,x) then mulq(x,1803886264u64)-36401737619210u64 else if lt(59137326579712u64,x) then mulq(s3,p3)+4035422422303u64 else if lt(37881611550720u64,x) then mulq(s4,p4) else 0u64 fi fi fi fi
+        total = total+v
+        denom = denom+x
+    endfor
+    return divq(total,denom)

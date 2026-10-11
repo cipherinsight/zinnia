@@ -1,0 +1,50 @@
+{
+  "program": "pythran_cdotc",
+  "category": "needs_gadget: fixed-point multiplication/rescaling",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:15,24: private trip count N; @requires 0<=N<=1024 supplies a bound, including zero strides. Complex multiply needs Q32 rescaling.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "rejected",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\n\nthread 'main' (150975) panicked at src/target/r1cs/trans.rs:387:18:\ninternal error: entered unreachable code: Unhandled variable operator return.0\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    "constraints": null,
+    "seconds": 3.981190605001757,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch2/pythran_cdotc/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Guard 1024 iterations with I<N.",
+      "Encode optional None/complex return with a public presence tag."
+    ],
+    "remaining_blocker": "needs gadget: fixed-point multiplication/rescaling"
+  },
+  "correctness": {
+    "A": "not run: no accepted translation",
+    "B": "not run: no accepted translation"
+  },
+  "notes": "kernel.py:15,24: private trip count N; @requires 0<=N<=1024 supplies a bound, including zero strides. Complex multiply needs Q32 rescaling.",
+  "source": "benchmarking/datasets/pythran/pythran_cdotc/kernel.py",
+  "function": "CDOTC",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/pythran/pythran_cdotc/fixture.json",
+  "source_sha256": "b272e1561d4e2125e70c6cdfbf76b1adb9d2f1aa3783bf20733eddca36ebc150",
+  "encoding": "Real and complex components rounded to nearest integer at scale 2^32; centered field residues for field translations; native arbitrary-precision integers for integer translations. Public return includes all logical output values; padded returns include shape/presence metadata.",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh"
+  },
+  "translation_sha256": {
+    "rewrite": "ca66f2537301517ff9a6868fb92f40bf27b2f3eac31b7eb09d3176bfe8236fe5"
+  }
+}

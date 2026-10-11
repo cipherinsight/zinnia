@@ -1,0 +1,388 @@
+{
+ "schema": 1,
+ "system": "cairo",
+ "case": "pythran_smoothing__smoothing",
+ "description": "Cairo (Scarb 2.20.1, Stwo), Q32",
+ "windows": {
+  "prove_core": "`scarb prove` process wall clock (includes start-up)",
+  "end_to_end": "`scarb execute` + `scarb prove` process wall clocks",
+  "verify": "`scarb verify` process wall clock"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/pythran/pythran_smoothing/kernel.py": "2350df59c613b4ed5b00cb58bf5ec7abf35bedf7b10039bed2d416b2937b167a",
+  "benchmarking/datasets/pythran/pythran_smoothing/fixture.json": "855aa1880ef8e48ccfb6857f4381cc0d0e9a74c092f0cf832ba6833056ced592",
+  "benchmarking/datasets/pythran/pythran_smoothing/cairo/smoothing.cairo": "dd00ddcf58d814d6e0d59eb84fe2ec5869fc0860e6c44699dd5fb8cfcf15b801",
+  "benchmarking/baselines/cairo/cairo_baseline.py": "d652fd51d6d23afdcbec825da52f25358b2d6e51cc2d2889902126ab59ffa80c"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-11T10:03:01+0000",
+  "loadavg": [
+   42.94091796875,
+   27.33154296875,
+   16.72216796875
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "build": 0.2685115123167634,
+    "process_wall": 0.33919778000563383
+   },
+   "details": {
+    "system": "cairo",
+    "scarb": "/home/zhantong/.local/share/scarb/scarb-v2.20.1-x86_64-unknown-linux-gnu/bin/scarb",
+    "case": "pythran_smoothing__smoothing",
+    "input": "A",
+    "mode": "setup",
+    "proof_mode": "stwo",
+    "proof_path": null,
+    "peak_rss_mib": 110
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 0.4678079355508089,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 145489920,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   42.94091796875,
+   27.33154296875,
+   16.72216796875
+  ],
+  "child": {
+   "wall_s": 46.09290538262576,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 14672314368,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 23.823993056081235,
+   "end_to_end_s": 24.047524544410408,
+   "proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-pythran_smoothing__smoothing-zkvm/work/cairo/pythran_smoothing__smoothing/proofs/warmup/program/proof-stwo-B.bin",
+   "proof_bytes": 968715,
+   "timings_s": {
+    "execute": 0.22353148832917213,
+    "prove": 23.823993056081235,
+    "prove_json_copy": 21.769820576533675,
+    "process_wall": 45.94085771869868
+   },
+   "details": {
+    "system": "cairo",
+    "scarb": "/home/zhantong/.local/share/scarb/scarb-v2.20.1-x86_64-unknown-linux-gnu/bin/scarb",
+    "case": "pythran_smoothing__smoothing",
+    "input": "B",
+    "mode": "prove",
+    "proof_mode": "stwo",
+    "public_words": [
+     1,
+     16,
+     16,
+     -848420632,
+     -273303379,
+     -191455982,
+     -64748560,
+     400948141,
+     807959538,
+     1132207207,
+     1540970100,
+     1573571491,
+     1816799706,
+     2222901759,
+     2351704479,
+     2850742972,
+     2921229378,
+     3224424299,
+     3719227475
+    ],
+    "input_shapes": [
+     16
+    ],
+    "output_shape": [
+     16
+    ],
+    "resources": {
+     "n_steps": 40005,
+     "n_memory_holes": 1521,
+     "builtin_instance_counter": [
+      [
+       "range_check_builtin",
+       2969
+      ],
+      [
+       "output_builtin",
+       23
+      ]
+     ],
+     "syscalls": [],
+     "memory_segment_sizes": [
+      [
+       "execution",
+       30422
+      ],
+      [
+       "range_check",
+       2969
+      ],
+      [
+       "output",
+       23
+      ]
+     ],
+     "max_memory_address": 37713
+    },
+    "proof_size_bytes": 968715,
+    "json_proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-pythran_smoothing__smoothing-zkvm/work/cairo/pythran_smoothing__smoothing/proofs/warmup/program/proof-stwo-B.json",
+    "json_proof_size_bytes": 11360304,
+    "peak_rss_mib": 13943
+   },
+   "proof_sha256": "5bf79032cc03492cf497bb99dbc9f269a770778e5e39ef668160b1c0ecaa8c0e"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 16 elements differ",
+   "expected_count": 16,
+   "actual_count": 16,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "ca484665e1a94459501788eed808604dffdb3e44a36a1beb079eeb429cf40985",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    -0.19753832183778286,
+    -0.06363340164534748,
+    -0.04457681952044368,
+    -0.015075448900461197,
+    0.09335301374085248,
+    0.18811773927882314,
+    0.26361253275536,
+    0.35878506023436785,
+    0.3663756630849093,
+    0.4230066449381411,
+    0.517559647327289,
+    0.5475488675292581,
+    0.6637403210625052,
+    0.6801517163403332,
+    0.7507447849493474,
+    0.8659501268994063
+   ],
+   "elided": [],
+   "shapes": [
+    [
+     16
+    ]
+   ]
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    43.13427734375,
+    29.59423828125,
+    17.99365234375
+   ],
+   "child": {
+    "wall_s": 42.95815650932491,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 15021383680,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 21.815134434960783,
+    "end_to_end_s": 22.027259453199804,
+    "proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-pythran_smoothing__smoothing-zkvm/work/cairo/pythran_smoothing__smoothing/proofs/sample-1/program/proof-stwo-B.bin",
+    "proof_bytes": 968715,
+    "timings_s": {
+     "execute": 0.2121250182390213,
+     "prove": 21.815134434960783,
+     "prove_json_copy": 20.57952405884862,
+     "process_wall": 42.78845153097063
+    },
+    "details": {
+     "system": "cairo",
+     "scarb": "/home/zhantong/.local/share/scarb/scarb-v2.20.1-x86_64-unknown-linux-gnu/bin/scarb",
+     "case": "pythran_smoothing__smoothing",
+     "input": "B",
+     "mode": "prove",
+     "proof_mode": "stwo",
+     "public_words": [
+      1,
+      16,
+      16,
+      -848420632,
+      -273303379,
+      -191455982,
+      -64748560,
+      400948141,
+      807959538,
+      1132207207,
+      1540970100,
+      1573571491,
+      1816799706,
+      2222901759,
+      2351704479,
+      2850742972,
+      2921229378,
+      3224424299,
+      3719227475
+     ],
+     "input_shapes": [
+      16
+     ],
+     "output_shape": [
+      16
+     ],
+     "resources": {
+      "n_steps": 40005,
+      "n_memory_holes": 1521,
+      "builtin_instance_counter": [
+       [
+        "range_check_builtin",
+        2969
+       ],
+       [
+        "output_builtin",
+        23
+       ]
+      ],
+      "syscalls": [],
+      "memory_segment_sizes": [
+       [
+        "execution",
+        30422
+       ],
+       [
+        "range_check",
+        2969
+       ],
+       [
+        "output",
+        23
+       ]
+      ],
+      "max_memory_address": 37713
+     },
+     "proof_size_bytes": 968715,
+     "json_proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-pythran_smoothing__smoothing-zkvm/work/cairo/pythran_smoothing__smoothing/proofs/sample-1/program/proof-stwo-B.json",
+     "json_proof_size_bytes": 11360304,
+     "peak_rss_mib": 14275
+    },
+    "proof_sha256": "5bf79032cc03492cf497bb99dbc9f269a770778e5e39ef668160b1c0ecaa8c0e"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 16 elements differ",
+    "expected_count": 16,
+    "actual_count": 16,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "ca484665e1a94459501788eed808604dffdb3e44a36a1beb079eeb429cf40985",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     -0.19753832183778286,
+     -0.06363340164534748,
+     -0.04457681952044368,
+     -0.015075448900461197,
+     0.09335301374085248,
+     0.18811773927882314,
+     0.26361253275536,
+     0.35878506023436785,
+     0.3663756630849093,
+     0.4230066449381411,
+     0.517559647327289,
+     0.5475488675292581,
+     0.6637403210625052,
+     0.6801517163403332,
+     0.7507447849493474,
+     0.8659501268994063
+    ],
+    "elided": [],
+    "shapes": [
+     [
+      16
+     ]
+    ]
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.07864215318113565,
+     "not_applicable": null,
+     "timings_s": {
+      "verify": 0.07864215318113565,
+      "process_wall": 0.26741011813282967
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.4056034982204437,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 93884416,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 0.09253413043916225,
+    "not_applicable": null,
+    "timings_s": {
+     "verify": 0.09253413043916225,
+     "process_wall": 0.6618212880566716
+    },
+    "details": {
+     "error": null
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.9170398805290461,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 84148224,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

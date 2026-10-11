@@ -1,0 +1,25 @@
+struct Output {
+    field[5] values
+    field[5] sizes
+    field length
+}
+def main(private field[5] values) -> Output:
+    field[5] diff = [1, 0, 0, 0, 0]
+    for field i in 1..5 do
+        diff[i] = values[i]-values[i-1]
+    endfor
+    field[6] idx = [0; 6]
+    field count = 0
+    for field i in 0..5 do
+        idx[count] = if diff[i] != 0 then i else idx[count] fi
+        count = count + if diff[i] != 0 then 1 else 0 fi
+    endfor
+    idx[count] = 5
+    field[5] out = [0; 5]
+    field[5] sizes = [0; 5]
+    for field i in 0..5 do
+        field ix = if i < count then idx[i] else 0 fi
+        out[i] = if i < count then values[ix] else 0 fi
+        sizes[i] = if i < count then idx[i+1]-idx[i] else 0 fi
+    endfor
+    return Output {values: out, sizes: sizes, length: count}

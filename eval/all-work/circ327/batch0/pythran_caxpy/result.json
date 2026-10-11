@@ -1,0 +1,29 @@
+{
+  "program": "pythran_caxpy",
+  "category": "needs_gadget: fixed-point multiplication",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:16,25: loops have runtime N; line 17/26 multiplies private complex values.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "needs gadget",
+    "error": "needs gadget: fixed-point multiplication; Signed products of Q32 components require scaling without overflow; native integer R1CS lowering fails and a custom arithmetic gadget is prohibited.",
+    "constraints": null,
+    "rewrites": [
+      "Guard 1024 iterations using the explicit 0 <= N <= 1024 precondition; preserve increment-dependent indices and early-return tag.",
+      "Represent complex values by real/imaginary Q32 components; compare both components to zero for abs(CA)==0."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "not applicable",
+      "reason": "No accepted full translation."
+    },
+    "B": {
+      "status": "not applicable",
+      "reason": "No accepted full translation."
+    }
+  },
+  "notes": "Signed products of Q32 components require scaling without overflow; native integer R1CS lowering fails and a custom arithmetic gadget is prohibited. Bounded rewrite analyzed but not emitted as a dummy executable; missing gadget explicitly prohibited."
+}

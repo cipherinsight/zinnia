@@ -1,0 +1,21 @@
+program,dataset,function,outcome,class,construct,detail
+case0301,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 20 elements differ
+case0323,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 1 elements differ
+case0340,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 30 elements differ
+case0360,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 12 elements differ
+case0384,ds1000_numpy,kernel,rejected_unsupported_construct,unsupported_construct,np.linalg.matrix_power,"ZinniaException: IR generation failed: np.linalg.matrix_power is not implemented; supported: norm and the verification helpers verify_inverse, verify_solve, verify_cholesky"
+case0405,ds1000_numpy,kernel,rejected_no_provable_bound,no_provable_bound,np.bincount output length from runtime values,"ZinniaException: IR generation failed: np.bincount: x entry value is not statically bounded — its runtime value could be anything, and the output length is `max(x)+1`. The previous compiler revision silently capped the output at 256 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal int array, or annotate the input with `@requires(lambda x: forall(x, lambda v: v <= K))` so the compiler can derive a tight, sound upper bound."
+case0425,ds1000_numpy,kernel,rejected_no_provable_bound,no_provable_bound,np.arange length from a runtime value,ZinniaException: IR generation failed: range stop must be a compile-time constant int
+case0442,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 17 elements differ
+case0468,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 100 elements differ
+case0498,ds1000_numpy,kernel,rejected_no_provable_bound,no_provable_bound,np.pad width from a runtime value,"ZinniaException: IR generation failed: np.pad: pad width is not statically bounded — its value at runtime could be anything. The previous compiler revision silently capped it at 128 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal pad width, or annotate the kernel inputs that drive the pad width with `@requires(lambda x: x <= K)` so the compiler can derive a tight, sound upper bound."
+npbench_compute_compute,npbench,compute,accepted_correct,,,logical outputs: 0 of 256 elements differ
+npbench_polybench_cholesky_cholesky,npbench,kernel,accepted_correct,,,logical outputs: 0 of 225 elements differ
+npbench_polybench_k2mm_k2mm,npbench,kernel,accepted_correct,,,logical outputs: 0 of 224 elements differ
+npbench_weather_stencils_hdiff_hdiff,npbench,hdiff,accepted_correct,,,logical outputs: 0 of 1210 elements differ
+pythran_check_mask,pythran,check_mask,rejected_unsupported_construct,unsupported_construct,np.bitwise_and,ZinniaException: IR generation failed: np.bitwise_and is not implemented
+pythran_euler_challenge14,pythran,euler14,rejected_unsupported_construct,unsupported_construct,dict,"ZinniaException: In method ""euler14"", line 5 lengths = {1: 0} ^^^^^^ UnsupportedLangFeatureException: Dict literals are not supported inside @zk_circuit because mapping types are unsupported in circuits."
+pythran_hyantes_core,pythran,run,rejected_no_provable_bound,no_provable_bound,range() trip count,"ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value without known bounds. Give the bound a maximum, e.g. a bounded array annotation (Integer[Array, ""N<=8""]) or a precondition (@zk_circuit(requires=[lambda n: 0 <= n <= 8]))"
+pythran_matmul,pythran,matrix_multiply,accepted_correct,,,logical outputs: 0 of 256 elements differ
+pythran_projection_simplex,pythran,projection_simplex,accepted_correct,,,logical outputs: 0 of 10 elements differ
+pythran_sum_primes,pythran,sum_primes,rejected_unsupported_construct,unsupported_construct,np.ceil,ZinniaException: IR generation failed: np.ceil is not implemented

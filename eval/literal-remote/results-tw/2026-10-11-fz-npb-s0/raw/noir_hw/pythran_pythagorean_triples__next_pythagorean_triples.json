@@ -1,0 +1,365 @@
+{
+ "schema": 1,
+ "system": "noir_hw",
+ "case": "pythran_pythagorean_triples__next_pythagorean_triples",
+ "description": "handwritten Noir (main.nr) -> nargo 1.0.0-beta.20 compile, noir-execute, bb UltraHonk (ZK)",
+ "windows": {
+  "setup": "nargo compile + bb write_vk",
+  "prove_core": "wall clock of the `bb prove` process (UltraHonk, ZK), including bb start-up and CRS loading",
+  "end_to_end": "`noir-execute` on setup's compiled artifact (runs the ACVM: witness generation) + `bb prove` with that witness. Every sample also runs `nargo execute` (re-elaborates the package source first) after `noir-execute` and before `bb prove`, records it as `timings_s.nargo_execute` and requires the same witness",
+  "verify": "wall clock of the `bb verify` process with the setup's verification key"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/pythran/pythran_pythagorean_triples/kernel.py": "8b02e649dce84b590be3826da1966e219b60a87b77768095184bf954ef584783",
+  "benchmarking/datasets/pythran/pythran_pythagorean_triples/fixture.json": "f16025dfe4374b331b428dc036431a154a1106684edf671665d9a9825f03b6e7",
+  "benchmarking/datasets/pythran/pythran_pythagorean_triples/main.next_pythagorean_triples.nr": "924973e85bdadc566235185f7659fb3f0cb46251c8c659a32ac9736ae76a5a20",
+  "benchmarking/baselines/noir_hw/src/lib.nr": "c0b66d8dfbf9ad11be2cc70c4473d0203eb758f6de6e00a92fa49b4cea998785",
+  "benchmarking/baselines/noir_hw/src/transcendental.nr": "f47de7f71117d442d62d8c3f3f13c55949eb6d399b4dc3fa7484d17c56ac92c9",
+  "benchmarking/baselines/hw_check/prover_toml.py": "3b13a196f183ba3210dc1b7624aa8c6873ac9da0993c3f31eed2a50af03c07c2",
+  "benchmarking/baselines/hw_check/noir_driver.py": "560fe258a20ee26955255a5b726daf9f1ee1a7c4f84683d90541f85e10c72b6b"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-11T13:17:23+0000",
+  "loadavg": [
+   31.61328125,
+   23.32275390625,
+   23.53759765625
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "nargo_compile": 0.2045119283720851,
+    "bb_write_vk": 0.022265170700848103
+   },
+   "details": {
+    "gates": {
+     "circuit_size": 2847,
+     "acir_opcodes": 15
+    },
+    "prover_toml_writer": "hw_check.prover_toml"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 0.36874507553875446,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 91701248,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   32.125,
+   23.56689453125,
+   23.61572265625
+  ],
+  "child": {
+   "wall_s": 0.46974191442131996,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 93290496,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 0.09939744044095278,
+   "end_to_end_s": 0.10220675822347403,
+   "proof_path": "/home/zhantong/zinnia-eval-run/fz/epochs/2026-10-11-fz-npb-s0/work/noir_hw/pythran_pythagorean_triples__next_pythagorean_triples/proofs/warmup/proof",
+   "proof_bytes": 14656,
+   "timings_s": {
+    "noir_execute": 0.002809317782521248,
+    "nargo_execute": 0.19928056094795465,
+    "bb_prove": 0.09939744044095278
+   },
+   "details": {
+    "witness_sha256": "52de3dfcc2778a9508a7ebfa44ebe2feb7ff489e23d03549a7ac4dab7f32a065"
+   },
+   "proof_sha256": "b1d162950b1a5ebb80923e21bf5eaa75342a227597e1e04987953f8954b71e62"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 9 elements differ",
+   "expected_count": 9,
+   "actual_count": 9,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "a575c065b33982de415f5521856d6c08d83298c938bc352b4c6afd61ac10c990",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    17,
+    9,
+    19,
+    23,
+    21,
+    31,
+    3,
+    11,
+    11
+   ],
+   "elided": [],
+   "shapes": null
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    32.125,
+    23.56689453125,
+    23.61572265625
+   ],
+   "child": {
+    "wall_s": 0.4128204835578799,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 97058816,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.08588907681405544,
+    "end_to_end_s": 0.08847348671406507,
+    "proof_path": "/home/zhantong/zinnia-eval-run/fz/epochs/2026-10-11-fz-npb-s0/work/noir_hw/pythran_pythagorean_triples__next_pythagorean_triples/proofs/sample-1/proof",
+    "proof_bytes": 14656,
+    "timings_s": {
+     "noir_execute": 0.002584409900009632,
+     "nargo_execute": 0.18725293036550283,
+     "bb_prove": 0.08588907681405544
+    },
+    "details": {
+     "witness_sha256": "52de3dfcc2778a9508a7ebfa44ebe2feb7ff489e23d03549a7ac4dab7f32a065"
+    },
+    "proof_sha256": "7ceb47faceb05e5929bee57162c73059b713e8d376cacb4c59ea75e48d5904ca"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 9 elements differ",
+    "expected_count": 9,
+    "actual_count": 9,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "a575c065b33982de415f5521856d6c08d83298c938bc352b4c6afd61ac10c990",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     17,
+     9,
+     19,
+     23,
+     21,
+     31,
+     3,
+     11,
+     11
+    ],
+    "elided": [],
+    "shapes": null
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.008716212585568428,
+     "not_applicable": null,
+     "timings_s": {
+      "bb_verify": 0.008716212585568428
+     },
+     "details": {
+      "exit": 0,
+      "output": ""
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.13326857518404722,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 33083392,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-2",
+   "loadavg_before": [
+    32.125,
+    23.56689453125,
+    23.61572265625
+   ],
+   "child": {
+    "wall_s": 0.4408499589189887,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 98484224,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.11621903534978628,
+    "end_to_end_s": 0.11911654844880104,
+    "proof_path": "/home/zhantong/zinnia-eval-run/fz/epochs/2026-10-11-fz-npb-s0/work/noir_hw/pythran_pythagorean_triples__next_pythagorean_triples/proofs/sample-2/proof",
+    "proof_bytes": 14656,
+    "timings_s": {
+     "noir_execute": 0.002897513099014759,
+     "nargo_execute": 0.18070414569228888,
+     "bb_prove": 0.11621903534978628
+    },
+    "details": {
+     "witness_sha256": "52de3dfcc2778a9508a7ebfa44ebe2feb7ff489e23d03549a7ac4dab7f32a065"
+    },
+    "proof_sha256": "3bc6bb52c54148676cc6128288baf7d460ededb7c978eb455e9059e5e7265437"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 9 elements differ",
+    "expected_count": 9,
+    "actual_count": 9,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "a575c065b33982de415f5521856d6c08d83298c938bc352b4c6afd61ac10c990",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.015079588629305363,
+     "not_applicable": null,
+     "timings_s": {
+      "bb_verify": 0.015079588629305363
+     },
+     "details": {
+      "exit": 0,
+      "output": ""
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.11717069521546364,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 33566720,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-3",
+   "loadavg_before": [
+    32.11474609375,
+    23.70703125,
+    23.6611328125
+   ],
+   "child": {
+    "wall_s": 0.4041758868843317,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 98545664,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.09449510276317596,
+    "end_to_end_s": 0.09710192400962114,
+    "proof_path": "/home/zhantong/zinnia-eval-run/fz/epochs/2026-10-11-fz-npb-s0/work/noir_hw/pythran_pythagorean_triples__next_pythagorean_triples/proofs/sample-3/proof",
+    "proof_bytes": 14656,
+    "timings_s": {
+     "noir_execute": 0.002606821246445179,
+     "nargo_execute": 0.1796099692583084,
+     "bb_prove": 0.09449510276317596
+    },
+    "details": {
+     "witness_sha256": "52de3dfcc2778a9508a7ebfa44ebe2feb7ff489e23d03549a7ac4dab7f32a065"
+    },
+    "proof_sha256": "f6d3d2c7b279c41047d44571cff59afee88dfaba12cdac4e93bac5f3bba121ea"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 9 elements differ",
+    "expected_count": 9,
+    "actual_count": 9,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "a575c065b33982de415f5521856d6c08d83298c938bc352b4c6afd61ac10c990",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.008835013955831528,
+     "not_applicable": null,
+     "timings_s": {
+      "bb_verify": 0.008835013955831528
+     },
+     "details": {
+      "exit": 0,
+      "output": ""
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.10908372327685356,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 33632256,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 0.010858220979571342,
+    "not_applicable": null,
+    "timings_s": {
+     "bb_verify": 0.010858220979571342
+    },
+    "details": {
+     "exit": 1,
+     "output": "\nScheme is: ultra_honk, num threads: 8 (mem: 31.79 MiB)\nUltraVerifier: verification failed at reduction step (mem: 31.79 MiB)\nProof verification failed (mem: 31.79 MiB)\n"
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.13313810620456934,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 33603584,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

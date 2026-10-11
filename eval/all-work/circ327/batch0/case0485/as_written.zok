@@ -1,0 +1,12 @@
+def main(private integer[5][6][3] A, private integer[3][3] B) -> integer[5][6][3]:
+    integer[5][6][3] result = [[[0; 3]; 6]; 5]
+    for u32 i in 0..5 do
+        for u32 j in 0..6 do
+            for u32 k in 0..3 do
+                for u32 l in 0..3 do
+                    result[i][j][k] = result[i][j][k] + A[i][j][l]*B[l][k]/4294967296
+                endfor
+            endfor
+        endfor
+    endfor
+    return result

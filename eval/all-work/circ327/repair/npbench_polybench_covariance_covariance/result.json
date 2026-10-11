@@ -1,0 +1,96 @@
+{
+  "program": "npbench_polybench_covariance_covariance",
+  "function": "kernel",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:12: cov = np.zeros((M, M), dtype=data.dtype). Private M controls the cov shape and source loops; successful assignments into cov imply 0<=M<=14.",
+    "constraints": null,
+    "source_file": "npbench_polybench_covariance_covariance/as_written.zok",
+    "artifact_sha256": "209cce468439128665c1728f29faec1fa66f6baf612b876627bb62cabc2daeae"
+  },
+  "rewrite": {
+    "status": "accepted",
+    "constraints": 2768213,
+    "error": null,
+    "seconds": 46.35716370400041,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_polybench_covariance_covariance/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Pad cov to 14x14 and return M; valid executions have 0<=M<=14 because nonempty assignments use the fourteen columns of data."
+    ],
+    "source_file": "npbench_polybench_covariance_covariance/rewrite.zok",
+    "artifact_sha256": "16466a40099bdfd9b872545cef36ad4b28a65e353c3eceba55a356d8f25ef412"
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "expected_elements": 196,
+      "actual_elements": 196,
+      "max_abs_error": 3.92804011539738e-10,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_polybench_covariance_covariance/rewrite.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_polybench_covariance_covariance/A.pin"
+      ]
+    },
+    "B": {
+      "status": "pass",
+      "expected_elements": 196,
+      "actual_elements": 196,
+      "max_abs_error": 4.897451333363279e-10,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_polybench_covariance_covariance/rewrite.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_polybench_covariance_covariance/B.pin"
+      ]
+    }
+  },
+  "notes": "Native u64 Q32 arithmetic with explicit signs, wide product parts, and quotient/remainder digits; all source outputs retained.",
+  "source": {
+    "program": "npbench_polybench_covariance_covariance",
+    "dataset": "npbench",
+    "kernel": "benchmarking/datasets/npbench/npbench_polybench_covariance_covariance/kernel.py",
+    "function": "kernel",
+    "sha256": "0b6607276061793320b84407506584414ea1065543dfd4d64dae63cfb14493b1"
+  },
+  "numeric_encoding": {
+    "real_scale": 4294967296,
+    "rtol": 1e-06,
+    "atol": 1e-06,
+    "representation": "signed two-complement u64 with native wide products",
+    "helper": {
+      "file": "native_v1.zok",
+      "sha256": "8e37dc19d2ec49c06392f37e5a4f379a8a76d3db6ed33c9224f6e9398e76f987"
+    }
+  },
+  "old_category": "needs_gadget: division",
+  "old_result": "batch0/npbench_polybench_covariance_covariance/result.json",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+    "tmpdir": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/tmp"
+  },
+  "fixture": {
+    "path": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/npbench/npbench_polybench_covariance_covariance/fixture.json",
+    "sha256": "31110ee0433af63f0547dc440878dc0346fdb08ea92e131190ea687af4de7f87"
+  },
+  "reason": "Pad cov to 14x14 and return M; valid executions have 0<=M<=14 because nonempty assignments use the fourteen columns of data. A/B pass."
+}

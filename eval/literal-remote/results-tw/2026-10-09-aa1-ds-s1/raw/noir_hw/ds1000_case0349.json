@@ -1,0 +1,89 @@
+{
+ "schema": 1,
+ "system": "noir_hw",
+ "case": "ds1000_case0349",
+ "description": "handwritten Noir (main.nr) -> nargo 1.0.0-beta.20 compile, noir-execute, bb UltraHonk (ZK)",
+ "windows": {
+  "setup": "nargo compile + bb write_vk",
+  "prove_core": "wall clock of the `bb prove` process (UltraHonk, ZK), including bb start-up and CRS loading",
+  "end_to_end": "`noir-execute` on setup's compiled artifact (runs the ACVM: witness generation) + `bb prove` with that witness. Every sample also runs `nargo execute` (re-elaborates the package source first) after `noir-execute` and before `bb prove`, records it as `timings_s.nargo_execute` and requires the same witness",
+  "verify": "wall clock of the `bb verify` process with the setup's verification key"
+ },
+ "status": "prove_failed",
+ "failure": {
+  "class": "prove_failed",
+  "step": "warmup",
+  "detail": "/home/zhantong/.bb/bb prove exited 1: \nScheme is: ultra_honk, num threads: 8 (mem: 32.09 MiB)\nAssertion failed: (witness.size() == constraints.max_witness_index + 1)\n  Actual  : 48\n  Expected: 1\n  Reason  : ACIR witness size (48) does not match max witness index + 1 (1).\n"
+ },
+ "files": {
+  "benchmarking/datasets/ds1000/ds1000_case0349/kernel.py": "2702a2c3f49cc0c6ac9e7c0024da5670bab1ad2b2b98d5ab553bfd2f6ae02ee1",
+  "benchmarking/datasets/ds1000/ds1000_case0349/fixture.json": "57f6489a7b50e6f113e94b4e3629620602fa689f6e5e37aa3c1057f496e9b04c",
+  "benchmarking/datasets/ds1000/ds1000_case0349/main.nr": "8c8d362da6e6bfedbe3024b8cec011978bba83d2e0a2cf9054f41234448e2496",
+  "benchmarking/baselines/noir_hw/src/lib.nr": "c0b66d8dfbf9ad11be2cc70c4473d0203eb758f6de6e00a92fa49b4cea998785",
+  "benchmarking/baselines/noir_hw/src/transcendental.nr": "f47de7f71117d442d62d8c3f3f13c55949eb6d399b4dc3fa7484d17c56ac92c9",
+  "benchmarking/baselines/hw_check/prover_toml.py": "3b13a196f183ba3210dc1b7624aa8c6873ac9da0993c3f31eed2a50af03c07c2",
+  "benchmarking/baselines/hw_check/noir_driver.py": "5b60312d22f0a9261dd9f92b0f381fe3969861c8bce57beb8305556c89e9228a"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "harness default"
+ },
+ "environment": {
+  "time": "2026-10-09T15:04:29+0000",
+  "loadavg": [
+   16.3837890625,
+   10.52490234375,
+   8.95361328125
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "nargo_compile": 0.17670385260134935,
+    "bb_write_vk": 0.018116885796189308
+   },
+   "details": {
+    "gates": {
+     "circuit_size": 34,
+     "acir_opcodes": 0
+    },
+    "prover_toml_writer": "hw_check.prover_toml"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 0.3205990893766284,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 96280576,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   16.3837890625,
+   10.52490234375,
+   8.95361328125
+  ],
+  "child": {
+   "wall_s": 0.3055559294298291,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 101519360,
+   "over_memory_cap": false
+  },
+  "failure": {
+   "class": "prove_failed",
+   "detail": "/home/zhantong/.bb/bb prove exited 1: \nScheme is: ultra_honk, num threads: 8 (mem: 32.09 MiB)\nAssertion failed: (witness.size() == constraints.max_witness_index + 1)\n  Actual  : 48\n  Expected: 1\n  Reason  : ACIR witness size (48) does not match max witness index + 1 (1).\n"
+  }
+ },
+ "samples": [],
+ "tamper": null
+}

@@ -1,0 +1,26 @@
+{
+  "program": "npbench_deep_learning_resnet_resnet",
+  "category": "needs_gadget: sqrt",
+  "as_written": {
+    "status": "needs gadget",
+    "error": "kernel.py:28: std = np.std(x, axis=0, keepdims=True). Batch normalization needs standard deviation, another sqrt(std+eps), and real division; cannot omit normalization or supply its values as witnesses.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "needs gadget",
+    "error": "Batch normalization needs standard deviation, another sqrt(std+eps), and real division; cannot omit normalization or supply its values as witnesses.",
+    "constraints": null,
+    "rewrites": []
+  },
+  "correctness": {
+    "A": "not run: no executable accepted translation",
+    "B": "not run: no executable accepted translation"
+  },
+  "notes": "Batch normalization needs standard deviation, another sqrt(std+eps), and real division; cannot omit normalization or supply its values as witnesses.",
+  "source": {
+    "kernel": "benchmarking/datasets/npbench/npbench_deep_learning_resnet_resnet/kernel.py",
+    "function": "resnet_basicblock",
+    "sha256": "8e9e6bd0ab77569b5bc5e205f29f9573157183598b8c208a9c2bee41ac6fd8bf"
+  },
+  "reason": "Batch normalization needs standard deviation, another sqrt(std+eps), and real division; cannot omit normalization or supply its values as witnesses."
+}

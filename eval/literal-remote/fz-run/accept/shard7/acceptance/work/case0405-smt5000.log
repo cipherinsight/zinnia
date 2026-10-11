@@ -1,0 +1,5 @@
+$ choom -n 1000 -- /home/zhantong/zinnia-eval-run/zinnia-sizefix/.venv/bin/python -m benchmarking.harness.acceptance.validate --child /home/zhantong/zinnia-eval-run/fz/accept/shard7/acceptance/work/case0405-smt5000.request.json /home/zhantong/zinnia-eval-run/fz/accept/shard7/acceptance/work/case0405-smt5000.response.json
+
+thread 'zinnia-compile' (872491) panicked at src/ops/static_ndarray_ops/indexing.rs:218:13:
+np.bincount: x entry value is not statically bounded — its runtime value could be anything, and the output length is `max(x)+1`. The previous compiler revision silently capped the output at 256 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal int array, or annotate the input with `@requires(lambda x: forall(x, lambda v: v <= K))` so the compiler can derive a tight, sound upper bound.
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

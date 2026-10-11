@@ -1,0 +1,1129 @@
+{
+  "id": "ds1000_numpy__case0507__kernel",
+  "sites": {
+    "11:11:11:18:Compare": "im == 0",
+    "12:27:12:32:UnaryOp": "~mask",
+    "12:26:12:45:Call": "(~mask).sum(axis=1)",
+    "12:11:12:46:Call": "np.flatnonzero((~mask).sum(axis=1))",
+    "13:27:13:32:UnaryOp": "~mask",
+    "13:26:13:45:Call": "(~mask).sum(axis=0)",
+    "13:11:13:46:Call": "np.flatnonzero((~mask).sum(axis=0))",
+    "17:17:17:69:Subscript": "im[rows.min():rows.max() + 1, cols.min():cols.max() + 1]"
+  },
+  "numpy": {
+    "A": [
+      {
+        "site": "11:11:11:18:Compare",
+        "value": {
+          "shape": [
+            5,
+            6
+          ],
+          "length": 30
+        }
+      },
+      {
+        "site": "12:27:12:32:UnaryOp",
+        "value": {
+          "shape": [
+            5,
+            6
+          ],
+          "length": 30
+        }
+      },
+      {
+        "site": "12:26:12:45:Call",
+        "value": {
+          "shape": [
+            5
+          ],
+          "length": 5
+        }
+      },
+      {
+        "site": "12:11:12:46:Call",
+        "value": {
+          "shape": [
+            4
+          ],
+          "length": 4
+        }
+      },
+      {
+        "site": "13:27:13:32:UnaryOp",
+        "value": {
+          "shape": [
+            5,
+            6
+          ],
+          "length": 30
+        }
+      },
+      {
+        "site": "13:26:13:45:Call",
+        "value": {
+          "shape": [
+            6
+          ],
+          "length": 6
+        }
+      },
+      {
+        "site": "13:11:13:46:Call",
+        "value": {
+          "shape": [
+            5
+          ],
+          "length": 5
+        }
+      },
+      {
+        "site": "17:17:17:69:Subscript",
+        "value": {
+          "shape": [
+            4,
+            5
+          ],
+          "length": 20
+        }
+      }
+    ],
+    "B": [
+      {
+        "site": "11:11:11:18:Compare",
+        "value": {
+          "shape": [
+            5,
+            6
+          ],
+          "length": 30
+        }
+      },
+      {
+        "site": "12:27:12:32:UnaryOp",
+        "value": {
+          "shape": [
+            5,
+            6
+          ],
+          "length": 30
+        }
+      },
+      {
+        "site": "12:26:12:45:Call",
+        "value": {
+          "shape": [
+            5
+          ],
+          "length": 5
+        }
+      },
+      {
+        "site": "12:11:12:46:Call",
+        "value": {
+          "shape": [
+            4
+          ],
+          "length": 4
+        }
+      },
+      {
+        "site": "13:27:13:32:UnaryOp",
+        "value": {
+          "shape": [
+            5,
+            6
+          ],
+          "length": 30
+        }
+      },
+      {
+        "site": "13:26:13:45:Call",
+        "value": {
+          "shape": [
+            6
+          ],
+          "length": 6
+        }
+      },
+      {
+        "site": "13:11:13:46:Call",
+        "value": {
+          "shape": [
+            5
+          ],
+          "length": 5
+        }
+      },
+      {
+        "site": "17:17:17:69:Subscript",
+        "value": {
+          "shape": [
+            4,
+            5
+          ],
+          "length": 20
+        }
+      }
+    ]
+  },
+  "selected": [
+    "11:11:11:18:Compare",
+    "12:11:12:46:Call",
+    "12:26:12:45:Call",
+    "12:27:12:32:UnaryOp",
+    "13:11:13:46:Call",
+    "13:26:13:45:Call",
+    "13:27:13:32:UnaryOp"
+  ],
+  "source": "def kernel(im: Integer[Array, '5 6']):\n    bprobe_trace = []\n    bprobe_v0 = im == 0\n    bprobe_trace.append((0, bprobe_v0))\n    mask = bprobe_v0\n    bprobe_v1 = ~mask\n    bprobe_trace.append((3, bprobe_v1))\n    bprobe_v2 = bprobe_v1.sum(axis=1)\n    bprobe_trace.append((2, bprobe_v2))\n    bprobe_v3 = np.flatnonzero(bprobe_v2)\n    bprobe_trace.append((1, bprobe_v3))\n    rows = bprobe_v3\n    bprobe_v4 = ~mask\n    bprobe_trace.append((6, bprobe_v4))\n    bprobe_v5 = bprobe_v4.sum(axis=0)\n    bprobe_trace.append((5, bprobe_v5))\n    bprobe_v6 = np.flatnonzero(bprobe_v5)\n    bprobe_trace.append((4, bprobe_v6))\n    cols = bprobe_v6\n    return bprobe_trace",
+  "traceback": "Traceback (most recent call last):\n  File \"/home/zhantong/Projects/zinnia-project/wt/npb-hw/zinnia/api/zk_circuit.py\", line 102, in compile\n    self.program = ZinniaCompiler(self.config).compile(\n                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^\n        self.source, self.name,\n        ^^^^^^^^^^^^^^^^^^^^^^^\n        {k: v.to_internal_object() for k, v in self.chips.items()},\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        {k: v.to_internal_object() for k, v in self.externals.items()},\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/zhantong/Projects/zinnia-project/wt/npb-hw/zinnia/compile/zinnia_compiler.py\", line 154, in compile\n    compiled_ir = compile_circuit(\n        json.dumps(ast_dict), json.dumps(config_dict),\n        json.dumps(chips_dict), json.dumps(externals_dict),\n    )\nValueError: IR generation failed: this operation is not supported on an array with a runtime shape (the result of a boolean mask, nonzero/argwhere/unique, or a slice with runtime bounds)\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/zhantong/Projects/zinnia-project/eval-redo/paper-numbers/B/probe.py\", line 94, in probe\n    c=ZKCircuit(p.function,source,chips=chips).compile();layout=c.get_output_layout()\n  File \"/home/zhantong/Projects/zinnia-project/wt/npb-hw/zinnia/api/zk_circuit.py\", line 111, in compile\n    raise ZinniaException(str(e))\nzinnia.debug.exception.base.ZinniaException: IR generation failed: this operation is not supported on an array with a runtime shape (the result of a boolean mask, nonzero/argwhere/unique, or a slice with runtime bounds)\n",
+  "layout": [
+    {
+      "cells": [
+        {
+          "constant": 0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 0
+        },
+        {
+          "kind": "i",
+          "public": 1
+        },
+        {
+          "kind": "i",
+          "public": 2
+        },
+        {
+          "kind": "i",
+          "public": 3
+        },
+        {
+          "kind": "i",
+          "public": 4
+        },
+        {
+          "kind": "i",
+          "public": 5
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          0
+        ]
+      },
+      "shape": [
+        6
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 6
+        },
+        {
+          "kind": "i",
+          "public": 7
+        },
+        {
+          "kind": "i",
+          "public": 8
+        },
+        {
+          "kind": "i",
+          "public": 9
+        },
+        {
+          "kind": "i",
+          "public": 10
+        },
+        {
+          "kind": "i",
+          "public": 11
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          1
+        ]
+      },
+      "shape": [
+        6
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 12
+        },
+        {
+          "kind": "i",
+          "public": 13
+        },
+        {
+          "kind": "i",
+          "public": 14
+        },
+        {
+          "kind": "i",
+          "public": 15
+        },
+        {
+          "kind": "i",
+          "public": 16
+        },
+        {
+          "kind": "i",
+          "public": 17
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          2
+        ]
+      },
+      "shape": [
+        6
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 18
+        },
+        {
+          "kind": "i",
+          "public": 19
+        },
+        {
+          "kind": "i",
+          "public": 20
+        },
+        {
+          "kind": "i",
+          "public": 21
+        },
+        {
+          "kind": "i",
+          "public": 22
+        },
+        {
+          "kind": "i",
+          "public": 23
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          3
+        ]
+      },
+      "shape": [
+        6
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 24
+        },
+        {
+          "kind": "i",
+          "public": 25
+        },
+        {
+          "kind": "i",
+          "public": 26
+        },
+        {
+          "kind": "i",
+          "public": 27
+        },
+        {
+          "kind": "i",
+          "public": 28
+        },
+        {
+          "kind": "i",
+          "public": 29
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1,
+          4
+        ]
+      },
+      "shape": [
+        6
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 3
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 30
+        },
+        {
+          "kind": "i",
+          "public": 31
+        },
+        {
+          "kind": "i",
+          "public": 32
+        },
+        {
+          "kind": "i",
+          "public": 33
+        },
+        {
+          "kind": "i",
+          "public": 34
+        },
+        {
+          "kind": "i",
+          "public": 35
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1,
+          0
+        ]
+      },
+      "shape": [
+        6
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 36
+        },
+        {
+          "kind": "i",
+          "public": 37
+        },
+        {
+          "kind": "i",
+          "public": 38
+        },
+        {
+          "kind": "i",
+          "public": 39
+        },
+        {
+          "kind": "i",
+          "public": 40
+        },
+        {
+          "kind": "i",
+          "public": 41
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1,
+          1
+        ]
+      },
+      "shape": [
+        6
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 42
+        },
+        {
+          "kind": "i",
+          "public": 43
+        },
+        {
+          "kind": "i",
+          "public": 44
+        },
+        {
+          "kind": "i",
+          "public": 45
+        },
+        {
+          "kind": "i",
+          "public": 46
+        },
+        {
+          "kind": "i",
+          "public": 47
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1,
+          2
+        ]
+      },
+      "shape": [
+        6
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 48
+        },
+        {
+          "kind": "i",
+          "public": 49
+        },
+        {
+          "kind": "i",
+          "public": 50
+        },
+        {
+          "kind": "i",
+          "public": 51
+        },
+        {
+          "kind": "i",
+          "public": 52
+        },
+        {
+          "kind": "i",
+          "public": 53
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1,
+          3
+        ]
+      },
+      "shape": [
+        6
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 54
+        },
+        {
+          "kind": "i",
+          "public": 55
+        },
+        {
+          "kind": "i",
+          "public": 56
+        },
+        {
+          "kind": "i",
+          "public": 57
+        },
+        {
+          "kind": "i",
+          "public": 58
+        },
+        {
+          "kind": "i",
+          "public": 59
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1,
+          4
+        ]
+      },
+      "shape": [
+        6
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 2
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 60
+        },
+        {
+          "kind": "i",
+          "public": 61
+        },
+        {
+          "kind": "i",
+          "public": 62
+        },
+        {
+          "kind": "i",
+          "public": 63
+        },
+        {
+          "kind": "i",
+          "public": 64
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1
+        ]
+      },
+      "shape": [
+        5
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 1
+        }
+      ],
+      "output": {
+        "return": [
+          3,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "dynamic": {
+        "cells": [
+          {
+            "kind": "i",
+            "public": 66
+          },
+          {
+            "kind": "i",
+            "public": 67
+          },
+          {
+            "kind": "i",
+            "public": 68
+          },
+          {
+            "kind": "i",
+            "public": 69
+          },
+          {
+            "kind": "i",
+            "public": 70
+          }
+        ],
+        "dims": [
+          {
+            "kind": "i",
+            "public": 65
+          }
+        ],
+        "length": {
+          "kind": "i",
+          "public": 65
+        },
+        "offset": 0,
+        "rank": {
+          "constant": 1
+        },
+        "strides": [
+          1
+        ]
+      },
+      "output": {
+        "return": [
+          3,
+          1
+        ]
+      }
+    },
+    {
+      "cells": [
+        {
+          "constant": 6
+        }
+      ],
+      "output": {
+        "return": [
+          4,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 71
+        },
+        {
+          "kind": "i",
+          "public": 72
+        },
+        {
+          "kind": "i",
+          "public": 73
+        },
+        {
+          "kind": "i",
+          "public": 74
+        },
+        {
+          "kind": "i",
+          "public": 75
+        },
+        {
+          "kind": "i",
+          "public": 76
+        }
+      ],
+      "output": {
+        "return": [
+          4,
+          1,
+          0
+        ]
+      },
+      "shape": [
+        6
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 77
+        },
+        {
+          "kind": "i",
+          "public": 78
+        },
+        {
+          "kind": "i",
+          "public": 79
+        },
+        {
+          "kind": "i",
+          "public": 80
+        },
+        {
+          "kind": "i",
+          "public": 81
+        },
+        {
+          "kind": "i",
+          "public": 82
+        }
+      ],
+      "output": {
+        "return": [
+          4,
+          1,
+          1
+        ]
+      },
+      "shape": [
+        6
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 83
+        },
+        {
+          "kind": "i",
+          "public": 84
+        },
+        {
+          "kind": "i",
+          "public": 85
+        },
+        {
+          "kind": "i",
+          "public": 86
+        },
+        {
+          "kind": "i",
+          "public": 87
+        },
+        {
+          "kind": "i",
+          "public": 88
+        }
+      ],
+      "output": {
+        "return": [
+          4,
+          1,
+          2
+        ]
+      },
+      "shape": [
+        6
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 89
+        },
+        {
+          "kind": "i",
+          "public": 90
+        },
+        {
+          "kind": "i",
+          "public": 91
+        },
+        {
+          "kind": "i",
+          "public": 92
+        },
+        {
+          "kind": "i",
+          "public": 93
+        },
+        {
+          "kind": "i",
+          "public": 94
+        }
+      ],
+      "output": {
+        "return": [
+          4,
+          1,
+          3
+        ]
+      },
+      "shape": [
+        6
+      ]
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 95
+        },
+        {
+          "kind": "i",
+          "public": 96
+        },
+        {
+          "kind": "i",
+          "public": 97
+        },
+        {
+          "kind": "i",
+          "public": 98
+        },
+        {
+          "kind": "i",
+          "public": 99
+        },
+        {
+          "kind": "i",
+          "public": 100
+        }
+      ],
+      "output": {
+        "return": [
+          4,
+          1,
+          4
+        ]
+      },
+      "shape": [
+        6
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 5
+        }
+      ],
+      "output": {
+        "return": [
+          5,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 101
+        },
+        {
+          "kind": "i",
+          "public": 102
+        },
+        {
+          "kind": "i",
+          "public": 103
+        },
+        {
+          "kind": "i",
+          "public": 104
+        },
+        {
+          "kind": "i",
+          "public": 105
+        },
+        {
+          "kind": "i",
+          "public": 106
+        }
+      ],
+      "output": {
+        "return": [
+          5,
+          1
+        ]
+      },
+      "shape": [
+        6
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 4
+        }
+      ],
+      "output": {
+        "return": [
+          6,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "dynamic": {
+        "cells": [
+          {
+            "kind": "i",
+            "public": 108
+          },
+          {
+            "kind": "i",
+            "public": 109
+          },
+          {
+            "kind": "i",
+            "public": 110
+          },
+          {
+            "kind": "i",
+            "public": 111
+          },
+          {
+            "kind": "i",
+            "public": 112
+          },
+          {
+            "kind": "i",
+            "public": 113
+          }
+        ],
+        "dims": [
+          {
+            "kind": "i",
+            "public": 107
+          }
+        ],
+        "length": {
+          "kind": "i",
+          "public": 107
+        },
+        "offset": 0,
+        "rank": {
+          "constant": 1
+        },
+        "strides": [
+          1
+        ]
+      },
+      "output": {
+        "return": [
+          6,
+          1
+        ]
+      }
+    }
+  ],
+  "dynamic": [
+    {
+      "dynamic": {
+        "cells": [
+          {
+            "kind": "i",
+            "public": 66
+          },
+          {
+            "kind": "i",
+            "public": 67
+          },
+          {
+            "kind": "i",
+            "public": 68
+          },
+          {
+            "kind": "i",
+            "public": 69
+          },
+          {
+            "kind": "i",
+            "public": 70
+          }
+        ],
+        "dims": [
+          {
+            "kind": "i",
+            "public": 65
+          }
+        ],
+        "length": {
+          "kind": "i",
+          "public": 65
+        },
+        "offset": 0,
+        "rank": {
+          "constant": 1
+        },
+        "strides": [
+          1
+        ]
+      },
+      "output": {
+        "return": [
+          3,
+          1
+        ]
+      }
+    },
+    {
+      "dynamic": {
+        "cells": [
+          {
+            "kind": "i",
+            "public": 108
+          },
+          {
+            "kind": "i",
+            "public": 109
+          },
+          {
+            "kind": "i",
+            "public": 110
+          },
+          {
+            "kind": "i",
+            "public": 111
+          },
+          {
+            "kind": "i",
+            "public": 112
+          },
+          {
+            "kind": "i",
+            "public": 113
+          }
+        ],
+        "dims": [
+          {
+            "kind": "i",
+            "public": 107
+          }
+        ],
+        "length": {
+          "kind": "i",
+          "public": 107
+        },
+        "offset": 0,
+        "rank": {
+          "constant": 1
+        },
+        "strides": [
+          1
+        ]
+      },
+      "output": {
+        "return": [
+          6,
+          1
+        ]
+      }
+    }
+  ],
+  "repair": "observational prefix / unconditional branch probe; see source"
+}

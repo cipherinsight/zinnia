@@ -1,0 +1,382 @@
+{
+ "schema": 1,
+ "system": "sp1",
+ "case": "pythran_sumarray3d__summation",
+ "description": "SP1 6.8.1, core (STARK) proof, Q32 guest",
+ "windows": {
+  "prove_core": "client.prove (prove); SP1's SDK proves from the program and its input, so execution happens inside the prove call and cannot be excluded",
+  "end_to_end": "client.prove (prove), which includes execution",
+  "verify": "client.verify (verify)"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/pythran/pythran_sumarray3d/kernel.py": "f483d00396239bb44e3df0e095022f14b57d905d6a3f010020564f44f1da8748",
+  "benchmarking/datasets/pythran/pythran_sumarray3d/fixture.json": "812fd02ef7fdbeabe6aefdc2e5e0adaa02029ecb00204f1c203d36b8e906544f",
+  "benchmarking/datasets/pythran/pythran_sumarray3d/zkvm.rs": "23ebe6c23220ea27d0c92d3e70b7255ae76812ea66997d213c1af9f34ebeff07",
+  "benchmarking/baselines/sp1/target/release/sp1-baseline": "8b11da92afce32f313dba253a6bfad7596b88f6aceacc1ae4b688118a5b5de40"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-07T21:34:36+0000",
+  "loadavg": [
+   32.30078125,
+   34.0849609375,
+   30.00927734375
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "client_init": 26.891501601999998,
+    "setup": 2.397339432,
+    "process_wall": 29.47323050443083
+   },
+   "details": {
+    "case": "pythran_sumarray3d/summation",
+    "input": "A",
+    "mode": "setup",
+    "peak_rss_mib": 7184.0,
+    "proof_path": null,
+    "sdk_version": "6.8.1",
+    "system": "sp1",
+    "vk_hash": "0x0059ab0bf1793613dfd1a06d0d4de3b9bdade000cff9795a44ff954a3d683fc4",
+    "vk_path": "/home/zhantong/zinnia-eval-run/zinnia-src/benchmarking/results/2026-10-07-ff1-npb-zkvm-s1/work/sp1/pythran_sumarray3d__summation/program/vk.bin"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 29.574629116803408,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 7557980160,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   31.8076171875,
+   33.80224609375,
+   30.0458984375
+  ],
+  "child": {
+   "wall_s": 53.49601036217064,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 10448441344,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 26.348771792,
+   "end_to_end_s": 26.348771792,
+   "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-src/benchmarking/results/2026-10-07-ff1-npb-zkvm-s1/work/sp1/pythran_sumarray3d__summation/proofs/warmup/program/proof-core-B.bin",
+   "proof_bytes": 2794031,
+   "timings_s": {
+    "client_init": 26.340686609,
+    "execute": 0.01556361,
+    "prove": 26.348771792,
+    "process_wall": 53.385511418804526
+   },
+   "details": {
+    "case": "pythran_sumarray3d/summation",
+    "cycles": 188768,
+    "gas": 194472,
+    "input": "B",
+    "input_shapes": [
+     16,
+     3,
+     16,
+     16,
+     3
+    ],
+    "mode": "prove",
+    "peak_rss_mib": 9934.0,
+    "proof_mode": "core",
+    "proof_size_bytes": 2794031,
+    "sdk_version": "6.8.1",
+    "syscalls": 20,
+    "system": "sp1"
+   },
+   "proof_sha256": "e8ff2319c3c31eb1996bfa2d5ca1763fa16c9d22278ec8cc384a22992c70fa29"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 64 elements differ",
+   "expected_count": 64,
+   "actual_count": 64,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "5a115141f03d037396cfda62483b2fd7f9388e2b0c6333efb673a28665c8d58d",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    0.5661487316247076,
+    0.7027563739102334,
+    1.0882309419102967,
+    1.0269107825588435,
+    1.0349216223694384,
+    1.1033169571310282,
+    0.7306128635536879,
+    1.002365849679336,
+    1.051606614375487,
+    1.1308459974825382,
+    1.0333984568715096,
+    0.9965449804440141,
+    1.0292013736907393,
+    1.384584090905264,
+    1.063886750023812,
+    1.254387668799609,
+    -501.05334643041715,
+    -384.8017455097288,
+    -238.17248618672602,
+    -472.1313728932291,
+    -308.28292409912683,
+    -319.448277376825,
+    -308.33682681410573,
+    -228.40394875011407,
+    -329.45950903813355,
+    -245.85825992305763,
+    -217.00531289516948,
+    -349.26618599612266,
+    -142.388492875034,
+    -87.20504367444664,
+    -148.0727382649202,
+    -94.79073728364892,
+    -87.57065479457378,
+    -171.71905283886008,
+    -304.3226313747,
+    -29.33982204576023,
+    -118.52544111013412,
+    -51.66225271509029,
+    65.71374213998206,
+    4.427642453927547,
+    91.62481716042385,
+    -87.89307527476922,
+    14.125589444767684,
+    16.674640693236142,
+    35.90759027702734,
+    26.8505125278607,
+    88.21275752480142,
+    133.02618468762375,
+    151.54588582366705,
+    108.35082150576636,
+    56.32629514974542,
+    189.72067260881886,
+    190.17517063603736,
+    239.4266159136314,
+    226.6057655143086,
+    275.15061873430386,
+    215.87873158371076,
+    291.3159508127719,
+    299.52784949867055,
+    316.76369072217494,
+    348.4521217853762,
+    273.29809332918376,
+    301.53410973004065,
+    256.978623886127
+   ],
+   "elided": [],
+   "shapes": null
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    37.2099609375,
+    37.80224609375,
+    33.2958984375
+   ],
+   "child": {
+    "wall_s": 53.38956506643444,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 10310393856,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 26.729543015,
+    "end_to_end_s": 26.729543015,
+    "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-src/benchmarking/results/2026-10-07-ff1-npb-zkvm-s1/work/sp1/pythran_sumarray3d__summation/proofs/sample-1/program/proof-core-B.bin",
+    "proof_bytes": 2794031,
+    "timings_s": {
+     "client_init": 25.588005443,
+     "execute": 0.01876004,
+     "prove": 26.729543015,
+     "process_wall": 53.282458612695336
+    },
+    "details": {
+     "case": "pythran_sumarray3d/summation",
+     "cycles": 188768,
+     "gas": 194472,
+     "input": "B",
+     "input_shapes": [
+      16,
+      3,
+      16,
+      16,
+      3
+     ],
+     "mode": "prove",
+     "peak_rss_mib": 9817.0,
+     "proof_mode": "core",
+     "proof_size_bytes": 2794031,
+     "sdk_version": "6.8.1",
+     "syscalls": 20,
+     "system": "sp1"
+    },
+    "proof_sha256": "229cddfdd6baf310b5e9c11f4e400c9f3c6575ef2c25bdad2efeabdb2243de55"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 64 elements differ",
+    "expected_count": 64,
+    "actual_count": 64,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "5a115141f03d037396cfda62483b2fd7f9388e2b0c6333efb673a28665c8d58d",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     0.5661487316247076,
+     0.7027563739102334,
+     1.0882309419102967,
+     1.0269107825588435,
+     1.0349216223694384,
+     1.1033169571310282,
+     0.7306128635536879,
+     1.002365849679336,
+     1.051606614375487,
+     1.1308459974825382,
+     1.0333984568715096,
+     0.9965449804440141,
+     1.0292013736907393,
+     1.384584090905264,
+     1.063886750023812,
+     1.254387668799609,
+     -501.05334643041715,
+     -384.8017455097288,
+     -238.17248618672602,
+     -472.1313728932291,
+     -308.28292409912683,
+     -319.448277376825,
+     -308.33682681410573,
+     -228.40394875011407,
+     -329.45950903813355,
+     -245.85825992305763,
+     -217.00531289516948,
+     -349.26618599612266,
+     -142.388492875034,
+     -87.20504367444664,
+     -148.0727382649202,
+     -94.79073728364892,
+     -87.57065479457378,
+     -171.71905283886008,
+     -304.3226313747,
+     -29.33982204576023,
+     -118.52544111013412,
+     -51.66225271509029,
+     65.71374213998206,
+     4.427642453927547,
+     91.62481716042385,
+     -87.89307527476922,
+     14.125589444767684,
+     16.674640693236142,
+     35.90759027702734,
+     26.8505125278607,
+     88.21275752480142,
+     133.02618468762375,
+     151.54588582366705,
+     108.35082150576636,
+     56.32629514974542,
+     189.72067260881886,
+     190.17517063603736,
+     239.4266159136314,
+     226.6057655143086,
+     275.15061873430386,
+     215.87873158371076,
+     291.3159508127719,
+     299.52784949867055,
+     316.76369072217494,
+     348.4521217853762,
+     273.29809332918376,
+     301.53410973004065,
+     256.978623886127
+    ],
+    "elided": [],
+    "shapes": null
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.115219737,
+     "not_applicable": null,
+     "timings_s": {
+      "client_init": 0.390113687,
+      "verify": 0.115219737,
+      "process_wall": 0.6853588037192822
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.8124638302251697,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 91463680,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 1.0303e-05,
+    "not_applicable": null,
+    "timings_s": {
+     "client_init": 0.391627907,
+     "verify": 1.0303e-05,
+     "process_wall": 0.5731455190107226
+    },
+    "details": {
+     "error": null
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.6760335555300117,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 81903616,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

@@ -1,0 +1,8 @@
+// Reals are encoded at scale 2^32; signed field values use centered residues.
+def main(private field[8][8] a) -> field[2][8]:
+    field[2][8] r = [[0; 8]; 2]
+    for u32 i in 0..8 do
+        r[0][i] = a[i][i]
+        r[1][i] = a[i][7-i]
+    endfor
+    return r

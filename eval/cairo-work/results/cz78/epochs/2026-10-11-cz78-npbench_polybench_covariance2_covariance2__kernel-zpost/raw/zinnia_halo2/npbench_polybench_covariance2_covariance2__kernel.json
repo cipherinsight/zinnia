@@ -1,0 +1,930 @@
+{
+ "schema": 1,
+ "system": "zinnia_halo2",
+ "case": "npbench_polybench_covariance2_covariance2__kernel",
+ "description": "Zinnia -> halo2-base backend (IPA/BN254, Blake2b transcript)",
+ "windows": {
+  "setup": "compile + parameter choice + witness-free keygen (ParamsIPA::new, keygen_vk, keygen_pk) + writing params/pk/vk to the key directory",
+  "prove_core": "prove_s: create_proof + transcript finalize (halo2_hw's prove_s covers the same calls)",
+  "end_to_end": "preprocess_s (IR evaluation resolving external calls) + witness_s (synthesis into the builder pinned to keygen's layout) + prove_s; params and proving key read from files beforehand, untimed (load_params_s, load_pk_s), as halo2_hw",
+  "verify": "verify_s: transcript + verify_proof against the verifying key read from the key directory (load_params_s, load_vk_s untimed), as halo2_hw"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/npbench/npbench_polybench_covariance2_covariance2/kernel.py": "caf29f2d151e2be5682bc8d8204bf822899b3c2e40a4a47d6371c457092bf459",
+  "benchmarking/datasets/npbench/npbench_polybench_covariance2_covariance2/fixture.json": "d3b996d6278c1259d5984c226187104fb6e42a325394775e5d9c7c9483b49fdb"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-11T10:16:59+0000",
+  "loadavg": [
+   39.06591796875,
+   38.65869140625,
+   30.56396484375
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "compile": 0.10920013301074505,
+    "keygen_s": 0.539142447,
+    "write_s": 0.00971826259046793
+   },
+   "details": {
+    "params": {
+     "k": 9,
+     "lookup_bits": 8,
+     "precision_bits": 32
+    },
+    "params_source": "Zinnia estimate_params",
+    "cells": "advice=[20993] lookup=[4246, 0, 0] fixed=14 instances=196 second_phase=PhaseShape { advice: 0, constants: 0 }",
+    "key_file_bytes": {
+     "keys.json": 505,
+     "params.bin": 32836,
+     "pk.bin": 9742263,
+     "vk.bin": 8967
+    },
+    "exposed_outputs": 196,
+    "elided_outputs": 0,
+    "ir_sha256": "46ba3041e24476997cd09d667ddcbf5dc6eff586a7879dbc4498d67a63863ec2"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 0.9084905730560422,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 88281088,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   39.06591796875,
+   38.65869140625,
+   30.56396484375
+  ],
+  "child": {
+   "wall_s": 0.7721889214590192,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 90570752,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 0.458491054,
+   "end_to_end_s": 0.470571747,
+   "proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-npbench_polybench_covariance2_covariance2__kernel-zpost/work/zinnia_halo2/npbench_polybench_covariance2_covariance2__kernel/proofs/warmup/proof.bin",
+   "proof_bytes": 17344,
+   "timings_s": {
+    "load_pk_s": 0.010271589,
+    "load_params_s": 0.016948108,
+    "parse_inputs_s": 2.4081e-05,
+    "preprocess_s": 0.004400201,
+    "witness_s": 0.007680492,
+    "thread_pool_s": 0.00051827,
+    "prove_s": 0.458491054,
+    "prove_call_s": 0.47925344482064247
+   },
+   "details": {
+    "k": 9
+   },
+   "proof_sha256": "a34f28c442a7035871738ef0e231a64c9c9f1801f3a6555fcedab3d11b8443fa"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 196 elements differ",
+   "expected_count": 196,
+   "actual_count": 196,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "728f8353e5fb75305e0d8c717358ae608cd55f8ae94a2eed1fb7628bc85c6a75",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    0.7966791938524693,
+    0.013887712266296148,
+    -0.34458549600094557,
+    0.23628532816655934,
+    -0.20310342754237354,
+    -0.5089283327106386,
+    -0.2868147629778832,
+    0.11825505504384637,
+    0.3173843934200704,
+    0.6923301108181477,
+    1.1822639720048755,
+    0.6961816754192114,
+    0.3122704429551959,
+    0.6248379116877913,
+    0.013887712266296148,
+    1.7821309226565063,
+    -0.6298421646934003,
+    0.027140427147969604,
+    -0.20909893489442766,
+    0.3017969320062548,
+    -0.33616162301041186,
+    0.11835857876576483,
+    0.2919449091423303,
+    0.7069377705920488,
+    0.27239246061071754,
+    0.8355505750514567,
+    -0.28371202759444714,
+    -0.17244426114484668,
+    -0.34458549600094557,
+    -0.6298421646934003,
+    3.577116501284763,
+    0.09254558524116874,
+    0.6438167120795697,
+    0.2775422928389162,
+    -1.5991079667583108,
+    -0.0653075787704438,
+    -0.8878464829176664,
+    -1.3592103568371385,
+    -0.36835145647637546,
+    -1.2165994585957378,
+    1.059793955879286,
+    1.2202927595935762,
+    0.23628532816655934,
+    0.027140427147969604,
+    0.09254558524116874,
+    2.925725481240079,
+    1.2839932865463197,
+    2.176990191452205,
+    1.6384811527095735,
+    2.0405742283910513,
+    2.3645495667587966,
+    2.6975738452747464,
+    2.4626743369735777,
+    2.537687323288992,
+    3.9888460650108755,
+    3.9696395550854504,
+    -0.20310342754237354,
+    -0.20909893489442766,
+    0.6438167120795697,
+    1.2839932865463197,
+    5.836954958271235,
+    4.686250761616975,
+    4.209141071652994,
+    4.8530134577304125,
+    5.442769878078252,
+    4.791444946778938,
+    6.962125114630908,
+    6.522712233476341,
+    8.609302629018202,
+    7.440907756332308,
+    -0.5089283327106386,
+    0.3017969320062548,
+    0.2775422928389162,
+    2.176990191452205,
+    4.686250761616975,
+    6.332206483930349,
+    4.138834381010383,
+    4.088486585766077,
+    5.511097616050392,
+    5.15041443426162,
+    5.466772275045514,
+    5.552444945089519,
+    8.742420375347137,
+    6.932760713621974,
+    -0.2868147629778832,
+    -0.33616162301041186,
+    -1.5991079667583108,
+    1.6384811527095735,
+    4.209141071652994,
+    4.138834381010383,
+    6.725694467313588,
+    6.176915178075433,
+    6.973126948811114,
+    6.954223959241062,
+    7.4021772695705295,
+    8.542136782081798,
+    9.569374075625092,
+    8.62728496780619,
+    0.11825505504384637,
+    0.11835857876576483,
+    -0.0653075787704438,
+    2.0405742283910513,
+    4.8530134577304125,
+    4.088486585766077,
+    6.176915178075433,
+    7.859000616008416,
+    7.607635620515794,
+    7.8056386795360595,
+    9.699757267488167,
+    10.537272104527801,
+    11.51663979375735,
+    11.99571034568362,
+    0.3173843934200704,
+    0.2919449091423303,
+    -0.8878464829176664,
+    2.3645495667587966,
+    5.442769878078252,
+    5.511097616050392,
+    6.973126948811114,
+    7.607635620515794,
+    10.002543774666265,
+    9.3628451412078,
+    11.051457801833749,
+    11.12671315181069,
+    12.633122309111059,
+    12.314679828472435,
+    0.6923301108181477,
+    0.7069377705920488,
+    -1.3592103568371385,
+    2.6975738452747464,
+    4.791444946778938,
+    5.15041443426162,
+    6.954223959241062,
+    7.8056386795360595,
+    9.3628451412078,
+    11.765694475034252,
+    11.488959968555719,
+    11.578639164101332,
+    13.12819353560917,
+    12.858548660064116,
+    1.1822639720048755,
+    0.27239246061071754,
+    -0.36835145647637546,
+    2.4626743369735777,
+    6.962125114630908,
+    5.466772275045514,
+    7.4021772695705295,
+    9.699757267488167,
+    11.051457801833749,
+    11.488959968555719,
+    15.378852943889797,
+    14.32215194357559,
+    15.916667993180454,
+    16.1449152152054,
+    0.6961816754192114,
+    0.8355505750514567,
+    -1.2165994585957378,
+    2.537687323288992,
+    6.522712233476341,
+    5.552444945089519,
+    8.542136782081798,
+    10.537272104527801,
+    11.12671315181069,
+    11.578639164101332,
+    14.32215194357559,
+    15.661947507876903,
+    16.21222238475457,
+    15.965734374243766,
+    0.3122704429551959,
+    -0.28371202759444714,
+    1.059793955879286,
+    3.9888460650108755,
+    8.609302629018202,
+    8.742420375347137,
+    9.569374075625092,
+    11.51663979375735,
+    12.633122309111059,
+    13.12819353560917,
+    15.916667993180454,
+    16.21222238475457,
+    21.592050845501944,
+    19.615332612767816,
+    0.6248379116877913,
+    -0.17244426114484668,
+    1.2202927595935762,
+    3.9696395550854504,
+    7.440907756332308,
+    6.932760713621974,
+    8.62728496780619,
+    11.99571034568362,
+    12.314679828472435,
+    12.858548660064116,
+    16.1449152152054,
+    15.965734374243766,
+    19.615332612767816,
+    20.769403548678383
+   ],
+   "elided": [],
+   "shapes": [
+    [
+     14,
+     14
+    ]
+   ]
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    38.419921875,
+    38.53125,
+    30.56640625
+   ],
+   "child": {
+    "wall_s": 0.8178494507446885,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 90853376,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.510438518,
+    "end_to_end_s": 0.5226670959999999,
+    "proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-npbench_polybench_covariance2_covariance2__kernel-zpost/work/zinnia_halo2/npbench_polybench_covariance2_covariance2__kernel/proofs/sample-1/proof.bin",
+    "proof_bytes": 17344,
+    "timings_s": {
+     "load_params_s": 0.016907959,
+     "load_pk_s": 0.010452467,
+     "parse_inputs_s": 2.5208e-05,
+     "preprocess_s": 0.004410478,
+     "witness_s": 0.0078181,
+     "thread_pool_s": 0.000512969,
+     "prove_s": 0.510438518,
+     "prove_call_s": 0.531338632106781
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "6642edc6874f4a97e278556ee6e5a88290de1e5cd69030f17d10c2652a965143"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 196 elements differ",
+    "expected_count": 196,
+    "actual_count": 196,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "728f8353e5fb75305e0d8c717358ae608cd55f8ae94a2eed1fb7628bc85c6a75",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     0.7966791938524693,
+     0.013887712266296148,
+     -0.34458549600094557,
+     0.23628532816655934,
+     -0.20310342754237354,
+     -0.5089283327106386,
+     -0.2868147629778832,
+     0.11825505504384637,
+     0.3173843934200704,
+     0.6923301108181477,
+     1.1822639720048755,
+     0.6961816754192114,
+     0.3122704429551959,
+     0.6248379116877913,
+     0.013887712266296148,
+     1.7821309226565063,
+     -0.6298421646934003,
+     0.027140427147969604,
+     -0.20909893489442766,
+     0.3017969320062548,
+     -0.33616162301041186,
+     0.11835857876576483,
+     0.2919449091423303,
+     0.7069377705920488,
+     0.27239246061071754,
+     0.8355505750514567,
+     -0.28371202759444714,
+     -0.17244426114484668,
+     -0.34458549600094557,
+     -0.6298421646934003,
+     3.577116501284763,
+     0.09254558524116874,
+     0.6438167120795697,
+     0.2775422928389162,
+     -1.5991079667583108,
+     -0.0653075787704438,
+     -0.8878464829176664,
+     -1.3592103568371385,
+     -0.36835145647637546,
+     -1.2165994585957378,
+     1.059793955879286,
+     1.2202927595935762,
+     0.23628532816655934,
+     0.027140427147969604,
+     0.09254558524116874,
+     2.925725481240079,
+     1.2839932865463197,
+     2.176990191452205,
+     1.6384811527095735,
+     2.0405742283910513,
+     2.3645495667587966,
+     2.6975738452747464,
+     2.4626743369735777,
+     2.537687323288992,
+     3.9888460650108755,
+     3.9696395550854504,
+     -0.20310342754237354,
+     -0.20909893489442766,
+     0.6438167120795697,
+     1.2839932865463197,
+     5.836954958271235,
+     4.686250761616975,
+     4.209141071652994,
+     4.8530134577304125,
+     5.442769878078252,
+     4.791444946778938,
+     6.962125114630908,
+     6.522712233476341,
+     8.609302629018202,
+     7.440907756332308,
+     -0.5089283327106386,
+     0.3017969320062548,
+     0.2775422928389162,
+     2.176990191452205,
+     4.686250761616975,
+     6.332206483930349,
+     4.138834381010383,
+     4.088486585766077,
+     5.511097616050392,
+     5.15041443426162,
+     5.466772275045514,
+     5.552444945089519,
+     8.742420375347137,
+     6.932760713621974,
+     -0.2868147629778832,
+     -0.33616162301041186,
+     -1.5991079667583108,
+     1.6384811527095735,
+     4.209141071652994,
+     4.138834381010383,
+     6.725694467313588,
+     6.176915178075433,
+     6.973126948811114,
+     6.954223959241062,
+     7.4021772695705295,
+     8.542136782081798,
+     9.569374075625092,
+     8.62728496780619,
+     0.11825505504384637,
+     0.11835857876576483,
+     -0.0653075787704438,
+     2.0405742283910513,
+     4.8530134577304125,
+     4.088486585766077,
+     6.176915178075433,
+     7.859000616008416,
+     7.607635620515794,
+     7.8056386795360595,
+     9.699757267488167,
+     10.537272104527801,
+     11.51663979375735,
+     11.99571034568362,
+     0.3173843934200704,
+     0.2919449091423303,
+     -0.8878464829176664,
+     2.3645495667587966,
+     5.442769878078252,
+     5.511097616050392,
+     6.973126948811114,
+     7.607635620515794,
+     10.002543774666265,
+     9.3628451412078,
+     11.051457801833749,
+     11.12671315181069,
+     12.633122309111059,
+     12.314679828472435,
+     0.6923301108181477,
+     0.7069377705920488,
+     -1.3592103568371385,
+     2.6975738452747464,
+     4.791444946778938,
+     5.15041443426162,
+     6.954223959241062,
+     7.8056386795360595,
+     9.3628451412078,
+     11.765694475034252,
+     11.488959968555719,
+     11.578639164101332,
+     13.12819353560917,
+     12.858548660064116,
+     1.1822639720048755,
+     0.27239246061071754,
+     -0.36835145647637546,
+     2.4626743369735777,
+     6.962125114630908,
+     5.466772275045514,
+     7.4021772695705295,
+     9.699757267488167,
+     11.051457801833749,
+     11.488959968555719,
+     15.378852943889797,
+     14.32215194357559,
+     15.916667993180454,
+     16.1449152152054,
+     0.6961816754192114,
+     0.8355505750514567,
+     -1.2165994585957378,
+     2.537687323288992,
+     6.522712233476341,
+     5.552444945089519,
+     8.542136782081798,
+     10.537272104527801,
+     11.12671315181069,
+     11.578639164101332,
+     14.32215194357559,
+     15.661947507876903,
+     16.21222238475457,
+     15.965734374243766,
+     0.3122704429551959,
+     -0.28371202759444714,
+     1.059793955879286,
+     3.9888460650108755,
+     8.609302629018202,
+     8.742420375347137,
+     9.569374075625092,
+     11.51663979375735,
+     12.633122309111059,
+     13.12819353560917,
+     15.916667993180454,
+     16.21222238475457,
+     21.592050845501944,
+     19.615332612767816,
+     0.6248379116877913,
+     -0.17244426114484668,
+     1.2202927595935762,
+     3.9696395550854504,
+     7.440907756332308,
+     6.932760713621974,
+     8.62728496780619,
+     11.99571034568362,
+     12.314679828472435,
+     12.858548660064116,
+     16.1449152152054,
+     15.965734374243766,
+     19.615332612767816,
+     20.769403548678383
+    ],
+    "elided": [],
+    "shapes": [
+     [
+      14,
+      14
+     ]
+    ]
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.01238543,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.016935013,
+      "load_vk_s": 0.000804015,
+      "verify_call_s": 0.012566296383738518,
+      "verify_s": 0.01238543
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.1648952141404152,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 36171776,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-2",
+   "loadavg_before": [
+    38.419921875,
+    38.53125,
+    30.56640625
+   ],
+   "child": {
+    "wall_s": 0.7696828413754702,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 91103232,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.457964655,
+    "end_to_end_s": 0.470085458,
+    "proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-npbench_polybench_covariance2_covariance2__kernel-zpost/work/zinnia_halo2/npbench_polybench_covariance2_covariance2__kernel/proofs/sample-2/proof.bin",
+    "proof_bytes": 17344,
+    "timings_s": {
+     "load_pk_s": 0.00982275,
+     "load_params_s": 0.01689117,
+     "parse_inputs_s": 2.611e-05,
+     "preprocess_s": 0.004394189,
+     "witness_s": 0.007726614,
+     "thread_pool_s": 0.000381792,
+     "prove_s": 0.457964655,
+     "prove_call_s": 0.4781410042196512
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "70f0d6765a6a8698763f73b0d2f8c4acd18224371934f0acdc95ef784b5219c3"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 196 elements differ",
+    "expected_count": 196,
+    "actual_count": 196,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "728f8353e5fb75305e0d8c717358ae608cd55f8ae94a2eed1fb7628bc85c6a75",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.018313979,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.015257899,
+      "load_vk_s": 0.00069857,
+      "verify_call_s": 0.018479985184967518,
+      "verify_s": 0.018313979
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.166291369125247,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 36249600,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-3",
+   "loadavg_before": [
+    38.419921875,
+    38.53125,
+    30.56640625
+   ],
+   "child": {
+    "wall_s": 0.9704663790762424,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 90808320,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.636177184,
+    "end_to_end_s": 0.648732987,
+    "proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-npbench_polybench_covariance2_covariance2__kernel-zpost/work/zinnia_halo2/npbench_polybench_covariance2_covariance2__kernel/proofs/sample-3/proof.bin",
+    "proof_bytes": 17344,
+    "timings_s": {
+     "load_pk_s": 0.012099022,
+     "load_params_s": 0.016855989,
+     "parse_inputs_s": 2.2818e-05,
+     "preprocess_s": 0.00443167,
+     "witness_s": 0.008124133,
+     "thread_pool_s": 0.000609837,
+     "prove_s": 0.636177184,
+     "prove_call_s": 0.6591662336140871
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "eeab5c10e0ba8c0f1ac81173b6f25e7d43b05d34feefe957c3fb22d35bc81ab8"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 196 elements differ",
+    "expected_count": 196,
+    "actual_count": 196,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "728f8353e5fb75305e0d8c717358ae608cd55f8ae94a2eed1fb7628bc85c6a75",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.020034302,
+     "not_applicable": null,
+     "timings_s": {
+      "load_vk_s": 0.00074311,
+      "load_params_s": 0.016984577,
+      "verify_call_s": 0.020199882797896862,
+      "verify_s": 0.020034302
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.16568348743021488,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 36323328,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-4",
+   "loadavg_before": [
+    38.30615234375,
+    38.50537109375,
+    30.60107421875
+   ],
+   "child": {
+    "wall_s": 0.9426059667021036,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 90697728,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.629068145,
+    "end_to_end_s": 0.641314066,
+    "proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-npbench_polybench_covariance2_covariance2__kernel-zpost/work/zinnia_halo2/npbench_polybench_covariance2_covariance2__kernel/proofs/sample-4/proof.bin",
+    "proof_bytes": 17344,
+    "timings_s": {
+     "load_pk_s": 0.00997495,
+     "load_params_s": 0.016925525,
+     "parse_inputs_s": 2.3361e-05,
+     "preprocess_s": 0.004409748,
+     "witness_s": 0.007836173,
+     "thread_pool_s": 0.000492506,
+     "prove_s": 0.629068145,
+     "prove_call_s": 0.6496611824259162
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "539f4d4b0deb87349ced704431eba6c19cc00a51e73f23189d9c524f031b6a09"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 196 elements differ",
+    "expected_count": 196,
+    "actual_count": 196,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "728f8353e5fb75305e0d8c717358ae608cd55f8ae94a2eed1fb7628bc85c6a75",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.013480168,
+     "not_applicable": null,
+     "timings_s": {
+      "load_vk_s": 0.000651993,
+      "load_params_s": 0.01525429,
+      "verify_call_s": 0.013630247674882412,
+      "verify_s": 0.013480168
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.1651010923087597,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 36380672,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-5",
+   "loadavg_before": [
+    38.30615234375,
+    38.50537109375,
+    30.60107421875
+   ],
+   "child": {
+    "wall_s": 0.8383610108867288,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 90574848,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.540271058,
+    "end_to_end_s": 0.551146827,
+    "proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-npbench_polybench_covariance2_covariance2__kernel-zpost/work/zinnia_halo2/npbench_polybench_covariance2_covariance2__kernel/proofs/sample-5/proof.bin",
+    "proof_bytes": 17344,
+    "timings_s": {
+     "load_params_s": 0.015220417,
+     "load_pk_s": 0.009217552,
+     "parse_inputs_s": 2.0151e-05,
+     "preprocess_s": 0.003954203,
+     "witness_s": 0.006921566,
+     "thread_pool_s": 0.000416631,
+     "prove_s": 0.540271058,
+     "prove_call_s": 0.5593193350359797
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "2fd499eb12a4bbe2eabab66b54c7d39205c91d17828b2adb554ffa3b33a46cae"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 196 elements differ",
+    "expected_count": 196,
+    "actual_count": 196,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "728f8353e5fb75305e0d8c717358ae608cd55f8ae94a2eed1fb7628bc85c6a75",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.014820214,
+     "not_applicable": null,
+     "timings_s": {
+      "load_vk_s": 0.0006996,
+      "load_params_s": 0.015274974,
+      "verify_call_s": 0.014995520003139973,
+      "verify_s": 0.014820214
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.13546379655599594,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 39645184,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 0.011993247,
+    "not_applicable": null,
+    "timings_s": {
+     "load_params_s": 0.016952722,
+     "load_vk_s": 0.000806502,
+     "verify_call_s": 0.012170864269137383,
+     "verify_s": 0.011993247
+    },
+    "details": {
+     "error": "halo2-base verify_proof failed: ConstraintSystemFailure"
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.16509375721216202,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 36220928,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

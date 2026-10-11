@@ -1,0 +1,52 @@
+// kernel.py:11 argwhere and line 13 crop have data-dependent shapes.
+from "EMBED" import u64_to_field
+from "EMBED" import u32_to_u64
+from "EMBED" import unpack
+from "EMBED" import u64_from_bits
+
+def lt(u64 a, u64 b) -> bool:
+    return (a ^ 9223372036854775808u64) < (b ^ 9223372036854775808u64)
+
+def mul(u64 a, u64 b) -> u64:
+    bool sa = a >= 9223372036854775808u64
+    bool sb = b >= 9223372036854775808u64
+    u64 aa = if sa then 0u64-a else a fi
+    u64 bb = if sb then 0u64-b else b fi
+    bool[128] bits = unpack::<128>(u64_to_field(aa)*u64_to_field(bb))
+    u64 v = u64_from_bits(bits[32..96])
+    return if sa != sb then 0u64-v else v fi
+
+def main(private u64[10][10] A) -> u64[102]:
+    u32 ys = 10
+    u32 xs = 10
+    u32 ye = 0
+    u32 xe = 0
+    for u32 i in 0..10 do
+        for u32 j in 0..10 do
+            bool nz = A[i][j] != 0u64
+            ys = if nz && i < ys then i else ys fi
+            xs = if nz && j < xs then j else xs fi
+            ye = if nz && i+1 > ye then i+1 else ye fi
+            xe = if nz && j+1 > xe then j+1 else xe fi
+        endfor
+    endfor
+    u32 rows = ye-ys
+    u32 cols = xe-xs
+    u64[10][10] result = [[0u64;10];10]
+    for u32 i in 0..10 do
+        for u32 j in 0..10 do
+            bool keep = i < rows && j < cols
+            u32 r = if keep then i+ys else 0u32 fi
+            u32 c = if keep then j+xs else 0u32 fi
+            result[i][j] = if keep then A[r][c] else 0u64 fi
+        endfor
+    endfor
+    u64[102] packed = [0u64;102]
+    for u32 i in 0..10 do
+        for u32 j in 0..10 do
+            packed[i*10+j] = result[i][j]
+        endfor
+    endfor
+    packed[100] = u32_to_u64(rows)
+    packed[101] = u32_to_u64(cols)
+    return packed

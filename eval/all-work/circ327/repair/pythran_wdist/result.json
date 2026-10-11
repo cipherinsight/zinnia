@@ -1,0 +1,51 @@
+{
+  "program": "pythran_wdist",
+  "function": "slow_wdist",
+  "category": "needs_gadget: sqrt",
+  "as_written": {
+    "status": "needs_gadget",
+    "error": "kernel.py:16 uses np.sqrt((wdiff ** 2).sum()); native Q32 division repairs the division subexpression but cannot supply square root. All loops already have static bounds.",
+    "constraints": null,
+    "source_file": "pythran_wdist/as_written.zok",
+    "artifact_sha256": "042ac0d4cbdf972b598e2ae88770b4d25acf47087bd482da5f3979c546652731"
+  },
+  "rewrite": {
+    "status": "needs_gadget",
+    "error": "kernel.py:16 uses np.sqrt((wdiff ** 2).sum()); native Q32 division repairs the division subexpression but cannot supply square root. All loops already have static bounds.",
+    "constraints": null,
+    "rewrites": [],
+    "source_file": "pythran_wdist/rewrite.zok",
+    "artifact_sha256": "081b48bdf8eec92f411bfee324562e290437d7c89067b5c01fd1b8aeb1a78e2e"
+  },
+  "correctness": {
+    "A": {
+      "status": "not_run",
+      "reason": "No executable translation for this source construct"
+    },
+    "B": {
+      "status": "not_run",
+      "reason": "No executable translation for this source construct"
+    }
+  },
+  "notes": "kernel.py:16 uses np.sqrt((wdiff ** 2).sum()); native Q32 division repairs the division subexpression but cannot supply square root. All loops already have static bounds.",
+  "source": {
+    "program": "pythran_wdist",
+    "dataset": "pythran",
+    "kernel": "benchmarking/datasets/pythran/pythran_wdist/kernel.py",
+    "function": "slow_wdist",
+    "sha256": "bd4bf903855cd6f5f6976e02cefcc5c7f340dbec0a1a9a87398e628ac9e8cf49"
+  },
+  "old_category": "needs_gadget: division",
+  "old_result": "batch0/pythran_wdist/result.json",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+    "tmpdir": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/tmp"
+  },
+  "fixture": {
+    "path": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/pythran/pythran_wdist/fixture.json",
+    "sha256": "27e7d53c586307d11a3953aaec3a46334a10bce9ded38e6a46bfa1cf3bf66310"
+  },
+  "reason": "kernel.py:16 uses np.sqrt((wdiff ** 2).sum()); native Q32 division repairs the division subexpression but cannot supply square root. All loops already have static bounds."
+}

@@ -1,0 +1,22 @@
+{
+  "program": "pythran_gauss",
+  "category": "needs_gadget: division",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:29 private n loop bound.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "needs_gadget",
+    "error": "kernel.py:32 reciprocal of a private pivot requires fixed-point division.",
+    "constraints": null,
+    "rewrites": [
+      "Guard loops over 4 rows; valid indexed n cannot exceed 4, and the explicit domain also gives n<=1024. Reciprocal remains required."
+    ]
+  },
+  "correctness": {
+    "A": null,
+    "B": null
+  },
+  "notes": "kernel.py:32 reciprocal of a private pivot requires fixed-point division."
+}

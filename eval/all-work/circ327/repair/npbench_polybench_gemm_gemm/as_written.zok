@@ -1,0 +1,19 @@
+from "../native_v1" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64 alpha, private u64 beta, private u64[14][15] C, private u64[14][16] A, private u64[16][15] B) -> u64[14][15]:
+    u64[14][16] scaled = [[0;16];14]
+    for u32 i in 0..14 do
+        for u32 j in 0..16 do
+            scaled[i][j] = mulq(alpha, A[i][j])
+        endfor
+    endfor
+    u64[14][15] product = [[0;15];14]
+    for u32 i in 0..14 do
+        for u32 j in 0..15 do
+            for u32 k in 0..16 do
+                product[i][j] = (product[i][j] + mulq(scaled[i][k], B[k][j]))
+            endfor
+            C[i][j] = (product[i][j] + mulq(beta, C[i][j]))
+        endfor
+    endfor
+    return C

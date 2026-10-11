@@ -1,0 +1,266 @@
+{
+ "schema": 1,
+ "system": "sp1_groth16",
+ "case": "pythran_pythagorean_triples__next_pythagorean_triples",
+ "description": "SP1 6.8.1, Groth16-wrapped proof, Q32 guest",
+ "windows": {
+  "prove_core": "client.prove in groth16 mode (prove); SP1's SDK proves from the program and its input, so execution happens inside the prove call and cannot be excluded",
+  "end_to_end": "client.prove (prove), which includes execution",
+  "verify": "client.verify (verify)"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/pythran/pythran_pythagorean_triples/kernel.py": "8b02e649dce84b590be3826da1966e219b60a87b77768095184bf954ef584783",
+  "benchmarking/datasets/pythran/pythran_pythagorean_triples/fixture.json": "f16025dfe4374b331b428dc036431a154a1106684edf671665d9a9825f03b6e7",
+  "benchmarking/datasets/pythran/pythran_pythagorean_triples/zkvm.rs": "5347bbe5e6026f9ce9284a42cc7cbdb04f35ff32c79f9bc915a4d73683667fed",
+  "benchmarking/baselines/sp1/target/release/sp1-baseline": "65e77c96da5e2637bd23b4f3d28c164da7810e2ae644c55443537c04888efd01"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-11T00:02:48+0000",
+  "loadavg": [
+   58.69482421875,
+   61.2509765625,
+   62.025390625
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "client_init": 24.38021931,
+    "setup": 2.2881856320000002,
+    "process_wall": 27.05134185962379
+   },
+   "details": {
+    "case": "pythran_pythagorean_triples/next_pythagorean_triples",
+    "input": "A",
+    "mode": "setup",
+    "peak_rss_mib": 7170.0,
+    "proof_path": null,
+    "sdk_version": "6.8.1",
+    "system": "sp1",
+    "vk_hash": "0x00f1bb80f1ab6966c6aab19be044aa4aac982995d14b8a77f4b1ccdf76bf0672",
+    "vk_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s3/work/sp1_groth16/pythran_pythagorean_triples__next_pythagorean_triples/program/vk.bin"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 27.173410861752927,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 7543119872,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   62.83642578125,
+   61.99365234375,
+   62.2197265625
+  ],
+  "child": {
+   "wall_s": 369.4539282824844,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 28868657152,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 342.784691269,
+   "end_to_end_s": 342.784691269,
+   "proof_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s3/work/sp1_groth16/pythran_pythagorean_triples__next_pythagorean_triples/proofs/warmup/program/proof-groth16-B.bin",
+   "proof_bytes": 1806,
+   "timings_s": {
+    "client_init": 25.234250335,
+    "execute": 0.012990884,
+    "prove": 342.784691269,
+    "process_wall": 369.3281063325703
+   },
+   "details": {
+    "case": "pythran_pythagorean_triples/next_pythagorean_triples",
+    "cycles": 6160,
+    "gas": 8963,
+    "input": "B",
+    "input_shapes": [
+     1,
+     3
+    ],
+    "mode": "prove",
+    "peak_rss_mib": 27500.0,
+    "proof_mode": "groth16",
+    "proof_size_bytes": 1806,
+    "sdk_version": "6.8.1",
+    "syscalls": 4,
+    "system": "sp1"
+   },
+   "proof_sha256": "3355019afc8238cf934d00d6459246bff0c763660555099319b723b8a4052568"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 9 elements differ",
+   "expected_count": 9,
+   "actual_count": 9,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "a575c065b33982de415f5521856d6c08d83298c938bc352b4c6afd61ac10c990",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    17,
+    9,
+    19,
+    23,
+    21,
+    31,
+    3,
+    11,
+    11
+   ],
+   "elided": [],
+   "shapes": null
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    62.57275390625,
+    62.97216796875,
+    62.6015625
+   ],
+   "child": {
+    "wall_s": 372.2996591264382,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 28696985600,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 341.608306331,
+    "end_to_end_s": 341.608306331,
+    "proof_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s3/work/sp1_groth16/pythran_pythagorean_triples__next_pythagorean_triples/proofs/sample-1/program/proof-groth16-B.bin",
+    "proof_bytes": 1806,
+    "timings_s": {
+     "client_init": 29.122664179,
+     "execute": 0.012989258,
+     "prove": 341.608306331,
+     "process_wall": 372.18315826542675
+    },
+    "details": {
+     "case": "pythran_pythagorean_triples/next_pythagorean_triples",
+     "cycles": 6160,
+     "gas": 8963,
+     "input": "B",
+     "input_shapes": [
+      1,
+      3
+     ],
+     "mode": "prove",
+     "peak_rss_mib": 27336.0,
+     "proof_mode": "groth16",
+     "proof_size_bytes": 1806,
+     "sdk_version": "6.8.1",
+     "syscalls": 4,
+     "system": "sp1"
+    },
+    "proof_sha256": "74a1bfc492e238d003fcd83c64fa8e24feb6ad0ba3886ed55886b5666252f9d5"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 9 elements differ",
+    "expected_count": 9,
+    "actual_count": 9,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "a575c065b33982de415f5521856d6c08d83298c938bc352b4c6afd61ac10c990",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     17,
+     9,
+     19,
+     23,
+     21,
+     31,
+     3,
+     11,
+     11
+    ],
+    "elided": [],
+    "shapes": null
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.396994388,
+     "not_applicable": null,
+     "timings_s": {
+      "client_init": 0.491553562,
+      "verify": 0.396994388,
+      "process_wall": 0.8988770302385092
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 1.0137279545888305,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 87355392,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 1.2543e-05,
+    "not_applicable": null,
+    "timings_s": {
+     "client_init": 0.403490774,
+     "verify": 1.2543e-05,
+     "process_wall": 0.41246156580746174
+    },
+    "details": {
+     "error": null
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.5148296859115362,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 78983168,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

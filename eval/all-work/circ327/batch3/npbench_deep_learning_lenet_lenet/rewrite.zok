@@ -1,0 +1,119 @@
+// benchmarking/datasets/npbench/npbench_deep_learning_lenet_lenet/kernel.py
+// Signed integers use their canonical field residues; real inputs are Q32.
+def neg(field x) -> bool:
+    return x > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+def absv(field x) -> field:
+    return if neg(x) then -x else x fi
+def lt(field a, field b) -> bool:
+    return if neg(a) != neg(b) then neg(a) else a < b fi
+// Constant integer rescaling uses native remainder and field division only.
+def divc(field x, field c) -> field:
+    field m = absv(x)
+    field q = (m - m % c) / c
+    return if neg(x) then -q else q fi
+def mulq(field a, field b) -> field:
+    return divc(a * b, 4294967296)
+
+def main(private field[2][16][16][1] input, private field[5][5][1][6] conv1, private field[6] conv1bias, private field[5][5][6][16] conv2, private field[16] conv2bias, private field[16][120] fc1w, private field[120] fc1b, private field[120][84] fc2w, private field[84] fc2b, private field[84][10] fc3w, private field[10] fc3b, private field N, private field C_before_fc1) -> field[2][10]:
+    assert(N == 2)
+    assert(C_before_fc1 == 16)
+    field[2][12][12][6] c1 = [[[[0; 6]; 12]; 12]; 2]
+    for u32 i in 0..12 do
+        for u32 j in 0..12 do
+            for u32 n in 0..2 do
+                for u32 co in 0..6 do
+                    field sum = 0
+                    for u32 ki in 0..5 do
+                        for u32 kj in 0..5 do
+                            sum = sum + mulq(input[n][i+ki][j+kj][0],conv1[ki][kj][0][co])
+                        endfor
+                    endfor
+                    sum = sum + conv1bias[co]
+                    c1[n][i][j][co] = if neg(sum) then 0 else sum fi
+                endfor
+            endfor
+        endfor
+    endfor
+    field[2][6][6][6] p1 = [[[[0; 6]; 6]; 6]; 2]
+    for u32 i in 0..6 do
+        for u32 j in 0..6 do
+            for u32 n in 0..2 do
+                for u32 co in 0..6 do
+                    field best = c1[n][2*i][2*j][co]
+                    for u32 ki in 0..2 do
+                        for u32 kj in 0..2 do
+                            field v = c1[n][2*i+ki][2*j+kj][co]
+                            best = if lt(best,v) then v else best fi
+                        endfor
+                    endfor
+                    p1[n][i][j][co] = best
+                endfor
+            endfor
+        endfor
+    endfor
+    field[2][2][2][16] c2 = [[[[0; 16]; 2]; 2]; 2]
+    for u32 i in 0..2 do
+        for u32 j in 0..2 do
+            for u32 n in 0..2 do
+                for u32 co in 0..16 do
+                    field sum = 0
+                    for u32 ki in 0..5 do
+                        for u32 kj in 0..5 do
+                            for u32 ci in 0..6 do
+                                sum = sum + mulq(p1[n][i+ki][j+kj][ci],conv2[ki][kj][ci][co])
+                            endfor
+                        endfor
+                    endfor
+                    sum = sum + conv2bias[co]
+                    c2[n][i][j][co] = if neg(sum) then 0 else sum fi
+                endfor
+            endfor
+        endfor
+    endfor
+    field[2][16] flat = [[0; 16]; 2]
+    for u32 n in 0..2 do
+        for u32 co in 0..16 do
+            field best = c2[n][0][0][co]
+            for u32 i in 0..2 do
+                for u32 j in 0..2 do
+                    field v = c2[n][i][j][co]
+                    best = if lt(best,v) then v else best fi
+                endfor
+            endfor
+            flat[n][co] = best
+        endfor
+    endfor
+    field[2][120] f1 = [[0; 120]; 2]
+    for u32 n in 0..2 do
+        for u32 j in 0..120 do
+            field sum = 0
+            for u32 k in 0..16 do
+                sum = sum + mulq(flat[n][k], fc1w[k][j])
+            endfor
+            sum = sum + fc1b[j]
+            f1[n][j] = if neg(sum) then 0 else sum fi
+        endfor
+    endfor
+    field[2][84] f2 = [[0; 84]; 2]
+    for u32 n in 0..2 do
+        for u32 j in 0..84 do
+            field sum = 0
+            for u32 k in 0..120 do
+                sum = sum + mulq(f1[n][k], fc2w[k][j])
+            endfor
+            sum = sum + fc2b[j]
+            f2[n][j] = if neg(sum) then 0 else sum fi
+        endfor
+    endfor
+    field[2][10] f3 = [[0; 10]; 2]
+    for u32 n in 0..2 do
+        for u32 j in 0..10 do
+            field sum = 0
+            for u32 k in 0..84 do
+                sum = sum + mulq(f2[n][k], fc3w[k][j])
+            endfor
+            sum = sum + fc3b[j]
+            f3[n][j] = sum
+        endfor
+    endfor
+    return f3

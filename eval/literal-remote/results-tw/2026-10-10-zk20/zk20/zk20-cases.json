@@ -1,0 +1,804 @@
+{
+  "cases": [
+    {
+      "case": "ds1000_case0313",
+      "problem_id": 313,
+      "status": "perf",
+      "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+      "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+      "duplicate_of": null,
+      "former_status": "duplicate",
+      "former_duplicate_of": "ds1000_case0309",
+      "former_reason": "same kernel as 0309 after renaming local variables",
+      "former_decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
+      "data_movement_only": false,
+      "kernel": {
+        "params": [
+          {
+            "name": "a",
+            "annotation": "Float[Array, \"8 6\"]"
+          }
+        ],
+        "constants": {},
+        "shape_test_case": 2
+      },
+      "adaptations": [
+        "Body: the reference function body as DS-1000 runs it inside `def f(...)`, with its own return.",
+        "Shapes fixed to DS-1000 test case 2 (a (8, 6)); the DS-1000 program accepts any shape, a circuit needs one."
+      ],
+      "kernel_change": null,
+      "output_kind": "exact",
+      "float_tolerance": null,
+      "fixture": "fixture.json",
+      "zinnia": {
+        "compiles": true,
+        "error": null
+      },
+      "kernel_sha256": "94fd6972be5fc4e9bb8fb30117eb9a1a10ec3b290b71fb928f4b2c85d5c1945e",
+      "fixture_sha256": "ae6dba1b52cd7ed291cb79ebddab6cc20636d9e2cbd59b9f1884dbb066aa9eed"
+    },
+    {
+      "case": "ds1000_case0330",
+      "problem_id": 330,
+      "status": "perf",
+      "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+      "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+      "duplicate_of": null,
+      "former_status": "duplicate",
+      "former_duplicate_of": "ds1000_case0329",
+      "former_reason": "computes `a ** power` like 0329; 0329 assigns the result back to `a`, 0330 to `result`",
+      "former_decision_source": "tools/ds1000_perf.py find_duplicates (SEMANTIC_DUPLICATES, hand review)",
+      "data_movement_only": false,
+      "kernel": {
+        "params": [
+          {
+            "name": "a",
+            "annotation": "Float[Array, \"8 6\"]"
+          }
+        ],
+        "constants": {
+          "power": 6
+        },
+        "shape_test_case": 2
+      },
+      "adaptations": [
+        "Body: the reference function body as DS-1000 runs it inside `def f(...)`, with its own return.",
+        "Shapes fixed to DS-1000 test case 2 (a (8, 6)); the DS-1000 program accepts any shape, a circuit needs one.",
+        "power = 6 is a compile-time constant (DS-1000 test case 2 value; it sets the exponent (number of multiplications); listed by the author). The runtime variant is ds1000_numpy/generated/case0330/kernel.py."
+      ],
+      "kernel_change": "signature (a: Float[Array, '8 6'], power: Integer) -> (a: Float[Array, '8 6']); added: power = 6",
+      "output_kind": "float",
+      "float_tolerance": {
+        "atol": 1e-06,
+        "rtol": 1e-06
+      },
+      "fixture": "fixture.json",
+      "zinnia": {
+        "compiles": true,
+        "error": null
+      },
+      "kernel_sha256": "53f781ebb5a1ff46134e2489f6faf066c6f661f5da299dc0851c914f559d36ec",
+      "fixture_sha256": "b48f4f64b88feb9666286ce479739589ec0a85dd5fba734ab4aea45e51138c30"
+    },
+    {
+      "case": "ds1000_case0356",
+      "problem_id": 356,
+      "status": "perf",
+      "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+      "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+      "duplicate_of": null,
+      "former_status": "duplicate",
+      "former_duplicate_of": "ds1000_case0355",
+      "former_reason": "same kernel as 0355 after renaming local variables",
+      "former_decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
+      "data_movement_only": false,
+      "kernel": {
+        "params": [
+          {
+            "name": "a",
+            "annotation": "Float[Array, \"3 3 3\"]"
+          },
+          {
+            "name": "b",
+            "annotation": "Integer[Array, \"3 3 3\"]"
+          }
+        ],
+        "constants": {},
+        "shape_test_case": 1
+      },
+      "adaptations": [
+        "Body: the reference statements; returns `c`, the value DS-1000 checks (exec_context: `result = c`).",
+        "Shapes fixed to DS-1000 test case 1 (a (3, 3, 3), b (3, 3, 3)); the DS-1000 program accepts any shape, a circuit needs one."
+      ],
+      "kernel_change": null,
+      "output_kind": "exact",
+      "float_tolerance": null,
+      "fixture": "fixture.json",
+      "zinnia": {
+        "compiles": true,
+        "error": null
+      },
+      "kernel_sha256": "4af5fe2e0add0fab8f8c25fd426673112bf3735b9e3c28fde93239f2be351cd9",
+      "fixture_sha256": "e0d407d146d0486d1368c5f1ed22bbe2c89e174bd5af691b769302a9d76504fb"
+    },
+    {
+      "case": "ds1000_case0357",
+      "problem_id": 357,
+      "status": "perf",
+      "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+      "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+      "duplicate_of": null,
+      "former_status": "duplicate",
+      "former_duplicate_of": "ds1000_case0355",
+      "former_reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0355",
+      "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
+      "data_movement_only": false,
+      "kernel": {
+        "params": [
+          {
+            "name": "a",
+            "annotation": "Float[Array, \"3 3 3\"]"
+          },
+          {
+            "name": "b",
+            "annotation": "Integer[Array, \"3 3 3\"]"
+          }
+        ],
+        "constants": {},
+        "shape_test_case": 1
+      },
+      "adaptations": [
+        "Body: the reference statements; returns `c`, the value DS-1000 checks (exec_context: `result = c`).",
+        "Shapes fixed to DS-1000 test case 1 (a (3, 3, 3), b (3, 3, 3)); the DS-1000 program accepts any shape, a circuit needs one."
+      ],
+      "kernel_change": null,
+      "output_kind": "exact",
+      "float_tolerance": null,
+      "fixture": "fixture.json",
+      "zinnia": {
+        "compiles": true,
+        "error": null
+      },
+      "kernel_sha256": "d490058e7532e6521f09cfcffdff48c59e6ed6f508a57781f04ea0966aa6c65b",
+      "fixture_sha256": "a7c7e261771b4855cd134c9a9134df8833f1745ab78aae183fd5697dcc9c07bf"
+    },
+    {
+      "case": "ds1000_case0365",
+      "problem_id": 365,
+      "status": "perf",
+      "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+      "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+      "duplicate_of": null,
+      "former_status": "duplicate",
+      "former_duplicate_of": "ds1000_case0363",
+      "former_reason": "same kernel as 0363 after renaming local variables",
+      "former_decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
+      "data_movement_only": false,
+      "kernel": {
+        "params": [
+          {
+            "name": "a",
+            "annotation": "Float[Array, \"100\"]"
+          },
+          {
+            "name": "pos",
+            "annotation": "Integer"
+          },
+          {
+            "name": "element",
+            "annotation": "Integer"
+          }
+        ],
+        "constants": {},
+        "shape_test_case": 2
+      },
+      "adaptations": [
+        "Body: the reference function body as DS-1000 runs it inside `def f(...)`, with its own return.",
+        "Shapes fixed to DS-1000 test case 2 (a (100,)); the DS-1000 program accepts any shape, a circuit needs one."
+      ],
+      "kernel_change": null,
+      "output_kind": "float",
+      "float_tolerance": {
+        "atol": 1e-06,
+        "rtol": 1e-06
+      },
+      "fixture": "fixture.json",
+      "zinnia": {
+        "compiles": true,
+        "error": null
+      },
+      "kernel_sha256": "f6344c05aacab081dd3945c2fd258acdc684e4d475223d9dc10bbf3ce60bbb5a",
+      "fixture_sha256": "19d2a9334b5e9563abc8b5eaa5c4fffbf5f464d842db7455c28fc81adace6724"
+    },
+    {
+      "case": "ds1000_case0370",
+      "problem_id": 370,
+      "status": "perf",
+      "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+      "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+      "duplicate_of": null,
+      "former_status": "duplicate",
+      "former_duplicate_of": "ds1000_case0368",
+      "former_reason": "same kernel as 0368 after renaming local variables",
+      "former_decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
+      "data_movement_only": false,
+      "kernel": {
+        "params": [
+          {
+            "name": "a",
+            "annotation": "Float[Array, \"3 3\"]"
+          }
+        ],
+        "constants": {},
+        "shape_test_case": 5
+      },
+      "adaptations": [
+        "Body: the reference function body as DS-1000 runs it inside `def f(...)`, with its own return.",
+        "Shapes fixed to DS-1000 test case 5 (a (3, 3)); the DS-1000 program accepts any shape, a circuit needs one.",
+        "a is Float although the last test case passes Integer: DS-1000 test case 2 passes a float value"
+      ],
+      "kernel_change": "signature (a: Integer[Array, '3 3']) -> (a: Float[Array, '3 3'])",
+      "output_kind": "exact",
+      "float_tolerance": null,
+      "fixture": "fixture.json",
+      "zinnia": {
+        "compiles": true,
+        "error": null
+      },
+      "kernel_sha256": "7eb92d6c8658156b637efe53585fe334a16263e27c7e0ccfec1ff7c3b5977cf8",
+      "fixture_sha256": "3d1bf0e4f3e4264f368883086916054a670f69c96ba8e62d819127234efb5152"
+    },
+    {
+      "case": "ds1000_case0382",
+      "problem_id": 382,
+      "status": "perf",
+      "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+      "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+      "duplicate_of": null,
+      "former_status": "duplicate",
+      "former_duplicate_of": "ds1000_case0381",
+      "former_reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0381",
+      "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
+      "data_movement_only": false,
+      "kernel": {
+        "params": [
+          {
+            "name": "a",
+            "annotation": "Float[Array, \"100\"]"
+          }
+        ],
+        "constants": {},
+        "shape_test_case": 2
+      },
+      "adaptations": [
+        "Body: the reference statements; returns `result`, the value DS-1000 checks.",
+        "Shapes fixed to DS-1000 test case 2 (a (100,)); the DS-1000 program accepts any shape, a circuit needs one."
+      ],
+      "kernel_change": null,
+      "output_kind": "exact",
+      "float_tolerance": null,
+      "fixture": "fixture.json",
+      "zinnia": {
+        "compiles": true,
+        "error": null
+      },
+      "kernel_sha256": "eda9d47a8f00d0729a7ae1809f9566c1c5ff6be9ef779842713ca2b6c4cf81a5",
+      "fixture_sha256": "d3405e90a2a66fc4c98cbcf98978f65fd4c0faef6bafefe5b714d606f0f3c7a8"
+    },
+    {
+      "case": "ds1000_case0413",
+      "problem_id": 413,
+      "status": "perf",
+      "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+      "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+      "duplicate_of": null,
+      "former_status": "zinnia_rejects",
+      "former_duplicate_of": null,
+      "former_reason": "compiles, but Zinnia refuses to build a witness for either fixture input: ZinniaException: Cannot build witness for `x`: `Complex` values are not supported as circuit inputs.",
+      "former_decision_source": "Zinnia mock prove of both fixture inputs (zinnia_probe)",
+      "data_movement_only": false,
+      "kernel": {
+        "params": [
+          {
+            "name": "x",
+            "annotation": "Complex[Array, \"10\"]"
+          }
+        ],
+        "constants": {},
+        "shape_test_case": 2
+      },
+      "adaptations": [
+        "Body: the reference statements; returns `result`, the value DS-1000 checks.",
+        "Shapes fixed to DS-1000 test case 2 (x (10,)); the DS-1000 program accepts any shape, a circuit needs one."
+      ],
+      "kernel_change": "signature (x: Float[Array, '10']) -> (x: Complex[Array, '10'])",
+      "output_kind": "float",
+      "float_tolerance": {
+        "atol": 1e-06,
+        "rtol": 1e-06
+      },
+      "fixture": "fixture.json",
+      "zinnia": {
+        "compiles": true,
+        "error": null
+      },
+      "kernel_sha256": "004301a2e4b68dafbfe9f96746077e4d4783c8a7cf8c7fb0820e26e5667cdfb7",
+      "fixture_sha256": "e42bfd8a1486e81a410b937186a6418b46674067db1799ed5ab1187c20d233a5"
+    },
+    {
+      "case": "ds1000_case0417",
+      "problem_id": 417,
+      "status": "perf",
+      "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+      "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+      "duplicate_of": null,
+      "former_status": "duplicate",
+      "former_duplicate_of": "ds1000_case0414",
+      "former_reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0414",
+      "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
+      "data_movement_only": false,
+      "kernel": {
+        "params": [
+          {
+            "name": "data",
+            "annotation": "Float[Array, \"8\"]"
+          }
+        ],
+        "constants": {
+          "bin_size": 4
+        },
+        "shape_test_case": 2
+      },
+      "adaptations": [
+        "Body: the reference statements; returns `bin_data_mean`, the value DS-1000 checks (exec_context: `result = bin_data_mean`).",
+        "Shapes fixed to DS-1000 test case 2 (data (8,)); the DS-1000 program accepts any shape, a circuit needs one.",
+        "bin_size = 4 is a compile-time constant (DS-1000 test case 2 value; it sets the bin width, hence the number of bins). The runtime variant is ds1000_numpy/generated/case0417/kernel.py."
+      ],
+      "kernel_change": "signature (data: Float[Array, '8'], bin_size: Integer) -> (data: Float[Array, '8']); added: bin_size = 4",
+      "output_kind": "float",
+      "float_tolerance": {
+        "atol": 1e-06,
+        "rtol": 1e-06
+      },
+      "fixture": "fixture.json",
+      "zinnia": {
+        "compiles": true,
+        "error": null
+      },
+      "kernel_sha256": "4146a3e41000e68557bad8af1255dfc24c75e3335ab53b946d0a9b41d3779bc3",
+      "fixture_sha256": "2753de957ae069213b33c095008e5753f8f2444b972750cbaa40d8ce20728184"
+    },
+    {
+      "case": "ds1000_case0418",
+      "problem_id": 418,
+      "status": "perf",
+      "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+      "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+      "duplicate_of": null,
+      "former_status": "duplicate",
+      "former_duplicate_of": "ds1000_case0416",
+      "former_reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0416",
+      "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
+      "data_movement_only": false,
+      "kernel": {
+        "params": [
+          {
+            "name": "data",
+            "annotation": "Float[Array, \"8 6\"]"
+          }
+        ],
+        "constants": {
+          "bin_size": 2
+        },
+        "shape_test_case": 2
+      },
+      "adaptations": [
+        "Body: the reference statements; returns `bin_data_mean`, the value DS-1000 checks (exec_context: `result = bin_data_mean`).",
+        "Shapes fixed to DS-1000 test case 2 (data (8, 6)); the DS-1000 program accepts any shape, a circuit needs one.",
+        "bin_size = 2 is a compile-time constant (DS-1000 test case 2 value; it sets the bin width, hence the number of bins). The runtime variant is ds1000_numpy/generated/case0418/kernel.py."
+      ],
+      "kernel_change": "signature (data: Float[Array, '8 6'], bin_size: Integer) -> (data: Float[Array, '8 6']); added: bin_size = 2",
+      "output_kind": "float",
+      "float_tolerance": {
+        "atol": 1e-06,
+        "rtol": 1e-06
+      },
+      "fixture": "fixture.json",
+      "zinnia": {
+        "compiles": true,
+        "error": null
+      },
+      "kernel_sha256": "e4e54beec9648e4ca06236303d93b5e1ec3f20e145a2c4e2b65b9912e4d53c8f",
+      "fixture_sha256": "463fa513c2f3f9f3a795685b6239e86ccf1a178cc8241310333281b885d1fa39"
+    },
+    {
+      "case": "ds1000_case0419",
+      "problem_id": 419,
+      "status": "perf",
+      "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+      "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+      "duplicate_of": null,
+      "former_status": "duplicate",
+      "former_duplicate_of": "ds1000_case0416",
+      "former_reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0416",
+      "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
+      "data_movement_only": false,
+      "kernel": {
+        "params": [
+          {
+            "name": "data",
+            "annotation": "Float[Array, \"8 6\"]"
+          }
+        ],
+        "constants": {
+          "bin_size": 2
+        },
+        "shape_test_case": 2
+      },
+      "adaptations": [
+        "Body: the reference statements; returns `bin_data_mean`, the value DS-1000 checks (exec_context: `result = bin_data_mean`).",
+        "Shapes fixed to DS-1000 test case 2 (data (8, 6)); the DS-1000 program accepts any shape, a circuit needs one.",
+        "bin_size = 2 is a compile-time constant (DS-1000 test case 2 value; it sets the bin width, hence the number of bins). The runtime variant is ds1000_numpy/generated/case0419/kernel.py."
+      ],
+      "kernel_change": "signature (data: Float[Array, '8 6'], bin_size: Integer) -> (data: Float[Array, '8 6']); added: bin_size = 2",
+      "output_kind": "float",
+      "float_tolerance": {
+        "atol": 1e-06,
+        "rtol": 1e-06
+      },
+      "fixture": "fixture.json",
+      "zinnia": {
+        "compiles": true,
+        "error": null
+      },
+      "kernel_sha256": "d6af60635a20486b92f9dac5d1d81427453010d8bc16977390c25032b314e958",
+      "fixture_sha256": "26d5903f37b96ec0dbefbad1a551b6a75de1c0abc0132c3bc60f1070a22cb42f"
+    },
+    {
+      "case": "ds1000_case0430",
+      "problem_id": 430,
+      "status": "perf",
+      "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+      "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+      "duplicate_of": null,
+      "former_status": "duplicate",
+      "former_duplicate_of": "ds1000_case0428",
+      "former_reason": "same kernel as 0428 after renaming local variables",
+      "former_decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
+      "data_movement_only": false,
+      "kernel": {
+        "params": [
+          {
+            "name": "a",
+            "annotation": "Float[Array, \"30\"]"
+          }
+        ],
+        "constants": {},
+        "shape_test_case": 2
+      },
+      "adaptations": [
+        "Body: the reference function body as DS-1000 runs it inside `def f(...)`, with its own return.",
+        "Shapes fixed to DS-1000 test case 2 (a (30,)); the DS-1000 program accepts any shape, a circuit needs one."
+      ],
+      "kernel_change": null,
+      "output_kind": "float",
+      "float_tolerance": {
+        "atol": 1e-06,
+        "rtol": 1e-06
+      },
+      "fixture": "fixture.json",
+      "zinnia": {
+        "compiles": true,
+        "error": null
+      },
+      "kernel_sha256": "1c20d7b993bbe25a613a645409274e1c98714e1546070d3e3cb6f1e6e1845b86",
+      "fixture_sha256": "035facbc58cd37993fa84ac7cce29dc392c87c26fa6e655741cfe7cd8e72f604"
+    },
+    {
+      "case": "ds1000_case0456",
+      "problem_id": 456,
+      "status": "perf",
+      "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+      "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+      "duplicate_of": null,
+      "former_status": "absent",
+      "former_duplicate_of": null,
+      "former_reason": "no performance folder after excluded_numpy_family was removed (audit DB-09)",
+      "former_decision_source": "datasets/FILTERING.md: rules removed on 2026-10-06",
+      "data_movement_only": false,
+      "kernel": {
+        "params": [
+          {
+            "name": "a",
+            "annotation": "Float[Array, \"8 3\"]"
+          }
+        ],
+        "constants": {},
+        "shape_test_case": 2
+      },
+      "adaptations": [
+        "Body: the reference statements; returns `result`, the value DS-1000 checks.",
+        "Shapes fixed to DS-1000 test case 2 (a (8, 3)); the DS-1000 program accepts any shape, a circuit needs one."
+      ],
+      "kernel_change": "new performance folder, mechanically generated from DS-1000",
+      "output_kind": "float",
+      "float_tolerance": {
+        "atol": 1e-06,
+        "rtol": 1e-06
+      },
+      "fixture": "fixture.json",
+      "zinnia": {
+        "compiles": null,
+        "error": null,
+        "note": "not probed on this performance variant; selection comes from frozen RQ1 acceptance"
+      },
+      "kernel_sha256": "7dcdecc3efe9b9dd2d90ed65805d5ebfcb46483444334cd7dd00431b636e6a59",
+      "fixture_sha256": "0aa27aca76668a5ee1ba3fc8e1dd47b780aa5e8557efb37cee464fd9b071116b"
+    },
+    {
+      "case": "ds1000_case0457",
+      "problem_id": 457,
+      "status": "perf",
+      "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+      "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+      "duplicate_of": null,
+      "former_status": "absent",
+      "former_duplicate_of": null,
+      "former_reason": "no performance folder after excluded_numpy_family was removed (audit DB-09)",
+      "former_decision_source": "datasets/FILTERING.md: rules removed on 2026-10-06",
+      "data_movement_only": false,
+      "kernel": {
+        "params": [
+          {
+            "name": "a",
+            "annotation": "Float[Array, \"8 6\"]"
+          }
+        ],
+        "constants": {
+          "dim": 6
+        },
+        "shape_test_case": 1
+      },
+      "adaptations": [
+        "Body: the reference statements; returns `result`, the value DS-1000 checks.",
+        "Shapes fixed to DS-1000 test case 1 (a (8, 6)); the DS-1000 program accepts any shape, a circuit needs one.",
+        "dim = 6 is a compile-time constant (DS-1000 test case 1 value; it sets the input array width (DS-1000 constructs a with this many columns)). The runtime variant is ds1000_numpy/generated/case0457/kernel.py.",
+        "unused DS-1000 test inputs kept as parameters: dim."
+      ],
+      "kernel_change": "new performance folder, mechanically generated from DS-1000",
+      "output_kind": "float",
+      "float_tolerance": {
+        "atol": 1e-06,
+        "rtol": 1e-06
+      },
+      "fixture": "fixture.json",
+      "zinnia": {
+        "compiles": null,
+        "error": null,
+        "note": "not probed on this performance variant; selection comes from frozen RQ1 acceptance"
+      },
+      "kernel_sha256": "1258076d3adaad7339745b19c52f7aee6f2b0edef8d62e08803ad6c5ecae3ece",
+      "fixture_sha256": "bd46156df9859a23ef69c993930221bd6f6491a828e1e066e74e0d16311d60f0"
+    },
+    {
+      "case": "ds1000_case0458",
+      "problem_id": 458,
+      "status": "perf",
+      "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+      "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+      "duplicate_of": null,
+      "former_status": "absent",
+      "former_duplicate_of": null,
+      "former_reason": "no performance folder after excluded_numpy_family was removed (audit DB-09)",
+      "former_decision_source": "datasets/FILTERING.md: rules removed on 2026-10-06",
+      "data_movement_only": false,
+      "kernel": {
+        "params": [
+          {
+            "name": "a",
+            "annotation": "Float[Array, \"8 6\"]"
+          }
+        ],
+        "constants": {
+          "dim": 6
+        },
+        "shape_test_case": 1
+      },
+      "adaptations": [
+        "Body: the reference statements; returns `result`, the value DS-1000 checks.",
+        "Shapes fixed to DS-1000 test case 1 (a (8, 6)); the DS-1000 program accepts any shape, a circuit needs one.",
+        "dim = 6 is a compile-time constant (DS-1000 test case 1 value; it sets the input array width (DS-1000 constructs a with this many columns)). The runtime variant is ds1000_numpy/generated/case0458/kernel.py.",
+        "unused DS-1000 test inputs kept as parameters: dim."
+      ],
+      "kernel_change": "new performance folder, mechanically generated from DS-1000",
+      "output_kind": "float",
+      "float_tolerance": {
+        "atol": 1e-06,
+        "rtol": 1e-06
+      },
+      "fixture": "fixture.json",
+      "zinnia": {
+        "compiles": null,
+        "error": null,
+        "note": "not probed on this performance variant; selection comes from frozen RQ1 acceptance"
+      },
+      "kernel_sha256": "e0f141010fb1c08ef683048b6cc6c4b2da134c7ef476469ea13b310a60783ed1",
+      "fixture_sha256": "68d9aa09c4f9cc7b09130db2da518b8db597d593bc3e5529f7252798047e5740"
+    },
+    {
+      "case": "ds1000_case0463",
+      "problem_id": 463,
+      "status": "perf",
+      "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+      "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+      "duplicate_of": null,
+      "former_status": "duplicate",
+      "former_duplicate_of": "ds1000_case0462",
+      "former_reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0462",
+      "former_decision_source": "tools/ds1000_perf.py functional_duplicates (numeric test on the fixture inputs)",
+      "data_movement_only": false,
+      "kernel": {
+        "params": [
+          {
+            "name": "a",
+            "annotation": "Integer[Array, \"20 1\"]"
+          }
+        ],
+        "constants": {},
+        "shape_test_case": 2
+      },
+      "adaptations": [
+        "Body: the reference statements; returns `result`, the value DS-1000 checks.",
+        "Shapes fixed to DS-1000 test case 2 (a (20, 1)); the DS-1000 program accepts any shape, a circuit needs one."
+      ],
+      "kernel_change": null,
+      "output_kind": "exact",
+      "float_tolerance": null,
+      "fixture": "fixture.json",
+      "zinnia": {
+        "compiles": true,
+        "error": null
+      },
+      "kernel_sha256": "1c136a0094c02c1c035076204057e5bf91c4ee9ffaf89c112921d66b75320b0f",
+      "fixture_sha256": "796ca6bf2901bc4fcc3cf8ae4d243d12698a80d782e3c91b59a6a4019fc4bd73"
+    },
+    {
+      "case": "ds1000_case0502",
+      "problem_id": 502,
+      "status": "perf",
+      "reason": "accepted in the frozen RQ1 program list; include duplicates and constant outputs",
+      "decision_source": "author decision 2026-10-09, tools/ds1000_perf.py RQ1_ACCEPTED",
+      "duplicate_of": null,
+      "former_status": "duplicate",
+      "former_duplicate_of": "ds1000_case0501",
+      "former_reason": "same kernel as 0501 after renaming local variables",
+      "former_decision_source": "tools/ds1000_perf.py find_duplicates (equal kernels after renaming)",
+      "data_movement_only": false,
+      "kernel": {
+        "params": [
+          {
+            "name": "a",
+            "annotation": "Float[Array, \"13 13 2\"]"
+          },
+          {
+            "name": "b",
+            "annotation": "Integer[Array, \"13 13\"]"
+          }
+        ],
+        "constants": {},
+        "shape_test_case": 2
+      },
+      "adaptations": [
+        "Body: the reference statements; returns `result`, the value DS-1000 checks.",
+        "Shapes fixed to DS-1000 test case 2 (a (13, 13, 2), b (13, 13)); the DS-1000 program accepts any shape, a circuit needs one."
+      ],
+      "kernel_change": null,
+      "output_kind": "float",
+      "float_tolerance": {
+        "atol": 1e-06,
+        "rtol": 1e-06
+      },
+      "fixture": "fixture.json",
+      "zinnia": {
+        "compiles": true,
+        "error": null
+      },
+      "kernel_sha256": "c3261df063f0fa0da7d7b5a977e54d0c68bced82db7ccea08b4c4f7ef53ba297",
+      "fixture_sha256": "47ba2c11a97a43e9b0baa97eebf4ebfd00a2873666a90695532d438d21d3ac36"
+    },
+    {
+      "case": "npbench_deep_learning_resnet_resnet__resnet_basicblock",
+      "status": "perf",
+      "reason": "accepted in RQ1; author decision 2026-10-09 to include every accepted program",
+      "group": "npbench",
+      "program": "npbench_deep_learning_resnet_resnet",
+      "function": "resnet_basicblock",
+      "path": "datasets/npbench/npbench_deep_learning_resnet_resnet",
+      "fixture": "fixture.json",
+      "shape_generic": true,
+      "mutated_outputs": [],
+      "data_movement_only": false,
+      "float_tolerance": {
+        "atol": 2e-06,
+        "rtol": 1e-06,
+        "measure": "float64_buffers",
+        "reason": "conv2d writes its result into a float32 buffer (np.empty(..., dtype=np.float32)), which Q32 cannot imitate: the float32 rounding alone moves the output by up to 1.7e-6",
+        "measured_max_abs_difference": 1.67e-06
+      },
+      "acceptance": {
+        "outcome": "rejected_resource_limit",
+        "construct": "compile time over 300 s"
+      },
+      "zkvm_port": {
+        "file": "datasets/npbench/npbench_deep_learning_resnet_resnet/zkvm.rs",
+        "sha256": "913476c34f9f0339de43ff6faf80684807896186a85b32c2bf7b9edb86b5b7b6"
+      },
+      "former_status": "zinnia_rejects",
+      "former_duplicate_of": null,
+      "former_reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s",
+      "decision_source": "author RQ1 acceptance expansion (ALL_SETUP.md); existing acceptance fields are historical"
+    },
+    {
+      "case": "npbench_polybench_floyd_warshall_floyd_warshall__kernel",
+      "status": "perf",
+      "reason": "accepted in RQ1; author decision 2026-10-09 to include every accepted program",
+      "group": "npbench",
+      "program": "npbench_polybench_floyd_warshall_floyd_warshall",
+      "function": "kernel",
+      "path": "datasets/npbench/npbench_polybench_floyd_warshall_floyd_warshall",
+      "fixture": "fixture.json",
+      "shape_generic": true,
+      "mutated_outputs": [
+        "path"
+      ],
+      "data_movement_only": false,
+      "float_tolerance": {
+        "atol": 1e-06,
+        "rtol": 1e-06
+      },
+      "acceptance": {
+        "outcome": "rejected_resource_limit",
+        "construct": "compile time over 300 s"
+      },
+      "zkvm_port": {
+        "file": "datasets/npbench/npbench_polybench_floyd_warshall_floyd_warshall/zkvm.rs",
+        "sha256": "54c55ab95a66035436ab843a1f14b0a35e386cc9c2725cdf7bf052fcba78d674"
+      },
+      "former_status": "zinnia_rejects",
+      "former_duplicate_of": null,
+      "former_reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s",
+      "decision_source": "author RQ1 acceptance expansion (ALL_SETUP.md); existing acceptance fields are historical"
+    },
+    {
+      "case": "pythran_ccopy__CCOPY",
+      "status": "perf",
+      "reason": "accepted in RQ1; author decision 2026-10-09 to include every accepted program",
+      "group": "pythran",
+      "program": "pythran_ccopy",
+      "function": "CCOPY",
+      "path": "datasets/pythran/pythran_ccopy",
+      "fixture": "fixture.json",
+      "shape_generic": true,
+      "mutated_outputs": [
+        "CY"
+      ],
+      "data_movement_only": false,
+      "float_tolerance": {
+        "atol": 1e-06,
+        "rtol": 1e-06
+      },
+      "acceptance": {
+        "outcome": "rejected_resource_limit",
+        "construct": "compile time over 300 s"
+      },
+      "zkvm_port": {
+        "file": "datasets/pythran/pythran_ccopy/zkvm.rs",
+        "sha256": "75a0184bfce5e23ac7f13ce87f2bbb0aa0a39a3e385217c6c6ac713ea569faa7"
+      },
+      "former_status": "zinnia_rejects",
+      "former_duplicate_of": null,
+      "former_reason": "rejected_resource_limit (compile time over 300 s): timeout after 300s",
+      "decision_source": "author RQ1 acceptance expansion (ALL_SETUP.md); existing acceptance fields are historical"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[8][6] a, private u64 row, private u64 multiply_number) -> u64[6]:
+    u64 r = (row - 1)
+    r = if neg(r) then (r + 8) else r fi
+    for u32 j in 0..6 do
+        a[ui(r)][j] = mul(a[ui(r)][j], multiply_number)
+    endfor
+    u64[6] result = [0;6]
+    u64 total = 0
+    for u32 j in 0..6 do
+        total = (total + a[ui(r)][j])
+        result[j] = total
+    endfor
+    return result

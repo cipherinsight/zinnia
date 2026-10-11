@@ -1,0 +1,651 @@
+{
+ "schema": 1,
+ "system": "halo2_lit",
+ "case": "pythran_perm__permutations",
+ "description": "literal-translation halo2-base (same prover stack as halo2_hw)",
+ "windows": {
+  "prove_core": "create_proof (prove_s)",
+  "end_to_end": "witness synthesis (witness_s) + create_proof (prove_s)",
+  "verify": "verify_proof with the stored verifying key (verify_s)"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/pythran/pythran_perm/kernel.py": "633e8e48057c3a69cfaf20a8aa3c01cbde3c1434c075e6ff468babc46544e944",
+  "benchmarking/datasets/pythran/pythran_perm/fixture.json": "ba10ac6d77c66a41f521b45f36a383f780247a47f2e409ecef1009b2bd1ef107",
+  "benchmarking/datasets/pythran/pythran_perm/target.permutations.literal.rs": "bfaedf0dde0d60d4e517b0604145c17293833b8d0afc64099c1efcf0f2f8ae2d",
+  "benchmarking/baselines/halo2_hw/target-literal/release/halo2_hw": "da65edc170cbca95fb4ba05bdefcd43b2e964b8044927a824b10b95317249d39"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-11T13:14:41+0000",
+  "loadavg": [
+   31.7294921875,
+   17.1474609375,
+   21.93701171875
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "choose_k_s": 0.000606932,
+    "keygen_pk_s": 0.001365918,
+    "keygen_vk_s": 0.012263402,
+    "load_input_s": 2.8013e-05,
+    "params_s": 0.035397946,
+    "synthesize_s": 0.000134447,
+    "write_s": 0.000283072,
+    "process_wall": 0.05167391523718834
+   },
+   "details": {
+    "case": "pythran_perm__permutations",
+    "cells": {
+     "advice": 160,
+     "fixed": 14,
+     "instances": 96,
+     "lookup": 48
+    },
+    "input": "A",
+    "k": 7,
+    "lookup_bits": 6,
+    "mode": "setup",
+    "params": {
+     "k": 7,
+     "lookup_bits": 6,
+     "num_advice_per_phase": [
+      2
+     ],
+     "num_fixed": 1,
+     "num_instance_columns": 1,
+     "num_lookup_advice_per_phase": [
+      1,
+      0,
+      0
+     ]
+    },
+    "pk_path": "/home/zhantong/zinnia-eval-run/fz/epochs/2026-10-11-fz-npb-s1/work/halo2_lit/pythran_perm__permutations/program/pk.bin",
+    "vk_path": "/home/zhantong/zinnia-eval-run/fz/epochs/2026-10-11-fz-npb-s1/work/halo2_lit/pythran_perm__permutations/program/vk.bin"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 0.16520717181265354,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 37634048,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   31.7294921875,
+   17.1474609375,
+   21.93701171875
+  ],
+  "child": {
+   "wall_s": 0.20182428322732449,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 35307520,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 0.059501844,
+   "end_to_end_s": 0.059700169,
+   "proof_path": "/home/zhantong/zinnia-eval-run/fz/epochs/2026-10-11-fz-npb-s1/work/halo2_lit/pythran_perm__permutations/proofs/warmup/program/proof.bin",
+   "proof_bytes": 2208,
+   "timings_s": {
+    "load_input_s": 4.2506e-05,
+    "load_params_s": 0.007298984,
+    "load_pk_s": 0.000687679,
+    "prove_s": 0.059501844,
+    "prove_samples_s": [
+     0.059501844
+    ],
+    "thread_pool_s": 0.000410715,
+    "witness_s": 0.000198325,
+    "write_s": 0.000235041,
+    "process_wall": 0.06990810483694077
+   },
+   "details": {
+    "case": "pythran_perm__permutations",
+    "cells": {
+     "advice": 160,
+     "fixed": 14,
+     "instances": 96,
+     "lookup": 48
+    },
+    "input": "B",
+    "instance_path": "/home/zhantong/zinnia-eval-run/fz/epochs/2026-10-11-fz-npb-s1/work/halo2_lit/pythran_perm__permutations/proofs/warmup/program/instance.json",
+    "k": 7,
+    "lookup_bits": 6,
+    "mode": "prove",
+    "proof_bytes": 2208
+   },
+   "proof_sha256": "4350706eb4eb1ca8c5dbe6f4eee9c6b73edfda2c146759c4402cb68e9c2d1975"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 96 elements differ",
+   "expected_count": 96,
+   "actual_count": 96,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "21357a2dc3538494c3f912eb6d9988c69da4c31c74f80016c5e586c227adfd8a",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    6,
+    6,
+    5,
+    4,
+    6,
+    6,
+    4,
+    5,
+    6,
+    5,
+    6,
+    4,
+    6,
+    5,
+    4,
+    6,
+    6,
+    4,
+    6,
+    5,
+    6,
+    4,
+    5,
+    6,
+    6,
+    6,
+    5,
+    4,
+    6,
+    6,
+    4,
+    5,
+    6,
+    5,
+    6,
+    4,
+    6,
+    5,
+    4,
+    6,
+    6,
+    4,
+    6,
+    5,
+    6,
+    4,
+    5,
+    6,
+    5,
+    6,
+    6,
+    4,
+    5,
+    6,
+    4,
+    6,
+    5,
+    6,
+    6,
+    4,
+    5,
+    6,
+    4,
+    6,
+    5,
+    4,
+    6,
+    6,
+    5,
+    4,
+    6,
+    6,
+    4,
+    6,
+    6,
+    5,
+    4,
+    6,
+    5,
+    6,
+    4,
+    6,
+    6,
+    5,
+    4,
+    6,
+    5,
+    6,
+    4,
+    5,
+    6,
+    6,
+    4,
+    5,
+    6,
+    6
+   ],
+   "elided": [],
+   "shapes": null
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    30.7900390625,
+    17.19482421875,
+    21.92626953125
+   ],
+   "child": {
+    "wall_s": 0.20228310208767653,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 38465536,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.062006813,
+    "end_to_end_s": 0.062147481,
+    "proof_path": "/home/zhantong/zinnia-eval-run/fz/epochs/2026-10-11-fz-npb-s1/work/halo2_lit/pythran_perm__permutations/proofs/sample-1/program/proof.bin",
+    "proof_bytes": 2208,
+    "timings_s": {
+     "load_input_s": 3.0504e-05,
+     "load_params_s": 0.005289951,
+     "load_pk_s": 0.000491881,
+     "prove_s": 0.062006813,
+     "prove_samples_s": [
+      0.062006813
+     ],
+     "thread_pool_s": 0.00034447,
+     "witness_s": 0.000140668,
+     "write_s": 0.000274249,
+     "process_wall": 0.07003777381032705
+    },
+    "details": {
+     "case": "pythran_perm__permutations",
+     "cells": {
+      "advice": 160,
+      "fixed": 14,
+      "instances": 96,
+      "lookup": 48
+     },
+     "input": "B",
+     "instance_path": "/home/zhantong/zinnia-eval-run/fz/epochs/2026-10-11-fz-npb-s1/work/halo2_lit/pythran_perm__permutations/proofs/sample-1/program/instance.json",
+     "k": 7,
+     "lookup_bits": 6,
+     "mode": "prove",
+     "proof_bytes": 2208
+    },
+    "proof_sha256": "57be9981a14c1c885633b64a7295188602f43ac00b9ddf0c41e274b2fd02f836"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 96 elements differ",
+    "expected_count": 96,
+    "actual_count": 96,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "21357a2dc3538494c3f912eb6d9988c69da4c31c74f80016c5e586c227adfd8a",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     6,
+     6,
+     5,
+     4,
+     6,
+     6,
+     4,
+     5,
+     6,
+     5,
+     6,
+     4,
+     6,
+     5,
+     4,
+     6,
+     6,
+     4,
+     6,
+     5,
+     6,
+     4,
+     5,
+     6,
+     6,
+     6,
+     5,
+     4,
+     6,
+     6,
+     4,
+     5,
+     6,
+     5,
+     6,
+     4,
+     6,
+     5,
+     4,
+     6,
+     6,
+     4,
+     6,
+     5,
+     6,
+     4,
+     5,
+     6,
+     5,
+     6,
+     6,
+     4,
+     5,
+     6,
+     4,
+     6,
+     5,
+     6,
+     6,
+     4,
+     5,
+     6,
+     4,
+     6,
+     5,
+     4,
+     6,
+     6,
+     5,
+     4,
+     6,
+     6,
+     4,
+     6,
+     6,
+     5,
+     4,
+     6,
+     5,
+     6,
+     4,
+     6,
+     6,
+     5,
+     4,
+     6,
+     5,
+     6,
+     4,
+     5,
+     6,
+     6,
+     4,
+     5,
+     6,
+     6
+    ],
+    "elided": [],
+    "shapes": null
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.004174496,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.007239753,
+      "load_vk_s": 0.00013605,
+      "verify_s": 0.004174496,
+      "process_wall": 0.014538941904902458
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.11702363565564156,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 33759232,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-2",
+   "loadavg_before": [
+    30.7900390625,
+    17.19482421875,
+    21.92626953125
+   ],
+   "child": {
+    "wall_s": 0.16666858829557896,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 38514688,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.051249211,
+    "end_to_end_s": 0.051390542000000004,
+    "proof_path": "/home/zhantong/zinnia-eval-run/fz/epochs/2026-10-11-fz-npb-s1/work/halo2_lit/pythran_perm__permutations/proofs/sample-2/program/proof.bin",
+    "proof_bytes": 2208,
+    "timings_s": {
+     "load_input_s": 3.2013e-05,
+     "load_params_s": 0.006466537,
+     "load_pk_s": 0.000579421,
+     "prove_s": 0.051249211,
+     "prove_samples_s": [
+      0.051249211
+     ],
+     "thread_pool_s": 0.000528761,
+     "witness_s": 0.000141331,
+     "write_s": 0.000191206,
+     "process_wall": 0.0609476650133729
+    },
+    "details": {
+     "case": "pythran_perm__permutations",
+     "cells": {
+      "advice": 160,
+      "fixed": 14,
+      "instances": 96,
+      "lookup": 48
+     },
+     "input": "B",
+     "instance_path": "/home/zhantong/zinnia-eval-run/fz/epochs/2026-10-11-fz-npb-s1/work/halo2_lit/pythran_perm__permutations/proofs/sample-2/program/instance.json",
+     "k": 7,
+     "lookup_bits": 6,
+     "mode": "prove",
+     "proof_bytes": 2208
+    },
+    "proof_sha256": "dee600446b685468bf017b385602ae8a57abf09b27093164b2eb91a758b90d00"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 96 elements differ",
+    "expected_count": 96,
+    "actual_count": 96,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "21357a2dc3538494c3f912eb6d9988c69da4c31c74f80016c5e586c227adfd8a",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.004140495,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.004258925,
+      "load_vk_s": 9.9602e-05,
+      "verify_s": 0.004140495,
+      "process_wall": 0.010266130790114403
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.11697518639266491,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 33722368,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-3",
+   "loadavg_before": [
+    30.7900390625,
+    17.19482421875,
+    21.92626953125
+   ],
+   "child": {
+    "wall_s": 0.20175139978528023,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 35332096,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.049863112,
+    "end_to_end_s": 0.050007322,
+    "proof_path": "/home/zhantong/zinnia-eval-run/fz/epochs/2026-10-11-fz-npb-s1/work/halo2_lit/pythran_perm__permutations/proofs/sample-3/program/proof.bin",
+    "proof_bytes": 2208,
+    "timings_s": {
+     "load_input_s": 3.4139e-05,
+     "load_params_s": 0.006438918,
+     "load_pk_s": 0.000557134,
+     "prove_s": 0.049863112,
+     "prove_samples_s": [
+      0.049863112
+     ],
+     "thread_pool_s": 0.000332364,
+     "witness_s": 0.00014421,
+     "write_s": 0.000567015,
+     "process_wall": 0.05959467776119709
+    },
+    "details": {
+     "case": "pythran_perm__permutations",
+     "cells": {
+      "advice": 160,
+      "fixed": 14,
+      "instances": 96,
+      "lookup": 48
+     },
+     "input": "B",
+     "instance_path": "/home/zhantong/zinnia-eval-run/fz/epochs/2026-10-11-fz-npb-s1/work/halo2_lit/pythran_perm__permutations/proofs/sample-3/program/instance.json",
+     "k": 7,
+     "lookup_bits": 6,
+     "mode": "prove",
+     "proof_bytes": 2208
+    },
+    "proof_sha256": "036062cff3fbcf3100f135dbd0d70b79fddec351e665110071177da24685d477"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 96 elements differ",
+    "expected_count": 96,
+    "actual_count": 96,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "21357a2dc3538494c3f912eb6d9988c69da4c31c74f80016c5e586c227adfd8a",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.004267709,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.006621563,
+      "load_vk_s": 0.000131794,
+      "verify_s": 0.004267709,
+      "process_wall": 0.012926644645631313
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.11729591712355614,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 33869824,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 0.005068728,
+    "not_applicable": null,
+    "timings_s": {
+     "load_params_s": 0.005434813,
+     "load_vk_s": 0.000105589,
+     "verify_s": 0.005068728,
+     "process_wall": 0.01253026258200407
+    },
+    "details": {
+     "error": null
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.1168923107907176,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 33759232,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

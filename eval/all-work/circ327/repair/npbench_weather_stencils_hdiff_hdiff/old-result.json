@@ -1,0 +1,41 @@
+{
+  "program": "npbench_weather_stencils_hdiff_hdiff",
+  "category": "needs_gadget: division",
+  "as_written": {
+    "status": "rejected",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\n\nthread 'main' (149982) panicked at src/target/r1cs/trans.rs:387:18:\ninternal error: entered unreachable code: Unhandled variable operator return.0.0.0\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    "constraints": null,
+    "seconds": 1.3952786922454834,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch5/npbench_weather_stencils_hdiff_hdiff/as_written.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ]
+  },
+  "rewrite": {
+    "status": "needs gadget",
+    "error": "Native integer Q32 arithmetic cannot be lowered to R1CS; a custom wide fixed-point rescaling/division gadget would be required.",
+    "constraints": null,
+    "rewrites": []
+  },
+  "correctness": {
+    "A": "not run",
+    "B": "not run"
+  },
+  "notes": "Full Q32 products require wider intermediates than native u64. The faithful native arbitrary-integer candidate fails R1CS lowering; no custom wide multiplication/rescaling/division gadget was introduced. See probes/native_integer_field_output.compile.log and probes/stdlib_inventory.json.",
+  "source": {
+    "kernel": "benchmarking/datasets/npbench/npbench_weather_stencils_hdiff_hdiff/kernel.py",
+    "function": "hdiff",
+    "sha256": "856f67ef80e596bacbc27c6bf2a245bddfbf444ee71ded18a0a9235e1d614533"
+  },
+  "encoding": "Private inputs; public return value. Real numbers are rounded to scale 2^32. Native u64 values use signed two-complement interpretation; integer arithmetic is used for candidate full-width Q32 products to avoid truncating them to 64 bits before rescaling.",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/npbench/npbench_weather_stencils_hdiff_hdiff/fixture.json",
+  "reason": "Full Q32 products require wider intermediates than native u64. The faithful native arbitrary-integer candidate fails R1CS lowering; no custom wide multiplication/rescaling/division gadget was introduced. See probes/native_integer_field_output.compile.log and probes/stdlib_inventory.json."
+}

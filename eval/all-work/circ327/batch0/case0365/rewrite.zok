@@ -1,0 +1,10 @@
+const field HALF = 26217937587563095239723870254092982918845276250263818911301829349969290592256
+def main(private field[100] a, private field pos, private field element) -> field[101]:
+    field p = if pos > HALF then pos+100 else pos fi
+    field[101] result = [0; 101]
+    for field i in 0..101 do
+        field before = a[if i < 100 then i else 0 fi]
+        field after = a[if i > 0 then i-1 else 0 fi]
+        result[i] = if i == p then element*4294967296 else if i < p then before else after fi fi
+    endfor
+    return result

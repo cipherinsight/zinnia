@@ -1,0 +1,20 @@
+from "../native_v1" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[15][15] A) -> u64[15][15]:
+    for u32 i in 0..15 do
+        for u32 j in 0..i do
+            u64 s = 0u64
+            for u32 k in 0..j do
+                s = s+mulq(A[i][k],A[k][j])
+            endfor
+            A[i][j] = divq(A[i][j]-s,A[j][j])
+        endfor
+        for u32 j in i..15 do
+            u64 s = 0u64
+            for u32 k in 0..i do
+                s = s+mulq(A[i][k],A[k][j])
+            endfor
+            A[i][j] = A[i][j]-s
+        endfor
+    endfor
+    return A

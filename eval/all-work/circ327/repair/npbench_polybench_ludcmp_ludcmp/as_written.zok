@@ -1,0 +1,41 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+struct Output {
+    u64[15] x
+    u64[15] y
+}
+def main(private u64[15][15] A, private u64[15] b) -> Output:
+    for u32 i in 0..15 do
+        for u32 j in 0..i do
+            u64 s = 0u64
+            for u32 k in 0..j do
+                s = s+mulq(A[i][k],A[k][j])
+            endfor
+            A[i][j] = divq(A[i][j]-s,A[j][j])
+        endfor
+        for u32 j in i..15 do
+            u64 s = 0u64
+            for u32 k in 0..i do
+                s = s+mulq(A[i][k],A[k][j])
+            endfor
+            A[i][j] = A[i][j]-s
+        endfor
+    endfor
+    u64[15] x = [0u64; 15]
+    u64[15] y = [0u64; 15]
+    for u32 i in 0..15 do
+        u64 s = 0u64
+        for u32 j in 0..i do
+            s = s+mulq(A[i][j],y[j])
+        endfor
+        y[i] = b[i]-s
+    endfor
+    for u32 t in 0..15 do
+        u32 i = 14u32-t
+        u64 s = 0u64
+        for u32 j in 0..15 do
+            s = s + if j > i then mulq(A[i][j],x[j]) else 0u64 fi
+        endfor
+        x[i] = divq(y[i]-s,A[i][i])
+    endfor
+    return Output {x: x, y: y}

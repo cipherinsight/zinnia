@@ -1,0 +1,1 @@
+kernel.py:20 is a dynamic loop, bounded by nb_opt <=1024 (and 14 array entries on valid calls); lines 21-30 require private sqrt/log/exp/division. Pad two outputs to 14 entries and guard 14 iterations, but the numerical gadgets remain required.

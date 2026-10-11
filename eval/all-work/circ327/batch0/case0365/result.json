@@ -1,0 +1,64 @@
+{
+  "program": "case0365",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "out of memory",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\n",
+    "constraints": null,
+    "returncode": -9,
+    "seconds": 9.478,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch0/case0365/as_written.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ]
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 51674,
+    "returncode": 0,
+    "seconds": 0.43,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch0/case0365/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Replace insertion scatter with a guarded gather into the known 101 output positions; inserting one scalar into 100 elements always yields length 101."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "rtol": 1e-06,
+      "atol": 1e-06,
+      "decoded_shape": [
+        101
+      ]
+    },
+    "B": {
+      "status": "pass",
+      "rtol": 1e-06,
+      "atol": 1e-06,
+      "decoded_shape": [
+        101
+      ]
+    }
+  },
+  "notes": "Native insertion scatter exhausted 8 GB; fixed output length permits guarded gather."
+}

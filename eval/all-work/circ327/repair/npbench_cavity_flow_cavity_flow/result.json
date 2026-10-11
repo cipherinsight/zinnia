@@ -1,0 +1,78 @@
+{
+  "program": "npbench_cavity_flow_cavity_flow",
+  "function": "cavity_flow",
+  "category": "timeout_or_oom",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:33: b = np.zeros((ny, nx)). Private nx and ny determine b; no bound applies when nt=0. The rewrite removes this unused allocation at nt=0 and uses the shape required by the active source assignments.",
+    "constraints": null,
+    "source_file": "npbench_cavity_flow_cavity_flow/as_written.zok",
+    "artifact_sha256": "80ce88b00068c11fdc74095ce4ec559c2a0f301bcb834026a70b4c93c3f075e8"
+  },
+  "rewrite": {
+    "status": "out_of_memory",
+    "constraints": null,
+    "error": "Running frontend",
+    "seconds": 68.22597659700114,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_cavity_flow_cavity_flow/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Guard both time and pressure loops at 1024 using the explicit nt/nit contracts.",
+      "Use a 16x16 b on active iterations: assignment of the 14x14 u/v stencil to b[1:-1,1:-1] requires nx=ny=16 whenever nt>0. On nt=0 b is unused, so omit its unbounded allocation.",
+      "Return all three mutated arrays u, v and p."
+    ],
+    "source_file": "npbench_cavity_flow_cavity_flow/rewrite.zok",
+    "artifact_sha256": "30026d0a6c20fa6ef082355a9300cd309f7480fac2be84d3f32db6567eb831b6"
+  },
+  "correctness": {
+    "A": {
+      "status": "interpreter_error",
+      "error": ""
+    },
+    "B": {
+      "status": "interpreter_error",
+      "error": ""
+    }
+  },
+  "notes": "Q32 values use signed u64; native operations, explicit signs and 32-bit product parts. No arbitrary-integer backend operations.",
+  "source": {
+    "program": "npbench_cavity_flow_cavity_flow",
+    "dataset": "npbench",
+    "kernel": "benchmarking/datasets/npbench/npbench_cavity_flow_cavity_flow/kernel.py",
+    "function": "cavity_flow",
+    "sha256": "f380b59489d97bcae759d2c4a3317b55d2df5c6e54fe90e2cc3225f0e301d0b8"
+  },
+  "numeric_encoding": {
+    "real_scale": 4294967296,
+    "rtol": 1e-06,
+    "atol": 1e-06,
+    "representation": "signed two-complement u64 with native wide products",
+    "helper": {
+      "file": "native.zok",
+      "sha256": "230210f08577e08c6d8067d12af2de953bb0d8a1227875d2288459a4e80ac9ab"
+    }
+  },
+  "old_category": "needs_gadget: division",
+  "old_result": "batch3/npbench_cavity_flow_cavity_flow/result.json",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+    "tmpdir": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/tmp"
+  },
+  "fixture": {
+    "path": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/npbench/npbench_cavity_flow_cavity_flow/fixture.json",
+    "sha256": "974fd515d9539c264c70fcced32226060c58615f2a58cdf8edf25108359ec092"
+  },
+  "reason": "Native-arithmetic out of memory under 300 s / 8 GB; no arithmetic gadget blocker."
+}

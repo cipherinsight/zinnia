@@ -1,0 +1,17 @@
+def lt(u64 a, u64 b) -> bool:
+    return (a ^ 0x8000000000000000) < (b ^ 0x8000000000000000)
+
+from "utils/casts/u32_to_u64" import main as widen
+def u64idx(u32 i, u32 j) -> u64:
+    return widen(i * 6u32 + j)
+def main(private u64[8][6] a) -> u64:
+    u64 best = a[0][0]
+    u64 idx = 0u64
+    for u32 i in 0..8 do
+        for u32 j in 0..6 do
+            bool take = lt(best, a[i][j])
+            idx = if take then u64idx(i, j) else idx fi
+            best = if take then a[i][j] else best fi
+        endfor
+    endfor
+    return idx

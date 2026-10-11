@@ -1,0 +1,1 @@
+kernel.py:15,24: private range(N); the declared precondition bounds N by 1024. N=0 returns None, otherwise a complex number.

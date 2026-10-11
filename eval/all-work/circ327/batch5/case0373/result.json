@@ -1,0 +1,53 @@
+{
+  "program": "case0373",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "needs gadget",
+    "error": "needs gadget: sort",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 50,
+    "seconds": 0.02180647850036621,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch5/case0373/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Remove unused sorted values: ecdf_result returns only arange(1,51)/50; len(sort(grades)) is always 50. Constant output is encoded at scale 2^32."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "elements": 50,
+      "actual_elements": 50,
+      "max_abs_error": 1.1175871339474952e-10
+    },
+    "B": {
+      "status": "pass",
+      "elements": 50,
+      "actual_elements": 50,
+      "max_abs_error": 1.1175871339474952e-10
+    }
+  },
+  "notes": "",
+  "source": {
+    "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0373/kernel.py",
+    "function": "kernel",
+    "sha256": "8d7eec8aa14aaedebe70cdf3e554967a469588af2c55a69490d8110ab470f935"
+  },
+  "encoding": "Private inputs; public return value. Real numbers are rounded to scale 2^32. Native u64 values use signed two-complement interpretation; integer arithmetic is used for candidate full-width Q32 products to avoid truncating them to 64 bits before rescaling.",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/ds1000_numpy/generated/case0373/fixture.json",
+  "reason": "Remove unused sorting; ECDF ordinate output depends only on length 50."
+}

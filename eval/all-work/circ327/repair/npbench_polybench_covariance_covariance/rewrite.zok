@@ -1,0 +1,27 @@
+from "../native_v1" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64 M, private u64 float_n, private u64[16][14] data) -> u64[197]:
+    u64[14] mean = [0u64; 14]
+    for u32 j in 0..14 do
+        for u32 i in 0..16 do
+            mean[j] = mean[j]+data[i][j]
+        endfor
+        mean[j] = divc(mean[j],16u64)
+        for u32 i in 0..16 do
+            data[i][j] = data[i][j]-mean[j]
+        endfor
+    endfor
+    u64[197] cov = [0u64; 197]
+    cov[0] = M
+    for u32 i in 0..14 do
+        for u32 j in i..14 do
+            u64 s = 0u64
+            for u32 k in 0..16 do
+                s = s+mulq(data[k][i],data[k][j])
+            endfor
+            u64 v = if it(i) < M && it(j) < M then divq(s,float_n-4294967296u64) else 0u64 fi
+            cov[1u32+i*14u32+j] = v
+            cov[1u32+j*14u32+i] = v
+        endfor
+    endfor
+    return cov

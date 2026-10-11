@@ -1,0 +1,11 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[16] var, private u64 dh2) -> u64[16]:
+    u64[16] lap = [0u64; 16]
+    for u32 i in 0..16 do
+        u32 left = if i == 0 then 1u32 else i-1u32 fi
+        u64 v = mulq(5726623061u64,var[left])+mulq(5726623061u64,var[(i+1u32)%16u32])
+        v = v-mulq(10737418240u64,var[i])-divc(var[(i+14u32)%16u32],12u64)-divc(var[(i+2u32)%16u32],12u64)
+        lap[i] = divq(v,dh2)
+    endfor
+    return lap

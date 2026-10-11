@@ -1,0 +1,8 @@
+{
+  "mode": "rewrite",
+  "rewrites": [
+    "Guard both time and pressure loops at 1024 using the explicit nt/nit contracts.",
+    "Use a 16x16 b on active iterations: assignment of the 14x14 u/v stencil to b[1:-1,1:-1] requires nx=ny=16 whenever nt>0. On nt=0 b is unused, so omit its unbounded allocation.",
+    "Return all three mutated arrays u, v and p."
+  ]
+}

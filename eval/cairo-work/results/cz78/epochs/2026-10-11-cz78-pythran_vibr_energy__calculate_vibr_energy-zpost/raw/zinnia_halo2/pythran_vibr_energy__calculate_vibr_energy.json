@@ -1,0 +1,568 @@
+{
+ "schema": 1,
+ "system": "zinnia_halo2",
+ "case": "pythran_vibr_energy__calculate_vibr_energy",
+ "description": "Zinnia -> halo2-base backend (IPA/BN254, Blake2b transcript)",
+ "windows": {
+  "setup": "compile + parameter choice + witness-free keygen (ParamsIPA::new, keygen_vk, keygen_pk) + writing params/pk/vk to the key directory",
+  "prove_core": "prove_s: create_proof + transcript finalize (halo2_hw's prove_s covers the same calls)",
+  "end_to_end": "preprocess_s (IR evaluation resolving external calls) + witness_s (synthesis into the builder pinned to keygen's layout) + prove_s; params and proving key read from files beforehand, untimed (load_params_s, load_pk_s), as halo2_hw",
+  "verify": "verify_s: transcript + verify_proof against the verifying key read from the key directory (load_params_s, load_vk_s untimed), as halo2_hw"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/pythran/pythran_vibr_energy/kernel.py": "db54012657f3f673993dd200bd84c9dec2c6abaa9ffca9c88512b0f144a908a8",
+  "benchmarking/datasets/pythran/pythran_vibr_energy/fixture.json": "e5b21731006c40589b33f2090b0fd04b0a1d69ec34b6464549cabd9f00709a46"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-11T10:10:03+0000",
+  "loadavg": [
+   42.5693359375,
+   38.19384765625,
+   25.83837890625
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "compile": 0.016494368202984333,
+    "keygen_s": 0.469927189,
+    "write_s": 0.007353445515036583
+   },
+   "details": {
+    "params": {
+     "k": 9,
+     "lookup_bits": 8,
+     "precision_bits": 32
+    },
+    "params_source": "Zinnia estimate_params",
+    "cells": "advice=[12609] lookup=[2768, 0, 0] fixed=35 instances=16 second_phase=PhaseShape { advice: 0, constants: 0 }",
+    "key_file_bytes": {
+     "keys.json": 441,
+     "params.bin": 32836,
+     "pk.bin": 6199495,
+     "vk.bin": 5575
+    },
+    "exposed_outputs": 16,
+    "elided_outputs": 0,
+    "ir_sha256": "6b3032169635a28e653fae59dc3f6a4ff18c2c864047a2ace1b17ddb6d320b68"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 0.7081898497417569,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 56262656,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   42.5693359375,
+   38.19384765625,
+   25.83837890625
+  ],
+  "child": {
+   "wall_s": 0.4675161633640528,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 55078912,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 0.270797708,
+   "end_to_end_s": 0.276417532,
+   "proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-pythran_vibr_energy__calculate_vibr_energy-zpost/work/zinnia_halo2/pythran_vibr_energy__calculate_vibr_energy/proofs/warmup/proof.bin",
+   "proof_bytes": 11232,
+   "timings_s": {
+    "load_params_s": 0.017031496,
+    "load_pk_s": 0.008478449,
+    "parse_inputs_s": 1.5303e-05,
+    "preprocess_s": 0.000696095,
+    "witness_s": 0.004923729,
+    "thread_pool_s": 0.000801751,
+    "prove_s": 0.270797708,
+    "prove_call_s": 0.2796779051423073
+   },
+   "details": {
+    "k": 9
+   },
+   "proof_sha256": "7984e4d0399141aeb7031ddf93e61752dab8c10007cbbe22ee7194bf5ea55c24"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 16 elements differ",
+   "expected_count": 16,
+   "actual_count": 16,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "1a4cce3df52ccc4c696bc3a2aeaa40ac38c87242bda67ec6e4c1dd4277899bfb",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    0.9033938201609999,
+    0.0032466277480125427,
+    0.20053054532036185,
+    0.0021974944975227118,
+    0.002996973693370819,
+    3.026798367500305e-09,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "elided": [],
+   "shapes": [
+    [
+     16
+    ]
+   ]
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    42.5693359375,
+    38.19384765625,
+    25.83837890625
+   ],
+   "child": {
+    "wall_s": 0.5708288615569472,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 55332864,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.376414645,
+    "end_to_end_s": 0.381730175,
+    "proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-pythran_vibr_energy__calculate_vibr_energy-zpost/work/zinnia_halo2/pythran_vibr_energy__calculate_vibr_energy/proofs/sample-1/proof.bin",
+    "proof_bytes": 11232,
+    "timings_s": {
+     "load_params_s": 0.0194225,
+     "load_pk_s": 0.010760423,
+     "parse_inputs_s": 1.4413e-05,
+     "preprocess_s": 0.000680632,
+     "witness_s": 0.004634898,
+     "thread_pool_s": 0.000388623,
+     "prove_s": 0.376414645,
+     "prove_call_s": 0.3844784824177623
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "a423ffbd7c3a782d5e0385798f8f220c9ef2baaf9b78de81f584b67da0dba57f"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 16 elements differ",
+    "expected_count": 16,
+    "actual_count": 16,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "1a4cce3df52ccc4c696bc3a2aeaa40ac38c87242bda67ec6e4c1dd4277899bfb",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     0.9033938201609999,
+     0.0032466277480125427,
+     0.20053054532036185,
+     0.0021974944975227118,
+     0.002996973693370819,
+     3.026798367500305e-09,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "elided": [],
+    "shapes": [
+     [
+      16
+     ]
+    ]
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.01150993,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.017022828,
+      "load_vk_s": 0.000572754,
+      "verify_call_s": 0.011606394313275814,
+      "verify_s": 0.01150993
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.16496667079627514,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 36249600,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-2",
+   "loadavg_before": [
+    42.5693359375,
+    38.19384765625,
+    25.83837890625
+   ],
+   "child": {
+    "wall_s": 0.569438174366951,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 55369728,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.376826348,
+    "end_to_end_s": 0.383594444,
+    "proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-pythran_vibr_energy__calculate_vibr_energy-zpost/work/zinnia_halo2/pythran_vibr_energy__calculate_vibr_energy/proofs/sample-2/proof.bin",
+    "proof_bytes": 11232,
+    "timings_s": {
+     "load_pk_s": 0.008732255,
+     "load_params_s": 0.018128886,
+     "parse_inputs_s": 1.8719e-05,
+     "preprocess_s": 0.00071128,
+     "witness_s": 0.006056816,
+     "thread_pool_s": 0.000542263,
+     "prove_s": 0.376826348,
+     "prove_call_s": 0.38655083905905485
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "7b977ad48b4ae357587e1e8ab6e220e3e61755eef7f3c24b36a716c833caf3ee"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 16 elements differ",
+    "expected_count": 16,
+    "actual_count": 16,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "1a4cce3df52ccc4c696bc3a2aeaa40ac38c87242bda67ec6e4c1dd4277899bfb",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.013354969,
+     "not_applicable": null,
+     "timings_s": {
+      "load_vk_s": 0.000480308,
+      "load_params_s": 0.016944889,
+      "verify_call_s": 0.013464514166116714,
+      "verify_s": 0.013354969
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.16495329700410366,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 36147200,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-3",
+   "loadavg_before": [
+    42.5234375,
+    38.25732421875,
+    25.92529296875
+   ],
+   "child": {
+    "wall_s": 0.5689072329550982,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 55504896,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.372992085,
+    "end_to_end_s": 0.37832753599999996,
+    "proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-pythran_vibr_energy__calculate_vibr_energy-zpost/work/zinnia_halo2/pythran_vibr_energy__calculate_vibr_energy/proofs/sample-3/proof.bin",
+    "proof_bytes": 11232,
+    "timings_s": {
+     "load_params_s": 0.016897568,
+     "load_pk_s": 0.00725149,
+     "parse_inputs_s": 1.3537e-05,
+     "preprocess_s": 0.000673473,
+     "witness_s": 0.004661978,
+     "thread_pool_s": 0.000630071,
+     "prove_s": 0.372992085,
+     "prove_call_s": 0.38128316309303045
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "63e5b61ed58a63275141d01da8356373c2ef17d3c3ce4a2629b005d78643aab9"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 16 elements differ",
+    "expected_count": 16,
+    "actual_count": 16,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "1a4cce3df52ccc4c696bc3a2aeaa40ac38c87242bda67ec6e4c1dd4277899bfb",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.013416878,
+     "not_applicable": null,
+     "timings_s": {
+      "load_vk_s": 0.000475624,
+      "load_params_s": 0.017003244,
+      "verify_call_s": 0.013532641343772411,
+      "verify_s": 0.013416878
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.1654772013425827,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 36118528,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-4",
+   "loadavg_before": [
+    42.5234375,
+    38.25732421875,
+    25.92529296875
+   ],
+   "child": {
+    "wall_s": 0.5051678130403161,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 55361536,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.305072965,
+    "end_to_end_s": 0.310275486,
+    "proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-pythran_vibr_energy__calculate_vibr_energy-zpost/work/zinnia_halo2/pythran_vibr_energy__calculate_vibr_energy/proofs/sample-4/proof.bin",
+    "proof_bytes": 11232,
+    "timings_s": {
+     "load_pk_s": 0.007153689,
+     "load_params_s": 0.016883705,
+     "parse_inputs_s": 1.3527e-05,
+     "preprocess_s": 0.00067218,
+     "witness_s": 0.004530341,
+     "thread_pool_s": 0.000614687,
+     "prove_s": 0.305072965,
+     "prove_call_s": 0.31346608977764845
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "e62bea52c14c68992885ad9a0e2444f1c6b545f767e24733b94f81ccce4a2a00"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 16 elements differ",
+    "expected_count": 16,
+    "actual_count": 16,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "1a4cce3df52ccc4c696bc3a2aeaa40ac38c87242bda67ec6e4c1dd4277899bfb",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.013759837,
+     "not_applicable": null,
+     "timings_s": {
+      "load_vk_s": 0.000725327,
+      "load_params_s": 0.016993598,
+      "verify_call_s": 0.0139340590685606,
+      "verify_s": 0.013759837
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.2015587631613016,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 36147200,
+     "over_memory_cap": false
+    }
+   }
+  },
+  {
+   "tag": "sample-5",
+   "loadavg_before": [
+    42.5234375,
+    38.25732421875,
+    25.92529296875
+   ],
+   "child": {
+    "wall_s": 0.5049823969602585,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 57303040,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 0.290055485,
+    "end_to_end_s": 0.296409604,
+    "proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-pythran_vibr_energy__calculate_vibr_energy-zpost/work/zinnia_halo2/pythran_vibr_energy__calculate_vibr_energy/proofs/sample-5/proof.bin",
+    "proof_bytes": 11232,
+    "timings_s": {
+     "load_params_s": 0.017054268,
+     "load_pk_s": 0.014334816,
+     "parse_inputs_s": 2.0663e-05,
+     "preprocess_s": 0.000712554,
+     "witness_s": 0.005641565,
+     "thread_pool_s": 0.0011444,
+     "prove_s": 0.290055485,
+     "prove_call_s": 0.30139066837728024
+    },
+    "details": {
+     "k": 9
+    },
+    "proof_sha256": "ae7a4e6088c5a6cd339a8a5402c81139aca66096660cc8b7d48b962d807e5adb"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 16 elements differ",
+    "expected_count": 16,
+    "actual_count": 16,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "1a4cce3df52ccc4c696bc3a2aeaa40ac38c87242bda67ec6e4c1dd4277899bfb",
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.010374407,
+     "not_applicable": null,
+     "timings_s": {
+      "load_params_s": 0.017335373,
+      "load_vk_s": 0.000473771,
+      "verify_call_s": 0.010464626364409924,
+      "verify_s": 0.010374407
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.16459624655544758,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 33640448,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 0.010330901,
+    "not_applicable": null,
+    "timings_s": {
+     "load_params_s": 0.017767278,
+     "load_vk_s": 0.000629281,
+     "verify_call_s": 0.010476542636752129,
+     "verify_s": 0.010330901
+    },
+    "details": {
+     "error": "halo2-base verify_proof failed: ConstraintSystemFailure"
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.13509029801934958,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 36098048,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

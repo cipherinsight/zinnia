@@ -1,0 +1,792 @@
+{
+  "case0295": {
+    "category": "not_expressible: dynamic shape",
+    "reason": "The second zeros dimension is a.max()+1; Integer[50] gives no upper bound on values, so no finite padding capacity is implied.",
+    "line": 11,
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:11: The second zeros dimension is a.max()+1; Integer[50] gives no upper bound on values, so no finite padding capacity is implied.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "not_expressible",
+      "error": "The second zeros dimension is a.max()+1; Integer[50] gives no upper bound on values, so no finite padding capacity is implied.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "case0301": {
+    "scale": 4294967296,
+    "decode": "reshape",
+    "types": {},
+    "reason": "",
+    "rewrite": {
+      "file": "rewrite.zok",
+      "rewrites": [
+        "Replace value-dependent reshape by its 20 elements plus public row/column dimensions; 20 source elements bound the output size."
+      ]
+    },
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:11: reshape has value-dependent dimensions (-1, ncol).",
+      "constraints": null
+    }
+  },
+  "case0311": {
+    "scale": 1,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "as_written": {
+      "file": "as_written.zok",
+      "rewrites": []
+    }
+  },
+  "case0319": {
+    "scale": 4294967296,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "as_written": {
+      "file": "as_written.zok",
+      "rewrites": []
+    }
+  },
+  "case0325": {
+    "category": "needs_gadget: sin",
+    "reason": "np.sin(np.deg2rad(number)) and np.sin(number) need fixed-point sine; no supplied Z# implementation.",
+    "line": 11,
+    "as_written": {
+      "status": "needs gadget",
+      "error": "kernel.py:11: np.sin(np.deg2rad(number)) and np.sin(number) need fixed-point sine; no supplied Z# implementation.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "needs_gadget",
+      "error": "np.sin(np.deg2rad(number)) and np.sin(number) need fixed-point sine; no supplied Z# implementation.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "case0331": {
+    "category": "not_expressible: dynamic loop",
+    "reason": "np.gcd expands to a Euclidean remainder loop; unconstrained Integer operands give no declared iteration bound.",
+    "line": 11,
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:11: np.gcd expands to a Euclidean remainder loop; unconstrained Integer operands give no declared iteration bound.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "not_expressible",
+      "error": "np.gcd expands to a Euclidean remainder loop; unconstrained Integer operands give no declared iteration bound.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "case0338": {
+    "scale": 4294967296,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "as_written": {
+      "file": "as_written.zok",
+      "rewrites": []
+    }
+  },
+  "case0345": {
+    "scale": 4294967296,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "as_written": {
+      "file": "as_written.zok",
+      "rewrites": []
+    }
+  },
+  "case0354": {
+    "scale": 1,
+    "decode": "compact",
+    "types": {},
+    "reason": "",
+    "rewrite": {
+      "file": "rewrite.zok",
+      "rewrites": [
+        "Pad both Boolean selections and concatenation to 9 rows and return logical length; 2+7 input rows bound the capacity."
+      ]
+    },
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:12-13: Boolean selections and append have value-dependent row counts.",
+      "constraints": null
+    }
+  },
+  "case0360": {
+    "scale": 4294967296,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "as_written": {
+      "file": "as_written.zok",
+      "rewrites": []
+    }
+  },
+  "case0366": {
+    "category": "needs_gadget: sort",
+    "reason": "np.insert with an arbitrary position vector uses stable sorting of the adjusted insertion positions; a custom sorting gadget is prohibited. Output capacity itself is static (105 rows).",
+    "line": 12,
+    "as_written": {
+      "status": "needs gadget",
+      "error": "kernel.py:12: np.insert with an arbitrary position vector uses stable sorting of the adjusted insertion positions; a custom sorting gadget is prohibited. Output capacity itself is static (105 rows).",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "needs_gadget",
+      "error": "np.insert with an arbitrary position vector uses stable sorting of the adjusted insertion positions; a custom sorting gadget is prohibited. Output capacity itself is static (105 rows).",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "case0375": {
+    "category": "needs_gadget: sort",
+    "reason": "np.sort(x) requires a sorting implementation; no supplied Z# sort routine, and handwritten sorting networks are forbidden.",
+    "line": 11,
+    "as_written": {
+      "status": "needs gadget",
+      "error": "kernel.py:11: np.sort(x) requires a sorting implementation; no supplied Z# sort routine, and handwritten sorting networks are forbidden.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "needs_gadget",
+      "error": "np.sort(x) requires a sorting implementation; no supplied Z# sort routine, and handwritten sorting networks are forbidden.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "case0386": {
+    "scale": 4294967296,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "as_written": {
+      "file": "as_written.zok",
+      "rewrites": []
+    }
+  },
+  "case0392": {
+    "scale": 4294967296,
+    "decode": "compact",
+    "types": {},
+    "reason": "",
+    "rewrite": {
+      "file": "rewrite.zok",
+      "rewrites": [
+        "Normalize Python slice bounds, pad to 20 rows, and return length; slicing a 20-row array yields at most 20 rows."
+      ]
+    },
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:11: low:high has value-dependent row count.",
+      "constraints": null
+    }
+  },
+  "case0402": {
+    "scale": 1,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "as_written": {
+      "file": "as_written.zok",
+      "rewrites": []
+    }
+  },
+  "case0409": {
+    "scale": 4294967296,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "as_written": {
+      "file": "as_written.zok",
+      "rewrites": []
+    }
+  },
+  "case0416": {
+    "category": "needs_gadget: division",
+    "reason": "The dynamic reshape can be padded to 8x6 (six columns bound the number of bins), but mean(axis=-1) then needs signed fixed-point division by bin_size.",
+    "line": 11,
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:11: The dynamic reshape can be padded to 8x6 (six columns bound the number of bins), but mean(axis=-1) then needs signed fixed-point division by bin_size.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "needs_gadget",
+      "error": "The dynamic reshape can be padded to 8x6 (six columns bound the number of bins), but mean(axis=-1) then needs signed fixed-point division by bin_size.",
+      "constraints": null,
+      "rewrites": [
+        "Pad to 8x6 and preserve logical shape, capacity implied by six input columns."
+      ]
+    }
+  },
+  "case0425": {
+    "category": "not_expressible: dynamic shape",
+    "reason": "np.arange(m) and the 20xm output depend on unconstrained Integer m; no finite output capacity is implied.",
+    "line": 11,
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:11: np.arange(m) and the 20xm output depend on unconstrained Integer m; no finite output capacity is implied.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "not_expressible",
+      "error": "np.arange(m) and the 20xm output depend on unconstrained Integer m; no finite output capacity is implied.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "case0431": {
+    "category": "needs_gadget: sqrt",
+    "reason": "np.std computes a square root of a data-dependent variance; fixed-point sqrt is not supplied.",
+    "line": 11,
+    "as_written": {
+      "status": "needs gadget",
+      "error": "kernel.py:11: np.std computes a square root of a data-dependent variance; fixed-point sqrt is not supplied.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "needs_gadget",
+      "error": "np.std computes a square root of a data-dependent variance; fixed-point sqrt is not supplied.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "case0438": {
+    "category": "needs_gadget: sqrt",
+    "reason": "np.corrcoef normalizes covariance by data-dependent standard deviations, requiring sqrt and fixed-point division.",
+    "line": 11,
+    "as_written": {
+      "status": "needs gadget",
+      "error": "kernel.py:11: np.corrcoef normalizes covariance by data-dependent standard deviations, requiring sqrt and fixed-point division.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "needs_gadget",
+      "error": "np.corrcoef normalizes covariance by data-dependent standard deviations, requiring sqrt and fixed-point division.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "case0444": {
+    "scale": 1,
+    "decode": "compact",
+    "types": {},
+    "reason": "",
+    "rewrite": {
+      "file": "rewrite.zok",
+      "rewrites": [
+        "Pad Boolean selection to 20 entries and return logical length; the input contains only 20 entries."
+      ]
+    },
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:11: Boolean selection has value-dependent output length.",
+      "constraints": null
+    }
+  },
+  "case0453": {
+    "category": "needs_gadget: sqrt",
+    "reason": "Data-dependent L2 norms need square root and fixed-point normalization division.",
+    "line": 11,
+    "as_written": {
+      "status": "needs gadget",
+      "error": "kernel.py:11: Data-dependent L2 norms need square root and fixed-point normalization division.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "needs_gadget",
+      "error": "Data-dependent L2 norms need square root and fixed-point normalization division.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "case0463": {
+    "scale": 1,
+    "decode": "compact",
+    "types": {},
+    "reason": "",
+    "rewrite": {
+      "file": "rewrite.zok",
+      "rewrites": [
+        "Pad Boolean selection to 20 entries and return logical length; the input contains only 20 entries."
+      ]
+    },
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:14: Boolean selection has value-dependent output length.",
+      "constraints": null
+    }
+  },
+  "case0478": {
+    "scale": 1,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "as_written": {
+      "file": "as_written.zok",
+      "rewrites": []
+    }
+  },
+  "case0489": {
+    "scale": 4294967296,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "rewrite": {
+      "file": "rewrite.zok",
+      "rewrites": [
+        "Replace dynamic np.where index arrays and Boolean scatter by guarded element updates over the fixed 100x50 input shape."
+      ]
+    },
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:12-14: np.where index arrays have data-dependent length.",
+      "constraints": null
+    }
+  },
+  "case0498": {
+    "category": "not_expressible: dynamic shape",
+    "reason": "np.pad output dimensions come from unconstrained Integer[2] shape; source dimensions do not bound padding above.",
+    "line": 11,
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:11: np.pad output dimensions come from unconstrained Integer[2] shape; source dimensions do not bound padding above.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "not_expressible",
+      "error": "np.pad output dimensions come from unconstrained Integer[2] shape; source dimensions do not bound padding above.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "case0504": {
+    "scale": 4294967296,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "as_written": {
+      "file": "as_written.zok",
+      "rewrites": []
+    }
+  },
+  "npbench_azimint_hist_azimint_hist": {
+    "category": "not_expressible: dynamic shape",
+    "reason": "Both histograms have npt bins; unconstrained Integer npt has no upper bound, including when there are only 16 samples.",
+    "line": 10,
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:10: Both histograms have npt bins; unconstrained Integer npt has no upper bound, including when there are only 16 samples.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "not_expressible",
+      "error": "Both histograms have npt bins; unconstrained Integer npt has no upper bound, including when there are only 16 samples.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "npbench_crc16_crc16": {
+    "scale": 1,
+    "decode": "plain",
+    "types": {
+      "data": "u64",
+      "poly": "u64"
+    },
+    "reason": "An exploratory u64 translation compiled and matched A/B but was discarded because the signature does not bound poly; its successful fixture tests do not establish domain equivalence.",
+    "as_written": {
+      "file": "as_written.zok",
+      "rewrites": []
+    },
+    "rejection_category": "unsupported_feature: integer bitwise",
+    "rejection_rewrite": {
+      "status": "unsupported feature",
+      "error": "Z# bitwise operators require bounded unsigned U* operands. The Integer signature permits negative/arbitrarily large poly; changing it to u64 would narrow the input domain. No custom multiword/signed bitwise gadget is permitted.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "npbench_go_fast_go_fast": {
+    "category": "needs_gadget: tanh",
+    "reason": "np.tanh on private diagonal elements requires a fixed-point transcendental routine.",
+    "line": 12,
+    "as_written": {
+      "status": "needs gadget",
+      "error": "kernel.py:12: np.tanh on private diagonal elements requires a fixed-point transcendental routine.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "needs_gadget",
+      "error": "np.tanh on private diagonal elements requires a fixed-point transcendental routine.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "npbench_polybench_bicg_bicg": {
+    "scale": 4294967296,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "as_written": {
+      "file": "as_written.zok",
+      "rewrites": []
+    }
+  },
+  "npbench_polybench_deriche_deriche": {
+    "category": "needs_gadget: exp",
+    "reason": "Private alpha is used in np.exp and real exponentiation, plus fixed-point division.",
+    "line": 10,
+    "as_written": {
+      "status": "needs gadget",
+      "error": "kernel.py:10: Private alpha is used in np.exp and real exponentiation, plus fixed-point division.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "needs_gadget",
+      "error": "Private alpha is used in np.exp and real exponentiation, plus fixed-point division.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "npbench_polybench_gemver_gemver": {
+    "scale": 4294967296,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "as_written": {
+      "file": "as_written.zok",
+      "rewrites": []
+    }
+  },
+  "npbench_polybench_k2mm_k2mm": {
+    "scale": 4294967296,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "as_written": {
+      "file": "as_written.zok",
+      "rewrites": []
+    }
+  },
+  "npbench_polybench_seidel_2d_seidel_2d": {
+    "category": "not_expressible: dynamic loop",
+    "reason": "The outer loop runs TSTEPS-1 times; only N is bounded by requires, not TSTEPS.",
+    "line": 11,
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:11: The outer loop runs TSTEPS-1 times; only N is bounded by requires, not TSTEPS.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "not_expressible",
+      "error": "The outer loop runs TSTEPS-1 times; only N is bounded by requires, not TSTEPS.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "npbench_pythran_arc_distance_arc_distance": {
+    "category": "needs_gadget: sin",
+    "reason": "Private angle arrays need sin, cos, sqrt, and arctan2; no corresponding fixed-point standard-library routines.",
+    "line": 13,
+    "as_written": {
+      "status": "needs gadget",
+      "error": "kernel.py:13: Private angle arrays need sin, cos, sqrt, and arctan2; no corresponding fixed-point standard-library routines.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "needs_gadget",
+      "error": "Private angle arrays need sin, cos, sqrt, and arctan2; no corresponding fixed-point standard-library routines.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "pythran_allpairs": {
+    "scale": 4294967296,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "as_written": {
+      "file": "as_written.zok",
+      "rewrites": []
+    }
+  },
+  "pythran_arc_distance": {
+    "category": "needs_gadget: sin",
+    "reason": "Private angle arrays need sin, cos, sqrt, and arctan2; no corresponding fixed-point standard-library routines.",
+    "line": 13,
+    "as_written": {
+      "status": "needs gadget",
+      "error": "kernel.py:13: Private angle arrays need sin, cos, sqrt, and arctan2; no corresponding fixed-point standard-library routines.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "needs_gadget",
+      "error": "Private angle arrays need sin, cos, sqrt, and arctan2; no corresponding fixed-point standard-library routines.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "pythran_ccopy": {
+    "scale": 4294967296,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "rewrite": {
+      "file": "rewrite.zok",
+      "rewrites": [
+        "Bound both range(N) loops by 1024 and guard I<N, from @requires(0<=N<=1024). Encode each complex value as real/imaginary fields and expose mutated CY."
+      ]
+    },
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:15,24: range(N) has a private bound.",
+      "constraints": null
+    }
+  },
+  "pythran_collatz": {
+    "scale": 1,
+    "decode": "plain",
+    "types": {
+      "n_max": "u32"
+    },
+    "reason": "",
+    "rewrite": {
+      "file": "rewrite.zok",
+      "rewrites": [
+        "Pad arange to 1022 slots from n_max<=1024; use 178 guarded Collatz rounds, proved exhaustively for every initial integer 3..1024 in bound.json; maximum intermediate 250504 fits u64."
+      ]
+    },
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:12-15: private arange extent and data-dependent while np.any(indices).",
+      "constraints": null
+    }
+  },
+  "pythran_crotg": {
+    "category": "needs_gadget: sqrt",
+    "reason": "Complex magnitude and NORM require fixed-point sqrt, followed by division.",
+    "line": 15,
+    "as_written": {
+      "status": "needs gadget",
+      "error": "kernel.py:15: Complex magnitude and NORM require fixed-point sqrt, followed by division.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "needs_gadget",
+      "error": "Complex magnitude and NORM require fixed-point sqrt, followed by division.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "pythran_euclidean_distance_square": {
+    "scale": 4294967296,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "as_written": {
+      "file": "as_written.zok",
+      "rewrites": []
+    }
+  },
+  "pythran_fft": {
+    "scale": 4294967296,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "as_written": {
+      "file": "as_written.zok",
+      "rewrites": []
+    }
+  },
+  "pythran_growcut": {
+    "scale": 1,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "rewrite": {
+      "file": "rewrite.zok",
+      "rewrites": [
+        "Pad images/state to 1024x1024 using N<=1024 and mask out-of-domain pixels; use a 21x21 masked neighborhood from the literal radius 10.",
+        "Fold the input-independent zero color differences: every image entry is initialized to zero and never changed, so sqrt(s)=0 and gval=1 on all valid inputs."
+      ]
+    },
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:56-58: arrays have private NxN shapes; neighborhood loops also depend on N.",
+      "constraints": null
+    }
+  },
+  "pythran_insertion_sort": {
+    "scale": 4294967296,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "rewrite": {
+      "file": "rewrite.zok",
+      "rewrites": [
+        "Replace the while loop by nine guarded shifts; j starts at i<=9 and each iteration decrements j. Preserve insertion sort, without a sorting network."
+      ]
+    },
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:13: data-dependent while j > 0 and list2[j-1] > save.",
+      "constraints": null
+    }
+  },
+  "pythran_laplace": {
+    "scale": 4294967296,
+    "decode": "square",
+    "types": {
+      "N": "u32",
+      "Niter": "u32"
+    },
+    "reason": "",
+    "rewrite": {
+      "file": "rewrite.zok",
+      "rewrites": [
+        "Pad the NxN grid to 1024x1024 and bound time iterations at 1024, guarding all work by N and Niter from the two @requires clauses; expose N for decoding."
+      ]
+    },
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:25-28: private grid dimensions and Niter loop bound.",
+      "constraints": null
+    }
+  },
+  "pythran_lu": {
+    "category": "needs_gadget: division",
+    "reason": "M[j,line] / pivot needs signed fixed-point division on private data.",
+    "line": 18,
+    "as_written": {
+      "status": "needs gadget",
+      "error": "kernel.py:18: M[j,line] / pivot needs signed fixed-point division on private data.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "needs_gadget",
+      "error": "M[j,line] / pivot needs signed fixed-point division on private data.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "pythran_monte_carlo": {
+    "category": "not_expressible: dynamic loop",
+    "reason": "numSteps is constrained only to be nonzero; its range loops have no finite declared upper bound. Sine and division are additional obstacles.",
+    "line": 17,
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:17: numSteps is constrained only to be nonzero; its range loops have no finite declared upper bound. Sine and division are additional obstacles.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "not_expressible",
+      "error": "numSteps is constrained only to be nonzero; its range loops have no finite declared upper bound. Sine and division are additional obstacles.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "pythran_multitype": {
+    "scale": 1,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "as_written": {
+      "file": "as_written.zok",
+      "rewrites": []
+    }
+  },
+  "pythran_perm": {
+    "scale": 1,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "rewrite": {
+      "file": "rewrite.zok",
+      "rewrites": [
+        "Allocate exactly 4!=24 outputs; replace while/break/for-else with 23 guarded successor iterations after the first output, as implied by the four-element input. Preserve the source cycles algorithm."
+      ]
+    },
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:11,19: growing list and while 1 with break/for-else.",
+      "constraints": null
+    }
+  },
+  "pythran_pythagorean_triples": {
+    "scale": 1,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "as_written": {
+      "file": "as_written.zok",
+      "rewrites": []
+    }
+  },
+  "pythran_sexy_primes": {
+    "category": "not_expressible: dynamic shape",
+    "reason": "The primes output and range(9,x+1) depend on unconstrained Integer x; no finite capacity follows from the signature.",
+    "line": 13,
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:13: The primes output and range(9,x+1) depend on unconstrained Integer x; no finite capacity follows from the signature.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "not_expressible",
+      "error": "The primes output and range(9,x+1) depend on unconstrained Integer x; no finite capacity follows from the signature.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "pythran_spectraldns": {
+    "scale": 4294967296,
+    "decode": "plain",
+    "types": {},
+    "reason": "",
+    "as_written": {
+      "file": "as_written.zok",
+      "rewrites": []
+    }
+  },
+  "pythran_train_eq": {
+    "category": "not_expressible: dynamic shape",
+    "reason": "err has TrSyms elements with no bound on TrSyms; os may be zero, so the fixed E shape cannot bound the number of iterations.",
+    "line": 31,
+    "as_written": {
+      "status": "not expressible",
+      "error": "kernel.py:31: err has TrSyms elements with no bound on TrSyms; os may be zero, so the fixed E shape cannot bound the number of iterations.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "not_expressible",
+      "error": "err has TrSyms elements with no bound on TrSyms; os may be zero, so the fixed E shape cannot bound the number of iterations.",
+      "constraints": null,
+      "rewrites": []
+    }
+  },
+  "pythran_weights": {
+    "category": "needs_gadget: division",
+    "reason": "weights[i] = 1 / total needs fixed-point reciprocal of a private match count; handwritten division or lookup gadgets are forbidden.",
+    "line": 17,
+    "as_written": {
+      "status": "needs gadget",
+      "error": "kernel.py:17: weights[i] = 1 / total needs fixed-point reciprocal of a private match count; handwritten division or lookup gadgets are forbidden.",
+      "constraints": null
+    },
+    "rewrite": {
+      "status": "needs_gadget",
+      "error": "weights[i] = 1 / total needs fixed-point reciprocal of a private match count; handwritten division or lookup gadgets are forbidden.",
+      "constraints": null,
+      "rewrites": []
+    }
+  }
+}

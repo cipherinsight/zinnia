@@ -1,0 +1,41 @@
+program,dataset,function,outcome,class,construct,detail
+case0298,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 15 elements differ
+case0310,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 1 elements differ
+case0320,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 2 elements differ
+case0328,ds1000_numpy,kernel,rejected_no_provable_bound,no_provable_bound,np.pad width from a runtime value,"ZinniaException: IR generation failed: np.pad: pad width is not statically bounded — its value at runtime could be anything. The previous compiler revision silently capped it at 128 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal pad width, or annotate the kernel inputs that drive the pad width with `@requires(lambda x: x <= K)` so the compiler can derive a tight, sound upper bound."
+case0337,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 8 elements differ
+case0346,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 6 elements differ
+case0357,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 27 elements differ
+case0365,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 101 elements differ
+case0381,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 100 elements differ
+case0389,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 72 elements differ
+case0401,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 0 elements differ
+case0411,ds1000_numpy,kernel,rejected_no_provable_bound,no_provable_bound,array shape from a runtime value,ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int
+case0419,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 24 elements differ
+case0430,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 2 elements differ
+case0439,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 2000 elements differ
+case0450,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 28 elements differ
+case0462,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 8 elements differ
+case0480,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 1 elements differ
+case0495,ds1000_numpy,kernel,rejected_no_provable_bound,no_provable_bound,np.pad width from a runtime value,"ZinniaException: IR generation failed: np.pad: pad width is not statically bounded — its value at runtime could be anything. The previous compiler revision silently capped it at 128 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal pad width, or annotate the kernel inputs that drive the pad width with `@requires(lambda x: x <= K)` so the compiler can derive a tight, sound upper bound."
+case0503,ds1000_numpy,kernel,accepted_correct,,,logical outputs: 0 of 169 elements differ
+npbench_azimint_naive_azimint_naive,npbench,azimint_naive,rejected_no_provable_bound,no_provable_bound,array shape from a runtime value,ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int
+npbench_deep_learning_mlp_mlp,npbench,mlp,accepted_correct,,,logical outputs: 0 of 4 elements differ
+npbench_polybench_atax_atax,npbench,kernel,accepted_correct,,,logical outputs: 0 of 16 elements differ
+npbench_polybench_doitgen_doitgen,npbench,kernel,rejected_compiler_limitation,compiler_limitation,operation on a runtime-shaped array,"ZinniaException: IR generation failed: this operation is not supported on an array with a runtime shape (the result of a boolean mask, nonzero/argwhere/unique, or a slice with runtime bounds)"
+npbench_polybench_heat_3d_heat_3d,npbench,kernel,rejected_no_provable_bound,no_provable_bound,range() trip count,"ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value without known bounds. Give the bound a maximum, e.g. a bounded array annotation (Integer[Array, ""N<=8""]) or a precondition (@zk_circuit(requires=[lambda n: 0 <= n <= 8]))"
+npbench_polybench_nussinov_nussinov,npbench,kernel,rejected_no_provable_bound,no_provable_bound,array shape from a runtime value,ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int
+npbench_scattering_self_energies_scattering_self_energies,npbench,scattering_self_energies,accepted_correct,,,logical outputs: 0 of 864 elements differ
+pythran_another_quicksort,pythran,QuickSort,rejected_no_provable_bound,no_provable_bound,while-loop trip count,"ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: the `while` condition was not proven false within loop_limit=1000 unrolled iterations. Bound the values the condition depends on (a bounded array annotation or a `requires` precondition), or raise ZinniaConfig loop_limit if a larger bound exists"
+pythran_ccopy,pythran,CCOPY,accepted_correct,,,logical outputs: 0 of 8 elements differ
+pythran_compute_subpix_2d_gaussian2,pythran,compute_subpix_2d_gaussian2,rejected_compiler_limitation,compiler_limitation,np.nonzero of a runtime-shaped array,ZinniaException: IR generation failed: nonzero: DynamicNDArray input is deferred; use static numeric arrays for now
+pythran_diffusion,pythran,diffuseNumpy,rejected_no_provable_bound,no_provable_bound,range() trip count,"ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value without known bounds. Give the bound a maximum, e.g. a bounded array annotation (Integer[Array, ""N<=8""]) or a precondition (@zk_circuit(requires=[lambda n: 0 <= n <= 8]))"
+pythran_fft,pythran,fft,rejected_unsupported_construct,unsupported_construct,"call of `fft` (no builtin, chip or numpy function of that name in scope)","ZinniaException: IR generation failed: Unknown function `fft` in @zk_circuit. If `fft` is a helper you defined, decorate it with @zk_chip (or @zk_external for off-circuit witness functions). no @zk_chip helpers are registered in this module"
+pythran_harris,pythran,harris,accepted_correct,,,logical outputs: 0 of 15 elements differ
+pythran_lapl2d,pythran,lapl2d,rejected_compiler_limitation,compiler_limitation,"array name bound to different arrays on runtime paths, then written","ZinniaException: IR generation failed: Reading `In` is not supported here: a name that refers to this array on some paths and to another array on others (bound under a runtime condition) was used to modify one of them; which array changed depends on the path, and Zinnia does not track that. Write to the arrays under the condition instead (`if c: a[i] = v else: b[i] = v`)."
+pythran_make_circle_two_points,pythran,_make_circle_one_point,rejected_unsupported_construct,unsupported_construct,`is` / `is not`,"ZinniaException: In method ""make_circle_two_points"", line 13 if c is None: ^^^^^^^^^ UnsupportedOperatorException: `is` / `is not` compare object identity, which circuit values do not have; compare values with `==` / `!=`."
+pythran_multi_export,pythran,a,accepted_correct,,,logical outputs: 0 of 1 elements differ
+pythran_pivot,pythran,pivot,rejected_no_provable_bound,no_provable_bound,range() trip count,"ZinniaException: IR generation failed: loop bound depends on a private value with no provable maximum: cannot bound the number of iterations of range() because its start or stop is a runtime value without known bounds. Give the bound a maximum, e.g. a bounded array annotation (Integer[Array, ""N<=8""]) or a precondition (@zk_circuit(requires=[lambda n: 0 <= n <= 8]))"
+pythran_repeating,pythran,repeating,rejected_no_provable_bound,no_provable_bound,array shape from a runtime value,ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int
+pythran_specialconvolve,pythran,specialconvolve,accepted_correct,,,logical outputs: 0 of 196 elements differ
+pythran_vibr_energy,pythran,calculate_vibr_energy,accepted_correct,,,logical outputs: 0 of 16 elements differ

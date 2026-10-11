@@ -1,0 +1,254 @@
+{
+ "schema": 1,
+ "system": "risc0_groth16",
+ "case": "pythran_log_likelihood__log_likelihood",
+ "description": "RISC Zero 3.0.3, Groth16 receipt, Q32 guest",
+ "windows": {
+  "prove_core": "prove_session + succinct compression + Groth16 wrap",
+  "end_to_end": "execute + the prove core",
+  "verify": "receipt.verify (verify)"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/pythran/pythran_log_likelihood/kernel.py": "12c6e564601c3f600f280ca6aa5ee541dcc621cedf8cc1566fb8fd9feb0a5de9",
+  "benchmarking/datasets/pythran/pythran_log_likelihood/fixture.json": "a99d9b12be62880a8ebd5e0bcf62d56ce2c1801c1286d49b4e7f412654da04a8",
+  "benchmarking/datasets/pythran/pythran_log_likelihood/zkvm.rs": "eb780f380615d3c3f53250cbb743602bd734a8f678f6ad86805be52920182816",
+  "benchmarking/baselines/risc0/target/release/risc0-baseline": "81c51d8fd5ddc90c2a10983cf5f0561e75cfc95fc2e979f469e982df280b09fe"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-10T16:22:36+0000",
+  "loadavg": [
+   8.37548828125,
+   8.1279296875,
+   8.1005859375
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "load_program": 0.000170075,
+    "process_wall": 0.0035807350650429726
+   },
+   "details": {
+    "case": "pythran_log_likelihood/log_likelihood",
+    "image_id": "2536d9e1198fd6b359bce62a613437dab81b19c80c3925bb866388235e32fc42",
+    "input": "A",
+    "mode": "setup",
+    "peak_rss_mib": 6.0,
+    "proof_path": null,
+    "system": "risc0",
+    "zkvm_version": "3.0.3"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 0.10124071314930916,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 0,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   25.6201171875,
+   12.302734375,
+   9.48876953125
+  ],
+  "child": {
+   "wall_s": 73.74339449778199,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 7944949760,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 73.593934392,
+   "end_to_end_s": 73.622841212,
+   "proof_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s0/work/risc0_groth16/pythran_log_likelihood__log_likelihood/proofs/warmup/program/receipt-groth16-B.bin",
+   "proof_bytes": 545,
+   "timings_s": {
+    "compress_succinct": 9.040651995,
+    "execute": 0.02890682,
+    "load_program": 0.000174614,
+    "prove": 20.264288326,
+    "wrap_groth16": 44.288994071,
+    "process_wall": 73.62927074264735
+   },
+   "details": {
+    "case": "pythran_log_likelihood/log_likelihood",
+    "image_id": "2536d9e1198fd6b359bce62a613437dab81b19c80c3925bb866388235e32fc42",
+    "input": "B",
+    "input_shapes": [
+     16
+    ],
+    "mode": "prove",
+    "paging_cycles": 21185,
+    "peak_rss_mib": 2348.0,
+    "proof_mode": "groth16",
+    "proof_size_bytes": 545,
+    "segments": 1,
+    "system": "risc0",
+    "total_cycles": 262144,
+    "user_cycles": 127196,
+    "zkvm_version": "3.0.3"
+   },
+   "proof_sha256": "751b6341c30e9a3cb78071eea3323e91d6bf0e92f67cd619716c7c10e3ce1d20"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 1 elements differ",
+   "expected_count": 1,
+   "actual_count": 1,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "86ae65daecad9421ebfbe298a6d7eb98330b0174f27bdac937722c4765f89032",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    -29.59692779975012
+   ],
+   "elided": [],
+   "shapes": null
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    52.9345703125,
+    56.87890625,
+    39.7490234375
+   ],
+   "child": {
+    "wall_s": 77.05974826589227,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 7924539392,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 76.916844174,
+    "end_to_end_s": 76.940321115,
+    "proof_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s0/work/risc0_groth16/pythran_log_likelihood__log_likelihood/proofs/sample-1/program/receipt-groth16-B.bin",
+    "proof_bytes": 545,
+    "timings_s": {
+     "compress_succinct": 9.601563086,
+     "execute": 0.023476941,
+     "load_program": 0.000162879,
+     "prove": 24.208605342,
+     "wrap_groth16": 43.106675746,
+     "process_wall": 76.94673834741116
+    },
+    "details": {
+     "case": "pythran_log_likelihood/log_likelihood",
+     "image_id": "2536d9e1198fd6b359bce62a613437dab81b19c80c3925bb866388235e32fc42",
+     "input": "B",
+     "input_shapes": [
+      16
+     ],
+     "mode": "prove",
+     "paging_cycles": 21185,
+     "peak_rss_mib": 2350.0,
+     "proof_mode": "groth16",
+     "proof_size_bytes": 545,
+     "segments": 1,
+     "system": "risc0",
+     "total_cycles": 262144,
+     "user_cycles": 127196,
+     "zkvm_version": "3.0.3"
+    },
+    "proof_sha256": "c9044392885a0f80fa4c4aea9595c333bbbafe88d4e8e06824c704f400e899d4"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 1 elements differ",
+    "expected_count": 1,
+    "actual_count": 1,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "86ae65daecad9421ebfbe298a6d7eb98330b0174f27bdac937722c4765f89032",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     -29.59692779975012
+    ],
+    "elided": [],
+    "shapes": null
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.00565264,
+     "not_applicable": null,
+     "timings_s": {
+      "load_program": 0.000137681,
+      "verify": 0.00565264,
+      "process_wall": 0.0077302223071455956
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.10066208802163601,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 0,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 0.011584974,
+    "not_applicable": null,
+    "timings_s": {
+     "load_program": 0.000396302,
+     "verify": 0.011584974,
+     "process_wall": 0.016543032601475716
+    },
+    "details": {
+     "error": null
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.10412531532347202,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 33636352,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

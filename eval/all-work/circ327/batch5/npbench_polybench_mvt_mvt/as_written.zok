@@ -1,0 +1,16 @@
+struct Result {
+    integer[16] a
+    integer[16] b
+}
+def main(private integer[16] x1, private integer[16] x2, private integer[16] y_1, private integer[16] y_2, private integer[16][16] A) -> Result:
+    for u32 i in 0..16 do
+        integer p = 0int
+        integer q = 0int
+        for u32 j in 0..16 do
+            p = p+A[i][j]*y_1[j]/4294967296int
+            q = q+y_2[j]*A[j][i]/4294967296int
+        endfor
+        x1[i] = x1[i]+p
+        x2[i] = x2[i]+q
+    endfor
+    return Result {a: x1, b: x2}

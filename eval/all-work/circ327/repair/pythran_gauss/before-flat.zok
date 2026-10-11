@@ -1,0 +1,42 @@
+from "../native_v1" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64 n, private u64[4][4] a, private u64[4] b) -> u64[4]:
+    for u64 i in 1..5 do
+        bool active = i <= n
+        u64 i0 = i
+        u64 amp0 = absv(a[i-1u64][i-1u64])
+        for u64 j in 1..5 do
+            bool take = active && j > i && j <= n && absv(a[i-1u64][j-1u64]) > amp0
+            i0 = if take then j else i0 fi
+            amp0 = if take then absv(a[i-1u64][j-1u64]) else amp0 fi
+        endfor
+        u64 temp = b[i-1u64]
+        b[i-1u64] = if active && i < n then b[i0-1u64] else b[i-1u64] fi
+        b[i0-1u64] = if active && i < n then temp else b[i0-1u64] fi
+        for u64 j in 1..5 do
+            u64 t = a[j-1u64][i-1u64]
+            bool go = active && i < n && j >= i && j <= n
+            a[j-1u64][i-1u64] = if go then a[j-1u64][i0-1u64] else a[j-1u64][i-1u64] fi
+            a[j-1u64][i0-1u64] = if go then t else a[j-1u64][i0-1u64] fi
+        endfor
+        u64 divisor = if active then a[i-1u64][i-1u64] else 4294967296u64 fi
+        a[i-1u64][i-1u64] = if active then divq(4294967296u64,divisor) else a[i-1u64][i-1u64] fi
+        b[i-1u64] = if active then mulq(b[i-1u64],a[i-1u64][i-1u64]) else b[i-1u64] fi
+        for u64 j in 1..5 do
+            a[j-1u64][i-1u64] = if active && j > i && j <= n then mulq(a[j-1u64][i-1u64],a[i-1u64][i-1u64]) else a[j-1u64][i-1u64] fi
+        endfor
+        for u64 k in 1..5 do
+            bool go = active && k > i && k <= n
+            b[k-1u64] = if go then b[k-1u64]-mulq(a[i-1u64][k-1u64],b[i-1u64]) else b[k-1u64] fi
+            for u64 j in 1..5 do
+                a[j-1u64][k-1u64] = if go && j > i && j <= n then a[j-1u64][k-1u64]-mulq(a[i-1u64][k-1u64],a[j-1u64][i-1u64]) else a[j-1u64][k-1u64] fi
+            endfor
+        endfor
+    endfor
+    for u64 rev in 0..3 do
+        u64 i = 3u64-rev
+        for u64 j in 1..4 do
+            b[i-1u64] = if i < n && j >= i && j < n then b[i-1u64]-mulq(a[j][i-1u64],b[j]) else b[i-1u64] fi
+        endfor
+    endfor
+    return b

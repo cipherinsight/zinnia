@@ -1,0 +1,27 @@
+struct Output {
+    field[14][14] table
+    field size
+}
+def main(private field N, private field[14] seq) -> Output:
+    field[14][14] table = [[0; 14]; 14]
+    for field rev in 0..14 do
+        field i = 13-rev
+        for field j in 0..14 do
+            bool active = i < N && j < N && j > i
+            field jm = if j > 0 then j-1 else 0 fi
+            field ip = if i+1 < 14 then i+1 else 0 fi
+            field v = table[i][j]
+            v = if active && j > 0 && table[i][jm] > v then table[i][jm] else v fi
+            v = if active && i+1 < N && table[ip][j] > v then table[ip][j] else v fi
+            field score = if seq[i]+seq[j] == 3 then 1 else 0 fi
+            field diag = table[ip][jm] + if i+1 < j then score else 0 fi
+            v = if active && j > 0 && i+1 < N && diag > v then diag else v fi
+            for field k in 0..14 do
+                field kp = if k+1 < 14 then k+1 else 0 fi
+                field candidate = table[i][k]+table[kp][j]
+                v = if active && k > i && k < j && candidate > v then candidate else v fi
+            endfor
+            table[i][j] = if active then v else table[i][j] fi
+        endfor
+    endfor
+    return Output {table: table, size: N}

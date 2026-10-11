@@ -1,0 +1,49 @@
+{
+  "program": "case0387",
+  "category": "accepted_as_written",
+  "as_written": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 0,
+    "seconds": 2.2149961089999124,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch2/case0387/as_written.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ]
+  },
+  "rewrite": null,
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "elements": 20000,
+      "max_abs_error": 1.1641321240318803e-10
+    },
+    "B": {
+      "status": "pass",
+      "elements": 20000,
+      "max_abs_error": 1.164049967528058e-10
+    }
+  },
+  "notes": "Static reshape/swapaxes/reshape mapped in C order; all 20,000 output elements retained. Static loop expansion uses an array literal to avoid zxi retaining successive full-array assignments; no value-dependent bounds changed.",
+  "source": "benchmarking/datasets/ds1000_numpy/generated/case0387/kernel.py",
+  "function": "kernel",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/ds1000_numpy/generated/case0387/fixture.json",
+  "source_sha256": "dd4d766fa2f2ab63f3fe429ab2122c017c596ac3968926416dd8823d82a5298c",
+  "encoding": "Real and complex components rounded to nearest integer at scale 2^32; centered field residues for field translations; native arbitrary-precision integers for integer translations. Public return includes all logical output values; padded returns include shape/presence metadata.",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh"
+  },
+  "translation_sha256": {
+    "as_written": "1a1f993f8317359bb528b7ed8e074a5a3cf36c60454d4051bf5c42805fc5d056"
+  }
+}

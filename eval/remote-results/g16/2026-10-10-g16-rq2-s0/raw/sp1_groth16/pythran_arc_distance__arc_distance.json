@@ -1,0 +1,262 @@
+{
+ "schema": 1,
+ "system": "sp1_groth16",
+ "case": "pythran_arc_distance__arc_distance",
+ "description": "SP1 6.8.1, Groth16-wrapped proof, Q32 guest",
+ "windows": {
+  "prove_core": "client.prove in groth16 mode (prove); SP1's SDK proves from the program and its input, so execution happens inside the prove call and cannot be excluded",
+  "end_to_end": "client.prove (prove), which includes execution",
+  "verify": "client.verify (verify)"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/pythran/pythran_arc_distance/kernel.py": "b5008b20bf1f27e8ee1c384e8f9312bb9c8afd736502f459623584c96d0cf02a",
+  "benchmarking/datasets/pythran/pythran_arc_distance/fixture.json": "f86e7d89b53f6c34e3021c2dcc8b97644881688628615d80287ff0dffcc929d8",
+  "benchmarking/datasets/pythran/pythran_arc_distance/zkvm.rs": "dabd0a380e2887a97f014bed7150a5973a780e5b129cebc1cc3b19867c0e2d14",
+  "benchmarking/baselines/sp1/target/release/sp1-baseline": "65e77c96da5e2637bd23b4f3d28c164da7810e2ae644c55443537c04888efd01"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-11T02:26:57+0000",
+  "loadavg": [
+   66.03955078125,
+   61.7685546875,
+   61.1552734375
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "client_init": 31.13888709,
+    "setup": 2.566807942,
+    "process_wall": 34.017403645440936
+   },
+   "details": {
+    "case": "pythran_arc_distance/arc_distance",
+    "input": "A",
+    "mode": "setup",
+    "peak_rss_mib": 7107.0,
+    "proof_path": null,
+    "sdk_version": "6.8.1",
+    "system": "sp1",
+    "vk_hash": "0x0000d20b31f42ede8ce815936b455c49adf8bdfe8cbb66e8c2f0e74c39d6fc69",
+    "vk_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s0/work/sp1_groth16/pythran_arc_distance__arc_distance/program/vk.bin"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 34.14821183681488,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 7486140416,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   67.6005859375,
+   62.5439453125,
+   61.4326171875
+  ],
+  "child": {
+   "wall_s": 345.873802639544,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 28432183296,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 314.501493086,
+   "end_to_end_s": 314.501493086,
+   "proof_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s0/work/sp1_groth16/pythran_arc_distance__arc_distance/proofs/warmup/program/proof-groth16-B.bin",
+   "proof_bytes": 1780,
+   "timings_s": {
+    "client_init": 30.224556266,
+    "execute": 0.013702922,
+    "prove": 314.501493086,
+    "process_wall": 345.76056245248765
+   },
+   "details": {
+    "case": "pythran_arc_distance/arc_distance",
+    "cycles": 13928,
+    "gas": 16708,
+    "input": "B",
+    "input_shapes": [
+     5,
+     5,
+     5,
+     5
+    ],
+    "mode": "prove",
+    "peak_rss_mib": 27083.0,
+    "proof_mode": "groth16",
+    "proof_size_bytes": 1780,
+    "sdk_version": "6.8.1",
+    "syscalls": 4,
+    "system": "sp1"
+   },
+   "proof_sha256": "8029f294001627e8cf95d06b3732a996dc29259681fba0f3a26c140179a7ef63"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 5 elements differ",
+   "expected_count": 5,
+   "actual_count": 5,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "64b45623720d3a7192a454fe4aaa7c3d3b222fd6d71ac08e759d07d676360ec0",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    2.263382805045694,
+    1.8918566671200097,
+    1.7571613397449255,
+    1.2230451218783855,
+    1.0419128090143204
+   ],
+   "elided": [],
+   "shapes": null
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    64.02734375,
+    61.67138671875,
+    61.3076171875
+   ],
+   "child": {
+    "wall_s": 361.2967628194019,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 28451258368,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 332.863588502,
+    "end_to_end_s": 332.863588502,
+    "proof_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s0/work/sp1_groth16/pythran_arc_distance__arc_distance/proofs/sample-1/program/proof-groth16-B.bin",
+    "proof_bytes": 1780,
+    "timings_s": {
+     "client_init": 27.41076935,
+     "execute": 0.013713625,
+     "prove": 332.863588502,
+     "process_wall": 361.15362465474755
+    },
+    "details": {
+     "case": "pythran_arc_distance/arc_distance",
+     "cycles": 13928,
+     "gas": 16708,
+     "input": "B",
+     "input_shapes": [
+      5,
+      5,
+      5,
+      5
+     ],
+     "mode": "prove",
+     "peak_rss_mib": 27102.0,
+     "proof_mode": "groth16",
+     "proof_size_bytes": 1780,
+     "sdk_version": "6.8.1",
+     "syscalls": 4,
+     "system": "sp1"
+    },
+    "proof_sha256": "d0ba6b87071b1e1621cb7f2db446be63dc610bd5601562416f2a28a26f39dab4"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 5 elements differ",
+    "expected_count": 5,
+    "actual_count": 5,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "64b45623720d3a7192a454fe4aaa7c3d3b222fd6d71ac08e759d07d676360ec0",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     2.263382805045694,
+     1.8918566671200097,
+     1.7571613397449255,
+     1.2230451218783855,
+     1.0419128090143204
+    ],
+    "elided": [],
+    "shapes": null
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.305552206,
+     "not_applicable": null,
+     "timings_s": {
+      "client_init": 0.367365018,
+      "verify": 0.305552206,
+      "process_wall": 0.681382711045444
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.8082358865067363,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 89006080,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 1.9468e-05,
+    "not_applicable": null,
+    "timings_s": {
+     "client_init": 0.496170944,
+     "verify": 1.9468e-05,
+     "process_wall": 0.5064462348818779
+    },
+    "details": {
+     "error": null
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.6353036258369684,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 88010752,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

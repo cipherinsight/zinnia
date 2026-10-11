@@ -1,0 +1,22 @@
+{
+  "id": "pythran__pythran_ising__ising_step",
+  "sites": {},
+  "numpy": {
+    "A": [],
+    "B": []
+  },
+  "selected": [],
+  "source": "def ising_step(field: Integer[Array, '2 2'], beta: Float=0.4):\n    bprobe_trace = []\n    N, M = field.shape\n    for n_offset in range(2):\n        for m_offset in range(2):\n            for n in range(n_offset, N, 2):\n                for m in range(m_offset, M, 2):\n                    _ising_update(field, n, m, np.float32(beta))\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [],
+      "output": {
+        "return": []
+      },
+      "shape": [
+        0
+      ]
+    }
+  ],
+  "dynamic": []
+}

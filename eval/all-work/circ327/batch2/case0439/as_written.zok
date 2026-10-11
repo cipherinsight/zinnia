@@ -1,0 +1,13 @@
+def mul(integer x, integer y) -> integer:
+    return (x*y)/4294967296
+
+def main(private integer[10][20] X) -> integer[20][10][10]:
+    integer[20][10][10] result = [[[0; 10]; 10]; 20]
+    for u32 k in 0..20 do
+        for u32 i in 0..10 do
+            for u32 j in 0..10 do
+                result[k][i][j] = mul(X[i][k], X[j][k])
+            endfor
+        endfor
+    endfor
+    return result

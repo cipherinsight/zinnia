@@ -1,0 +1,335 @@
+{
+ "schema": 1,
+ "system": "zinnia_noir",
+ "case": "ds1000_case0467",
+ "description": "Zinnia -> Noir source -> nargo 1.0.0-beta.20 compile, noir-execute, bb UltraHonk (ZK)",
+ "windows": {
+  "setup": "compile + emit main.nr for A and B + nargo compile + bb write_vk",
+  "prove_core": "wall clock of the `bb prove` process (UltraHonk, ZK), including bb start-up and CRS loading",
+  "end_to_end": "`noir-execute` on setup's compiled artifact (runs the ACVM: witness generation) + `bb prove` with that witness. Every sample also runs `nargo execute` (re-elaborates the package source first) after `noir-execute` and before `bb prove`, records it as `timings_s.nargo_execute` and requires the same witness",
+  "verify": "wall clock of the `bb verify` process with the setup's verification key"
+ },
+ "status": "wrong_output",
+ "failure": {
+  "class": "wrong_output",
+  "step": "warmup",
+  "detail": "output shapes [[2], [2], [3], [3], [3], [3], [2], [2], [2], [2], [2], [3], [3], [3], [3], [3], [3], [2], [2], [2], [2], [2], [2], [3], [3], [3], [3], [3], [3], [2], [2], [2], [2], [2], [3], [3], [3], [3], [2], [2]], reference [[2, 2], [2, 3], [2, 3], [2, 2], [3, 2], [3, 3], [3, 3], [3, 2], [3, 2], [3, 3], [3, 3], [3, 2], [2, 2], [2, 3], [2, 3], [2, 2]]"
+ },
+ "files": {
+  "benchmarking/datasets/ds1000/ds1000_case0467/kernel.py": "e4c43f88de3c27d7e834f35a019c2ca2367384db3528c6c16371311a4344c26f",
+  "benchmarking/datasets/ds1000/ds1000_case0467/fixture.json": "d6a0c43c21292e507e02127023893538bdc4f4294df06379d725bb266225ec2f"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "harness default"
+ },
+ "environment": {
+  "time": "2026-10-09T15:04:41+0000",
+  "loadavg": [
+   17.94287109375,
+   11.0517578125,
+   9.14208984375
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "compile": 0.020362387411296368,
+    "nargo_compile": 0.1551236491650343,
+    "bb_write_vk": 0.022905411198735237
+   },
+   "details": {
+    "gates": {
+     "circuit_size": 3084,
+     "acir_opcodes": 132
+    },
+    "exposed_outputs": 100,
+    "elided_outputs": 0,
+    "ir_sha256": "4a2b1f8689d6dbdd56d426a1e0bf8d65c6cb464deb31c86646b343dd76ca6683"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 0.31946815084666014,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 102666240,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   18.90869140625,
+   11.36669921875,
+   9.25439453125
+  ],
+  "child": {
+   "wall_s": 0.40866359416395426,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 102977536,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 0.14258123096078634,
+   "end_to_end_s": 0.14805942494422197,
+   "proof_path": "/home/zhantong/zinnia-eval-run/zinnia-literal/benchmarking/results/2026-10-09-aa1-ds-s5/work/zinnia_noir/ds1000_case0467/proofs/warmup/proof",
+   "proof_bytes": 14656,
+   "timings_s": {
+    "noir_execute": 0.005478193983435631,
+    "nargo_execute": 0.1513257371261716,
+    "bb_prove": 0.14258123096078634
+   },
+   "details": {
+    "witness_sha256": "933a3a0b37911bddfbe5a5f01d4c8f12cb89a717171f2fc9e22c1c8e1db90ca8"
+   },
+   "proof_sha256": "6d8f5d5d6956aa57f03f4542b9ad9408b8c4d0a91bd087c316667c7e3a19546e"
+  },
+  "output_check": {
+   "status": "mismatch",
+   "detail": "output shapes [[2], [2], [3], [3], [3], [3], [2], [2], [2], [2], [2], [3], [3], [3], [3], [3], [3], [2], [2], [2], [2], [2], [2], [3], [3], [3], [3], [3], [3], [2], [2], [2], [2], [2], [3], [3], [3], [3], [2], [2]], reference [[2, 2], [2, 3], [2, 3], [2, 2], [3, 2], [3, 3], [3, 3], [3, 2], [3, 2], [3, 3], [3, 3], [3, 2], [2, 2], [2, 3], [2, 3], [2, 2]]",
+   "expected_count": 100,
+   "actual_count": 100,
+   "mismatches": [],
+   "tolerance": null
+  },
+  "publics_sha256": "11c5ab0ef5c6c5551235f87f301c9a593a96d5acaab90ba31f7c6efa1355d725",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    1,
+    5,
+    5,
+    1,
+    1,
+    5,
+    1,
+    5,
+    1,
+    7,
+    5,
+    1,
+    7,
+    1,
+    7,
+    1,
+    1,
+    7,
+    7,
+    1,
+    1,
+    5,
+    5,
+    1,
+    7,
+    1,
+    1,
+    5,
+    1,
+    5,
+    1,
+    7,
+    7,
+    1,
+    5,
+    5,
+    1,
+    7,
+    1,
+    7,
+    1,
+    1,
+    5,
+    5,
+    1,
+    7,
+    7,
+    1,
+    5,
+    5,
+    5,
+    1,
+    7,
+    1,
+    9,
+    5,
+    5,
+    1,
+    7,
+    7,
+    1,
+    5,
+    9,
+    5,
+    4,
+    1,
+    7,
+    1,
+    1,
+    5,
+    5,
+    5,
+    4,
+    2,
+    7,
+    1,
+    5,
+    5,
+    4,
+    2,
+    7,
+    1,
+    9,
+    5,
+    7,
+    1,
+    5,
+    9,
+    5,
+    4,
+    1,
+    5,
+    5,
+    5,
+    4,
+    2,
+    5,
+    5,
+    4,
+    2
+   ],
+   "elided": [],
+   "shapes": [
+    [
+     2
+    ],
+    [
+     2
+    ],
+    [
+     3
+    ],
+    [
+     3
+    ],
+    [
+     3
+    ],
+    [
+     3
+    ],
+    [
+     2
+    ],
+    [
+     2
+    ],
+    [
+     2
+    ],
+    [
+     2
+    ],
+    [
+     2
+    ],
+    [
+     3
+    ],
+    [
+     3
+    ],
+    [
+     3
+    ],
+    [
+     3
+    ],
+    [
+     3
+    ],
+    [
+     3
+    ],
+    [
+     2
+    ],
+    [
+     2
+    ],
+    [
+     2
+    ],
+    [
+     2
+    ],
+    [
+     2
+    ],
+    [
+     2
+    ],
+    [
+     3
+    ],
+    [
+     3
+    ],
+    [
+     3
+    ],
+    [
+     3
+    ],
+    [
+     3
+    ],
+    [
+     3
+    ],
+    [
+     2
+    ],
+    [
+     2
+    ],
+    [
+     2
+    ],
+    [
+     2
+    ],
+    [
+     2
+    ],
+    [
+     3
+    ],
+    [
+     3
+    ],
+    [
+     3
+    ],
+    [
+     3
+    ],
+    [
+     2
+    ],
+    [
+     2
+    ]
+   ]
+  }
+ },
+ "samples": [],
+ "tamper": null
+}

@@ -1,0 +1,64 @@
+{
+  "program": "pythran_emin",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "rejected",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\n\nthread 'main' (149027) panicked at src/target/r1cs/trans.rs:387:18:\ninternal error: entered unreachable code: Unhandled variable operator return.energy\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n",
+    "constraints": null,
+    "returncode": 101,
+    "seconds": 22.634,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch0/pythran_emin/as_written.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ]
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 4,
+    "returncode": 0,
+    "seconds": 24.418,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch0/pythran_emin/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Cast the constant integer outputs to field using the built-in integer_to_field; preserve all 1,000,000 iterations and Q32 arithmetic."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "rtol": 1e-06,
+      "atol": 1e-06,
+      "decoded_shape": [
+        4
+      ]
+    },
+    "B": {
+      "status": "pass",
+      "rtol": 1e-06,
+      "atol": 1e-06,
+      "decoded_shape": [
+        4
+      ]
+    }
+  },
+  "notes": "Preserve all 1,000,000 iterations, even after updates cease; constants encoded at Q32."
+}

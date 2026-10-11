@@ -1,0 +1,58 @@
+{
+  "program": "case0393",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:12: private slice width is at most 10 from input shape, including negative/clipped endpoints.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 14915,
+    "seconds": 0.19628787799956626,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch2/case0393/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Normalize slice endpoints; pad each row to 10; return logical width."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "elements": 60,
+      "max_abs_error": 1.1512857334139426e-10,
+      "logical_shape_checked": true
+    },
+    "B": {
+      "status": "pass",
+      "elements": 60,
+      "max_abs_error": 1.1479639461242641e-10,
+      "logical_shape_checked": true
+    }
+  },
+  "notes": "kernel.py:12: private slice width is at most 10 from input shape, including negative/clipped endpoints.",
+  "source": "benchmarking/datasets/ds1000_numpy/generated/case0393/kernel.py",
+  "function": "kernel",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/ds1000_numpy/generated/case0393/fixture.json",
+  "source_sha256": "0b4953c25ac2a06947d75d1297e860319fddb03f26781b1826389b5dfca39825",
+  "encoding": "Real and complex components rounded to nearest integer at scale 2^32; centered field residues for field translations; native arbitrary-precision integers for integer translations. Public return includes all logical output values; padded returns include shape/presence metadata.",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh"
+  },
+  "translation_sha256": {
+    "rewrite": "ef422e40a2044dd6ad37f82485b69be0b5aa7762d81d3f0dc1ed3daab9bb0d55"
+  }
+}

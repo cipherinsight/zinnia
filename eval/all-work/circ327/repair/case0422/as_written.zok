@@ -1,0 +1,19 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[50] a, private u64[50] b) -> u64[50]:
+    u64[99] joined = [0;99]
+    for u32 i in 0..49 do
+        joined[i] = b[(i + 1)]
+    endfor
+    for u32 i in 0..50 do
+        joined[i+49] = b[i]
+    endfor
+    u64[50] result = [0;50]
+    for u32 i in 0..50 do
+        u64 acc = 0
+        for u32 j in 0..50 do
+            acc = (acc + mulq(a[j], joined[((49 - i) + j)]))
+        endfor
+        result[i] = acc
+    endfor
+    return result

@@ -1,0 +1,52 @@
+{
+  "program": "pythran_grouping",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:11-12: where and returned arrays have data-dependent length.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 3002,
+    "returncode": 0,
+    "seconds": 0.022,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch0/pythran_grouping/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Pad index array to six and both outputs to five with public group count; five entries imply at most five runs."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "rtol": 1e-06,
+      "atol": 1e-06,
+      "decoded_shape": [
+        2,
+        5
+      ]
+    },
+    "B": {
+      "status": "pass",
+      "rtol": 1e-06,
+      "atol": 1e-06,
+      "decoded_shape": [
+        2,
+        5
+      ]
+    }
+  },
+  "notes": "kernel.py:11-12: where and returned arrays have data-dependent length."
+}

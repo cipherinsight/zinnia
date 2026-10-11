@@ -1,0 +1,107 @@
+{
+  "program": "npbench_scattering_self_energies_scattering_self_energies",
+  "function": "scattering_self_energies",
+  "category": "timeout_or_oom",
+  "as_written": {
+    "status": "out_of_memory",
+    "constraints": null,
+    "error": "Running frontend",
+    "seconds": 93.31210355400253,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_scattering_self_energies_scattering_self_energies/as_written.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "source_file": "npbench_scattering_self_energies_scattering_self_energies/as_written.zok",
+    "artifact_sha256": "ad3534fdf5d389387668ccc648a7579e47c577d647e33149604cc2b8dc3ec2da"
+  },
+  "rewrite": {
+    "status": "timeout",
+    "constraints": null,
+    "error": "Running frontend",
+    "seconds": 300.02881856399836,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_scattering_self_energies_scattering_self_energies/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Use wide native field products, then native bit unpacking for the Q32 shift; retain native unsigned division and all loop bounds. This avoids bit-blasting every accumulation into a u64 adder."
+    ],
+    "source_file": "npbench_scattering_self_energies_scattering_self_energies/rewrite.zok",
+    "artifact_sha256": "d0efa56b1322dd991471f8aafad774988017cd2df79e96006e1cd88e19cd9af9"
+  },
+  "correctness": {
+    "A": {
+      "status": "out_of_memory",
+      "returncode": -9,
+      "error": "",
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_scattering_self_energies_scattering_self_energies/rewrite.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_scattering_self_energies_scattering_self_energies/A.pin"
+      ]
+    },
+    "B": {
+      "status": "out_of_memory",
+      "returncode": -9,
+      "error": "",
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_scattering_self_energies_scattering_self_energies/rewrite.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/npbench_scattering_self_energies_scattering_self_energies/B.pin"
+      ]
+    }
+  },
+  "notes": "Wide native field products and accumulation; native unpacking implements the Q32 shift, native unsigned division handles quotients. All source loops and outputs are retained.",
+  "source": {
+    "program": "npbench_scattering_self_energies_scattering_self_energies",
+    "dataset": "npbench",
+    "kernel": "benchmarking/datasets/npbench/npbench_scattering_self_energies_scattering_self_energies/kernel.py",
+    "function": "scattering_self_energies",
+    "sha256": "2a0b055128830fa48050a33f9795dd6fbe10d45104fa2d7ba65f448181d82433"
+  },
+  "numeric_encoding": {
+    "real_scale": 4294967296,
+    "rtol": 1e-06,
+    "atol": 1e-06,
+    "representation": "centered field residues with native unsigned division",
+    "helper": {
+      "file": "native_field.zok",
+      "sha256": "9479d28a511e5492cf372fe2e6416134dbfcf0d2e4e7b5b8848ab5712234ba8e"
+    }
+  },
+  "old_category": "needs_gadget: fixed-point multiplication/rescaling",
+  "old_result": "batch2/npbench_scattering_self_energies_scattering_self_energies/result.json",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+    "tmpdir": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/tmp"
+  },
+  "fixture": {
+    "path": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/npbench/npbench_scattering_self_energies_scattering_self_energies/fixture.json",
+    "sha256": "6f5c1f57105f49ff71db991e16d98f5330a9e99a0d69a7ef7abb3722542134b0"
+  },
+  "reason": "Native-arithmetic timeout under 300 s / 8 GB; no arithmetic gadget blocker."
+}

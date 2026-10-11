@@ -1,0 +1,29 @@
+// Reals are encoded at scale 2^32; signed field values use centered residues.
+def main(private u32 N) -> u32:
+    assert(N <= 1024)
+    field[1024][1024][3] image = [[[0; 3]; 1024]; 1024]
+    field[1024][1024][2] state = [[[0; 2]; 1024]; 1024]
+    field[1024][1024][2] state_next = state
+    state[0][0] = [1,4294967296]
+    u32 changes = 0
+    for u32 j in 0..1024 do
+        for u32 i in 0..1024 do
+            field winning_colony = state[i][j][0]
+            field defense_strength = state[i][j][1]
+            for u32 dj in 0..21 do
+                for u32 di in 0..21 do
+                    bool valid = i < N && j < N && i+di >= 10 && j+dj >= 10 && i+di < N+10 && j+dj < N+10 && !(di == 10 && dj == 10)
+                    u32 ii = if valid then i+di-10 else 0 fi
+                    u32 jj = if valid then j+dj-10 else 0 fi
+                    // image is identically zero for every input N: sqrt(s)=0, gval=1.
+                    field attack_strength = state[ii][jj][1]
+                    bool win = valid && attack_strength > defense_strength
+                    defense_strength = if win then attack_strength else defense_strength fi
+                    winning_colony = if win then state[ii][jj][0] else winning_colony fi
+                    changes = changes + if win then 1 else 0 fi
+                endfor
+            endfor
+            state_next[i][j] = [winning_colony,defense_strength]
+        endfor
+    endfor
+    return changes

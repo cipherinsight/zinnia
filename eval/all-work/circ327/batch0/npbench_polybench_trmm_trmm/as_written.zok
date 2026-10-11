@@ -1,0 +1,16 @@
+def main(private integer alpha, private integer[13][13] A, private integer[13][16] B) -> integer[13][16]:
+    for u32 i in 0..13 do
+        for u32 j in 0..16 do
+            integer dot = 0
+            for u32 k in i+1..13 do
+                dot = dot + A[k][i]*B[k][j]/4294967296
+            endfor
+            B[i][j] = B[i][j] + dot
+        endfor
+    endfor
+    for u32 i in 0..13 do
+        for u32 j in 0..16 do
+            B[i][j] = B[i][j]*alpha/4294967296
+        endfor
+    endfor
+    return B

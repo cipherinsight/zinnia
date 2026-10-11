@@ -1,0 +1,30 @@
+{
+  "program": "pythran_collatz",
+  "category": "timeout_or_oom",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:12-15: private arange extent and data-dependent while np.any(indices).",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "out of memory",
+    "error": "Running frontend\nRunning IR optimizations",
+    "constraints": null,
+    "returncode": -9,
+    "seconds": 111.866,
+    "rewrites": [
+      "Pad arange to 1022 slots from n_max<=1024; use 178 guarded Collatz rounds, proved exhaustively for every initial integer 3..1024 in bound.json; maximum intermediate 250504 fits u64."
+    ]
+  },
+  "correctness": {
+    "A": "not run: no accepted attempt",
+    "B": "not run: no accepted attempt"
+  },
+  "notes": [
+    "1022 slots and 178 proven rounds; killed under the 8 GB cap."
+  ],
+  "source": {
+    "kernel": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch1/pythran_collatz/kernel.py",
+    "function": "collatz"
+  }
+}

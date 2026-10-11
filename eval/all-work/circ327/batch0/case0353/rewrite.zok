@@ -1,0 +1,39 @@
+const field HALF = 26217937587563095239723870254092982918845276250263818911301829349969290592256
+def lt(field x, field y) -> bool:
+    return x + HALF < y + HALF
+struct Output {
+    field[2][3] values
+    field length
+}
+def main(private field[2][3] A, private field[7][3] B) -> Output:
+    field[3] dims = [0; 3]
+    for field j in 0..3 do
+        field m = A[0][j]
+        for field i in 0..2 do
+            m = if lt(m, A[i][j]) then A[i][j] else m fi
+        endfor
+        for field i in 0..7 do
+            m = if lt(m, B[i][j]) then B[i][j] else m fi
+        endfor
+        dims[j] = m+1
+    endfor
+    field[2] ai = [0; 2]
+    field[7] bi = [0; 7]
+    for field i in 0..2 do
+        ai[i] = (A[i][0]*dims[1]+A[i][1])*dims[2]+A[i][2]
+    endfor
+    for field i in 0..7 do
+        bi[i] = (B[i][0]*dims[1]+B[i][1])*dims[2]+B[i][2]
+    endfor
+    field[2][3] result = [[0; 3]; 2]
+    field count = 0
+    for field i in 0..2 do
+        bool found = false
+        for field j in 0..7 do
+            found = found || ai[i] == bi[j]
+        endfor
+        field ix = if count < 2 then count else 0 fi
+        result[ix] = if !found then A[i] else result[ix] fi
+        count = count + if !found then 1 else 0 fi
+    endfor
+    return Output {values: result, length: count}

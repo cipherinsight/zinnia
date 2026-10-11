@@ -1,0 +1,34 @@
+// kernel.py:12 private-dependent reshape dimensions.
+from "EMBED" import u64_to_field
+from "EMBED" import u32_to_u64
+from "EMBED" import unpack
+from "EMBED" import u64_from_bits
+
+def lt(u64 a, u64 b) -> bool:
+    return (a ^ 9223372036854775808u64) < (b ^ 9223372036854775808u64)
+
+def mul(u64 a, u64 b) -> u64:
+    bool sa = a >= 9223372036854775808u64
+    bool sb = b >= 9223372036854775808u64
+    u64 aa = if sa then 0u64-a else a fi
+    u64 bb = if sb then 0u64-b else b fi
+    bool[128] bits = unpack::<128>(u64_to_field(aa)*u64_to_field(bb))
+    u64 v = u64_from_bits(bits[32..96])
+    return if sa != sb then 0u64-v else v fi
+
+def main(private u64[6][3][4] a, private u64 h, private u64 w) -> u64[74]:
+    u64 groups = h/3u64
+    u64 tiles = 6u64/groups
+    u64[72] result = [0u64;72]
+    for u64 k in 0u64..72u64 do
+        u64 tile = (k/(tiles*12u64))*tiles+(k/4u64)%tiles
+        u64 row = (k/(tiles*4u64))%3u64
+        result[k] = a[tile][row][k%4u64]
+    endfor
+    u64[74] packed = [0u64;74]
+    for u32 i in 0..72 do
+        packed[i] = result[i]
+    endfor
+    packed[72] = h
+    packed[73] = 72u64/h
+    return packed

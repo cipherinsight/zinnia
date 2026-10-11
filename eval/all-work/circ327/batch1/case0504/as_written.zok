@@ -1,0 +1,16 @@
+// Reals are encoded at scale 2^32; signed field values use centered residues.
+def main(private field[13][13][5] a, private field[13][13] b) -> field:
+    field[13][13] arr = [[0; 13]; 13]
+    for u32 i in 0..13 do
+        for u32 j in 0..13 do
+            field ix = if b[i][j] > 4 then b[i][j]+5 else b[i][j] fi
+            arr[i][j] = a[i][j][ix]
+        endfor
+    endfor
+    field result = 0
+    for u32 i in 0..13 do
+        for u32 j in 0..13 do
+            result = result + arr[i][j]
+        endfor
+    endfor
+    return result

@@ -1,0 +1,26 @@
+{
+  "program": "npbench_polybench_trisolv_trisolv",
+  "category": "needs_gadget: division",
+  "as_written": {
+    "status": "needs gadget",
+    "error": "kernel.py:11: x[i] = (b[i] - L[i, :i] @ x[:i]) / L[i, i]. Triangular solve divides each computed real numerator by private L[i,i]; native field division is modular inverse, not Q32 real division.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "needs gadget",
+    "error": "Triangular solve divides each computed real numerator by private L[i,i]; native field division is modular inverse, not Q32 real division.",
+    "constraints": null,
+    "rewrites": []
+  },
+  "correctness": {
+    "A": "not run: no executable accepted translation",
+    "B": "not run: no executable accepted translation"
+  },
+  "notes": "Triangular solve divides each computed real numerator by private L[i,i]; native field division is modular inverse, not Q32 real division.",
+  "source": {
+    "kernel": "benchmarking/datasets/npbench/npbench_polybench_trisolv_trisolv/kernel.py",
+    "function": "kernel",
+    "sha256": "95f294391ca7474879aa93f72ff4c7beb9ecbeac157357eb8a554d0827e57ebd"
+  },
+  "reason": "Triangular solve divides each computed real numerator by private L[i,i]; native field division is modular inverse, not Q32 real division."
+}

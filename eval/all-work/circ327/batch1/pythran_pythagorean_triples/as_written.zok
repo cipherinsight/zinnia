@@ -1,0 +1,12 @@
+// Reals are encoded at scale 2^32; signed field values use centered residues.
+def main(private field[1][3] previous) -> field[3][3]:
+    field[9][3] matrices = [[-1,2,2],[-2,1,2],[-2,2,3],[1,2,2],[2,1,2],[2,2,3],[1,-2,2],[2,-1,2],[2,-2,3]]
+    field[3][3] r = [[0; 3]; 3]
+    for u32 i in 0..9 do
+        field acc = 0
+        for u32 j in 0..3 do
+            acc = acc + matrices[i][j] * previous[0][j]
+        endfor
+        r[i/3][i%3] = acc
+    endfor
+    return r

@@ -1,0 +1,46 @@
+{
+  "program": "npbench_compute_compute",
+  "category": "accepted_as_written",
+  "as_written": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 151747,
+    "seconds": 1.9803969860076904,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch5/npbench_compute_compute/as_written.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ]
+  },
+  "rewrite": null,
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "elements": 256,
+      "actual_elements": 256,
+      "max_abs_error": 0.0
+    },
+    "B": {
+      "status": "pass",
+      "elements": 256,
+      "actual_elements": 256,
+      "max_abs_error": 0.0
+    }
+  },
+  "notes": "",
+  "source": {
+    "kernel": "benchmarking/datasets/npbench/npbench_compute_compute/kernel.py",
+    "function": "compute",
+    "sha256": "e7c7373541a17875d7fafa2e8a614cf49dfbc631e3c43c08bab346fcddf9c45d"
+  },
+  "encoding": "Private inputs; public return value. Real numbers are rounded to scale 2^32. Native u64 values use signed two-complement interpretation; integer arithmetic is used for candidate full-width Q32 products to avoid truncating them to 64 bits before rescaling.",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/npbench/npbench_compute_compute/fixture.json",
+  "reason": "Signed clipping, integer multiplication and addition."
+}

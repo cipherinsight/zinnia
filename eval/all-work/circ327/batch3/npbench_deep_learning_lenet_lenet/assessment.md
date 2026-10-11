@@ -1,0 +1,1 @@
+kernel.py:39: reshape(x,(N,C_before_fc1)) uses private dimensions. x has 32 elements and the following matmul has inner dimension 16, forcing C_before_fc1=16,N=2 on valid calls.

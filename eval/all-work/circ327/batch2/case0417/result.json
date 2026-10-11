@@ -1,0 +1,49 @@
+{
+  "program": "case0417",
+  "category": "needs_gadget: division",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:12: private reshape/binning/output length; 8 input items bound the number of nonempty bins. Division uses native integer Q32 units.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "rejected",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\n\nthread 'main' (151242) panicked at src/target/r1cs/trans.rs:387:18:\ninternal error: entered unreachable code: Unhandled variable operator return.0\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    "constraints": null,
+    "seconds": 0.026667722999263788,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch2/case0417/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Pad output to eight bins with a logical count; replace dynamic bin slices by guarded scans of the eight input values."
+    ],
+    "remaining_blocker": "needs gadget: division"
+  },
+  "correctness": {
+    "A": "not run: no accepted translation",
+    "B": "not run: no accepted translation"
+  },
+  "notes": "kernel.py:12: private reshape/binning/output length; 8 input items bound the number of nonempty bins. Division uses native integer Q32 units.",
+  "source": "benchmarking/datasets/ds1000_numpy/generated/case0417/kernel.py",
+  "function": "kernel",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/ds1000_numpy/generated/case0417/fixture.json",
+  "source_sha256": "d1d69d17de19109df439c0864414a60e492d1d9553b987eee2a381169c70b91e",
+  "encoding": "Real and complex components rounded to nearest integer at scale 2^32; centered field residues for field translations; native arbitrary-precision integers for integer translations. Public return includes all logical output values; padded returns include shape/presence metadata.",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh"
+  },
+  "translation_sha256": {
+    "rewrite": "990516cac529c4e04768e9171c027dd3209f68e24c55d10ed4ac80260201daaf"
+  }
+}

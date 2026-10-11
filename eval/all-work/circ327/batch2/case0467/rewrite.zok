@@ -1,0 +1,47 @@
+from "EMBED" import u32_to_field
+from "utils/casts/field_to_u32" import main as idx
+
+def neg(field x) -> bool:
+    return x > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+
+def lt(field x, field y) -> bool:
+    return if neg(x) != neg(y) then neg(x) else x < y fi
+
+def ab(field x) -> field:
+    return if neg(x) then -x else x fi
+
+def half(field x) -> field:
+    field mag = ab(x)
+    u32 small = idx(if lt(mag, 32) then mag else 32 fi)
+    field q = u32_to_field(small/2)
+    return if neg(x) then -q-u32_to_field(small%2) else q fi
+
+def start(field x) -> field:
+    return if neg(x) then 0 else if lt(4,x) then 4 else x fi fi
+
+def endpoint(field x) -> field:
+    field y = if neg(x) then x+4 else x fi
+    return start(y)
+
+def main(private field[4][4] a, private field[2] size) -> field[16][18]:
+    field rwin = half(size[0])
+    field cwin = half(size[1])
+    field[16][18] result = [[0; 18]; 16]
+    for u32 i in 0..4 do
+        field xmin = start(u32_to_field(i)-rwin)
+        field xmax = endpoint(if lt(u32_to_field(i)+rwin+1,4) then u32_to_field(i)+rwin+1 else 4 fi)
+        field nr = if lt(xmin,xmax) then xmax-xmin else 0 fi
+        for u32 j in 0..4 do
+            field ymin = start(u32_to_field(j)-cwin)
+            field ymax = endpoint(if lt(u32_to_field(j)+cwin+1,4) then u32_to_field(j)+cwin+1 else 4 fi)
+            field nc = if lt(ymin,ymax) then ymax-ymin else 0 fi
+            result[i*4+j][0] = nr
+            result[i*4+j][1] = nc
+            for u32 r in 0..4 do
+                for u32 c in 0..4 do
+                    result[i*4+j][2+r*4+c] = if lt(u32_to_field(r),nr) && lt(u32_to_field(c),nc) then a[idx(xmin+u32_to_field(r))][idx(ymin+u32_to_field(c))] else 0 fi
+                endfor
+            endfor
+        endfor
+    endfor
+    return result

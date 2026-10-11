@@ -1,0 +1,58 @@
+{
+  "program": "pythran_pivot",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:11-13,22: magnitude comparisons and private loop ranges. Any executed access j-1 into a length-two dimension must be in [-2,1]; nonempty valid iterations therefore have j in [-1,2].",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 18113,
+    "seconds": 0.22298476800278877,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch2/pythran_pivot/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Compare squared complex magnitudes, retaining Q64 units; monotonic sqrt does not affect a pivot decision.",
+      "Guard scans of the valid logical one-based indices -1,0,1,2 (negative NumPy indices included).",
+      "Encode None versus (a,b) with a public presence tag."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "elements": 13,
+      "max_abs_error": 9.313216864370588e-11
+    },
+    "B": {
+      "status": "pass",
+      "elements": 13,
+      "max_abs_error": 1.0833467456450308e-10
+    }
+  },
+  "notes": "kernel.py:11-13,22: magnitude comparisons and private loop ranges. Any executed access j-1 into a length-two dimension must be in [-2,1]; nonempty valid iterations therefore have j in [-1,2].",
+  "source": "benchmarking/datasets/pythran/pythran_pivot/kernel.py",
+  "function": "pivot",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/pythran/pythran_pivot/fixture.json",
+  "source_sha256": "4162cb87144c0a3e5b5a5da30fa7b827326675e3bf904688fc3336d2063b2438",
+  "encoding": "Real and complex components rounded to nearest integer at scale 2^32; centered field residues for field translations; native arbitrary-precision integers for integer translations. Public return includes all logical output values; padded returns include shape/presence metadata.",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh"
+  },
+  "translation_sha256": {
+    "rewrite": "ae8e02ed6cdfec03ef0331fa4e71ee40e58847bf69a878bd2e7e02ad5f7434b3"
+  }
+}

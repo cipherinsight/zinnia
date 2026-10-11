@@ -1,0 +1,388 @@
+{
+ "schema": 1,
+ "system": "cairo",
+ "case": "npbench_polybench_durbin_durbin__kernel",
+ "description": "Cairo (Scarb 2.20.1, Stwo), Q32",
+ "windows": {
+  "prove_core": "`scarb prove` process wall clock (includes start-up)",
+  "end_to_end": "`scarb execute` + `scarb prove` process wall clocks",
+  "verify": "`scarb verify` process wall clock"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/npbench/npbench_polybench_durbin_durbin/kernel.py": "001d7b597471dc96a45f803cd4768cdc38d9185fd1b58e823d5fd8f6bfc8319f",
+  "benchmarking/datasets/npbench/npbench_polybench_durbin_durbin/fixture.json": "4eb650d857768d9fbb9f2cd4d5b3788a142023f88ddcbe49a85fb659c6f22530",
+  "benchmarking/datasets/npbench/npbench_polybench_durbin_durbin/cairo/kernel.cairo": "3e10bcb128dbbd554902d3d94c201f0a40c7a725a834675027b68506ad9c5395",
+  "benchmarking/baselines/cairo/cairo_baseline.py": "d652fd51d6d23afdcbec825da52f25358b2d6e51cc2d2889902126ab59ffa80c"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-11T10:08:02+0000",
+  "loadavg": [
+   40.6240234375,
+   36.2197265625,
+   23.59130859375
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "build": 0.1062077833339572,
+    "process_wall": 0.15565598383545876
+   },
+   "details": {
+    "system": "cairo",
+    "scarb": "/home/zhantong/.local/share/scarb/scarb-v2.20.1-x86_64-unknown-linux-gnu/bin/scarb",
+    "case": "npbench_polybench_durbin_durbin__kernel",
+    "input": "A",
+    "mode": "setup",
+    "proof_mode": "stwo",
+    "proof_path": null,
+    "peak_rss_mib": 108
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 0.30271937418729067,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 85835776,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   40.6240234375,
+   36.2197265625,
+   23.59130859375
+  ],
+  "child": {
+   "wall_s": 33.39376161433756,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 14747594752,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 17.51170293893665,
+   "end_to_end_s": 17.733890341594815,
+   "proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-npbench_polybench_durbin_durbin__kernel-zkvm/work/cairo/npbench_polybench_durbin_durbin__kernel/proofs/warmup/program/proof-stwo-B.bin",
+   "proof_bytes": 962662,
+   "timings_s": {
+    "execute": 0.2221874026581645,
+    "prove": 17.51170293893665,
+    "prove_json_copy": 15.417721865698695,
+    "process_wall": 33.25865824986249
+   },
+   "details": {
+    "system": "cairo",
+    "scarb": "/home/zhantong/.local/share/scarb/scarb-v2.20.1-x86_64-unknown-linux-gnu/bin/scarb",
+    "case": "npbench_polybench_durbin_durbin__kernel",
+    "input": "B",
+    "mode": "prove",
+    "proof_mode": "stwo",
+    "public_words": [
+     1,
+     16,
+     16,
+     -3243941725,
+     -3128775329,
+     -2281861602,
+     -820549888,
+     1847397017,
+     2810229972,
+     4740691396,
+     2442176477,
+     -562325653,
+     -3685708294,
+     -4167935826,
+     -3670007261,
+     -1899595704,
+     1096602342,
+     3193094959,
+     3972095050
+    ],
+    "input_shapes": [
+     16
+    ],
+    "output_shape": [
+     16
+    ],
+    "resources": {
+     "n_steps": 91403,
+     "n_memory_holes": 9640,
+     "builtin_instance_counter": [
+      [
+       "range_check_builtin",
+       10383
+      ],
+      [
+       "output_builtin",
+       23
+      ]
+     ],
+     "syscalls": [],
+     "memory_segment_sizes": [
+      [
+       "execution",
+       75030
+      ],
+      [
+       "range_check",
+       10383
+      ],
+      [
+       "output",
+       23
+      ]
+     ],
+     "max_memory_address": 94609
+    },
+    "proof_size_bytes": 962662,
+    "json_proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-npbench_polybench_durbin_durbin__kernel-zkvm/work/cairo/npbench_polybench_durbin_durbin__kernel/proofs/warmup/program/proof-stwo-B.json",
+    "json_proof_size_bytes": 11186999,
+    "peak_rss_mib": 14014
+   },
+   "proof_sha256": "640ae7d04fb5130b37fcf4d831a2556d5121e3c28045b37eeb18c7c5bcd293d1"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 16 elements differ",
+   "expected_count": 16,
+   "actual_count": 16,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "8b242d222be9c93e0ed1e0fecfe0fcc33eef7951e623c1fe5ae6fd0b08cc03c5",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    -0.7552890398073941,
+    -0.7284747736994177,
+    -0.5312873055227101,
+    -0.19104915857315063,
+    0.43013063655234873,
+    0.654307653196156,
+    1.1037782290950418,
+    0.5686135210562497,
+    -0.13092664373107255,
+    -0.8581458344124258,
+    -0.9704231810756028,
+    -0.8544901527930051,
+    -0.4422840904444456,
+    0.2553226291202009,
+    0.7434503545518965,
+    0.9248254471458495
+   ],
+   "elided": [],
+   "shapes": [
+    [
+     16
+    ]
+   ]
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    40.77783203125,
+    36.7158203125,
+    24.16064453125
+   ],
+   "child": {
+    "wall_s": 30.15148406010121,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 14727471104,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 14.937985215336084,
+    "end_to_end_s": 15.134465194307268,
+    "proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-npbench_polybench_durbin_durbin__kernel-zkvm/work/cairo/npbench_polybench_durbin_durbin__kernel/proofs/sample-1/program/proof-stwo-B.bin",
+    "proof_bytes": 962662,
+    "timings_s": {
+     "execute": 0.1964799789711833,
+     "prove": 14.937985215336084,
+     "prove_json_copy": 14.799694810062647,
+     "process_wall": 30.04351521935314
+    },
+    "details": {
+     "system": "cairo",
+     "scarb": "/home/zhantong/.local/share/scarb/scarb-v2.20.1-x86_64-unknown-linux-gnu/bin/scarb",
+     "case": "npbench_polybench_durbin_durbin__kernel",
+     "input": "B",
+     "mode": "prove",
+     "proof_mode": "stwo",
+     "public_words": [
+      1,
+      16,
+      16,
+      -3243941725,
+      -3128775329,
+      -2281861602,
+      -820549888,
+      1847397017,
+      2810229972,
+      4740691396,
+      2442176477,
+      -562325653,
+      -3685708294,
+      -4167935826,
+      -3670007261,
+      -1899595704,
+      1096602342,
+      3193094959,
+      3972095050
+     ],
+     "input_shapes": [
+      16
+     ],
+     "output_shape": [
+      16
+     ],
+     "resources": {
+      "n_steps": 91403,
+      "n_memory_holes": 9640,
+      "builtin_instance_counter": [
+       [
+        "range_check_builtin",
+        10383
+       ],
+       [
+        "output_builtin",
+        23
+       ]
+      ],
+      "syscalls": [],
+      "memory_segment_sizes": [
+       [
+        "execution",
+        75030
+       ],
+       [
+        "range_check",
+        10383
+       ],
+       [
+        "output",
+        23
+       ]
+      ],
+      "max_memory_address": 94609
+     },
+     "proof_size_bytes": 962662,
+     "json_proof_path": "/home/zhantong/zinnia-eval-run/cz78/epochs/2026-10-11-cz78-npbench_polybench_durbin_durbin__kernel-zkvm/work/cairo/npbench_polybench_durbin_durbin__kernel/proofs/sample-1/program/proof-stwo-B.json",
+     "json_proof_size_bytes": 11186999,
+     "peak_rss_mib": 13994
+    },
+    "proof_sha256": "640ae7d04fb5130b37fcf4d831a2556d5121e3c28045b37eeb18c7c5bcd293d1"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 16 elements differ",
+    "expected_count": 16,
+    "actual_count": 16,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "8b242d222be9c93e0ed1e0fecfe0fcc33eef7951e623c1fe5ae6fd0b08cc03c5",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     -0.7552890398073941,
+     -0.7284747736994177,
+     -0.5312873055227101,
+     -0.19104915857315063,
+     0.43013063655234873,
+     0.654307653196156,
+     1.1037782290950418,
+     0.5686135210562497,
+     -0.13092664373107255,
+     -0.8581458344124258,
+     -0.9704231810756028,
+     -0.8544901527930051,
+     -0.4422840904444456,
+     0.2553226291202009,
+     0.7434503545518965,
+     0.9248254471458495
+    ],
+    "elided": [],
+    "shapes": [
+     [
+      16
+     ]
+    ]
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.0461457809433341,
+     "not_applicable": null,
+     "timings_s": {
+      "verify": 0.0461457809433341,
+      "process_wall": 0.15306443721055984
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.2672023279592395,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 88203264,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 0.03248532395809889,
+    "not_applicable": null,
+    "timings_s": {
+     "verify": 0.03248532395809889,
+     "process_wall": 0.31066981609910727
+    },
+    "details": {
+     "error": null
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.410262580960989,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 65646592,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

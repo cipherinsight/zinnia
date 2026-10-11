@@ -1,0 +1,61 @@
+from "../native_v1" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def main(private u64[15][15][10] utens_stage, private u64[15][15][10] u_stage, private u64[16][15][10] wcon, private u64[15][15][10] u_pos, private u64[15][15][10] utens, private u64 dtr_stage) -> u64[15][15][10]:
+    u64[15][15][10] ccol = [[[0u64; 10]; 15]; 15]
+    u64[15][15][10] dcol = [[[0u64; 10]; 15]; 15]
+    u64[15][15] data_col = [[0u64; 15]; 15]
+    for u32 i in 0..15 do
+        for u32 j in 0..15 do
+            u64 gcv = divc(wcon[i+1u32][j][1]+wcon[i][j][1],4u64)
+            u64 cs = divc(gcv,2u64)
+            ccol[i][j][0] = divc(gcv,2u64)
+            u64 bcol = dtr_stage-ccol[i][j][0]
+            u64 correction = 0u64-mulq(cs,u_stage[i][j][1]-u_stage[i][j][0])
+            dcol[i][j][0] = mulq(dtr_stage,u_pos[i][j][0])+utens[i][j][0]+utens_stage[i][j][0]+correction
+            u64 divided = divq(4294967296u64,bcol)
+            ccol[i][j][0] = mulq(ccol[i][j][0],divided)
+            dcol[i][j][0] = mulq(dcol[i][j][0],divided)
+        endfor
+    endfor
+    for u32 k in 1..9 do
+        for u32 i in 0..15 do
+            for u32 j in 0..15 do
+                u64 gav = 0u64-divc(wcon[i+1u32][j][k]+wcon[i][j][k],4u64)
+                u64 gcv = divc(wcon[i+1u32][j][k+1u32]+wcon[i][j][k+1u32],4u64)
+                u64 a_s = divc(gav,2u64)
+                u64 cs = divc(gcv,2u64)
+                u64 acol = divc(gav,2u64)
+                ccol[i][j][k] = divc(gcv,2u64)
+                u64 bcol = dtr_stage-acol-ccol[i][j][k]
+                u64 correction = 0u64-mulq(a_s,u_stage[i][j][k-1u32]-u_stage[i][j][k])-mulq(cs,u_stage[i][j][k+1u32]-u_stage[i][j][k])
+                dcol[i][j][k] = mulq(dtr_stage,u_pos[i][j][k])+utens[i][j][k]+utens_stage[i][j][k]+correction
+                u64 divided = divq(4294967296u64,bcol-mulq(ccol[i][j][k-1u32],acol))
+                ccol[i][j][k] = mulq(ccol[i][j][k],divided)
+                dcol[i][j][k] = mulq(dcol[i][j][k]-mulq(dcol[i][j][k-1u32],acol),divided)
+            endfor
+        endfor
+    endfor
+    for u32 i in 0..15 do
+        for u32 j in 0..15 do
+            u64 gav = 0u64-divc(wcon[i+1u32][j][9]+wcon[i][j][9],4u64)
+            u64 a_s = divc(gav,2u64)
+            u64 acol = divc(gav,2u64)
+            u64 bcol = dtr_stage-acol
+            u64 correction = 0u64-mulq(a_s,u_stage[i][j][8]-u_stage[i][j][9])
+            dcol[i][j][9] = mulq(dtr_stage,u_pos[i][j][9])+utens[i][j][9]+utens_stage[i][j][9]+correction
+            u64 divided = divq(4294967296u64,bcol-mulq(ccol[i][j][8],acol))
+            dcol[i][j][9] = mulq(dcol[i][j][9]-mulq(dcol[i][j][8],acol),divided)
+            data_col[i][j] = dcol[i][j][9]
+            utens_stage[i][j][9] = mulq(dtr_stage,data_col[i][j]-u_pos[i][j][9])
+        endfor
+    endfor
+    for u32 reverse in 0..9 do
+        u32 k = 8u32-reverse
+        for u32 i in 0..15 do
+            for u32 j in 0..15 do
+                data_col[i][j] = dcol[i][j][k]-mulq(ccol[i][j][k],data_col[i][j])
+                utens_stage[i][j][k] = mulq(dtr_stage,data_col[i][j]-u_pos[i][j][k])
+            endfor
+        endfor
+    endfor
+    return utens_stage

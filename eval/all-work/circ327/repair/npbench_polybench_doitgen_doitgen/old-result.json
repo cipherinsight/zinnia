@@ -1,0 +1,49 @@
+{
+  "program": "npbench_polybench_doitgen_doitgen",
+  "category": "needs_gadget: fixed-point multiplication/rescaling",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:10: reshape dimensions are private. The fixed C4 forces NP=16 and valid assignment forces 8x8x16; output exposes mutated A.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "rejected",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\n\nthread 'main' (150967) panicked at src/target/r1cs/trans.rs:387:18:\ninternal error: entered unreachable code: Unhandled variable operator return.0.0.0\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    "constraints": null,
+    "seconds": 2.262571368002682,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch2/npbench_polybench_doitgen_doitgen/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Keep the 1024-element storage and its 64 length-16 rows; runtime reshape dimensions cannot change valid row grouping."
+    ],
+    "remaining_blocker": "needs gadget: fixed-point multiplication/rescaling"
+  },
+  "correctness": {
+    "A": "not run: no accepted translation",
+    "B": "not run: no accepted translation"
+  },
+  "notes": "kernel.py:10: reshape dimensions are private. The fixed C4 forces NP=16 and valid assignment forces 8x8x16; output exposes mutated A.",
+  "source": "benchmarking/datasets/npbench/npbench_polybench_doitgen_doitgen/kernel.py",
+  "function": "kernel",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/npbench/npbench_polybench_doitgen_doitgen/fixture.json",
+  "source_sha256": "f0f3e2e89ef3157b9aea8a0b9ea0b9ee45bbdc81c9e68965e530e4c2e7025206",
+  "encoding": "Real and complex components rounded to nearest integer at scale 2^32; centered field residues for field translations; native arbitrary-precision integers for integer translations. Public return includes all logical output values; padded returns include shape/presence metadata.",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh"
+  },
+  "translation_sha256": {
+    "rewrite": "3bffcd847b1180ef33a9450eeca5ccac6c47d4cf3ba686d5061b5e7465c39dc6"
+  }
+}

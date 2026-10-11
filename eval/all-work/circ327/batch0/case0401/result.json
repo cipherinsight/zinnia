@@ -1,0 +1,66 @@
+{
+  "program": "case0401",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "rejected",
+    "error": "Running frontend\n\nthread 'main' (148494) panicked at src/front/zsharp/term.rs:1234:18:\ncalled `Result::unwrap()` on an `Err` value: \"Empty array\"\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n",
+    "constraints": null,
+    "returncode": 101,
+    "seconds": 0.006,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch0/case0401/as_written.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ]
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 5,
+    "returncode": 0,
+    "seconds": 0.014,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch0/case0401/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Represent the empty 3x0 array with 3x1 zero padding and public dimensions [3,0]."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "rtol": 1e-06,
+      "atol": 1e-06,
+      "decoded_shape": [
+        3,
+        0
+      ]
+    },
+    "B": {
+      "status": "pass",
+      "rtol": 1e-06,
+      "atol": 1e-06,
+      "decoded_shape": [
+        3,
+        0
+      ]
+    }
+  },
+  "notes": "CirC rejects zero-element arrays with Empty array."
+}

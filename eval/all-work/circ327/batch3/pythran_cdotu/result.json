@@ -1,0 +1,40 @@
+{
+  "program": "pythran_cdotu",
+  "category": "circ_error",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:15,24: private range(N); the declared precondition bounds N by 1024. N=0 returns None, otherwise a complex number.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "rejected",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\n\nthread 'main' (151248) panicked at circ_fields/src/lib.rs:571:56:\ncalled `Option::unwrap()` on a `None` value\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    "constraints": null,
+    "rewrites": [
+      "Use 1024 guarded iterations, from the declared precondition, including repeated accesses when INCX or INCY is zero.",
+      "Represent complex numbers by real/imaginary Q32 fields and expose a presence tag for the N<=0 return.",
+      "Normalize valid negative array indices against length four and guard inactive accesses."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "not_run",
+      "reason": "No R1CS-accepted attempt; no circuit acceptance claimed."
+    },
+    "B": {
+      "status": "not_run",
+      "reason": "No R1CS-accepted attempt; no circuit acceptance claimed."
+    }
+  },
+  "notes": "kernel.py:15,24: private range(N); the declared precondition bounds N by 1024. N=0 returns None, otherwise a complex number.\n1024 guarded complex multiply-add steps; native Q32 rescaling crashes.",
+  "kernel": "benchmarking/datasets/pythran/pythran_cdotu/kernel.py",
+  "numeric_encoding": {
+    "modulus": "52435875175126190479447740508185965837690552500527637822603658699938581184513",
+    "real_scale": 4294967296,
+    "signed_encoding": "centered field residues; no unsigned-only interpretation of negative fixtures",
+    "validation_tolerance": {
+      "rtol": 1e-06,
+      "atol": 1e-06
+    }
+  }
+}

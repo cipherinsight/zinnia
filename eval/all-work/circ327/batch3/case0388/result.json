@@ -1,0 +1,39 @@
+{
+  "program": "case0388",
+  "category": "timeout_or_oom",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:11-12: crop and reshape have private dimensions. At most 100*200=20000 input elements can survive.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "out_of_memory",
+    "error": "Running frontend\nRunning IR optimizations",
+    "constraints": null,
+    "rewrites": [
+      "Pad flattened patches to 20000 values and expose patch count and side length; every surviving element comes from the declared 100x200 input.",
+      "Use native integer quotient expressions to map each padded output index back to its patch and input position."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "not_run",
+      "reason": "No R1CS-accepted attempt; no circuit acceptance claimed."
+    },
+    "B": {
+      "status": "not_run",
+      "reason": "No R1CS-accepted attempt; no circuit acceptance claimed."
+    }
+  },
+  "notes": "kernel.py:11-12: crop and reshape have private dimensions. At most 100*200=20000 input elements can survive.\n20,000-slot padded patch extraction exhausted the 8 GB memory cap.",
+  "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0388/kernel.py",
+  "numeric_encoding": {
+    "modulus": "52435875175126190479447740508185965837690552500527637822603658699938581184513",
+    "real_scale": 4294967296,
+    "signed_encoding": "centered field residues; no unsigned-only interpretation of negative fixtures",
+    "validation_tolerance": {
+      "rtol": 1e-06,
+      "atol": 1e-06
+    }
+  }
+}

@@ -1,0 +1,54 @@
+// benchmarking/datasets/pythran/pythran_deriv/kernel.py
+// Signed integers use their canonical field residues; real inputs are Q32.
+def neg(field x) -> bool:
+    return x > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+def absv(field x) -> field:
+    return if neg(x) then -x else x fi
+def lt(field a, field b) -> bool:
+    return if neg(a) != neg(b) then neg(a) else a < b fi
+// Constant integer rescaling uses native remainder and field division only.
+def divc(field x, field c) -> field:
+    field m = absv(x)
+    field q = (m - m % c) / c
+    return if neg(x) then -q else q fi
+def mulq(field a, field b) -> field:
+    return divc(a * b, 4294967296)
+struct Complex {
+    field re
+    field im
+}
+def cadd(Complex a, Complex b) -> Complex:
+    return Complex {re: a.re+b.re, im: a.im+b.im}
+def cmul(Complex a, Complex b) -> Complex:
+    return Complex {re: mulq(a.re,b.re)-mulq(a.im,b.im), im: mulq(a.re,b.im)+mulq(a.im,b.re)}
+
+def main(private field n, private field sig, private Complex alp, private Complex[4] dg, private Complex[4] dh1, private Complex[4] dh3, private Complex[5][4] bin, private field nu) -> Complex[4]:
+    Complex zero = Complex {re: 0, im: 0}
+    Complex[4] dh2 = [zero; 4]
+    Complex ci = Complex {re: 0, im: 4294967296}
+    dh1[0] = cmul(cmul(Complex {re: 2147483648, im: 0}, ci), Complex {re: sig, im: 0})
+    Complex exp1 = Complex {re: -2147483648, im: 0}
+    dh2[0] = alp
+    Complex exp2 = Complex {re: -4294967296, im: 0}
+    dh3[0] = Complex {re: -2*nu, im: 0}
+    Complex exp3 = Complex {re: -4294967296, im: 0}
+    for field i in 1..3 do
+        bool active = i < n
+        dh1[i] = if active then cmul(dh1[i-1],exp1) else dh1[i] fi
+        exp1.re = if active then exp1.re-4294967296 else exp1.re fi
+        dh2[i] = if active then cmul(dh2[i-1],exp2) else dh2[i] fi
+        exp2.re = if active then exp2.re-4294967296 else exp2.re fi
+        dh3[i] = if active then cmul(cmul(Complex {re: -nu, im: 0},dh3[i-1]),exp3) else dh3[i] fi
+        exp3.re = if active then exp3.re-4294967296 else exp3.re fi
+    endfor
+    dg[0] = Complex {re: 4294967296, im: 0}
+    dg[1] = cadd(cadd(dh1[0],dh2[0]),dh3[0])
+    for field i in 2..4 do
+        bool active = i <= n
+        dg[i] = if active then cadd(cadd(dh1[i-1],dh2[i-1]),dh3[i-1]) else dg[i] fi
+        for field j in 1..i do
+            Complex term = cmul(cmul(bin[j-1][i-1],cadd(cadd(dh1[j-1],dh2[j-1]),dh3[j-1])),dg[i-j])
+            dg[i] = if active then cadd(dg[i],term) else dg[i] fi
+        endfor
+    endfor
+    return dg

@@ -1,0 +1,48 @@
+{
+  "program": "pythran_morphology",
+  "category": "timeout_or_oom",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:18,29: private loop endpoints; image dimensions imply bounds 8 and 16, and requires bounds k to 0..1024.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "out of memory",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\nRunning r1cs optimizations ",
+    "constraints": null,
+    "seconds": 28.980149678998714,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch2/pythran_morphology/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Replace private inner loop ranges with 8- and 16-iteration guarded scans."
+    ]
+  },
+  "correctness": {
+    "A": "not run: no accepted translation",
+    "B": "not run: no accepted translation"
+  },
+  "notes": "kernel.py:18,29: private loop endpoints; image dimensions imply bounds 8 and 16, and requires bounds k to 0..1024.",
+  "source": "benchmarking/datasets/pythran/pythran_morphology/kernel.py",
+  "function": "dilate_decompose_loops",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/pythran/pythran_morphology/fixture.json",
+  "source_sha256": "43706ec3bd539bd3a475095aaab0d1aea0c9037b300c1957e762b0b908f75fb5",
+  "encoding": "Real and complex components rounded to nearest integer at scale 2^32; centered field residues for field translations; native arbitrary-precision integers for integer translations. Public return includes all logical output values; padded returns include shape/presence metadata.",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh"
+  },
+  "translation_sha256": {
+    "rewrite": "f851f75978c16366c220396845c29039824bc0782f17a8bee9fead94f795de9b"
+  }
+}

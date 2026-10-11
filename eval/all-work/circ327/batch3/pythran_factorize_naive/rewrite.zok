@@ -1,0 +1,36 @@
+// benchmarking/datasets/pythran/pythran_factorize_naive/kernel.py
+// Signed integers use their canonical field residues; real inputs are Q32.
+def neg(field x) -> bool:
+    return x > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+def absv(field x) -> field:
+    return if neg(x) then -x else x fi
+def lt(field a, field b) -> bool:
+    return if neg(a) != neg(b) then neg(a) else a < b fi
+// Constant integer rescaling uses native remainder and field division only.
+def divc(field x, field c) -> field:
+    field m = absv(x)
+    field q = (m - m % c) / c
+    return if neg(x) then -q else q fi
+def mulq(field a, field b) -> field:
+    return divc(a * b, 4294967296)
+
+def main(private u32 n) -> u32[11]:
+    assert(n <= 1024)
+    bool done = n < 2
+    u32 p = 2
+    u32 count = 0
+    u32[11] out = [0; 11]
+    for u32 step in 0..32 do
+        done = done || n == 1
+        u32 r = n % p
+        bool factor = !done && r == 0
+        bool last = !done && r != 0 && p*p >= n
+        u32 slot = if count < 10 then 1+count else 10 fi
+        out[slot] = if factor then p else if last then n else out[slot] fi fi
+        count = count + if factor || last then 1 else 0 fi
+        n = if factor then n/p else n fi
+        p = if !done && !factor && !last then if p > 2 then p+2 else p+1 fi else p fi
+        done = done || last
+    endfor
+    out[0] = count
+    return out

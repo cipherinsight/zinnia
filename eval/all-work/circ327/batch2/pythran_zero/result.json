@@ -1,0 +1,58 @@
+{
+  "program": "pythran_zero",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:11: nested list shape is private; @requires explicitly bounds both dimensions by 1024.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 1048576,
+    "seconds": 66.32936075199905,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch2/pythran_zero/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Pad the output to 1024x1024 zeros and retain both logical dimensions."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "elements": 128,
+      "max_abs_error": 0.0,
+      "logical_shape_checked": true
+    },
+    "B": {
+      "status": "pass",
+      "elements": 105,
+      "max_abs_error": 0.0,
+      "logical_shape_checked": true
+    }
+  },
+  "notes": "kernel.py:11: nested list shape is private; @requires explicitly bounds both dimensions by 1024.",
+  "source": "benchmarking/datasets/pythran/pythran_zero/kernel.py",
+  "function": "zero",
+  "fixture": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/pythran/pythran_zero/fixture.json",
+  "source_sha256": "f568fa9d72b08c826122cb505864e7a214701eec8989942211b0ecd4a002f8c8",
+  "encoding": "Real and complex components rounded to nearest integer at scale 2^32; centered field residues for field translations; native arbitrary-precision integers for integer translations. Public return includes all logical output values; padded returns include shape/presence metadata.",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh"
+  },
+  "translation_sha256": {
+    "rewrite": "5f2bdf48a73a3011938e8189406288b60e73a8506fbedce12777cfe8accc2039"
+  }
+}

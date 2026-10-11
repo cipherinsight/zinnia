@@ -1,0 +1,320 @@
+{
+ "epoch": "2026-10-07-ff1-zkvm-s5",
+ "systems": [
+  "sp1",
+  "risc0",
+  "cairo"
+ ],
+ "coverage": {
+  "sp1": {
+   "cases": 12,
+   "ok": 12,
+   "by_status": {
+    "ok": 12
+   },
+   "failures": []
+  },
+  "risc0": {
+   "cases": 12,
+   "ok": 12,
+   "by_status": {
+    "ok": 12
+   },
+   "failures": []
+  },
+  "cairo": {
+   "cases": 12,
+   "ok": 12,
+   "by_status": {
+    "ok": 12
+   },
+   "failures": []
+  }
+ },
+ "all_supported_subset": [
+  "ds1000_case0311",
+  "ds1000_case0322",
+  "ds1000_case0334",
+  "ds1000_case0353",
+  "ds1000_case0364",
+  "ds1000_case0389",
+  "ds1000_case0414",
+  "ds1000_case0429",
+  "ds1000_case0439",
+  "ds1000_case0453",
+  "ds1000_case0485",
+  "ds1000_case0503"
+ ],
+ "headline_subset": [
+  "ds1000_case0311",
+  "ds1000_case0322",
+  "ds1000_case0334",
+  "ds1000_case0353",
+  "ds1000_case0364",
+  "ds1000_case0414",
+  "ds1000_case0429",
+  "ds1000_case0439",
+  "ds1000_case0453",
+  "ds1000_case0485",
+  "ds1000_case0503"
+ ],
+ "data_movement_subset": [
+  "ds1000_case0389"
+ ],
+ "comparisons_headline": [],
+ "comparisons_data_movement": [],
+ "comparisons_all_supported": [],
+ "comparisons_pairwise": [],
+ "comparisons_by_group": {},
+ "excluded_cases": [
+  {
+   "case": "ds1000_case0291",
+   "reason": "returns a.shape; the annotation fixes it to (2, 5, 5, 2), so `a` is never read"
+  },
+  {
+   "case": "ds1000_case0295",
+   "reason": "ZinniaException: IR generation failed: shape element at axis 1 must be a compile-time constant int"
+  },
+  {
+   "case": "ds1000_case0296",
+   "reason": "same kernel as 0295 after renaming local variables"
+  },
+  {
+   "case": "ds1000_case0297",
+   "reason": "ZinniaException: IR generation failed: shape element at axis 1 must be a compile-time constant int"
+  },
+  {
+   "case": "ds1000_case0299",
+   "reason": "ZinniaException: IR generation failed: shape element at axis 1 must be a compile-time constant int"
+  },
+  {
+   "case": "ds1000_case0302",
+   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0301"
+  },
+  {
+   "case": "ds1000_case0303",
+   "reason": "copies 20 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0301"
+  },
+  {
+   "case": "ds1000_case0304",
+   "reason": "copies 20 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0301"
+  },
+  {
+   "case": "ds1000_case0313",
+   "reason": "same kernel as 0309 after renaming local variables"
+  },
+  {
+   "case": "ds1000_case0330",
+   "reason": "computes `a ** power` like 0329; 0329 assigns the result back to `a`, 0330 to `result`"
+  },
+  {
+   "case": "ds1000_case0331",
+   "reason": "ZinniaException: IR generation failed: np.gcd is not implemented"
+  },
+  {
+   "case": "ds1000_case0332",
+   "reason": "same kernel as 0331 after renaming local variables"
+  },
+  {
+   "case": "ds1000_case0337",
+   "reason": "copies 8 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0336"
+  },
+  {
+   "case": "ds1000_case0339",
+   "reason": "copies 16 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0338"
+  },
+  {
+   "case": "ds1000_case0341",
+   "reason": "same kernel as 0340 after renaming local variables"
+  },
+  {
+   "case": "ds1000_case0342",
+   "reason": "same kernel as 0340 after renaming local variables"
+  },
+  {
+   "case": "ds1000_case0343",
+   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0340"
+  },
+  {
+   "case": "ds1000_case0344",
+   "reason": "non_numeric_data: test input mystr: test input is a str"
+  },
+  {
+   "case": "ds1000_case0349",
+   "reason": "returns a.shape[1]; the annotation fixes it to 6, so `a` is never read"
+  },
+  {
+   "case": "ds1000_case0354",
+   "reason": "ZinniaException: IR generation failed: np.append is not implemented"
+  },
+  {
+   "case": "ds1000_case0356",
+   "reason": "same kernel as 0355 after renaming local variables"
+  },
+  {
+   "case": "ds1000_case0357",
+   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0355"
+  },
+  {
+   "case": "ds1000_case0365",
+   "reason": "same kernel as 0363 after renaming local variables"
+  },
+  {
+   "case": "ds1000_case0366",
+   "reason": "ZinniaException: IR generation failed: np.insert: this bounded slice supports one scalar obj"
+  },
+  {
+   "case": "ds1000_case0367",
+   "reason": "imports: import copy; non_numeric_data: test input array_of_arrays: object array (e.g. arrays of different shapes)"
+  },
+  {
+   "case": "ds1000_case0370",
+   "reason": "same kernel as 0368 after renaming local variables"
+  },
+  {
+   "case": "ds1000_case0373",
+   "reason": "returns np.arange(1, n+1)/n for n = len(grades) = 50, a constant; the sort is dead code"
+  },
+  {
+   "case": "ds1000_case0382",
+   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0381"
+  },
+  {
+   "case": "ds1000_case0387",
+   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0385"
+  },
+  {
+   "case": "ds1000_case0388",
+   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0385"
+  },
+  {
+   "case": "ds1000_case0390",
+   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0385"
+  },
+  {
+   "case": "ds1000_case0392",
+   "reason": "copies 30 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0340"
+  },
+  {
+   "case": "ds1000_case0393",
+   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0391"
+  },
+  {
+   "case": "ds1000_case0400",
+   "reason": "no inputs; returns the constant np.array([])"
+  },
+  {
+   "case": "ds1000_case0401",
+   "reason": "no inputs; returns the constant np.array([[], [], []])"
+  },
+  {
+   "case": "ds1000_case0405",
+   "reason": "ZinniaException: IR generation failed: np.bincount: x entry value is not statically bounded \u2014 its runtime value could be anything, and the output length is `max(x)+1`. The previous compiler revision silently capped the output at 256 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal int array, or annotate the input with `@requires(lambda x: forall(x, lambda v: v <= K))` so the compiler can derive a tight, sound upper bound."
+  },
+  {
+   "case": "ds1000_case0406",
+   "reason": "ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int"
+  },
+  {
+   "case": "ds1000_case0407",
+   "reason": "ZinniaException: IR generation failed: np.bincount: x entry value is not statically bounded \u2014 its runtime value could be anything, and the output length is `max(x)+1`. The previous compiler revision silently capped the output at 256 with a proof-time witness assert; that has been removed. To compile this program, either pass a literal int array, or annotate the input with `@requires(lambda x: forall(x, lambda v: v <= K))` so the compiler can derive a tight, sound upper bound."
+  },
+  {
+   "case": "ds1000_case0408",
+   "reason": "ZinniaException: IR generation failed: shape element at axis 0 must be a compile-time constant int"
+  },
+  {
+   "case": "ds1000_case0411",
+   "reason": "ZinniaException: IR generation failed: Unknown function `slice` in @zk_circuit. If `slice` is a helper you defined, decorate it with @zk_chip (or @zk_external for off-circuit witness functions). registered chips: fill_crop"
+  },
+  {
+   "case": "ds1000_case0413",
+   "reason": "compiles, but Zinnia refuses to build a witness for either fixture input: ZinniaException: Cannot build witness for `x`: `Complex` values are not supported as circuit inputs."
+  },
+  {
+   "case": "ds1000_case0417",
+   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0414"
+  },
+  {
+   "case": "ds1000_case0418",
+   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0416"
+  },
+  {
+   "case": "ds1000_case0419",
+   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0416"
+  },
+  {
+   "case": "ds1000_case0427",
+   "reason": "compiles, but no backend synthesizes the circuit: halo2-base: RuntimeError: Circuit synthesis error: halo2-base backend does not yet support bit_xor_i; noir: RuntimeError: Unsupported IR operation in circuit: noir-emit:bit_xor_i"
+  },
+  {
+   "case": "ds1000_case0430",
+   "reason": "same kernel as 0428 after renaming local variables"
+  },
+  {
+   "case": "ds1000_case0448",
+   "reason": "copies 24 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0361"
+  },
+  {
+   "case": "ds1000_case0449",
+   "reason": "same kernel as 0448 after renaming local variables; 0448 itself duplicates 0361: copies 24 input cells to outputs with no arithmetic (only which cells, their order and unread input cells differ), like 0361"
+  },
+  {
+   "case": "ds1000_case0451",
+   "reason": "no inputs; returns the constant np.zeros((20, 10, 10, 2))"
+  },
+  {
+   "case": "ds1000_case0459",
+   "reason": "non_numeric_data: test input A: array of strings"
+  },
+  {
+   "case": "ds1000_case0460",
+   "reason": "non_numeric_data: test input A: array of strings"
+  },
+  {
+   "case": "ds1000_case0463",
+   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0462"
+  },
+  {
+   "case": "ds1000_case0467",
+   "reason": "ZinniaException: IR generation failed: IRBuilder::ensure_ptr: cannot materialize a composite (List/Tuple) as a scalar IR pointer; got List(CompositeData { elements_type: [Integer], values: [Integer(ScalarValue { static_val: Some(-1), stmt_id: Some(40), value_id: ValueId(55) })], value_id: ValueId(58) }). A composite reached a scalar IR op; the right fix is at the call site (e.g. dispatch a per-element loop or convert to a StaticArray), not silently taking the first element."
+  },
+  {
+   "case": "ds1000_case0468",
+   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0467"
+  },
+  {
+   "case": "ds1000_case0469",
+   "reason": "non_finite_values: test input a: test input contains NaN or infinity"
+  },
+  {
+   "case": "ds1000_case0470",
+   "reason": "non_finite_values: test input a: test input contains NaN or infinity"
+  },
+  {
+   "case": "ds1000_case0473",
+   "reason": "non_numeric_data: test input CNTS: ragged sequence (setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions. The detected shape was (4,) + inhomogeneous part.)"
+  },
+  {
+   "case": "ds1000_case0489",
+   "reason": "killed by signal 9 after 14 s: exceeded the memory cap (MEMRUN_MAX=8G)"
+  },
+  {
+   "case": "ds1000_case0492",
+   "reason": "non_finite_values: test input s1: test input contains NaN or infinity"
+  },
+  {
+   "case": "ds1000_case0498",
+   "reason": "same kernel as 0495 after renaming local variables"
+  },
+  {
+   "case": "ds1000_case0499",
+   "reason": "same outputs up to a fixed reordering or reshaping, on the same inputs, like 0496"
+  },
+  {
+   "case": "ds1000_case0502",
+   "reason": "same kernel as 0501 after renaming local variables"
+  }
+ ],
+ "acceptance": null
+}

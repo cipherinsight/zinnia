@@ -1,0 +1,28 @@
+{
+  "program": "pythran_spectraldns",
+  "category": "needs_gadget: fixed-point multiplication",
+  "as_written": {
+    "status": "rejected",
+    "error": "Running frontend\nRunning IR optimizations\nRunning backend\n\nthread 'main' (151211) panicked at src/target/r1cs/trans.rs:387:18:\ninternal error: entered unreachable code: Unhandled variable operator return.v0.0.0.0.0\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    "constraints": null,
+    "returncode": 101,
+    "seconds": 0.093
+  },
+  "rewrite": {
+    "status": "needs gadget",
+    "error": "R1CS rejects native signed integer arithmetic. Preserving scale 2^32 products requires signed wide fixed-point rescaling; custom arithmetic gadgets are forbidden.",
+    "constraints": null,
+    "rewrites": []
+  },
+  "correctness": {
+    "A": "not run: no accepted attempt",
+    "B": "not run: no accepted attempt"
+  },
+  "notes": [
+    "Native signed fixed-point arithmetic reaches R1CS, then crashes; a wide signed rescaling gadget is forbidden."
+  ],
+  "source": {
+    "kernel": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch1/pythran_spectraldns/kernel.py",
+    "function": "add_pressure_diffusion"
+  }
+}

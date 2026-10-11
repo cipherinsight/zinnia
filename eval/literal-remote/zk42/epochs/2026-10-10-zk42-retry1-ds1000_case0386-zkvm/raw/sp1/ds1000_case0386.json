@@ -1,0 +1,90 @@
+{
+ "schema": 1,
+ "system": "sp1",
+ "case": "ds1000_case0386",
+ "description": "SP1 6.8.1, core (STARK) proof, Q32 guest",
+ "windows": {
+  "prove_core": "client.prove (prove); SP1's SDK proves from the program and its input, so execution happens inside the prove call and cannot be excluded",
+  "end_to_end": "client.prove (prove), which includes execution",
+  "verify": "client.verify (verify)"
+ },
+ "status": "out_of_memory",
+ "failure": {
+  "class": "out_of_memory",
+  "step": "warmup",
+  "detail": "exit -9 after 167.0s"
+ },
+ "files": {
+  "benchmarking/datasets/ds1000/ds1000_case0386/kernel.py": "0675ee8a7b2e9460caf238e7bef5bc72b2b0b0b1b4a5e618f2f93cc95fdabcf3",
+  "benchmarking/datasets/ds1000/ds1000_case0386/fixture.json": "34fe7044833be8e7114dada35323612750bc60b3a89d0479bc4274bfd105fdb3",
+  "benchmarking/datasets/ds1000/ds1000_case0386/zkvm.rs": "2b6506c1418d38be1d75e41e481eaf5d2eecf4a593d8f02f7a40c7caae939b0e",
+  "benchmarking/baselines/sp1/target/release/sp1-baseline": "ceb7ac853848b7bc7329758a05faec311d025e03b34bec93206027de32079b34"
+ },
+ "tolerance": {
+  "abs": 2.3283064365386963e-10,
+  "rel": 0.0,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-10T09:33:35+0000",
+  "loadavg": [
+   19.1044921875,
+   24.4853515625,
+   28.0986328125
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "client_init": 26.175887663,
+    "setup": 2.195751747,
+    "process_wall": 28.581869324669242
+   },
+   "details": {
+    "case": "ds1000_case0386",
+    "input": "A",
+    "mode": "setup",
+    "peak_rss_mib": 7162.0,
+    "proof_path": null,
+    "sdk_version": "6.8.1",
+    "system": "sp1",
+    "vk_hash": "0x0091c4f0476612ec2e870a5231afc7709b4c79b1c26ef21b0a9c542123337e2d",
+    "vk_path": "/home/zhantong/zinnia-eval-run/zk42/epochs/2026-10-10-zk42-retry1-ds1000_case0386-zkvm/work/sp1/ds1000_case0386/program/vk.bin"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 28.701334697194397,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 7535759360,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   21.1064453125,
+   23.9794921875,
+   27.65771484375
+  ],
+  "child": {
+   "wall_s": 166.98443740513176,
+   "returncode": -9,
+   "timed_out": false,
+   "peak_rss_bytes": 32296722432,
+   "over_memory_cap": true
+  },
+  "failure": {
+   "class": "out_of_memory",
+   "detail": "exit -9 after 167.0s"
+  }
+ },
+ "samples": [],
+ "tamper": null
+}

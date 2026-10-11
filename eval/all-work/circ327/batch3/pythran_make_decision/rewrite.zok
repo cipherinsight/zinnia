@@ -1,0 +1,42 @@
+// benchmarking/datasets/pythran/pythran_make_decision/kernel.py
+// Signed integers use their canonical field residues; real inputs are Q32.
+def neg(field x) -> bool:
+    return x > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+def absv(field x) -> field:
+    return if neg(x) then -x else x fi
+def lt(field a, field b) -> bool:
+    return if neg(a) != neg(b) then neg(a) else a < b fi
+// Constant integer rescaling uses native remainder and field division only.
+def divc(field x, field c) -> field:
+    field m = absv(x)
+    field q = (m - m % c) / c
+    return if neg(x) then -q else q fi
+def mulq(field a, field b) -> field:
+    return divc(a * b, 4294967296)
+struct Complex {
+    field re
+    field im
+}
+def cadd(Complex a, Complex b) -> Complex:
+    return Complex {re: a.re+b.re, im: a.im+b.im}
+def cmul(Complex a, Complex b) -> Complex:
+    return Complex {re: mulq(a.re,b.re)-mulq(a.im,b.im), im: mulq(a.re,b.im)+mulq(a.im,b.re)}
+
+def main(private Complex[16] E, private Complex[8] symbols) -> Complex[16]:
+    Complex[16] out = [Complex {re: 0, im: 0}; 16]
+    for u32 i in 0..16 do
+        field dr0 = E[i].re-symbols[0].re
+        field di0 = E[i].im-symbols[0].im
+        field best = dr0*dr0+di0*di0
+        field bi = 0
+        for field j in 1..8 do
+            field dr = E[i].re-symbols[j].re
+            field di = E[i].im-symbols[j].im
+            field dist = dr*dr+di*di
+            bool take = dist < best
+            bi = if take then j else bi fi
+            best = if take then dist else best fi
+        endfor
+        out[i] = symbols[bi]
+    endfor
+    return out

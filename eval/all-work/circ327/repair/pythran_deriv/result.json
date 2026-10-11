@@ -1,0 +1,97 @@
+{
+  "program": "pythran_deriv",
+  "function": "deriv",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:18,27: private range(n), range(n+1); declared n<=1024 and dg has four slots, so every valid call has n<=3.",
+    "constraints": null,
+    "source_file": "pythran_deriv/as_written.zok",
+    "artifact_sha256": "b6b3d78dff640759e2ac3a892e40a49356a0ceefa3b30c59701ef397df2c2ff1"
+  },
+  "rewrite": {
+    "status": "accepted",
+    "constraints": 15542,
+    "error": null,
+    "seconds": 0.3091028329981782,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_deriv/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Use guarded iterations 1..3 and 2..4; dg[n] forces n<=3 on valid calls and n>=0 is explicitly required.",
+      "Represent complex arithmetic by pairs of Q32 real fields using native multiply/add and constant rescaling."
+    ],
+    "source_file": "pythran_deriv/rewrite.zok",
+    "artifact_sha256": "560c263795c8725273fe40fd636259e6b2444c2551e1916a74228861c935d479"
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "expected_elements": 8,
+      "actual_elements": 8,
+      "max_abs_error": 0.0,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_deriv/rewrite.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_deriv/A.pin"
+      ]
+    },
+    "B": {
+      "status": "pass",
+      "expected_elements": 8,
+      "actual_elements": 8,
+      "max_abs_error": 1.2827604223275557e-07,
+      "command": [
+        "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+        "timeout",
+        "300",
+        "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/zxi",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_deriv/rewrite.zok",
+        "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_deriv/B.pin"
+      ]
+    }
+  },
+  "notes": "Q32 values use signed u64; native operations, explicit signs and 32-bit product parts. No arbitrary-integer backend operations.",
+  "source": {
+    "program": "pythran_deriv",
+    "dataset": "pythran",
+    "kernel": "benchmarking/datasets/pythran/pythran_deriv/kernel.py",
+    "function": "deriv",
+    "sha256": "852f0cfcdfe76e845ad4d361ea76851ffcc8bd78969ad5670ba121fab7665845"
+  },
+  "numeric_encoding": {
+    "real_scale": 4294967296,
+    "rtol": 1e-06,
+    "atol": 1e-06,
+    "representation": "signed two-complement u64 with native wide products",
+    "helper": {
+      "file": "native.zok",
+      "sha256": "230210f08577e08c6d8067d12af2de953bb0d8a1227875d2288459a4e80ac9ab"
+    }
+  },
+  "old_category": "circ_error",
+  "old_result": "batch3/pythran_deriv/result.json",
+  "limits": {
+    "compile_seconds": 300,
+    "compile_memory": "8G",
+    "wrapper": "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+    "tmpdir": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/tmp"
+  },
+  "fixture": {
+    "path": "/home/zhantong/Projects/zinnia-project/wt/literal/benchmarking/datasets/pythran/pythran_deriv/fixture.json",
+    "sha256": "f0aef36444293493f93755e3caf51f2006c65fe1899183d243aa314728be14c6"
+  },
+  "reason": "Use guarded iterations 1..3 and 2..4; dg[n] forces n<=3 on valid calls and n>=0 is explicitly required.; Represent complex arithmetic by pairs of Q32 real fields using native multiply/add and constant rescaling. A/B pass."
+}

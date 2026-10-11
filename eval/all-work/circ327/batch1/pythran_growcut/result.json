@@ -1,0 +1,31 @@
+{
+  "program": "pythran_growcut",
+  "category": "timeout_or_oom",
+  "as_written": {
+    "status": "not expressible",
+    "error": "kernel.py:56-58: arrays have private NxN shapes; neighborhood loops also depend on N.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "out of memory",
+    "error": "Running frontend",
+    "constraints": null,
+    "returncode": -9,
+    "seconds": 70.428,
+    "rewrites": [
+      "Pad images/state to 1024x1024 using N<=1024 and mask out-of-domain pixels; use a 21x21 masked neighborhood from the literal radius 10.",
+      "Fold the input-independent zero color differences: every image entry is initialized to zero and never changed, so sqrt(s)=0 and gval=1 on all valid inputs."
+    ]
+  },
+  "correctness": {
+    "A": "not run: no accepted attempt",
+    "B": "not run: no accepted attempt"
+  },
+  "notes": [
+    "1024x1024 capacity and masked neighborhoods; killed under the 8 GB cap."
+  ],
+  "source": {
+    "kernel": "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/batch1/pythran_growcut/kernel.py",
+    "function": "test"
+  }
+}

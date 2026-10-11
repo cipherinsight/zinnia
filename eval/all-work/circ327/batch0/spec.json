@@ -1,0 +1,226 @@
+{
+  "case0291": {
+    "scale": 1,
+    "reason": "",
+    "decode": null,
+    "rewrite": null
+  },
+  "case0310": {
+    "scale": 1,
+    "reason": "",
+    "decode": null,
+    "rewrite": null
+  },
+  "case0318": {
+    "scale": 4294967296,
+    "reason": "Native dynamic scatter and gather; negative NumPy indices normalized by array length. Undefined np.empty entries for non-permutations remain outside deterministic valid executions.",
+    "decode": null,
+    "rewrite": null
+  },
+  "case0337": {
+    "scale": 4294967296,
+    "reason": "",
+    "decode": null,
+    "rewrite": null
+  },
+  "case0343": {
+    "scale": 1,
+    "reason": "List append count is syntactically fixed at 30, independent of input values.",
+    "decode": null,
+    "rewrite": null
+  },
+  "case0359": {
+    "scale": 4294967296,
+    "reason": "",
+    "decode": null,
+    "rewrite": null
+  },
+  "case0365": {
+    "scale": 4294967296,
+    "reason": "Native insertion scatter exhausted 8 GB; fixed output length permits guarded gather.",
+    "decode": null,
+    "rewrite": [
+      "Replace insertion scatter with a guarded gather into the known 101 output positions; inserting one scalar into 100 elements always yields length 101."
+    ]
+  },
+  "case0385": {
+    "scale": 4294967296,
+    "reason": "Static reshape/swapaxes/transpose indexing expanded directly into a literal array constructor; avoids interpreter memory blowup from sequential stores. All 20,000 values retained.",
+    "decode": null,
+    "rewrite": null
+  },
+  "case0401": {
+    "scale": 4294967296,
+    "reason": "CirC rejects zero-element arrays with Empty array.",
+    "decode": "empty",
+    "rewrite": [
+      "Represent the empty 3x0 array with 3x1 zero padding and public dimensions [3,0]."
+    ]
+  },
+  "case0437": {
+    "scale": 1,
+    "reason": "",
+    "decode": null,
+    "rewrite": null
+  },
+  "case0477": {
+    "scale": 4294967296,
+    "reason": "",
+    "decode": null,
+    "rewrite": null
+  },
+  "case0503": {
+    "scale": 4294967296,
+    "reason": "",
+    "decode": null,
+    "rewrite": null
+  },
+  "pythran_multitype": {
+    "scale": 1,
+    "reason": "",
+    "decode": "multitype",
+    "rewrite": null
+  },
+  "pythran_specialconvolve": {
+    "scale": 1,
+    "reason": "",
+    "decode": null,
+    "rewrite": null
+  },
+  "case0443": {
+    "scale": 1,
+    "reason": "kernel.py:11: Boolean selection has value-dependent length.",
+    "decode": "filter",
+    "rewrite": [
+      "Use capacity 20, stable guarded compaction and public length; selection cannot exceed the 20 input entries."
+    ]
+  },
+  "case0462": {
+    "scale": 1,
+    "reason": "kernel.py:14: Boolean selection has value-dependent length.",
+    "decode": "filter",
+    "rewrite": [
+      "Use capacity 20, stable guarded compaction and public length; selection cannot exceed the 20 input entries."
+    ]
+  },
+  "case0353": {
+    "scale": 1,
+    "reason": "kernel.py:12: Boolean row selection has dynamic length.",
+    "decode": "filter",
+    "rewrite": [
+      "Pad to two rows, compact with guards and return public length; filtering two input rows can retain at most two."
+    ]
+  },
+  "case0391": {
+    "scale": 4294967296,
+    "reason": "kernel.py:11: low:high determines output width.",
+    "decode": "slice",
+    "rewrite": [
+      "Clamp signed slice endpoints as NumPy does; pad output to 20x10 and return width, since slicing cannot exceed ten columns."
+    ]
+  },
+  "case0415": {
+    "scale": 4294967296,
+    "reason": "kernel.py:11: reshape and number of bins depend on bin_size.",
+    "decode": "filter",
+    "rewrite": [
+      "Pad at most eight bins and return length; enumerate the eight possible nonempty bin widths with guards (larger positive widths produce no bins)."
+    ]
+  },
+  "pythran_grouping": {
+    "scale": 1,
+    "reason": "kernel.py:11-12: where and returned arrays have data-dependent length.",
+    "decode": "grouping",
+    "rewrite": [
+      "Pad index array to six and both outputs to five with public group count; five entries imply at most five runs."
+    ]
+  },
+  "pythran_pselect": {
+    "scale": 4294967296,
+    "reason": "kernel.py:13-16: runtime function-valued variable a is not a Z# type.",
+    "decode": null,
+    "rewrite": [
+      "Inline the two possible callees under their original guards; allocate the list at its fixed two-element length."
+    ]
+  },
+  "case0510": {
+    "scale": 4294967296,
+    "reason": "kernel.py:12-17: flatnonzero and crop produce value-dependent lengths.",
+    "decode": "crop",
+    "rewrite": [
+      "Use ten-entry row/column presence masks and guarded extrema; pad the cropped result to 10x10 with height and width, bounded by the input shape."
+    ]
+  },
+  "case0422": {
+    "scale": 4294967296,
+    "reason": "Native signed integer multiplication and division by the Q32 scale; NumPy valid correlation reverses offsets when its second input is longer.",
+    "decode": null,
+    "rewrite": null
+  },
+  "case0485": {
+    "scale": 4294967296,
+    "reason": "",
+    "decode": null,
+    "rewrite": null
+  },
+  "npbench_polybench_atax_atax": {
+    "scale": 4294967296,
+    "reason": "",
+    "decode": null,
+    "rewrite": null
+  },
+  "npbench_polybench_gemm_gemm": {
+    "scale": 4294967296,
+    "reason": "Return mutated C as the observable output of the in-place kernel.",
+    "decode": null,
+    "rewrite": null
+  },
+  "npbench_polybench_trmm_trmm": {
+    "scale": 4294967296,
+    "reason": "Return mutated B, preserving loop order and dot products.",
+    "decode": null,
+    "rewrite": null
+  },
+  "pythran_rosen": {
+    "scale": 4294967296,
+    "reason": "",
+    "decode": null,
+    "rewrite": null
+  },
+  "case0452": {
+    "scale": 4294967296,
+    "reason": "",
+    "decode": null,
+    "rewrite": null
+  },
+  "pythran_lapl3d": {
+    "scale": 4294967296,
+    "reason": "",
+    "decode": null,
+    "rewrite": null
+  },
+  "pythran_emin": {
+    "scale": 4294967296,
+    "reason": "Preserve all 1,000,000 iterations, even after updates cease; constants encoded at Q32.",
+    "decode": "emin",
+    "rewrite": [
+      "Cast the constant integer outputs to field using the built-in integer_to_field; preserve all 1,000,000 iterations and Q32 arithmetic."
+    ]
+  },
+  "npbench_polybench_nussinov_nussinov": {
+    "scale": 1,
+    "reason": "kernel.py:17-19: table allocation and loops depend on N.",
+    "decode": "nussinov",
+    "rewrite": [
+      "Pad table to 14x14 and guard loops using N; valid executions require 0 <= N <= 14 because for N > 14 the recurrence reads seq[N-1]."
+    ]
+  },
+  "pythran_approximated_callgraph": {
+    "scale": 1,
+    "reason": "kernel.py:15-16: two runtime-sized lists and loop bounds.",
+    "decode": "callgraph",
+    "rewrite": [
+      "Inline lambda and call; allocate a 1024x1024 padded result, guard both loops and return size, using the explicit 0 <= size <= 1024 precondition."
+    ]
+  }
+}

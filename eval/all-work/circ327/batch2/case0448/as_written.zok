@@ -1,0 +1,21 @@
+from "EMBED" import u32_to_field
+from "utils/casts/field_to_u32" import main as idx
+
+def neg(field x) -> bool:
+    return x > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+
+def lt(field x, field y) -> bool:
+    return if neg(x) != neg(y) then neg(x) else x < y fi
+
+def ab(field x) -> field:
+    return if neg(x) then -x else x fi
+
+def main(private field[3][4] x_dists, private field[3][4] y_dists) -> field[3][4][2]:
+    field[3][4][2] result = [[[0; 2]; 4]; 3]
+    for u32 i in 0..3 do
+        for u32 j in 0..4 do
+            result[i][j][0] = x_dists[i][j]
+            result[i][j][1] = y_dists[i][j]
+        endfor
+    endfor
+    return result

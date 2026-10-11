@@ -1,0 +1,20 @@
+from "EMBED" import int_to_bits, u32_from_bits, field_to_integer, u32_to_field
+
+def ui(integer x) -> u32:
+    return u32_from_bits(int_to_bits::<32>(x))
+
+def it(u32 x) -> integer:
+    return field_to_integer(u32_to_field(x))
+
+def mul(integer x, integer y) -> integer:
+    return (x*y)/4294967296
+
+def main(private integer n) -> integer:
+    integer a = 0
+    integer b = 1
+    for u32 i in 0..1024 do
+        integer next = a+b
+        a = if it(i) < n then b else a fi
+        b = if it(i) < n then next else b fi
+    endfor
+    return a

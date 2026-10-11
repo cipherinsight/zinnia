@@ -1,0 +1,17 @@
+// Reals are encoded at scale 2^32; signed field values use centered residues.
+def lt(field a, field b) -> bool:
+    bool an = a > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+    bool bn = b > 26217937587563095239723870254092982918845276250263818911301829349969290592256
+    return if an == bn then a < b else an fi
+
+
+def main(private field[100][50] arr) -> field[100][50]:
+    field[100][50] result = arr
+    for u32 i in 0..100 do
+        for u32 j in 0..50 do
+            arr[i][j] = if lt(result[i][j], -42949672960) then 0 else arr[i][j] fi
+            arr[i][j] = if !lt(result[i][j], 64424509440) then 128849018880 else arr[i][j] fi
+            arr[i][j] = if !lt(result[i][j], -42949672960) && lt(result[i][j], 64424509440) then arr[i][j]+21474836480 else arr[i][j] fi
+        endfor
+    endfor
+    return arr

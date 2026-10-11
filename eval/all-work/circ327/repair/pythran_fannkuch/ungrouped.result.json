@@ -1,0 +1,56 @@
+{
+  "program": "pythran_fannkuch",
+  "function": "fannkuch2",
+  "category": "circ_error",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:9,14-16 dynamic lists and nested while loops; bounded rewrite needs factorial-sized unrolling.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "rejected",
+    "constraints": null,
+    "error": "Running frontend\n\nthread 'main' (154650) has overflowed its stack\nfatal runtime error: stack overflow, aborting\ntimeout: the monitored command dumped core",
+    "seconds": 0.22307321400148794,
+    "command": [
+      "/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh",
+      "timeout",
+      "300",
+      "/home/zhantong/.cache/zkcc-reconfirm/circ-stock/target/release/examples/circ",
+      "--language",
+      "zsharp",
+      "/home/zhantong/Projects/zinnia-project/eval-redo/all-work/circ327/repair/pythran_fannkuch/rewrite.zok",
+      "r1cs",
+      "--action",
+      "count"
+    ],
+    "rewrites": [
+      "Pad count/perm buffers to 1024 per explicit n<=1024 contract; guard every update after early returns/breaks.",
+      "Bound permutation enumeration and each terminating prefix-reversal chain by 1024! (distinct permutations), and carry/descent loops by 1024; preserve call although fannkuch2 returns None.",
+      "Express each 1024! bound by nested native u32 loops with radices 2 through 1024; no enormous unsupported integer literal and no smaller bound."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "interpreter_error",
+      "error": "\nthread 'main' (155293) has overflowed its stack\nfatal runtime error: stack overflow, aborting\ntimeout: the monitored command dumped core\n"
+    },
+    "B": {
+      "status": "interpreter_error",
+      "error": "\nthread 'main' (155305) has overflowed its stack\nfatal runtime error: stack overflow, aborting\ntimeout: the monitored command dumped core\n"
+    }
+  },
+  "notes": "Q32 values use signed u64; native operations, explicit signs and 32-bit product parts. No arbitrary-integer backend operations.",
+  "source": {
+    "program": "pythran_fannkuch",
+    "dataset": "pythran",
+    "kernel": "benchmarking/datasets/pythran/pythran_fannkuch/kernel.py",
+    "function": "fannkuch2"
+  },
+  "numeric_encoding": {
+    "real_scale": 4294967296,
+    "signed": "two-complement u64",
+    "rtol": 1e-06,
+    "atol": 1e-06
+  }
+}

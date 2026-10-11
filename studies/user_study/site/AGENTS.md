@@ -16,10 +16,14 @@ Explicit user instruction (2026-09-23): P0, P2, and P8 are completed; their resu
 
 - Preserve all study results, attempts, drafts, timing, and practice records for these participants. Exclude them from general or previously authorized reset operations.
 - Read runtime/link-distribution.json before any participant reset; preserve_results_on_reset tracks this protection by token. Only a new explicit instruction overriding this protection for a named participant can authorize clearing their results.
-- P0 is the completed pilot, not an available unassigned survey; preserve its link during general invalidation. Existing frozen-link disclosure rules for P2 and P8 still apply.
+- P0 is a completed valid study participant, not an available unassigned survey; preserve its link during general invalidation. Existing frozen-link disclosure rules for P2 and P8 still apply.
 
 On 2026-09-24, P1 was marked unassigned before a random draw from available surveys. The draw selected P9, which is now assigned and frozen. Links and progress were preserved.
 
 On 2026-09-24, P1, P6, P7, and P10 were assigned and frozen for distribution of the remaining surveys. P3 and P11 were already assigned. Defer comparative study claims until the remaining six are collected.
 
 Assignment remark (2026-09-24): P3 and P11 are assigned to zhaoyu.
+
+Participant identity clarification (2026-10-06): the user confirmed all 12 surveys were completed by different participants. Zhaoyu is a distributor; P3 and P11 were completed by two different people. Treat all 12 participant identities as distinct.
+
+Study inclusion clarification (2026-10-06): the user confirmed P0 is not a pilot and is a valid study participant. Include P0 in the primary 12-participant analysis. P0 completed-result and link protections remain in force.

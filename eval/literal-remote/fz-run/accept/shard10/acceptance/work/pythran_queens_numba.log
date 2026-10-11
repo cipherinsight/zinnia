@@ -1,0 +1,5 @@
+$ choom -n 1000 -- /home/zhantong/zinnia-eval-run/zinnia-sizefix/.venv/bin/python -m benchmarking.harness.acceptance.validate --child /home/zhantong/zinnia-eval-run/fz/accept/shard10/acceptance/work/pythran_queens_numba.request.json /home/zhantong/zinnia-eval-run/fz/accept/shard10/acceptance/work/pythran_queens_numba.response.json
+
+thread 'zinnia-compile' (875370) panicked at src/ir_gen/list_sharing.rs:45:13:
+mutating this list through `queens_x` is not supported: the same list is also reachable through `queens_x` (Python shares a list on assignment, argument passing and storage in another list, but Zinnia copies lists). Make an explicit copy (`list(...)`) or return the new list instead of mutating it
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

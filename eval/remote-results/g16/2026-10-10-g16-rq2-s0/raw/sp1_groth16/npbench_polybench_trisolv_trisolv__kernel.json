@@ -1,0 +1,284 @@
+{
+ "schema": 1,
+ "system": "sp1_groth16",
+ "case": "npbench_polybench_trisolv_trisolv__kernel",
+ "description": "SP1 6.8.1, Groth16-wrapped proof, Q32 guest",
+ "windows": {
+  "prove_core": "client.prove in groth16 mode (prove); SP1's SDK proves from the program and its input, so execution happens inside the prove call and cannot be excluded",
+  "end_to_end": "client.prove (prove), which includes execution",
+  "verify": "client.verify (verify)"
+ },
+ "status": "ok",
+ "failure": null,
+ "files": {
+  "benchmarking/datasets/npbench/npbench_polybench_trisolv_trisolv/kernel.py": "95f294391ca7474879aa93f72ff4c7beb9ecbeac157357eb8a554d0827e57ebd",
+  "benchmarking/datasets/npbench/npbench_polybench_trisolv_trisolv/fixture.json": "bcd08322c50e33f12199aad18d676c444129ff87f4cc789b8b6815d56e651ec0",
+  "benchmarking/datasets/npbench/npbench_polybench_trisolv_trisolv/zkvm.rs": "3ed7b4243c59a5f4efe6fe9049df0f60a6477716db86930577eb2b2b7e98a4ee",
+  "benchmarking/baselines/sp1/target/release/sp1-baseline": "65e77c96da5e2637bd23b4f3d28c164da7810e2ae644c55443537c04888efd01"
+ },
+ "tolerance": {
+  "abs": 1e-06,
+  "rel": 1e-06,
+  "source": "case set"
+ },
+ "environment": {
+  "time": "2026-10-10T21:45:42+0000",
+  "loadavg": [
+   64.55859375,
+   63.88427734375,
+   62.7646484375
+  ],
+  "governor": "schedutil",
+  "energy_performance_preference": null,
+  "boost": "1",
+  "scaling_driver": "acpi-cpufreq"
+ },
+ "setup": {
+  "ok": true,
+  "result": {
+   "timings_s": {
+    "client_init": 21.752096314,
+    "setup": 1.65486426,
+    "process_wall": 23.741667486727238
+   },
+   "details": {
+    "case": "npbench_polybench_trisolv_trisolv/kernel",
+    "input": "A",
+    "mode": "setup",
+    "peak_rss_mib": 7127.0,
+    "proof_path": null,
+    "sdk_version": "6.8.1",
+    "system": "sp1",
+    "vk_hash": "0x00765d98e30f764adc50ebc51292c5447e5ed123cce87324a819e60bb6e9adeb",
+    "vk_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s0/work/sp1_groth16/npbench_polybench_trisolv_trisolv__kernel/program/vk.bin"
+   }
+  },
+  "failure": null,
+  "child": {
+   "wall_s": 23.873327679932117,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 7503015936,
+   "over_memory_cap": false
+  }
+ },
+ "warmup": {
+  "tag": "warmup",
+  "loadavg_before": [
+   59.06689453125,
+   62.5634765625,
+   62.3525390625
+  ],
+  "child": {
+   "wall_s": 380.5919011021033,
+   "returncode": 0,
+   "timed_out": false,
+   "peak_rss_bytes": 28496408576,
+   "over_memory_cap": false
+  },
+  "prove": {
+   "prove_core_s": 354.33724548,
+   "end_to_end_s": 354.33724548,
+   "proof_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s0/work/sp1_groth16/npbench_polybench_trisolv_trisolv__kernel/proofs/warmup/program/proof-groth16-B.bin",
+   "proof_bytes": 1869,
+   "timings_s": {
+    "client_init": 24.975979679,
+    "execute": 0.014612503,
+    "prove": 354.33724548,
+    "process_wall": 380.47753142006695
+   },
+   "details": {
+    "case": "npbench_polybench_trisolv_trisolv/kernel",
+    "cycles": 21006,
+    "gas": 27307,
+    "input": "B",
+    "input_shapes": [
+     16,
+     16,
+     16,
+     16
+    ],
+    "mode": "prove",
+    "peak_rss_mib": 27145.0,
+    "proof_mode": "groth16",
+    "proof_size_bytes": 1869,
+    "sdk_version": "6.8.1",
+    "syscalls": 6,
+    "system": "sp1"
+   },
+   "proof_sha256": "2fa661507712beb1f912cacf7a526c0f4158352d769b8f2f642f32df4295eb1f"
+  },
+  "output_check": {
+   "status": "match",
+   "detail": "logical outputs: 0 of 16 elements differ",
+   "expected_count": 16,
+   "actual_count": 16,
+   "mismatches": [],
+   "tolerance": {
+    "abs": 1e-06,
+    "rel": 1e-06,
+    "source": "case set"
+   }
+  },
+  "publics_sha256": "f77d8c4dcc77ec69160bc4edf0b28bab75bc4a2d03c4d9561f984ef30c568c96",
+  "publics": {
+   "layout": "logical",
+   "values": [
+    0.1952066831290722,
+    0.8348725403193384,
+    0.728048600954935,
+    1.2060414236038923,
+    -2.0895718028768897,
+    2.6963575382251292,
+    -0.8700619610026479,
+    0.21907946467399597,
+    -0.6480210390873253,
+    0.3913063493091613,
+    0.3951516665983945,
+    0.1435830001719296,
+    2.290765688754618,
+    -3.37475564959459,
+    2.050596928689629,
+    -1.545372252818197
+   ],
+   "elided": [],
+   "shapes": null
+  }
+ },
+ "samples": [
+  {
+   "tag": "sample-1",
+   "loadavg_before": [
+    64.09912109375,
+    62.6396484375,
+    62.52490234375
+   ],
+   "child": {
+    "wall_s": 382.6598257338628,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 28979236864,
+    "over_memory_cap": false
+   },
+   "prove": {
+    "prove_core_s": 355.503101476,
+    "end_to_end_s": 355.503101476,
+    "proof_path": "/home/zhantong/zinnia-eval-run/g16/epochs/2026-10-10-g16-rq2-s0/work/sp1_groth16/npbench_polybench_trisolv_trisolv__kernel/proofs/sample-1/program/proof-groth16-B.bin",
+    "proof_bytes": 1869,
+    "timings_s": {
+     "client_init": 26.152454635,
+     "execute": 0.01399732,
+     "prove": 355.503101476,
+     "process_wall": 382.51617153640836
+    },
+    "details": {
+     "case": "npbench_polybench_trisolv_trisolv/kernel",
+     "cycles": 21006,
+     "gas": 27307,
+     "input": "B",
+     "input_shapes": [
+      16,
+      16,
+      16,
+      16
+     ],
+     "mode": "prove",
+     "peak_rss_mib": 27605.0,
+     "proof_mode": "groth16",
+     "proof_size_bytes": 1869,
+     "sdk_version": "6.8.1",
+     "syscalls": 6,
+     "system": "sp1"
+    },
+    "proof_sha256": "30ea0eaa4b9e27eacbe58e76581e91e0cd9456d35fdf319dec9339c1fba3cac3"
+   },
+   "output_check": {
+    "status": "match",
+    "detail": "logical outputs: 0 of 16 elements differ",
+    "expected_count": 16,
+    "actual_count": 16,
+    "mismatches": [],
+    "tolerance": {
+     "abs": 1e-06,
+     "rel": 1e-06,
+     "source": "case set"
+    }
+   },
+   "publics_sha256": "f77d8c4dcc77ec69160bc4edf0b28bab75bc4a2d03c4d9561f984ef30c568c96",
+   "publics": {
+    "layout": "logical",
+    "values": [
+     0.1952066831290722,
+     0.8348725403193384,
+     0.728048600954935,
+     1.2060414236038923,
+     -2.0895718028768897,
+     2.6963575382251292,
+     -0.8700619610026479,
+     0.21907946467399597,
+     -0.6480210390873253,
+     0.3913063493091613,
+     0.3951516665983945,
+     0.1435830001719296,
+     2.290765688754618,
+     -3.37475564959459,
+     2.050596928689629,
+     -1.545372252818197
+    ],
+    "elided": [],
+    "shapes": null
+   },
+   "verify": {
+    "ok": true,
+    "result": {
+     "verified": true,
+     "verify_s": 0.248264778,
+     "not_applicable": null,
+     "timings_s": {
+      "client_init": 0.370928485,
+      "verify": 0.248264778,
+      "process_wall": 0.6296962080523372
+     },
+     "details": {
+      "error": null
+     }
+    },
+    "failure": null,
+    "child": {
+     "wall_s": 0.7442297972738743,
+     "returncode": 0,
+     "timed_out": false,
+     "peak_rss_bytes": 88928256,
+     "over_memory_cap": false
+    }
+   }
+  }
+ ],
+ "tamper": {
+  "response": {
+   "ok": true,
+   "result": {
+    "verified": false,
+    "verify_s": 1.6262e-05,
+    "not_applicable": null,
+    "timings_s": {
+     "client_init": 0.358514439,
+     "verify": 1.6262e-05,
+     "process_wall": 0.36631197668612003
+    },
+    "details": {
+     "error": null
+    }
+   },
+   "failure": null,
+   "child": {
+    "wall_s": 0.4686918770894408,
+    "returncode": 0,
+    "timed_out": false,
+    "peak_rss_bytes": 78839808,
+    "over_memory_cap": false
+   }
+  },
+  "status": "rejected"
+ }
+}

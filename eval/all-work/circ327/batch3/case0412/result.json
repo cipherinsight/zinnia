@@ -1,0 +1,68 @@
+{
+  "program": "case0412",
+  "category": "accepted_with_rewrite",
+  "as_written": {
+    "status": "not_expressible",
+    "error": "kernel.py:11: Boolean filtering returns between zero and ten elements.",
+    "constraints": null
+  },
+  "rewrite": {
+    "status": "accepted",
+    "error": null,
+    "constraints": 7081,
+    "rewrites": [
+      "Compact nonnegative entries into ten padded slots and expose length; the input signature has exactly ten elements."
+    ]
+  },
+  "correctness": {
+    "A": {
+      "status": "pass",
+      "numpy_shape": [
+        5
+      ],
+      "compared_values": 5,
+      "max_absolute_error": 8.29336599394992e-11,
+      "actual": [
+        0.06919301580637693,
+        0.4411021319683641,
+        0.08756315568462014,
+        0.43599215615540743,
+        0.17675826651975513
+      ],
+      "expected": [
+        0.06919301575146208,
+        0.4411021318945251,
+        0.08756315570598239,
+        0.4359921562289629,
+        0.17675826643682147
+      ]
+    },
+    "B": {
+      "status": "pass",
+      "numpy_shape": [
+        2
+      ],
+      "compared_values": 2,
+      "max_absolute_error": 1.0390777127611273e-10,
+      "actual": [
+        0.06993509270250797,
+        0.46281974390149117
+      ],
+      "expected": [
+        0.06993509269812304,
+        0.46281974400539894
+      ]
+    }
+  },
+  "notes": "kernel.py:11: Boolean filtering returns between zero and ten elements.\nTen-slot masked compaction and public length.",
+  "kernel": "benchmarking/datasets/ds1000_numpy/generated/case0412/kernel.py",
+  "numeric_encoding": {
+    "modulus": "52435875175126190479447740508185965837690552500527637822603658699938581184513",
+    "real_scale": 4294967296,
+    "signed_encoding": "centered field residues; no unsigned-only interpretation of negative fixtures",
+    "validation_tolerance": {
+      "rtol": 1e-06,
+      "atol": 1e-06
+    }
+  }
+}

@@ -1,0 +1,15 @@
+const field HALF = 26217937587563095239723870254092982918845276250263818911301829349969290592256
+def lt(field x, field y) -> bool:
+    return x + HALF < y + HALF
+def main(private field[10][5] a) -> bool[10][5]:
+    bool[10][5] mask = [[false; 5]; 10]
+    for field i in 0..10 do
+        field m = a[i][0]
+        for field j in 1..5 do
+            m = if lt(a[i][j], m) then a[i][j] else m fi
+        endfor
+        for field j in 0..5 do
+            mask[i][j] = m == a[i][j]
+        endfor
+    endfor
+    return mask

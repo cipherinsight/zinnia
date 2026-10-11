@@ -1,0 +1,62 @@
+from "../native" import neg, absv, ab, lt, divc, mulq, mul, divq, ui, it, integer_to_field
+
+def idx(u64 x) -> u64:
+    return if neg(x) then (x + 10) else x fi
+def partition(u64[10] a, u64 start, u64 end) -> u64[11]:
+    u64 pivot = a[idx(end)]
+    u64 bottom = (start - 1)
+    u64 top = end
+    bool done = false
+    for u32 outer in 0..20 do
+        bool stop1 = done
+        for u32 inner in 0..20 do
+            bottom = if (!stop1) then (bottom + 1) else bottom fi
+            done = (done || ((!stop1) && (bottom == top)))
+            u64 bi = if ((!stop1) && (!done)) then idx(bottom) else 0 fi
+            bool hit = (((!stop1) && (!done)) && lt(pivot, a[bi]))
+            u64 ti = if hit then idx(top) else 0 fi
+            a[ti] = if hit then a[bi] else a[ti] fi
+            stop1 = ((stop1 || done) || hit)
+        endfor
+        bool stop2 = done
+        for u32 inner in 0..20 do
+            top = if (!stop2) then (top - 1) else top fi
+            done = (done || ((!stop2) && (top == bottom)))
+            u64 ti = if ((!stop2) && (!done)) then idx(top) else 0 fi
+            bool hit = (((!stop2) && (!done)) && lt(a[ti], pivot))
+            u64 bi = if hit then idx(bottom) else 0 fi
+            a[bi] = if hit then a[ti] else a[bi] fi
+            stop2 = ((stop2 || done) || hit)
+        endfor
+    endfor
+    a[idx(top)] = pivot
+    u64[11] ret = [0;11]
+    for u32 i in 0..10 do
+        ret[i] = a[i]
+    endfor
+    ret[10] = top
+    return ret
+def main(private u64[10] l, private u64 s, private u64 e) -> u64[10]:
+    u64[21] starts = [0;21]
+    u64[21] ends = [0;21]
+    starts[0] = s
+    ends[0] = e
+    u64 sp = 1
+    for u32 step in 0..40 do
+        bool pop = (!neg(sp) && sp != 0u64)
+        sp = if pop then (sp - 1) else sp fi
+        u64 start = starts[sp]
+        u64 end = ends[sp]
+        bool work = (pop && lt(start, end))
+        u64[11] part = partition(l, if work then start else 0 fi, if work then end else 0 fi)
+        for u32 i in 0..10 do
+            l[i] = if work then part[i] else l[i] fi
+        endfor
+        u64 split = part[10]
+        starts[sp] = if work then (split + 1) else starts[sp] fi
+        ends[sp] = if work then end else ends[sp] fi
+        starts[sp+1] = if work then start else starts[(sp + 1)] fi
+        ends[sp+1] = if work then (split - 1) else ends[(sp + 1)] fi
+        sp = (sp + if work then 2 else 0 fi)
+    endfor
+    return l

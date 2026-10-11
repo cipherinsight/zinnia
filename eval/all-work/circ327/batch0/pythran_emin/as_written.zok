@@ -1,0 +1,28 @@
+struct Output {
+    bool converged
+    integer energy
+    integer rOH
+    integer thetaHOH
+}
+def main() -> Output:
+    integer c = 21474836
+    integer rOH = 42949672960
+    integer thetaHOH = 773094113280
+    integer E = 0
+    integer grOH = 0
+    integer grthetaHOH = 0
+    for u32 i in 0..1000000 do
+        integer r = rOH-4080218931
+        integer t = thetaHOH-448824082432
+        E = 100*(r*r/4294967296)+50*(t*t/4294967296)
+        grOH = 100*r
+        grthetaHOH = 100*t
+        integer ag = if grOH < 0 then -grOH else grOH fi
+        integer at = if grthetaHOH < 0 then -grthetaHOH else grthetaHOH fi
+        bool active = ag > 858993459 || at > 8589934592
+        rOH = if active then rOH-c*grOH/4294967296 else rOH fi
+        thetaHOH = if active then thetaHOH-c*grthetaHOH/4294967296 else thetaHOH fi
+    endfor
+    integer ag = if grOH < 0 then -grOH else grOH fi
+    integer at = if grthetaHOH < 0 then -grthetaHOH else grthetaHOH fi
+    return Output {converged: ag > 858993459 || at > 8589934592, energy: E, rOH: rOH, thetaHOH: thetaHOH}
