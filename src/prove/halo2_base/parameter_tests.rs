@@ -105,10 +105,11 @@ fn public_layout_stats_match_full_synthesis_and_bind_outputs() {
 }
 
 #[test]
-fn selector_minimizes_cells_then_proxy_over_all_widths() {
-    // A full signed word prefers eight-bit limbs; a short unsigned range
-    // prefers a narrow table even at k values that also fit wider tables.
-    for (lower, upper, expected_width) in [(i64::MIN, i64::MAX, 8), (0, 7, 3)] {
+fn selector_minimizes_cells_within_the_work_slack_over_all_widths() {
+    // A short unsigned range prefers a narrow table. A lone full signed word
+    // has fewest cells with eight-bit limbs, but that table needs k = 9, far
+    // above the cheapest work estimate, so a narrower layout wins.
+    for (lower, upper) in [(i64::MIN, i64::MAX), (0, 7)] {
         let ir = if lower == 0 {
             graph(vec![
                 (read("x"), vec![]),
@@ -145,9 +146,20 @@ fn selector_minimizes_cells_then_proxy_over_all_widths() {
                 }
             }
         }
-        let (_, _, k, width) = candidates.into_iter().min().unwrap();
+        let cheapest = candidates.iter().map(|c| c.1).min().unwrap();
+        let fewest = candidates.iter().min().unwrap().0;
+        let (cells, work, k, width) = candidates
+            .into_iter()
+            .filter(|c| c.1 * 100 <= cheapest * (100 + WORK_SLACK_PERCENT))
+            .min()
+            .unwrap();
         assert_eq!((selected.k, selected.lookup_bits), (k, width));
-        assert_eq!(width, expected_width);
+        assert!(work * 100 <= cheapest * (100 + WORK_SLACK_PERCENT));
+        if lower == 0 {
+            assert_eq!((width, cells), (3, fewest));
+        } else {
+            assert!(cells > fewest && width < 8 && k < 9, "k={k} width={width}");
+        }
         let (mut circuit, publics) =
             build_circuit(&ir, None, &selected, CircuitBuilderStage::Mock, None).unwrap();
         assert!(MockProver::run(k, &circuit, vec![publics])

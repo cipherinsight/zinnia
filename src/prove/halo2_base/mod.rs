@@ -64,6 +64,10 @@ use self::synthesizer::Halo2BaseSynthesizer;
 /// k search range for ground-truth parameter estimation.
 const ESTIMATE_K_MIN: u32 = 4;
 const ESTIMATE_K_MAX: u32 = 22;
+/// How far above the cheapest committed-polynomials x 2^k estimate a layout may
+/// be and still win on cell count. The estimate is this inaccurate: on
+/// ds1000_case0436 the layout it rates 4% more expensive proves faster.
+const WORK_SLACK_PERCENT: u128 = 10;
 /// Rows reserved for blinding factors / poisoned rows when packing cells
 /// into columns and when checking row-fit during sizing. Matches the
 /// halo2-graph scaffold's MINIMUM_ROWS default (20) so both sides pack
@@ -79,7 +83,7 @@ impl ProverBackend for Halo2BaseProverBackend {
     }
 
     fn estimate_params(&self, ir: &IRGraph) -> Result<ProvingParams, ProvingError> {
-        // Ground-truth sizing, no tuned thresholds. Two facts drive it:
+        // Ground-truth sizing. Two facts drive it:
         //
         // 1. Cell counts are witness-independent, so a dry synthesis into a
         //    virtual builder (the synthesizer substitutes zeros when no
@@ -89,13 +93,21 @@ impl ProverBackend for Halo2BaseProverBackend {
         //    lookup_bits-wide limbs), so the dry run is cached per
         //    lookup_bits value.
         //
-        // 2. Minimize advice + lookup cells, including second-phase,
-        //    table and RAM advice, exactly as in cell_stats. Among equal
-        //    sizes, minimize the existing committed-polynomials x 2^k
-        //    work proxy, then k and lookup width for deterministic ties.
-        //    Search every width up to the existing maximum: limb costs
-        //    need not decrease monotonically with width. All candidates
-        //    must still pass committed_polys' row-fit checks.
+        // 2. Prove time is U-shaped in k: every extra column is an extra
+        //    committed polynomial, while large k pays 2^k per polynomial. The
+        //    committed-polynomials x 2^k proxy estimates that work, but only
+        //    roughly: layouts it rates a few percent apart can prove in the
+        //    reverse order. So among the layouts within WORK_SLACK_PERCENT of
+        //    the cheapest estimate, take the fewest advice + lookup cells
+        //    (including second-phase, table and RAM advice, exactly as in
+        //    cell_stats), then the cheaper estimate, k and lookup width for
+        //    deterministic ties. Outside the slack a smaller circuit is not
+        //    worth it: a tiny circuit with an 8-bit lookup table has fewer
+        //    cells but needs k = 9 for the table, and proves several times
+        //    slower than at the k its cells need. Every width up to the
+        //    existing maximum is searched (limb costs need not decrease
+        //    monotonically with width); all candidates must pass
+        //    committed_polys' row-fit checks.
         use std::collections::HashMap;
 
         let defaults = ProvingParams::default();
@@ -109,17 +121,22 @@ impl ProverBackend for Halo2BaseProverBackend {
             Ok(entry)
         };
 
-        let mut best: Option<(usize, u128, u32, u32)> = None;
+        // (cells, work estimate, k, lookup_bits) of every layout that fits.
+        let mut candidates: Vec<(usize, u128, u32, u32)> = Vec::new();
         for k in ESTIMATE_K_MIN..=ESTIMATE_K_MAX {
             for lookup_bits in 1..=defaults.lookup_bits.min(k.saturating_sub(1)) {
                 let stats = dry_run(lookup_bits)?;
                 let Some(polys) = committed_polys(&stats, k, lookup_bits) else { continue };
-                let candidate = (stats.advice + stats.lookup, (polys as u128) << k, k, lookup_bits);
-                if best.map_or(true, |previous| candidate < previous) {
-                    best = Some(candidate);
-                }
+                candidates.push((stats.advice + stats.lookup, (polys as u128) << k, k, lookup_bits));
             }
         }
+        let cheapest = candidates.iter().map(|c| c.1).min();
+        let best = cheapest.and_then(|cheapest| {
+            candidates
+                .into_iter()
+                .filter(|c| c.1 * 100 <= cheapest * (100 + WORK_SLACK_PERCENT))
+                .min()
+        });
 
         match best {
             Some((_, _, k, lookup_bits)) => Ok(ProvingParams {
