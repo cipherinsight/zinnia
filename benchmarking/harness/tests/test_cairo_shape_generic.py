@@ -134,7 +134,7 @@ def test_execute_selects_function_fixture_and_checks_shape_commitment(tmp_path, 
     args = argparse.Namespace(case_dir=tmp_path, function="f", fixture=None, input="A", mode="execute",
                               work_dir=tmp_path / "work")
     seen = []
-    def execute(report, case, case_dir, args_path, schema):
+    def execute(report, case, case_dir, args_path, schema, keep_trace=False):
         seen.append((case, json.loads(args_path.read_text())))
         report["input_shapes"] = [3]
         return tmp_path / "execution"
