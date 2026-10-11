@@ -1254,7 +1254,19 @@ impl IRBuilder {
         // Materialize any pure constants so they have IR pointers
         let materialized: Vec<Value> = args.iter().map(|v| self.ensure_ptr(v)).collect();
         let ir_id = self.stmts.len() as StmtId;
-        let val = build_value(ir, ir_id, &materialized);
+        let mut val = build_value(ir, ir_id, &materialized);
+        if let IR::ProductSumF { len } = ir {
+            let ids: Option<Vec<_>> = materialized.iter().map(Value::stmt_id).collect();
+            if let Some(ids) = ids {
+                if ids.len() == 2 * (*len as usize)
+                    && crate::optim::exact_zero_product_sum(&self.stmts, &ids)
+                {
+                    if let Value::Float(sv) = &mut val {
+                        sv.static_val = Some(0.0);
+                    }
+                }
+            }
+        }
         // Phase 3 dual-view arguments (compiler.value-id-and-fact-leaves):
         // `arguments` keeps the existing stmt_id space so walkers keep
         // their direct-indexed `stmts[arg as usize]` flow. `arg_values`
@@ -3025,9 +3037,9 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
         IR::MulF => float_binary_ir(ir_id, args, |a, b| a * b),
         IR::ProductSumF { .. } => {
             // ProductSumF semantics depend on proving-time `precision_bits`
-            // because each pair uses fixed-point `MulF` rescaling. The builder
-            // does not know that parameter, so avoid publishing a potentially
-            // misleading compile-time float value here.
+            // because the raw sum is rescaled once. Only exact zero is
+            // precision-independent (`create_ir` checks that identity and
+            // its producer domains); do not evaluate other sums in host floats.
             Value::Float(ScalarValue::new(None, Some(ir_id)))
         }
         IR::DivF => float_binary_ir(ir_id, args, |a, b| a / b),

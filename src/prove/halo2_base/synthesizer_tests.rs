@@ -2374,3 +2374,64 @@ fn ram_trace_rejects_a_position_outside_its_own_memory() {
         assert!(!run(pb, s, r, &[]).accepted, "pb={pb} s={s} r={r}: accepted");
     }
 }
+
+/// CSE of opposite exact squares keeps the quotient domain and pins the
+/// retained root, including when only one triangle's root is observable.
+#[test]
+fn norm_square_cse_preserves_domains_and_public_roots() {
+    use crate::ir_defs::IR;
+    use crate::optim::{DeadCodeElimination, DuplicateCodeElimination, IRPass};
+    use graphs::*;
+    let mut g = Graph::default();
+    let x = g.read("x");
+    let y = g.read("y");
+    g.domain_check(x);
+    g.domain_check(y);
+    let zero = g.push(IR::ConstantFloat { value: 0.0 }, &[]);
+    for (a, b, expose) in [(x, y, true), (y, x, false)] {
+        let d = g.push(IR::SubF, &[a, b]);
+        let sum = g.push(IR::ProductSumF { len: 1 }, &[d, d]);
+        let nonnegative = g.push(IR::GteF, &[sum, zero]);
+        g.push(IR::Assert, &[nonnegative]);
+        if expose {
+            let root = g.push(IR::SqrtF, &[sum]);
+            g.push(IR::ExposePublicF, &[root]);
+        }
+    }
+    let before = g.finish();
+    let after = DeadCodeElimination.exec(DuplicateCodeElimination.exec(before.clone()));
+    assert_eq!(after.stmts.iter().filter(|s| matches!(s.ir, IR::ProductSumF { .. })).count(), 1);
+    for (x, y) in [(0, 0), (3i64 << 32, -2i64 << 32), (-7i64 << 31, 3i64 << 30)] {
+        let inputs = [("x", x), ("y", y)];
+        let original = run(&before, &inputs, None);
+        let optimized = run(&after, &inputs, None);
+        assert!(original.accepted && optimized.accepted);
+        assert_eq!(original.outputs, optimized.outputs);
+        assert!(!run(&after, &inputs, Some(vec![optimized.outputs[0] + Fp::one()])).accepted);
+    }
+    // Valid input encodings, but their squared distance exceeds signed Q32.
+    let outside = [("x", 1i64 << 60), ("y", -(1i64 << 60))];
+    assert!(!run(&before, &outside, None).accepted);
+    assert!(!run(&after, &outside, None).accepted);
+}
+
+#[test]
+fn zero_product_sum_does_not_erase_a_quotient_window() {
+    use crate::ir_defs::IR;
+    use crate::optim::{ConstantFold, DeadCodeElimination, IRPass};
+    use graphs::*;
+    let mut g = Graph::default();
+    let x = g.read("x");
+    g.domain_check(x);
+    let half = g.push(IR::ConstantFloat { value: 0.5 }, &[]);
+    let quotient = g.push(IR::DivF, &[x, half]);
+    let zero = g.push(IR::ConstantFloat { value: 0.0 }, &[]);
+    let sum = g.push(IR::ProductSumF { len: 1 }, &[zero, quotient]);
+    g.push(IR::ExposePublicF, &[sum]);
+    let before = g.finish();
+    let after = DeadCodeElimination.exec(ConstantFold.exec(before.clone()));
+    for (x, accepted) in [(1i64 << 32, true), (1i64 << 62, false)] {
+        assert_eq!(run(&before, &[("x", x)], None).accepted, accepted);
+        assert_eq!(run(&after, &[("x", x)], None).accepted, accepted);
+    }
+}

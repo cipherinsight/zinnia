@@ -16,10 +16,18 @@ enum FastDceKey {
     ConstantBool(bool),
     Commutative(Discriminant<IR>, StmtId, StmtId),
     SumF(u32, Vec<StmtId>),
-    ProductSumF(u32, Vec<StmtId>),
+    ProductSumF(u32, Vec<ProductKey>),
     ReadInteger(InputPath, bool),
     ReadFloat(InputPath, bool),
     ReadHash(InputPath, bool),
+}
+
+/// A square of an exact difference is independent of its orientation.
+/// Keep it distinct from an ordinary product of the difference's operands.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum ProductKey {
+    Product(StmtId, StmtId),
+    DifferenceSquare(StmtId, StmtId),
 }
 
 fn commutative_args(args: &[StmtId]) -> Option<(StmtId, StmtId)> {
@@ -31,12 +39,25 @@ fn commutative_args(args: &[StmtId]) -> Option<(StmtId, StmtId)> {
     Some(if a <= b { (a, b) } else { (b, a) })
 }
 
-fn fast_dce_key(ir: &IR, args: &[StmtId]) -> Option<FastDceKey> {
+fn fast_dce_key(
+    ir: &IR,
+    args: &[StmtId],
+    graph: &IRGraph,
+    replacements: &HashMap<StmtId, StmtId>,
+) -> Option<FastDceKey> {
     match ir {
         IR::ConstantInt { value } => Some(FastDceKey::ConstantInt(*value)),
         IR::ConstantBool { value } => Some(FastDceKey::ConstantBool(*value)),
-        IR::AddI | IR::MulI | IR::BitAndI | IR::BitOrI | IR::AddF | IR::MulF
-        | IR::EqI | IR::NeI | IR::EqF | IR::NeF => {
+        IR::AddI
+        | IR::MulI
+        | IR::BitAndI
+        | IR::BitOrI
+        | IR::AddF
+        | IR::MulF
+        | IR::EqI
+        | IR::NeI
+        | IR::EqF
+        | IR::NeF => {
             let (a, b) = commutative_args(args)?;
             Some(FastDceKey::Commutative(discriminant(ir), a, b))
         }
@@ -45,12 +66,28 @@ fn fast_dce_key(ir: &IR, args: &[StmtId]) -> Option<FastDceKey> {
             // Commuting the factors of each raw product preserves the
             // reduction schedule and its single final rescale. Do not
             // reorder pairs or merge independently rounded products.
-            let mut pairs = args.to_vec();
-            for pair in pairs.chunks_exact_mut(2) {
-                if pair[0] > pair[1] {
-                    pair.swap(0, 1);
-                }
-            }
+            let pairs = args
+                .chunks_exact(2)
+                .map(|pair| {
+                    if pair[0] == pair[1] {
+                        let factor = &graph.stmts[pair[0] as usize];
+                        if matches!(factor.ir, IR::SubF) && factor.arguments.len() == 2 {
+                            let operands: Vec<_> = factor
+                                .arguments
+                                .iter()
+                                .map(|a| replacements.get(a).copied().unwrap_or(*a))
+                                .collect();
+                            let (a, b) = commutative_args(&operands).unwrap();
+                            // Both signs change together, before the one rescale.
+                            // The raw sum, quotient window and root domain are
+                            // identical; observable SubF users keep their sign.
+                            return ProductKey::DifferenceSquare(a, b);
+                        }
+                    }
+                    let (a, b) = commutative_args(pair).unwrap();
+                    ProductKey::Product(a, b)
+                })
+                .collect();
             Some(FastDceKey::ProductSumF(*len, pairs))
         }
         IR::ReadInteger { path, is_public } => {
@@ -88,7 +125,7 @@ impl IRPass for DuplicateCodeElimination {
                 .iter()
                 .map(|a| to_be_replaced.get(a).copied().unwrap_or(*a))
                 .collect();
-            if let Some(key) = fast_dce_key(&stmt.ir, &resolved_args) {
+            if let Some(key) = fast_dce_key(&stmt.ir, &resolved_args, &ir_graph, &to_be_replaced) {
                 if let Some(existing_id) = fast_seen.get(&key).copied() {
                     to_be_replaced.insert(stmt.stmt_id, existing_id);
                 } else {
@@ -188,5 +225,90 @@ impl IRPass for DuplicateCodeElimination {
         // StaticOnlyResolver; P1 uses this for cache invalidation.
         new_graph.resolver_mut().on_ir_mutated(&[]);
         new_graph
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::ValueId;
+
+    #[test]
+    fn difference_squares_merge_transitively_without_changing_other_products() {
+        let nodes = vec![
+            (
+                IR::ReadFloat {
+                    path: InputPath::new("x", vec![]),
+                    is_public: false,
+                },
+                vec![],
+            ),
+            (
+                IR::ReadFloat {
+                    path: InputPath::new("y", vec![]),
+                    is_public: false,
+                },
+                vec![],
+            ),
+            (IR::SubF, vec![0, 1]),
+            (IR::SubF, vec![1, 0]),
+            (IR::ProductSumF { len: 1 }, vec![2, 2]),
+            (IR::ProductSumF { len: 1 }, vec![3, 3]),
+            (IR::ConstantFloat { value: 0.0 }, vec![]),
+            (IR::GteF, vec![4, 6]),
+            (IR::GteF, vec![5, 6]),
+            (IR::Assert, vec![7]),
+            (IR::Assert, vec![8]),
+            (IR::SqrtF, vec![4]),
+            (IR::SqrtF, vec![5]),
+            (IR::ExposePublicF, vec![11]),
+            (IR::ExposePublicF, vec![12]),
+            (IR::ProductSumF { len: 1 }, vec![2, 3]), // one changed sign
+            (IR::ProductSumF { len: 1 }, vec![0, 1]), // not a square
+            (IR::ExposePublicF, vec![2]),             // observable orientation
+            (IR::ExposePublicF, vec![3]),
+            (IR::ProductSumF { len: 2 }, vec![2, 2, 0, 0]),
+            (IR::ProductSumF { len: 2 }, vec![0, 0, 3, 3]), // retain pair order
+        ];
+        let graph = IRGraph::new(
+            nodes
+                .into_iter()
+                .enumerate()
+                .map(|(id, (ir, args))| {
+                    IRStatement::new(id as StmtId, ValueId::next(), ir, args, vec![], None)
+                })
+                .collect(),
+        );
+        let square_vid = graph.stmts[4].value_id;
+        let out = DuplicateCodeElimination.exec(graph);
+        assert_eq!(
+            out.stmts
+                .iter()
+                .filter(|s| matches!(s.ir, IR::ProductSumF { .. }))
+                .count(),
+            5
+        );
+        assert_eq!(
+            out.stmts
+                .iter()
+                .filter(|s| matches!(s.ir, IR::Assert))
+                .count(),
+            1
+        );
+        assert_eq!(
+            out.stmts
+                .iter()
+                .filter(|s| matches!(s.ir, IR::SqrtF))
+                .count(),
+            1
+        );
+        assert!(out.stmts.iter().any(|s| s.value_id == square_vid));
+        let exposed: Vec<_> = out
+            .stmts
+            .iter()
+            .filter(|s| matches!(s.ir, IR::ExposePublicF))
+            .collect();
+        assert_eq!(exposed[0].arguments, exposed[1].arguments);
+        assert_ne!(exposed[2].arguments, exposed[3].arguments);
     }
 }
