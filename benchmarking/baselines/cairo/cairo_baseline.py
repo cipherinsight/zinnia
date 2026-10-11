@@ -216,7 +216,7 @@ def parse_type(text: str):
     if text.startswith("tensor<"):
         rank, rest = text[7:].split(",", 1)
         inner, rest = parse_type(rest)
-        if not rest.startswith(">") or not rank.isdigit() or not 1 <= int(rank) <= 4:
+        if not rest.startswith(">") or not rank.isdigit() or int(rank) < 1:
             raise Failure("invalid tensor layout")
         return ("tensor", (int(rank), inner)), rest[1:]
     if text.startswith("option<"):
@@ -364,10 +364,16 @@ def scarb(report: dict, timing: str, *args: str) -> list[dict]:
     return messages
 
 
-def execute(report: dict, case: str, case_dir: Path, args_path: Path, schema) -> Path:
-    messages = scarb(report, "execute", "execute", "--no-build", "--executable-name", case,
-                     "--arguments-file", str(args_path), "--output", "standard", "--target", "bootloader",
-                     "--print-program-output", "--print-resource-usage")
+def execute(report: dict, target: str, case_dir: Path, args_path: Path, schema,
+            keep_trace: bool) -> Path | None:
+    """Runs the program; with keep_trace, saves the execution (trace and memory) for `scarb prove`.
+
+    Without it (execute mode) nothing is written: the output and resource counts are the same, and
+    a long program's trace does not have to fit in memory.
+    """
+    messages = scarb(report, "execute", "execute", "--no-build", "--executable-name", target,
+                     "--arguments-file", str(args_path), "--output", "standard" if keep_trace else "none",
+                     "--target", "bootloader", "--print-program-output", "--print-resource-usage")
     execution_dir = None
     for m in messages:
         if "program_output" in m:
@@ -377,7 +383,7 @@ def execute(report: dict, case: str, case_dir: Path, args_path: Path, schema) ->
             report["resources"] = m["resources"]
         if str(m.get("status", "")).startswith("saving output"):
             execution_dir = PACKAGE_DIR / m["message"]
-    if execution_dir is None:
+    if keep_trace and execution_dir is None:
         raise Failure("scarb execute did not report its output directory")
     return execution_dir
 
@@ -393,13 +399,15 @@ def run(args: argparse.Namespace, report: dict) -> None:
     case_dir = args.case_dir.resolve()
     case = case_dir.name + (f"__{args.function}" if args.function else "")
     report["case"] = case
+    # Scarb rejects uppercase letters in target names; sync_cases.py lowercases them the same way.
+    target = case.lower()
     work = (args.work_dir or PACKAGE_DIR / "work" / case).resolve()
     work.mkdir(parents=True, exist_ok=True)
     proof_path = work / f"proof-stwo-{args.input}.json"
     binary_proof_path = work / f"proof-stwo-{args.input}.bin"
 
     if args.mode == "setup":
-        scarb(report, "build", "build", "--target-names", case)
+        scarb(report, "build", "build", "--target-names", target)
         return
 
     schema = output_schema(case_dir, args.function)
@@ -419,11 +427,10 @@ def run(args: argparse.Namespace, report: dict) -> None:
     if args.mode in ("execute", "prove"):
         args_path = work / f"args-{args.input}.json"
         args_path.write_text(json.dumps([hex(v % STARK_PRIME) for v in felts]))
-        execution_dir = execute(report, case, case_dir, args_path, schema)
+        execution_dir = execute(report, target, case_dir, args_path, schema, keep_trace=args.mode == "prove")
         if args.function and report.get("input_shapes") != expected_shapes:
             raise Failure("committed input shapes differ from fixture")
         if args.mode == "execute":
-            shutil.rmtree(execution_dir, ignore_errors=True)
             return
         execution_id = execution_dir.name.removeprefix("execution")
         saved = execution_dir / "proof" / "proof.json"  # Scarb's name, whatever the format
