@@ -12,6 +12,14 @@
 //!   `2 * atan(x / (1 + sqrt(1 - x^2)))`; Horner rescales every product.
 use core::num::traits::Sqrt;
 
+pub const HALF: Q32 = Q32 { bits: 2147483648 };
+pub const LN_2: Q32 = Q32 { bits: 2977044472 };
+pub const LOG2_E: Q32 = Q32 { bits: 6196328019 };
+const EXP_TAYLOR: [i64; 14] = [1, 9, 108, 1184, 11836, 106522, 852176, 5965232,
+    35791394, 178956971, 715827883, 2147483648, 4294967296, 4294967296];
+const LN_ODD_SERIES: [i64; 11] = [204522252, 226050910, 252645135, 286331153,
+    330382100, 390451572, 477218588, 613566757, 858993459, 1431655765, 4294967296];
+
 const SCALE: i128 = 0x100000000;
 
 #[derive(Copy, Drop, Serde, PartialEq, Debug)]
@@ -86,6 +94,78 @@ pub fn from_raw_product(raw: i128) -> Q32 {
 
 #[generate_trait]
 pub impl Q32Impl of Q32Trait {
+    fn floor(self: Q32) -> Q32 {
+        Q32 { bits: (floor_div(self.bits.into(), SCALE) * SCALE).try_into().unwrap() }
+    }
+
+    fn atan(self: Q32) -> Q32 {
+        let magnitude = self.abs();
+        let angle = if magnitude <= ONE {
+            magnitude * horner(magnitude * magnitude, ATAN_OVER_X.span())
+        } else {
+            let t = ONE / magnitude;
+            FRAC_PI_2 - t * horner(t * t, ATAN_OVER_X.span())
+        };
+        if self.bits < 0 { -angle } else { angle }
+    }
+
+    fn atan2(self: Q32, x: Q32) -> Q32 {
+        let ay = self.abs();
+        let ax = x.abs();
+        if ay == ZERO && ax == ZERO { return ZERO; }
+        let first = if ay <= ax { (ay / ax).atan() } else { FRAC_PI_2 - (ax / ay).atan() };
+        let upper = if x.bits < 0 { PI - first } else { first };
+        if self.bits < 0 { -upper } else { upper }
+    }
+
+    /// Rust's degree-13 Taylor expansion after nearest-integer range reduction.
+    fn exp(self: Q32) -> Q32 {
+        let scaled = self * LOG2_E;
+        let k = if scaled.bits >= 0 {
+            (scaled.bits + HALF.bits) / ONE.bits
+        } else { -((-scaled.bits + HALF.bits) / ONE.bits) };
+        let r = self - LN_2.mul_int(k);
+        let value = horner(r, EXP_TAYLOR.span());
+        if k >= 0 {
+            // A positive exponent of 32 or more cannot fit Q32.
+            assert!(k < 32, "exp overflows Q32");
+            let factor = pow_two(k.try_into().unwrap());
+            Q32 { bits: (Into::<i64, i128>::into(value.bits) * factor).try_into().unwrap() }
+        } else if k > -64 {
+            Q32 { bits: (Into::<i64, i128>::into(value.bits) / pow_two((-k).try_into().unwrap())).try_into().unwrap() }
+        } else { ZERO }
+    }
+
+    fn ln(self: Q32) -> Q32 {
+        assert!(self.bits > 0, "log of a non-positive number");
+        let mut top = self.bits;
+        let mut k: i64 = -32;
+        while top >= 2 { top /= 2; k += 1; };
+        let m = if k >= 0 {
+            Q32 { bits: (Into::<i64, i128>::into(self.bits) / pow_two(k.try_into().unwrap())).try_into().unwrap() }
+        } else {
+            Q32 { bits: (Into::<i64, i128>::into(self.bits) * pow_two((-k).try_into().unwrap())).try_into().unwrap() }
+        };
+        let s = (m - ONE) / (m + ONE);
+        let series = s * horner(s * s, LN_ODD_SERIES.span());
+        series + series + LN_2.mul_int(k)
+    }
+
+    fn tanh(self: Q32) -> Q32 {
+        let e = self.abs().mul_int(-2).exp();
+        let value = (ONE - e) / (ONE + e);
+        if self.bits < 0 { -value } else { value }
+    }
+
+    /// Deliberately rescale every successive product, as Rust does.
+    fn powi(self: Q32, n: u32) -> Q32 {
+        let mut acc = ONE;
+        for _ in 0..n { acc = acc * self; };
+        acc
+    }
+
+    fn powf(self: Q32, y: Q32) -> Q32 { (y * self.ln()).exp() }
+
     /// The exact value of an integer (Zinnia `float_cast`).
     fn from_int(n: i64) -> Q32 {
         Q32 { bits: n * 0x100000000 }
@@ -244,4 +324,81 @@ mod tests {
         assert!(-ONE / Q32Trait::from_int(3) == Q32 { bits: -1431655766 });
         assert!(Q32Trait::from_int(-7).div_int(2) == Q32 { bits: -15032385536 });
     }
+}
+
+/// Small exact powers used for fixed-point range reduction.
+fn pow_two(n: u32) -> i128 {
+    let mut value: i128 = 1;
+    for _ in 0..n { value *= 2; };
+    value
+}
+
+/// Complex Q32 arithmetic; each product component is rescaled only once.
+#[derive(Copy, Drop, Serde, PartialEq, Debug)]
+pub struct C32 { pub re: Q32, pub im: Q32 }
+pub const C_ZERO: C32 = C32 { re: ZERO, im: ZERO };
+pub const C_ONE: C32 = C32 { re: ONE, im: ZERO };
+pub const I: C32 = C32 { re: ZERO, im: ONE };
+
+#[generate_trait]
+pub impl C32Impl of C32Trait {
+    fn new(re: Q32, im: Q32) -> C32 { C32 { re, im } }
+    fn from_real(re: Q32) -> C32 { C32 { re, im: ZERO } }
+    fn conj(self: C32) -> C32 { C32 { re: self.re, im: -self.im } }
+    fn norm_sqr(self: C32) -> Q32 {
+        from_raw_product(raw_product(self.re, self.re) + raw_product(self.im, self.im))
+    }
+    fn abs(self: C32) -> Q32 {
+        let raw: u128 = (raw_product(self.re, self.re) + raw_product(self.im, self.im)).try_into().unwrap();
+        let root: u64 = raw.sqrt();
+        Q32 { bits: root.try_into().unwrap() }
+    }
+    fn exp(self: C32) -> C32 {
+        let magnitude = self.re.exp();
+        C32 { re: magnitude * self.im.cos(), im: magnitude * self.im.sin() }
+    }
+    fn scale(self: C32, rhs: Q32) -> C32 { C32 { re: self.re * rhs, im: self.im * rhs } }
+    fn div_real(self: C32, rhs: Q32) -> C32 { C32 { re: self.re / rhs, im: self.im / rhs } }
+}
+impl C32Add of Add<C32> {
+    fn add(lhs: C32, rhs: C32) -> C32 { C32 { re: lhs.re + rhs.re, im: lhs.im + rhs.im } }
+}
+impl C32Sub of Sub<C32> {
+    fn sub(lhs: C32, rhs: C32) -> C32 { C32 { re: lhs.re - rhs.re, im: lhs.im - rhs.im } }
+}
+impl C32Neg of Neg<C32> {
+    fn neg(a: C32) -> C32 { C32 { re: -a.re, im: -a.im } }
+}
+impl C32Mul of Mul<C32> {
+    fn mul(lhs: C32, rhs: C32) -> C32 {
+        C32 {
+            re: from_raw_product(raw_product(lhs.re, rhs.re) + raw_product(-lhs.im, rhs.im)),
+            im: from_raw_product(raw_product(lhs.re, rhs.im) + raw_product(lhs.im, rhs.re)),
+        }
+    }
+}
+impl C32Div of Div<C32> {
+    fn div(lhs: C32, rhs: C32) -> C32 {
+        (lhs * rhs.conj()).div_real(rhs.norm_sqr())
+    }
+}
+
+#[cfg(test)]
+mod rust_vectors;
+
+#[cfg(test)]
+mod domain_tests {
+    use super::{Q32, Q32Trait, ZERO};
+    #[test]
+    #[should_panic]
+    fn log_zero_panics() { let _ = ZERO.ln(); }
+    #[test]
+    #[should_panic]
+    fn log_negative_panics() { let _ = Q32 { bits: -1 }.ln(); }
+    #[test]
+    #[should_panic]
+    fn exp_overflow_panics() { let _ = Q32Trait::from_int(22).exp(); }
+    #[test]
+    #[should_panic]
+    fn negative_fractional_power_panics() { let _ = Q32 { bits: -1 }.powf(ZERO); }
 }

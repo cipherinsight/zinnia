@@ -440,3 +440,58 @@ mod tests {
         assert!(twos_complement(-2) & 1 == 0);
     }
 }
+
+/// Fused row-major contractions, matching zkvm_common/kernels/src/np.rs.
+pub fn matmul(a: Span<Q32>, b: Span<Q32>, rows: u32, inner: u32, cols: u32) -> Array<Q32> {
+    assert!(a.len() == rows * inner && b.len() == inner * cols, "matmul shape mismatch");
+    let mut out = array![];
+    for i in 0..rows {
+        for j in 0..cols {
+            let mut raw: i128 = 0;
+            for k in 0..inner { raw += crate::q32::raw_product(*a.at(i * inner + k), *b.at(k * cols + j)); };
+            out.append(crate::q32::from_raw_product(raw));
+        };
+    };
+    out
+}
+pub fn matvec(a: Span<Q32>, b: Span<Q32>, rows: u32, cols: u32) -> Array<Q32> {
+    matmul(a, b, rows, cols, 1)
+}
+pub fn vecmat(a: Span<Q32>, b: Span<Q32>, rows: u32, cols: u32) -> Array<Q32> {
+    matmul(a, b, 1, rows, cols)
+}
+pub fn inner(a: Span<Q32>, b: Span<Q32>) -> Q32 {
+    assert!(a.len() == b.len(), "inner shape mismatch");
+    let mut raw: i128 = 0;
+    for i in 0..a.len() { raw += crate::q32::raw_product(*a.at(i), *b.at(i)); };
+    crate::q32::from_raw_product(raw)
+}
+
+#[cfg(test)]
+mod contraction_tests {
+    use super::{matmul, matvec, vecmat, inner};
+    use crate::q32::{Q32, Q32Trait, ZERO, ONE, HALF};
+
+    #[test]
+    fn contractions_rescale_once() {
+        let a = array![HALF, HALF].span();
+        let b = array![Q32 { bits: 1 }, Q32 { bits: 1 }].span();
+        assert!(inner(a, b).bits == 1);
+        assert!(inner(array![-HALF, -HALF].span(), b).bits == -1);
+        assert!(matvec(a, b, 1, 2) == array![Q32 { bits: 1 }]);
+        assert!(vecmat(a, b, 2, 1) == array![Q32 { bits: 1 }]);
+    }
+    #[test]
+    fn rectangular_and_empty_products() {
+        let a = array![ONE, Q32Trait::from_int(2), Q32Trait::from_int(3)].span();
+        let b = array![ONE, ZERO, ZERO, ONE, ONE, ONE].span();
+        assert!(matmul(a, b, 1, 3, 2) == array![Q32Trait::from_int(4), Q32Trait::from_int(5)]);
+        assert!(matmul(array![].span(), array![].span(), 2, 0, 3) == array![ZERO, ZERO, ZERO, ZERO, ZERO, ZERO]);
+        assert!(inner(array![].span(), array![].span()) == ZERO);
+    }
+    #[test]
+    #[should_panic]
+    fn rejects_mismatched_shapes() {
+        let _ = matmul(array![ONE].span(), array![ONE].span(), 2, 1, 1);
+    }
+}

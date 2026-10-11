@@ -131,3 +131,7 @@ pub mod ds1000_case0508;
 pub mod ds1000_case0509;
 pub mod ds1000_case0510;
 pub mod empty_program;
+pub mod npbench_crc16_crc16__crc16;
+pub mod npbench_polybench_gemm_gemm__kernel;
+pub mod pythran_bubble_sort__bubble_sort;
+pub mod pythran_log_likelihood__log_likelihood;
