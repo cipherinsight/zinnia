@@ -1,0 +1,1 @@
+../../../../datasets/pythran/pythran_sumarray3d/cairo/summation.cairo
