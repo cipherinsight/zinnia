@@ -151,8 +151,13 @@ def sync_cairo() -> None:
             link.symlink_to(target)
     mods = [f"// {HEADER}"] + [f"pub mod {name};" for name in cases]
     write_if_changed(cairo / "src" / "cases.cairo", "\n".join(mods) + "\n")
+    # Scarb rejects uppercase letters in target names (`pythran_lu__factorMatrix0`), so a target
+    # is named by the lowercased case name; cairo_baseline.py lowercases it the same way.
+    lowered = [name.lower() for name in cases]
+    if len(set(lowered)) != len(lowered):
+        raise SystemExit("two Cairo cases differ only in case")
     targets = "".join(
-        f'\n[[target.executable]]\nname = "{name}"\nfunction = "ds1000_cairo::cases::{name}::main"\n'
+        f'\n[[target.executable]]\nname = "{name.lower()}"\nfunction = "ds1000_cairo::cases::{name}::main"\n'
         for name in cases
     )
     template = (cairo / "Scarb.toml.in").read_text()
