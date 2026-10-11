@@ -49,13 +49,13 @@ def test_decode_exact_words_shapes_tensor_complex_and_option():
     words = [2, 1, 1, 1, 1, 2**31, -2**32, 1, -7]
     report = {}
     cairo.decode_output(report, ("shaped", schema), [len(words)] + [w % cairo.STARK_PRIME for w in words])
-    assert report == {"public_words": words, "input_shapes": [1, 1], "output_shape": [1, 1],
+    assert report == {"public_words": words, "input_shapes": [1, 1], "output_shapes": [[1, 1], []],
                       "publics": [.5, -1., -7]}
     schema, _ = cairo.parse_type("(tensor<2,q32>,option<i64>,())")
     report = {}
     cairo.decode_output(report, ("shaped", schema), [4, 0, 0, 3, 0])
     assert report["publics"] == []
-    assert report["output_shape"] == [0, 3]
+    assert report["output_shapes"] == [[0, 3], [], []]
 
 
 @pytest.mark.parametrize("raw", [[2, 0], [1, -1], [3, 5, 1, 1]])
@@ -177,3 +177,23 @@ def test_verify_rejects_wrong_fixture_shapes_before_invoking_verifier(tmp_path, 
                               work_dir=work, tamper=False)
     with pytest.raises(cairo.Failure, match="committed input shapes"):
         cairo.run(args, {"timings_s": {}})
+
+
+def test_a_result_tuple_with_arrays_reports_one_shape_per_output():
+    schema, _ = cairo.parse_type("(tensor<1,q32>,i64)")
+    words = [0, 2, 2**32, 2**31, 7]
+    report = {}
+    cairo.decode_output(report, ("shaped", schema), [len(words)] + [w % cairo.STARK_PRIME for w in words])
+    assert report["output_shapes"] == [[2], []] and report["publics"] == [1., .5, 7]
+    schema, _ = cairo.parse_type("(c32,q32)")
+    report = {}
+    cairo.decode_output(report, ("shaped", schema), [4, 0, 0, 0, 0])
+    assert "output_shapes" not in report and "output_shape" not in report
+
+
+def test_a_stacked_array_matches_a_list_of_rows_only_when_it_stacks_them():
+    from benchmarking.harness.outputs import _same_shapes
+    assert _same_shapes([[3, 2]], [[2], [2], [2]])
+    assert not _same_shapes([[2, 3]], [[2], [2], [2]])
+    assert not _same_shapes([[3, 2]], [[2], [2], [3]])
+    assert not _same_shapes([[6]], [[2], [2], [2]])

@@ -259,13 +259,14 @@ class ContractProgramAdapter(Adapter):
         if not proof.is_file() or not proof.resolve().is_relative_to(work.resolve()):
             raise StepFailure("prove_failed", f"proof {proof} is not a file in {work}")
         shape = response.get("output_shape")
+        shapes = response.get("output_shapes") or ([shape] if shape is not None else None)
         details = {k: v for k, v in response.items()
                    if k not in ("timings_s", "publics", "ok", "proof_path")}
         return ProveResult(
             prove_core_s=prove_core, end_to_end_s=_sum(timings, self.program.end_to_end),
             proof_path=str(proof), proof_bytes=proof.stat().st_size,
             publics=DecodedPublics(LOGICAL, list(response.get("publics", [])),
-                                   shapes=[shape] if shape is not None else None),
+                                   shapes=shapes),
             timings_s=timings, details=details)
 
     def verify(self, ctx: StepContext) -> VerifyResult:

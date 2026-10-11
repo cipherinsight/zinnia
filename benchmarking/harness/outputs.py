@@ -364,17 +364,25 @@ def _unchecked(reason: str, expected: list[Leaf], publics: DecodedPublics) -> Ou
     return OutputCheck("unchecked", reason, len(expected), len(publics.values))
 
 
+def _same_shapes(actual: list[list[int]], expected: list[list[int]]) -> bool:
+    if actual == expected:
+        return True
+    return (len(actual) == 1 and len(expected) > 1 and all(s == expected[0] for s in expected)
+            and actual[0] == [len(expected), *expected[0]])
+
+
 def check_outputs(expected: list[Leaf], publics: DecodedPublics, tolerance: Tolerance,
                   expected_shapes: list[list[int]] | None = None) -> OutputCheck:
     """Compare a proof's public outputs with the reference (see module docstring).
 
     When the system reports the shape of each output part, it must equal the
     reference's (`expected_shapes`): a runtime reshape can keep the flattened
-    values and still be wrong.
+    values and still be wrong. A reference returned as a list of equally shaped
+    arrays may be reported as one array that stacks them (`np.array(rows)`).
     """
     if publics.layout == LOGICAL:
         if publics.shapes is not None and expected_shapes is not None \
-                and [list(s) for s in publics.shapes] != expected_shapes:
+                and not _same_shapes([list(s) for s in publics.shapes], expected_shapes):
             return OutputCheck("mismatch", f"output shapes {publics.shapes}, reference "
                                f"{expected_shapes}", len(expected), len(publics.values))
         return compare_positional(expected, publics.values, tolerance, "logical outputs")

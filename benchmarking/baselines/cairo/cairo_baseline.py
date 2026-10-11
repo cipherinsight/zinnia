@@ -267,7 +267,8 @@ def signed(felt: int) -> int:
 
 
 def decode_output(report: dict, schema, felts: list[int]) -> None:
-    """Sets `publics` (and `output_shape` for `dim` entries) from the output felts."""
+    """Sets `publics` (and `output_shape` for `dim` and tensor entries, or `output_shapes` for a
+    shape-generic result tuple) from the output felts."""
     if isinstance(schema, tuple) and schema[0] == "shaped":
         # Cairo Serde's outer Array envelope; its contents are Rust's exact words.
         if not felts or felts[0] != len(felts) - 1:
@@ -279,6 +280,20 @@ def decode_output(report: dict, schema, felts: list[int]) -> None:
         report["input_shapes"] = words[1:1 + words[0]]
         felts = felts[2 + words[0]:]
         schema = schema[1]
+        if isinstance(schema, tuple) and schema[0] == "tuple" and any(map(has_tensor, schema[1])):
+            # A shape-generic result tuple with an array entry holds one entry per NumPy output
+            # (returned values, then written arguments): report each entry's shape. Tuples of
+            # scalars (and `c32`, parsed as a pair) report no shape, as before.
+            publics, shapes, pos = [], [], 0
+            for item in schema[1]:
+                shape: list = []
+                pos = decode_into(item, felts, pos, publics, shape)
+                shapes.append(shape)
+            if pos != len(felts):
+                raise Failure(f"program output has {len(felts) - pos} felts beyond the declared layout")
+            report["publics"] = publics
+            report["output_shapes"] = shapes
+            return
     publics: list = []
     shape: list = []
     pos = decode_into(schema, felts, 0, publics, shape)
@@ -287,6 +302,17 @@ def decode_output(report: dict, schema, felts: list[int]) -> None:
     report["publics"] = publics
     if shape:
         report["output_shape"] = shape
+
+
+def has_tensor(schema) -> bool:
+    if not isinstance(schema, tuple):
+        return False
+    kind, inner = schema
+    if kind == "tensor":
+        return True
+    if kind == "tuple":
+        return any(map(has_tensor, inner))
+    return has_tensor(inner)
 
 
 def decode_into(schema, felts: list[int], pos: int, out: list, shape: list) -> int:
