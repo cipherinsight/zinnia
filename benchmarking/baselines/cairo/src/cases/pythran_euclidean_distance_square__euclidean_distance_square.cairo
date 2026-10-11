@@ -1,0 +1,1 @@
+../../../../datasets/pythran/pythran_euclidean_distance_square/cairo/euclidean_distance_square.cairo
