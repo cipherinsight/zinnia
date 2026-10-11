@@ -1,0 +1,1 @@
+../../../../datasets/pythran/pythran_allpairs/cairo/sqr_dists.cairo
