@@ -92,10 +92,14 @@ def gate_count(main_nr: str, library: str, library_dir: Path) -> dict:
         pkg = Path(tmp)
         (pkg / "src").mkdir()
         (pkg / "src" / "main.nr").write_text(main_nr)
-        shutil.copytree(library_dir, pkg / library, ignore=shutil.ignore_patterns("target"))
+        # Preserve the repository layout: noir_hw imports ../../noir_fpc.
+        staged_library = Path("baselines") / library if library == "noir_hw" else Path(library)
+        shutil.copytree(library_dir, pkg / staged_library, ignore=shutil.ignore_patterns("target"))
+        if library == "noir_hw":
+            shutil.copytree(NOIR_FPC, pkg / "noir_fpc", ignore=shutil.ignore_patterns("target"))
         (pkg / "Nargo.toml").write_text(
             '[package]\nname = "circuit"\ntype = "bin"\nauthors = [""]\n\n'
-            f'[dependencies]\n{library} = {{ path = "./{library}" }}\n')
+            f'[dependencies]\n{library} = {{ path = "./{staged_library.as_posix()}" }}\n')
         proc = subprocess.run([NARGO, "compile", "--silence-warnings"], cwd=pkg,
                               capture_output=True, text=True)
         if proc.returncode != 0:
