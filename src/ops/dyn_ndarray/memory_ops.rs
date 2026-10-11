@@ -45,7 +45,7 @@ pub(crate) struct Compaction {
 /// padding). The row region is triangular (landing row <= i), so entries
 /// beyond i+1 stay constant 0 and emit nothing.
 ///
-/// With a zero default (every real dtype), slot `j` is accumulated as the
+/// With a zero default (each real or complex lane), slot `j` is accumulated as the
 /// sum `sum_i row_i[j] * deposit_i` instead of a chain of selects: the rows
 /// whose landing row is `j` are the run of non-kept rows after the j-th kept
 /// row, which deposit 0, and the (j+1)-th kept row itself, so the sum is
@@ -77,7 +77,11 @@ pub(crate) fn compact_by_mask(
     let mut kept_rows = b.ir_constant_int(0);
 
     let is_const_zero = |v: &Value| v.int_val() == Some(0);
-    let zero_default = is_zero_scalar(default_val);
+    let zero_default = match default_val {
+        Value::Complex { real, imag } => real.static_val == Some(0.0) && imag.static_val == Some(0.0),
+        _ => is_zero_scalar(default_val),
+    };
+    let complex_zero_default = zero_default && matches!(default_val, Value::Complex { .. });
     // With a zero default, the `(one-hot entry, deposit)` terms of each slot,
     // summed after the network so that each slot's sum is one contiguous
     // multiply-add chain (backends chain consecutive multiply-adds).
@@ -110,9 +114,13 @@ pub(crate) fn compact_by_mask(
             }
         }
 
-        // Shift the one-hot row right when this input row was kept.
+        // Shift the one-hot row right when this input row was kept. The lane
+        // pair construction emits forward for backend expression sharing;
+        // scalar payloads retain their cheaper reverse emission order.
         let mut new_row = row.clone();
-        for j in (0..(i + 2).min(leading_total)).rev() {
+        let active_rows = (i + 2).min(leading_total);
+        for offset in 0..active_rows {
+            let j = if complex_zero_default { offset } else { active_rows - 1 - offset };
             let prev = if j == 0 { &zero } else { &row[j - 1] };
             if is_const_zero(prev) && is_const_zero(&row[j]) {
                 continue;
@@ -125,8 +133,25 @@ pub(crate) fn compact_by_mask(
         kept_rows = b.ir_add_i(&kept_rows, &inc);
     }
     for (slot, slot_terms) in terms.into_iter().enumerate() {
-        for (hit, dep) in slot_terms {
-            acc[slot] = add_weighted(b, &acc[slot], &hit, &dep);
+        if complex_zero_default {
+            let (mut real, mut imag) = crate::helpers::value_ops::unpack_value_to_complex_parts(b, default_val);
+            let lanes: Vec<_> = slot_terms.into_iter().map(|(hit, dep)| {
+                let (re, im) = crate::helpers::value_ops::unpack_value_to_complex_parts(b, &dep);
+                (hit, re, im)
+            }).collect();
+            // Keep each lane's sum contiguous for backend multiply-add fusion;
+            // both lanes use the same row network and exact raw-code products.
+            for (hit, re, _) in &lanes {
+                real = add_weighted(b, &real, hit, re);
+            }
+            for (hit, _, im) in &lanes {
+                imag = add_weighted(b, &imag, hit, im);
+            }
+            acc[slot] = crate::helpers::value_ops::pack_complex_value(real, imag);
+        } else {
+            for (hit, dep) in slot_terms {
+                acc[slot] = add_weighted(b, &acc[slot], &hit, &dep);
+            }
         }
     }
 
@@ -1315,4 +1340,63 @@ fn static_split_chunks(
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod compaction_tests {
+    use super::*;
+    use crate::circuit_input::{CircuitInputs, InputNode, InputParam, InputPath, ResolvedWitness};
+    use crate::helpers::value_ops::{pack_complex_value, unpack_value_to_complex_parts};
+    use crate::ir_defs::IR;
+    use crate::prove::{interpreter::interpret_ir, mock::synthesizer::MockSynthesizer, types::ProvingParams};
+
+    #[test]
+    fn complex_compaction_preserves_trailing_lanes_and_nonzero_defaults() {
+        for (default_re, default_im) in [(0.0, 0.0), (1.25, 0.0), (0.0, -0.75)] {
+            for pattern in 0..8 {
+                let mut b = IRBuilder::new();
+                let mut inputs = CircuitInputs::new();
+                let masks: Vec<_> = (0..3).map(|i| {
+                    let name = format!("mask{i}");
+                    inputs.params.push(InputParam {
+                        name: name.clone(), is_public: false,
+                        dtype: serde_json::json!("Integer"),
+                        value: InputNode::Int((pattern >> i) & 1),
+                    });
+                    b.ir_read_integer(InputPath::new(name, vec![]), false)
+                }).collect();
+                let cells: Vec<_> = (0..6).map(|i| {
+                    let re = b.ir_constant_float(i as f64 - 2.5);
+                    let im = b.ir_constant_float(i as f64 / 8.0 - 0.5);
+                    pack_complex_value(re, im)
+                }).collect();
+                let re = b.ir_constant_float(default_re);
+                let im = b.ir_constant_float(default_im);
+                let default_value = pack_complex_value(re, im);
+                let out = compact_by_mask(&mut b, &cells, &masks, &default_value, 2);
+                if default_re == 0.0 && default_im == 0.0 {
+                    assert!(b.stmts.iter().any(|s| matches!(s.ir, IR::MulI)));
+                    assert!(!b.stmts.iter().any(|s| matches!(s.ir, IR::MulF)));
+                }
+                let kept: Vec<_> = (0..3).filter(|i| pattern & (1 << i) != 0).collect();
+                let count = b.ir_constant_int(kept.len() as i64);
+                let equal = b.ir_equal_i(&out.kept_rows, &count);
+                b.ir_assert(&equal);
+                for (slot, actual) in out.acc.iter().enumerate() {
+                    let expected = kept.get(slot / 2).map(|i| &cells[i * 2 + slot % 2]).unwrap_or(&default_value);
+                    let (re, im) = unpack_value_to_complex_parts(&mut b, actual);
+                    let (er, ei) = unpack_value_to_complex_parts(&mut b, expected);
+                    let real_equal = b.ir_equal_f(&re, &er);
+                    let imag_equal = b.ir_equal_f(&im, &ei);
+                    b.ir_assert(&real_equal);
+                    b.ir_assert(&imag_equal);
+                }
+                let params = ProvingParams::default();
+                let witness = ResolvedWitness::new(inputs, params.precision_bits);
+                let mut synth = MockSynthesizer::new(witness, params);
+                interpret_ir(&b.export_ir_graph(), &mut synth).unwrap();
+                assert!(synth.satisfied, "default=({default_re},{default_im}), pattern={pattern}");
+            }
+        }
+    }
 }
