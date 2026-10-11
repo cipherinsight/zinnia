@@ -1,0 +1,1 @@
+../../../../datasets/pythran/pythran_l2norm/cairo/l2_norm.cairo
