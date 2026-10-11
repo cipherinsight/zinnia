@@ -11,7 +11,7 @@ A parameter a case never reads is declared by a line
 `// unused parameters: a, b` in its program (for a shape-generic program,
 inside the entry function's module).
 
-The Cairo baseline covers the fixed-shape programs that have a `main.cairo`.
+Cairo uses `main.cairo` for fixed cases and `cairo/<function>.cairo` for shaped entries.
 
 This script writes
 * `zkvm_common/kernels/src/cases.rs`: the program and case lists of the
@@ -127,23 +127,37 @@ def sync_rust() -> None:
 
 
 def sync_cairo() -> None:
-    cases = program_dirs(FIXED_ROOTS, "main.cairo")
+    cases = {name: d / "main.cairo" for name, d in program_dirs(FIXED_ROOTS, "main.cairo").items()}
+    modules, rust = rust_cases()
+    for case in rust:
+        if case.shaped:
+            program, function = case.name.split("/")
+            source = modules[program] / "cairo" / f"{function}.cairo"
+            if source.is_file():
+                if unused_params(source.read_text()) != case.unused:
+                    raise SystemExit(f"{source}: unused parameters differ from zkvm.rs::{function}")
+                cases[case.binary] = source
     cairo = BASELINES / "cairo"
     links = cairo / "src" / "cases"
     links.mkdir(parents=True, exist_ok=True)
     for stale in links.glob("*.cairo"):
         if stale.stem not in cases:
             stale.unlink()
-    for name, d in cases.items():
+    for name, source in cases.items():
         link = links / f"{name}.cairo"
-        target = os.path.relpath(d / "main.cairo", links)
+        target = os.path.relpath(source, links)
         if not link.is_symlink() or os.readlink(link) != target:
             link.unlink(missing_ok=True)
             link.symlink_to(target)
     mods = [f"// {HEADER}"] + [f"pub mod {name};" for name in cases]
     write_if_changed(cairo / "src" / "cases.cairo", "\n".join(mods) + "\n")
+    # Scarb rejects uppercase letters in target names (`pythran_lu__factorMatrix0`), so a target
+    # is named by the lowercased case name; cairo_baseline.py lowercases it the same way.
+    lowered = [name.lower() for name in cases]
+    if len(set(lowered)) != len(lowered):
+        raise SystemExit("two Cairo cases differ only in case")
     targets = "".join(
-        f'\n[[target.executable]]\nname = "{name}"\nfunction = "ds1000_cairo::cases::{name}::main"\n'
+        f'\n[[target.executable]]\nname = "{name.lower()}"\nfunction = "ds1000_cairo::cases::{name}::main"\n'
         for name in cases
     )
     template = (cairo / "Scarb.toml.in").read_text()

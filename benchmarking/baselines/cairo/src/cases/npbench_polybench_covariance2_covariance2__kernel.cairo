@@ -1,0 +1,1 @@
+../../../../datasets/npbench/npbench_polybench_covariance2_covariance2/cairo/kernel.cairo

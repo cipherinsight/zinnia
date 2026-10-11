@@ -1,0 +1,1 @@
+../../../../datasets/pythran/pythran_pythagorean_triples/cairo/next_pythagorean_triples.cairo

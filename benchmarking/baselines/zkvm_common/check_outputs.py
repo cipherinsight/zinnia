@@ -9,7 +9,7 @@ Cases:
   fixed-shape   datasets/ds1000/<case> (zkvm.rs and main.cairo) and
                 zkvm_common/calibration/<name>
   shape-generic datasets/{npbench,pythran}/<program>, one case per entry
-                function (`pub mod <function>` in zkvm.rs); Rust systems only
+                function (`pub mod <function>` in zkvm.rs)
 
 Systems:
   native   the Q32 Rust program compiled for the host (no zkVM)
@@ -82,7 +82,8 @@ class Case:
 
     def has_program(self, system: str) -> bool:
         if self.function is not None:
-            return system in RUST_SYSTEMS
+            return ((self.folder / "cairo" / f"{self.function}.cairo").is_file()
+                    if system == "cairo" else system in RUST_SYSTEMS)
         return (self.folder / ("main.cairo" if system == "cairo" else "zkvm.rs")).exists()
 
 
@@ -255,6 +256,12 @@ EXECUTION_FIELDS = ("cycles", "user_cycles", "total_cycles", "segments", "resour
 
 
 def run_system(system: str, case: Case, fixture_path: Path, input_name: str, timeout: int) -> dict:
+    if system == "cairo" and case.function:
+        text = (case.folder / "cairo" / f"{case.function}.cairo").read_text()
+        match = MUTATED.search(text)
+        mutated = [n.strip() for n in match.group(1).split(",")] if match else []
+        if mutated != case.mutated:
+            raise ValueError("Cairo mutated outputs differ from the Rust entry function")
     cmd = HOSTS[system] + ["--case-dir", str(case.folder), "--fixture", str(fixture_path),
                            "--input", input_name, "--mode", "execute"]
     if case.function:
@@ -293,6 +300,8 @@ def main() -> int:
         parser.error(f"unknown systems: {sorted(unknown)}")
     all_cases = discover_cases()
     if args.cases:
+        aliases = {name.replace("/", "__"): name for name in all_cases}
+        args.cases = ",".join(aliases.get(name, name) for name in args.cases.split(","))
         missing = [c for c in args.cases.split(",") if c not in all_cases]
         if missing:
             parser.error(f"unknown cases: {missing}")
