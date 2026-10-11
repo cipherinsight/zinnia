@@ -1,0 +1,1 @@
+../../../../datasets/npbench/npbench_polybench_symm_symm/cairo/kernel.cairo

@@ -1,0 +1,1 @@
+../../../../datasets/npbench/npbench_go_fast_go_fast/cairo/go_fast.cairo
