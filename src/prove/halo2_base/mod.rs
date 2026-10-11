@@ -12,6 +12,9 @@ pub mod keys;
 pub mod python;
 pub mod synthesizer;
 
+#[cfg(test)]
+mod parameter_tests;
+
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -86,17 +89,13 @@ impl ProverBackend for Halo2BaseProverBackend {
         //    lookup_bits-wide limbs), so the dry run is cached per
         //    lookup_bits value.
         //
-        // 2. Any k whose usable rows hold the instance column and the range
-        //    table is viable — `calculate_params` packs cells into as many
-        //    columns as needed. But prove time is U-shaped in k: every extra
-        //    column is an extra committed polynomial (plus its share of
-        //    permutation and lookup arguments), so tiny k explodes the
-        //    polynomial count while large k pays 2^k per polynomial. We pick
-        //    the k minimizing (committed polynomials) x 2^k, where the
-        //    polynomial count is read from halo2's own ConstraintSystem
-        //    configured exactly as the real circuit would be.
-        use halo2_base::gates::circuit::BaseCircuitParams;
-        use halo2_base::halo2_proofs::plonk::ConstraintSystem;
+        // 2. Minimize advice + lookup cells, including second-phase,
+        //    table and RAM advice, exactly as in cell_stats. Among equal
+        //    sizes, minimize the existing committed-polynomials x 2^k
+        //    work proxy, then k and lookup width for deterministic ties.
+        //    Search every width up to the existing maximum: limb costs
+        //    need not decrease monotonically with width. All candidates
+        //    must still pass committed_polys' row-fit checks.
         use std::collections::HashMap;
 
         let defaults = ProvingParams::default();
@@ -110,18 +109,20 @@ impl ProverBackend for Halo2BaseProverBackend {
             Ok(entry)
         };
 
-        let mut best: Option<(u128, u32, u32)> = None; // (cost, k, lookup_bits)
+        let mut best: Option<(usize, u128, u32, u32)> = None;
         for k in ESTIMATE_K_MIN..=ESTIMATE_K_MAX {
-            let lookup_bits = defaults.lookup_bits.min(k.saturating_sub(1)).max(1);
-            let Some(committed_polys) = committed_polys(&dry_run(lookup_bits)?, k, lookup_bits) else { continue };
-            let cost = (committed_polys as u128) << k;
-            if best.map_or(true, |(c, _, _)| cost < c) {
-                best = Some((cost, k, lookup_bits));
+            for lookup_bits in 1..=defaults.lookup_bits.min(k.saturating_sub(1)) {
+                let stats = dry_run(lookup_bits)?;
+                let Some(polys) = committed_polys(&stats, k, lookup_bits) else { continue };
+                let candidate = (stats.advice + stats.lookup, (polys as u128) << k, k, lookup_bits);
+                if best.map_or(true, |previous| candidate < previous) {
+                    best = Some(candidate);
+                }
             }
         }
 
         match best {
-            Some((_, k, lookup_bits)) => Ok(ProvingParams {
+            Some((_, _, k, lookup_bits)) => Ok(ProvingParams {
                 k,
                 lookup_bits,
                 ..defaults
@@ -350,7 +351,7 @@ impl ProverBackend for Halo2BaseProverBackend {
 }
 
 /// The polynomials the prover commits to for a circuit with `stats` at `k`
-/// and `lookup_bits` (`estimate_params` minimises their number times 2^k),
+/// and `lookup_bits` (the secondary objective in `estimate_params`),
 /// or `None` when the circuit does not fit `k`.
 pub fn committed_polys(stats: &CellStats, k: u32, lookup_bits: u32) -> Option<usize> {
     use halo2_base::gates::circuit::BaseCircuitParams;
@@ -433,7 +434,7 @@ pub fn configured_polys(ir: &IRGraph, params: &ProvingParams) -> Result<serde_js
 /// Cell counts of one synthesized circuit (witness-independent).
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct CellStats {
-    /// Advice cells of both phases (the second phase's included).
+    /// All advice cells, including second-phase, table and RAM advice.
     pub advice: usize,
     /// Of those, the second phase's: its checks' cells and the challenge
     /// cells (`circuit.rs`).
@@ -465,7 +466,16 @@ pub fn cell_stats(ir: &IRGraph, lookup_bits: u32, precision_bits: u32) -> Result
     builder.set_lookup_bits(lookup_bits as usize);
     builder.set_instance_columns(1);
     let params = ProvingParams { k: ESTIMATE_K_MAX, lookup_bits, precision_bits };
-    let (instances, second, tables, ram) = {
+    let (instances, second, tables, ram) = if let Some(public_values) =
+        try_build_public_layout_only(&mut builder, ir, None)?
+    {
+        (
+            public_values.len(),
+            circuit::SecondPhase::default(),
+            circuit::Tables::default(),
+            circuit::Ram::default(),
+        )
+    } else {
         let mut synth = Halo2BaseSynthesizer::new(&mut builder, None, params);
         synth.plan_ahead(ir);
         interpret_ir(ir, &mut synth)?;
@@ -665,15 +675,38 @@ fn try_build_public_layout_only(
     ir: &IRGraph,
     witness: Option<&ResolvedWitness>,
 ) -> Result<Option<Vec<Fp>>, ProvingError> {
+    // Check the complete layout before assigning anything. A failed attempt
+    // falls back to full synthesis on this same builder, so even private
+    // advice assignments (not just instances) must not escape it.
+    let mut available_reads = vec![false; ir.stmts.len()];
+    let mut has_public = false;
+    for stmt in &ir.stmts {
+        match &stmt.ir {
+            IR::ReadInteger { is_public, .. } | IR::ReadFloat { is_public, .. } => {
+                let Some(read) = available_reads.get_mut(stmt.stmt_id as usize) else {
+                    return Ok(None);
+                };
+                *read = true;
+                has_public |= *is_public;
+            }
+            IR::ExposePublicI | IR::ExposePublicF => {
+                if stmt.arguments.len() != 1
+                    || !available_reads.get(stmt.arguments[0] as usize).copied().unwrap_or(false)
+                {
+                    return Ok(None);
+                }
+                has_public = true;
+            }
+            IR::StructuralPredicate { .. } | IR::ScalarPrecondition { .. } | IR::ArrayFact(_) => {}
+            _ => return Ok(None),
+        }
+    }
+    if !has_public {
+        return Ok(None);
+    }
+
     let mut reads: Vec<Option<(AssignedValue<Fp>, Fp)>> = vec![None; ir.stmts.len()];
     let mut public_values = Vec::new();
-    // Buffer the instance cells locally rather than pushing them into the
-    // shared `builder.assigned_instances` as we go. If this fast path bails
-    // out partway (returns `None`), `build_circuit` re-runs the full
-    // synthesizer on the SAME builder; any instance cells leaked here would
-    // survive and be appended to the full-synthesis instances, leaving
-    // `assigned_instances` longer than the public-input vector and breaking
-    // the instance copy constraints (C17). We only commit on success.
     let mut pending_instances: Vec<AssignedValue<Fp>> = Vec::new();
 
     for stmt in &ir.stmts {
@@ -684,9 +717,6 @@ fn try_build_public_layout_only(
                     .unwrap_or_else(Fp::zero);
                 let assigned = builder.main(0).load_witness(value);
                 let idx = stmt.stmt_id as usize;
-                if idx >= reads.len() {
-                    return Ok(None);
-                }
                 reads[idx] = Some((assigned, value));
                 if *is_public {
                     pending_instances.push(assigned);
@@ -694,26 +724,18 @@ fn try_build_public_layout_only(
                 }
             }
             IR::ExposePublicI | IR::ExposePublicF => {
-                if stmt.arguments.len() != 1 {
-                    return Ok(None);
-                }
-                let arg = stmt.arguments[0] as usize;
-                let Some((assigned, value)) = reads.get(arg).and_then(|v| *v) else {
-                    return Ok(None);
-                };
+                let (assigned, value) = reads[stmt.arguments[0] as usize]
+                    .expect("public-layout preflight checked the read");
                 pending_instances.push(assigned);
                 public_values.push(value);
             }
             | IR::StructuralPredicate { .. }
             | IR::ScalarPrecondition { .. }
             | IR::ArrayFact(_) => {}
-            _ => return Ok(None),
+            _ => unreachable!("public-layout preflight checked every statement"),
         }
     }
 
-    if public_values.is_empty() {
-        return Ok(None);
-    }
     // Success: commit the buffered instance cells exactly once.
     builder.assigned_instances[0].extend(pending_instances);
     Ok(Some(public_values))
