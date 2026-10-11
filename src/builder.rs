@@ -1251,6 +1251,11 @@ impl IRBuilder {
     /// and return the result `Value`.  Mirrors Python
     /// `IRBuilderImpl.create_ir(operator, args, dbg)`.
     pub fn create_ir(&mut self, ir: &IR, args: &[Value]) -> Value {
+        // Return the original handle for exact scalar identities: keeping both
+        // IDs retains facts/certificates and lets output metadata share a slot.
+        if let Some(value) = self.scalar_identity(ir, args) {
+            return value;
+        }
         // Materialize any pure constants so they have IR pointers
         let materialized: Vec<Value> = args.iter().map(|v| self.ensure_ptr(v)).collect();
         let ir_id = self.stmts.len() as StmtId;
@@ -1301,6 +1306,67 @@ impl IRBuilder {
         self.deposit_provenance(ir, &materialized, &val);
         self.track_statement(ir, ir_id, &materialized);
         val
+    }
+
+    fn scalar_identity(&mut self, ir: &IR, args: &[Value]) -> Option<Value> {
+        let is_zero = |v: &Value| v.int_val() == Some(0) || v.float_val() == Some(0.0);
+        match (ir, args) {
+            (IR::FloorDivI, [x, one]) if one.int_val() == Some(1) => {
+                // The quotient gadget also enforces a signed-64 window. Keep
+                // that obligation on the aliased numerator; existing input
+                // checks/intervals let the normal check optimizer share it.
+                let lo = self.ir_constant_int(i64::MIN);
+                let hi = self.ir_constant_int(i64::MAX);
+                for (op, bound) in [(IR::GteI, lo), (IR::LteI, hi)] {
+                    let check = self.create_ir(&op, &[x.clone(), bound]);
+                    self.create_ir(&IR::Assert, &[check]);
+                }
+                Some(x.clone())
+            }
+            (IR::FloorDivIPinned { divisor_bits }, [x, one]) if one.int_val() == Some(1) => {
+                // A pinned quotient has an unsigned producer-certified range.
+                // Only erase its checks when that range is independently known.
+                let (lo, hi) = self.cheap_bounds(x, Where::Everywhere);
+                match (lo, hi) {
+                    (Some(lo), Some(hi)) if lo >= 0
+                        && (*divisor_bits >= 63 || (hi as u64) < (1u64 << divisor_bits)) => Some(x.clone()),
+                    _ => None,
+                }
+            }
+            (IR::SelectI | IR::SelectF | IR::SelectBitI, [cond, x, zero])
+                if is_zero(zero) && self.is_nonzero_test(cond, x) => Some(x.clone()),
+            // MulI is a raw-code product, including a Q32 lane times a bit.
+            // MulF rescales its operands and is deliberately not covered.
+            (IR::MulI, [a, b]) if self.is_nonzero_test(a, b) => Some(b.clone()),
+            (IR::MulI, [a, b]) if self.is_nonzero_test(b, a) => Some(a.clone()),
+            _ => None,
+        }
+    }
+
+    /// An exact nonzero bit times its own tested value is that value: when
+    /// the bit is zero the value is zero, otherwise the bit is one. Equality
+    /// on float lanes compares raw Q32 codes, so the same argument applies.
+    fn is_nonzero_test(&self, cond: &Value, value: &Value) -> bool {
+        let (Some(cid), Some(vid)) = (cond.stmt_id(), value.stmt_id()) else {
+            return false;
+        };
+        let Some(mut test) = self.stmts.get(cid as usize) else { return false };
+        if matches!(test.ir, IR::BoolCast) {
+            return test.arguments.as_slice() == [vid];
+        }
+        let negated = matches!(test.ir, IR::LogicalNot);
+        if negated {
+            let [arg] = test.arguments.as_slice() else { return false };
+            let Some(inner) = self.stmts.get(*arg as usize) else { return false };
+            test = inner;
+        }
+        if !matches!((&test.ir, negated), (IR::NeI | IR::NeF, false) | (IR::EqI | IR::EqF, true)) {
+            return false;
+        }
+        let [a, b] = test.arguments.as_slice() else { return false };
+        let zero = if *a == vid { *b } else if *b == vid { *a } else { return false };
+        matches!(self.stmts.get(zero as usize).map(|s| &s.ir),
+            Some(IR::ConstantInt { value: 0 }) | Some(IR::ConstantFloat { value: 0.0 }))
     }
 
     /// Structural-provenance derivation chokepoint: every IR op deposits
@@ -3654,6 +3720,55 @@ fn float_cmp_ir(ir_id: StmtId, args: &[Value], op: impl Fn(f64, f64) -> bool) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scalar_identities_preserve_value_and_fact_identity() {
+        let mut b = IRBuilder::new();
+        let x = b.create_ir(&IR::ReadInteger { path: crate::circuit_input::InputPath::new("x", vec![]), is_public: false }, &[]);
+        let one = b.ir_constant_int(1);
+        let out = b.ir_floor_div_i(&x, &one);
+        assert_eq!(out.stmt_id(), x.stmt_id());
+        assert_eq!(out.value_id(), x.value_id());
+        let zero = b.ir_constant_int(0);
+        let nz = b.create_ir(&IR::NeI, &[x.clone(), zero.clone()]);
+        let eq = b.create_ir(&IR::EqI, &[zero.clone(), x.clone()]);
+        let not_eq = b.ir_logical_not(&eq);
+        let cast = b.ir_bool_cast(&x);
+        let bounded = b.ir_int_cast(&cast);
+        let quotient = b.ir_floor_div_i_pinned(&bounded, &one, 8);
+        assert_eq!(quotient.stmt_id(), bounded.stmt_id());
+        assert_eq!(quotient.value_id(), bounded.value_id());
+        assert_ne!(b.ir_floor_div_i_pinned(&x, &one, 8).stmt_id(), x.stmt_id());
+        for cond in [nz, not_eq, cast] {
+            for out in [
+                b.ir_select_i(&cond, &x, &zero),
+                b.ir_mul_i(&cond, &x),
+                b.ir_mul_i(&x, &cond),
+            ] {
+                assert_eq!(out.stmt_id(), x.stmt_id());
+                assert_eq!(out.value_id(), x.value_id());
+            }
+        }
+        // Equality itself and tests of another value must not cancel a mask.
+        assert_ne!(b.ir_select_i(&eq, &x, &zero).stmt_id(), x.stmt_id());
+        let other = b.create_ir(&IR::ReadInteger { path: crate::circuit_input::InputPath::new("y", vec![]), is_public: false }, &[]);
+        let other_nz = b.create_ir(&IR::NeI, &[other, zero.clone()]);
+        assert_ne!(b.ir_mul_i(&other_nz, &x).stmt_id(), x.stmt_id());
+        assert_ne!(b.ir_select_i(&other_nz, &x, &zero).stmt_id(), x.stmt_id());
+    }
+
+    #[test]
+    fn zero_mask_cancellation_uses_raw_float_codes() {
+        let mut b = IRBuilder::new();
+        let x = b.create_ir(&IR::ReadFloat { path: crate::circuit_input::InputPath::new("x", vec![]), is_public: false }, &[]);
+        let zero = b.ir_constant_float(0.0);
+        let nz = b.create_ir(&IR::NeF, &[x.clone(), zero.clone()]);
+        for out in [b.ir_select_f(&nz, &x, &zero), b.ir_mul_i(&nz, &x)] {
+            assert_eq!(out.stmt_id(), x.stmt_id());
+            assert_eq!(out.value_id(), x.value_id());
+        }
+        assert_ne!(b.ir_mul_f(&nz, &x).stmt_id(), x.stmt_id());
+    }
 
     #[test]
     fn test_builder_constant_int() {

@@ -2435,3 +2435,28 @@ fn zero_product_sum_does_not_erase_a_quotient_window() {
         assert_eq!(run(&after, &[("x", x)], None).accepted, accepted);
     }
 }
+
+#[test]
+fn builder_division_by_one_preserves_window_and_public_binding() {
+    use crate::builder::IRBuilder;
+    use crate::circuit_input::InputPath;
+    use graphs::run;
+
+    let mut b = IRBuilder::new();
+    let x = b.ir_read_integer(InputPath::new("x", vec![]), false);
+    let doubled = b.ir_add_i(&x, &x);
+    let one = b.ir_constant_int(1);
+    let quotient = b.ir_floor_div_i(&doubled, &one);
+    assert_eq!(quotient.stmt_id(), doubled.stmt_id());
+    b.ir_expose_public_i(&quotient);
+    let graph = b.export_ir_graph();
+    for x in [-17i64, 0, 23, i64::MIN / 2, i64::MAX / 2] {
+        let expected = int(x * 2);
+        let honest = run(&graph, &[("x", x)], None);
+        assert!(honest.accepted && honest.outputs == vec![expected]);
+        assert!(!run(&graph, &[("x", x)], Some(vec![expected + Fp::one()])).accepted);
+    }
+    for x in [i64::MAX / 2 + 1, i64::MIN / 2 - 1] {
+        assert!(!run(&graph, &[("x", x)], None).accepted, "wide quotient accepted: {x}");
+    }
+}
