@@ -13,6 +13,8 @@
 
 use crate::prove::field::F as Fp;
 use crate::prove::field::PrimeField;
+use num_bigint::{BigInt, Sign};
+use num_traits::ToPrimitive;
 
 /// Re-export the Field trait so backends can call `.invert()` etc.
 pub use crate::prove::field::Field;
@@ -266,9 +268,18 @@ pub fn quantize_to_fp(value: f64, precision_bits: u32) -> Fp {
 
 /// Dequantize an Fp field element back to a float.
 pub fn dequantize_from_fp(v: Fp, precision_bits: u32) -> f64 {
-    let i = fp_to_i64(v);
+    // Exact sums and integer-factor products may exceed signed64, including
+    // when they are passed to an external callback before being divided.
+    let i = fp_to_signed_bigint(v).to_f64().expect("a BN254 integer fits in f64");
     let scale = crate::prove::field::quantization_scale(precision_bits) as f64;
-    i as f64 / scale
+    i / scale
+}
+
+/// The centered signed field integer, without the int64 output ABI's wrap.
+pub fn fp_to_signed_bigint(v: Fp) -> BigInt {
+    let negative = fp_is_negative(v);
+    let magnitude = if negative { -v } else { v };
+    BigInt::from_bytes_le(if negative { Sign::Minus } else { Sign::Plus }, magnitude.to_repr().as_ref())
 }
 
 /// The quantization scale as an Fp field element.
@@ -372,54 +383,61 @@ pub fn signed_decompose(v: Fp) -> (Fp, bool) {
     (abs, is_neg)
 }
 
-/// Fixed-point multiplication with rescaling.
-///
-/// Computes `result = floor((a * b) / scale)` and `remainder = (a * b) - result * scale`,
-/// where `scale = 2^precision_bits`. Uses i128 integer division (via `div_euclid` /
-/// `rem_euclid`) — NOT field modular inverse. The field-element `scale.invert()`
-/// approach is unsound: for non-trivial products it wraps the prime modulus and
-/// produces a value unrelated to integer division.
-///
-/// `div_euclid` gives `0 <= remainder < scale.abs()`, matching the div_mod gate's
-/// intended remainder-range semantics.
+/// Decode a checked rescale using the field equation `raw = q * 2^P + r`.
+/// Decode the accumulated field value, never truncated factors. The
+/// remainder is in `[0, 2^P)`; callers retain their own result domains
+/// (exact integer-factor products can remain wider than signed64).
+pub fn fp_rescale_checked(raw: Fp, precision_bits: u32) -> Option<(Fp, Fp)> {
+    let raw = fp_to_i128_wide(raw)?;
+    let scale = 1i128.checked_shl(precision_bits).filter(|s| *s > 0)?;
+    let q = raw.checked_div_euclid(scale)?;
+    Some((i128_to_fp(q), i128_to_fp(raw.rem_euclid(scale))))
+}
+
+/// Rescale witness; outside the checked domain the circuit has no witness.
+/// Mock evaluation uses `fp_rescale_checked` to mark that case unsatisfied.
 pub fn fp_mul_rescale(a: Fp, b: Fp, precision_bits: u32) -> (Fp, Fp) {
-    let a_signed = fp_to_i64(a) as i128;
-    let b_signed = fp_to_i64(b) as i128;
-    let raw = a_signed * b_signed;
-    fp_rescale_raw_i128(raw, precision_bits)
+    fp_rescale_checked(a * b, precision_bits).unwrap_or((Fp::zero(), Fp::zero()))
 }
 
 /// Rescale an already-accumulated raw fixed-point integer by `2^precision_bits`.
 pub fn fp_rescale_raw_i128(raw: i128, precision_bits: u32) -> (Fp, Fp) {
     let scale = 1i128 << precision_bits;
-    let quotient = raw.div_euclid(scale);
-    let remainder = raw.rem_euclid(scale); // 0 <= remainder < scale
-    let result_fp = i128_to_fp(quotient);
-    let remainder_fp = Fp::from(remainder as u64); // remainder is non-negative and < 2^precision_bits
-    (result_fp, remainder_fp)
+    (i128_to_fp(raw.div_euclid(scale)), i128_to_fp(raw.rem_euclid(scale)))
 }
 
-/// Fused fixed-point inner product:
-/// `floor(sum_i raw(a_i*b_i) / 2^precision_bits)`.
-///
-/// This matches halo2-graph's `FixedPointChip::inner_product` shape and is
-/// closer to NumPy real arithmetic than adding already-rounded per-product
-/// fixed-point quotients.
+/// Fused fixed-point inner product, with one final checked rescale.
 pub fn fp_product_sum_rescale(pairs: &[(Fp, Fp)], precision_bits: u32) -> (Fp, Fp) {
-    let raw = pairs.iter().fold(0i128, |acc, (a, b)| {
-        acc + (fp_to_i64(*a) as i128) * (fp_to_i64(*b) as i128)
-    });
-    fp_rescale_raw_i128(raw, precision_bits)
+    let raw = pairs.iter().fold(Fp::zero(), |acc, (a, b)| acc + *a * *b);
+    fp_rescale_checked(raw, precision_bits).unwrap_or((Fp::zero(), Fp::zero()))
 }
 
-/// Fixed-point division with pre-scaling: `a * 2^P / b`, rounded by
-/// [`Rounding::Euclid`] (remainder in `[0, |b|)`), i.e. toward negative
-/// infinity for a positive divisor and toward positive infinity for a
-/// negative one. Division by zero yields zero (see [`div_rem_or_zero`]).
+/// Checked fixed-point division, matching `a * 2^P = b*q + r`, signed64
+/// quotient and `0 <= r < |b|`. The numerator may exceed signed64.
+/// Decode the scaled field value: every admissible reconstruction fits i128,
+/// even when the multiplication before reduction would not. Zero is totalized.
+pub fn fp_div_prescale_checked(a: Fp, b: Fp, precision_bits: u32) -> Option<Fp> {
+    let q = fp_div_prescale_wide(a, b, precision_bits)?;
+    fp_int64(q)?;
+    Some(q)
+}
+
+fn fp_div_prescale_wide(a: Fp, b: Fp, precision_bits: u32) -> Option<Fp> {
+    let divisor = fp_to_i128_wide(b)?;
+    if divisor == 0 { return Some(Fp::zero()); }
+    // Cancel the Q scale as the circuit does for integral float divisors.
+    // This also admits a wide FloatCast divisor without an overflowing shift.
+    let shift = divisor.trailing_zeros().min(precision_bits);
+    let divisor = divisor >> shift;
+    let scale = 1i128.checked_shl(precision_bits - shift).filter(|s| *s > 0)?;
+    let numerator = fp_to_i128_wide(a * i128_to_fp(scale))?;
+    let quotient = numerator.checked_div_euclid(divisor)?;
+    Some(i128_to_fp(quotient))
+}
+
+/// Division witness; use the checked form when deciding mock satisfaction.
 pub fn fp_div_prescale(a: Fp, b: Fp, precision_bits: u32) -> Fp {
-    let numerator = (fp_to_i64(a) as i128) << precision_bits;
-    let (q, _) = div_rem_or_zero(numerator, fp_to_i64(b) as i128, Rounding::Euclid);
-    i128_to_fp(q)
+    fp_div_prescale_wide(a, b, precision_bits).unwrap_or(Fp::zero())
 }
 
 /// Encode a signed i128 as an Fp field element.
@@ -500,16 +518,31 @@ pub fn div_rem_or_zero(a: i128, b: i128, rounding: Rounding) -> (i128, i128) {
 /// returns `q = trunc(v / 2^P)` with the remainder `r = v - q*2^P`, which has
 /// the sign of `v` (or is zero) and `|r| < 2^P`.
 pub fn fp_int_cast(v: Fp, precision_bits: u32) -> (Fp, Fp) {
-    let (q, r) = div_rem_or_zero(fp_to_i64(v) as i128, 1i128 << precision_bits, Rounding::Trunc);
-    (i128_to_fp(q), i128_to_fp(r))
+    fp_int_cast_checked(v, precision_bits).unwrap_or((Fp::zero(), Fp::zero()))
 }
 
-/// Integer floor division and remainder with Python semantics
-/// ([`Rounding::Floor`]): `-7 // 2 == -4`, `-7 % 2 == 1`, `7 % -2 == -1`.
-/// A zero divisor yields `(0, 0)` (see [`div_rem_or_zero`]).
+pub fn fp_int_cast_checked(v: Fp, precision_bits: u32) -> Option<(Fp, Fp)> {
+    let raw = fp_to_i128_wide(v)?;
+    let scale = 1i128.checked_shl(precision_bits).filter(|s| *s > 0)?;
+    let q = raw.checked_div(scale)?;
+    i64::try_from(q).ok()?;
+    Some((i128_to_fp(q), i128_to_fp(raw % scale)))
+}
+
+/// Integer floor division and remainder with Python semantics. Decode a
+/// wide dividend exactly; the circuit bounds the divisor and quotient.
+pub fn fp_floor_div_checked(a: Fp, b: Fp) -> Option<(Fp, Fp)> {
+    let b = fp_int64(b)? as i128;
+    if b == 0 { return Some((Fp::zero(), Fp::zero())); }
+    let a = fp_to_i128_wide(a)?;
+    let (q, r) = div_rem_or_zero(a, b, Rounding::Floor);
+    i64::try_from(q).ok()?;
+    Some((i128_to_fp(q), i128_to_fp(r)))
+}
+
+/// Floor-division witness; mock satisfaction uses the checked form.
 pub fn fp_floor_div(a: Fp, b: Fp) -> (Fp, Fp) {
-    let (q, r) = div_rem_or_zero(fp_to_i64(a) as i128, fp_to_i64(b) as i128, Rounding::Floor);
-    (i128_to_fp(q), i128_to_fp(r))
+    fp_floor_div_checked(a, b).unwrap_or((Fp::zero(), Fp::zero()))
 }
 
 // ---------------------------------------------------------------------------
@@ -1194,6 +1227,32 @@ pub fn fp_poseidon(inputs: &[Fp]) -> Fp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wide_q32_arithmetic_does_not_truncate() {
+        let scale = 1i128 << 32;
+        let numerator = (10_000_000_000i128 - 1) * scale;
+        for sign in [-1, 1] {
+            let q = fp_div_prescale_checked(i128_to_fp(sign * numerator), i128_to_fp(10 * scale), 32).unwrap();
+            assert_eq!(fp_to_i128_wide(q), Some((sign * numerator).div_euclid(10)));
+        }
+        let wide = i128_to_fp(3_000_000_000 * scale);
+        assert_eq!(dequantize_from_fp(wide, 32), 3_000_000_000.0);
+        assert_eq!(dequantize_from_fp(-wide, 32), -3_000_000_000.0);
+        let quarter = i128_to_fp(scale / 4);
+        assert_eq!(fp_to_i128_wide(fp_rescale_checked(wide * quarter, 32).unwrap().0), Some(750_000_000 * scale));
+        assert_eq!(fp_to_i128_wide(fp_int_cast_checked(wide, 32).unwrap().0), Some(3_000_000_000));
+        assert_eq!(fp_to_i128_wide(fp_floor_div_checked(wide, i128_to_fp(2 * scale)).unwrap().0), Some(1_500_000_000));
+        assert_eq!(fp_rescale_checked(wide * i128_to_fp(scale), 32).unwrap().0, wide);
+        assert!(fp_div_prescale_checked(wide, i128_to_fp(scale), 32).is_none());
+        assert!(fp_div_prescale_checked(i128_to_fp(1i128 << 126), Fp::one(), 32).is_none());
+        assert_eq!(fp_div_prescale_checked(wide, Fp::zero(), 32), Some(Fp::zero()));
+        let huge = i128_to_fp(1i128 << 126) * Fp::from(4u64);
+        assert_eq!(fp_div_prescale_checked(huge, Fp::zero(), 32), Some(Fp::zero()));
+        assert_eq!(fp_floor_div_checked(huge, Fp::zero()), Some((Fp::zero(), Fp::zero())));
+        // Integral FloatCast divisors may themselves exceed the Q32 window.
+        assert_eq!(fp_div_prescale_checked(wide, wide, 32), Some(i128_to_fp(scale)));
+    }
 
     #[test]
     fn test_i64_fp_round_trip() {

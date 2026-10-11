@@ -164,13 +164,13 @@ impl Synthesizer for MockSynthesizer {
     }
 
     fn floor_div_i(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
-        let (q, _) = kernel::fp_floor_div(a.fp(), b.fp());
-        Ok(MockCell(q))
+        let value = kernel::fp_floor_div_checked(a.fp(), b.fp()).map(|(q, _)| q);
+        Ok(self.domain_result(value, || "integer division outside the signed64 quotient/divisor window".into()))
     }
 
     fn mod_i(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
-        let (_, r) = kernel::fp_floor_div(a.fp(), b.fp());
-        Ok(MockCell(r))
+        let value = kernel::fp_floor_div_checked(a.fp(), b.fp()).map(|(_, r)| r);
+        Ok(self.domain_result(value, || "integer remainder outside the division domain".into()))
     }
 
     fn pow_i(&mut self, base: &MockCell, exp: &MockCell) -> Result<MockCell, ProvingError> {
@@ -261,30 +261,30 @@ impl Synthesizer for MockSynthesizer {
     }
 
     fn mul_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
-        let (result, _) = kernel::fp_mul_rescale(a.fp(), b.fp(), self.prec());
-        Ok(MockCell(result))
+        let value = kernel::fp_rescale_checked(a.fp() * b.fp(), self.prec()).map(|(q, _)| q);
+        Ok(self.domain_result(value, || "fixed-point product exceeds the wide arithmetic domain".into()))
     }
 
     fn product_sum_f(&mut self, pairs: &[(MockCell, MockCell)]) -> Result<MockCell, ProvingError> {
-        let pair_values: Vec<(Fp, Fp)> = pairs.iter().map(|(a, b)| (a.fp(), b.fp())).collect();
-        let (result, _) = kernel::fp_product_sum_rescale(&pair_values, self.prec());
-        Ok(MockCell(result))
+        let raw = pairs.iter().fold(Fp::zero(), |sum, (a, b)| sum + a.fp() * b.fp());
+        let value = kernel::fp_rescale_checked(raw, self.prec()).map(|(q, _)| q);
+        Ok(self.domain_result(value, || "fixed-point product sum exceeds the wide arithmetic domain".into()))
     }
 
     fn div_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
-        Ok(MockCell(kernel::fp_div_prescale(
-            a.fp(),
-            b.fp(),
-            self.prec(),
-        )))
+        let value = kernel::fp_div_prescale_checked(a.fp(), b.fp(), self.prec());
+        Ok(self.domain_result(value, || "fixed-point division outside the signed64 quotient/divisor window".into()))
     }
 
     fn floor_div_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
-        Ok(MockCell(kernel::fp_float_floor_div(a.fp(), b.fp(), self.prec())))
+        let value = kernel::fp_floor_div_checked(a.fp(), b.fp())
+            .map(|(q, _)| q * kernel::scale_fp(self.prec()));
+        Ok(self.domain_result(value, || "float floor division outside the division domain".into()))
     }
 
     fn mod_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
-        Ok(MockCell(kernel::fp_float_mod(a.fp(), b.fp())))
+        let value = kernel::fp_floor_div_checked(a.fp(), b.fp()).map(|(_, r)| r);
+        Ok(self.domain_result(value, || "float remainder outside the division domain".into()))
     }
 
     /// Outside NumPy's real domain (a `nan` or `inf` result) or the window
@@ -493,8 +493,8 @@ impl Synthesizer for MockSynthesizer {
 
     fn int_cast(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
         // Float→Int: truncate toward zero (shared convention, see kernel).
-        let (q, _r) = kernel::fp_int_cast(a.fp(), self.prec());
-        Ok(MockCell(q))
+        let value = kernel::fp_int_cast_checked(a.fp(), self.prec()).map(|(q, _)| q);
+        Ok(self.domain_result(value, || "integer cast outside the signed64 quotient window".into()))
     }
 
     fn float_cast(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
@@ -523,8 +523,12 @@ impl Synthesizer for MockSynthesizer {
     }
 
     fn expose_public(&mut self, a: &MockCell, label: &str) -> Result<(), ProvingError> {
-        self.public_outputs
-            .insert(label.to_string(), format!("{}", kernel::fp_to_i64(a.fp())));
+        let value = if label.starts_with("public_f_") {
+            kernel::fp_to_signed_bigint(a.fp()).to_string()
+        } else {
+            kernel::fp_to_i64(a.fp()).to_string()
+        };
+        self.public_outputs.insert(label.to_string(), value);
         Ok(())
     }
 

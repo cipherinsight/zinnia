@@ -267,6 +267,8 @@ impl PatternMatchOptim {
     }
 
     fn optimize_mul_f(&self, b: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
+        // Integral-factor multiplication is exact field arithmetic in the
+        // builder and both backends; unlike DivF it has no quotient window.
         let lv = args[0].float_val();
         let rv = args[1].float_val();
         if lv == Some(1.0) {
@@ -290,6 +292,14 @@ impl PatternMatchOptim {
 
     fn optimize_div_f(&self, b: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
         if args[1].float_val() == Some(1.0) {
+            // DivF bounds its quotient even when the division is exact.
+            // Use raw-code bounds, independent of proving precision. Backend
+            // range facts make these checks free when already implied.
+            for (comparison, bound) in [(IR::GteI, i64::MIN), (IR::LteI, i64::MAX)] {
+                let bound = b.ir_constant_int(bound);
+                let condition = b.create_ir(&comparison, &[args[0].clone(), bound]);
+                b.create_ir(&IR::Assert, &[condition]);
+            }
             return args[0].clone();
         }
         b.create_ir(ir, args)

@@ -2460,3 +2460,22 @@ fn builder_division_by_one_preserves_window_and_public_binding() {
         assert!(!run(&graph, &[("x", x)], None).accepted, "wide quotient accepted: {x}");
     }
 }
+
+#[test]
+fn division_identity_keeps_its_window_and_wide_numerators_are_pinned() {
+    let identity = with_constant_rhs(|s, a, b| s.div_f(a, b), q(1.0));
+    let wide = kernel::i128_to_fp(3i128 << 62);
+    assert!(!synthesize(&*identity, &[wide], &[]).accepted);
+    assert!(!synthesize(&*identity, &[-wide], &[]).accepted);
+    assert!(accepts_claim(&*identity, &[q(1.25)], &[q(1.25)]));
+    assert!(!accepts_claim(&*identity, &[q(1.25)], &[q(1.5)]));
+
+    let raw = (10_000_000_000i128 - 1) << PRECISION_BITS;
+    for divisor in [10.0, -10.0] {
+        let divide = with_constant_rhs(|s, a, b| s.div_f(a, b), q(divisor));
+        for numerator in [raw, -raw] {
+            let expected = kernel::i128_to_fp(numerator.div_euclid(divisor as i128));
+            assert_sound("wide numerator", &*divide, &[kernel::i128_to_fp(numerator)], &[expected], &[10]);
+        }
+    }
+}
