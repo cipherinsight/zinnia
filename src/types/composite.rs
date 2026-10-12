@@ -4,21 +4,6 @@ use super::value::Value;
 use super::zinnia_type::{NumberType, ZinniaType};
 use super::ValueId;
 
-/// Flat storage for NDArray values.
-#[derive(Debug, Clone)]
-pub struct NDArrayData {
-    pub shape: Vec<usize>,
-    pub dtype: NumberType,
-    /// Flat storage of element values. Length = product of shape.
-    pub elements: Vec<ScalarValue<i64>>,
-}
-
-impl NDArrayData {
-    pub fn num_elements(&self) -> usize {
-        self.shape.iter().product()
-    }
-}
-
 // ---------------------------------------------------------------------------
 // DynArrayMeta — metadata for DynamicNDArray
 // ---------------------------------------------------------------------------
@@ -40,7 +25,7 @@ pub struct DynArrayMeta {
 // DynamicNDArrayData — storage for runtime-shaped arrays
 // ---------------------------------------------------------------------------
 
-/// Storage for DynamicNDArray values (extends NDArrayData with metadata).
+/// Storage for DynamicNDArray values.
 ///
 /// The compile-time shape envelope (per-axis Static/Dynamic bounds with
 /// symbolic dim variables for unification) lives in [`Envelope`]. The
@@ -66,13 +51,6 @@ impl DynamicNDArrayData {
     /// Backing-buffer slot count, derived from the envelope's total bound.
     pub fn max_length(&self) -> usize {
         self.envelope.total_bound
-    }
-
-    /// Product of per-axis maxima. This can exceed the backing-buffer slot
-    /// count for compact dynamic arrays whose refinement facts establish a
-    /// tighter total bound than the rectangular max-shape product.
-    pub fn max_shape_product(&self) -> usize {
-        self.envelope.max_total()
     }
 
     /// Compile-time fixed rank, derived from the envelope.

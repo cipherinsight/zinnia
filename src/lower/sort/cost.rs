@@ -372,12 +372,6 @@ impl Network {
         matches!(self, Network::MergeExchangeTieBreak | Network::AdjacentSwap | Network::PackedMergeExchange)
     }
 
-    /// Whether equal values keep their original order (what a payload or an
-    /// argsort needs).
-    pub(super) fn is_stable(self) -> bool {
-        self.tracks_indices()
-    }
-
     pub(super) fn tie_break(self) -> bool {
         matches!(self, Network::MergeExchangeTieBreak)
     }

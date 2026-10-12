@@ -105,12 +105,6 @@ impl LayeredResolver {
             .with_telemetry(std::sync::Arc::clone(&telemetry));
         Self::new_with_telemetry(vec![Box::new(range), Box::new(smt)], telemetry)
     }
-
-    /// Borrow the shared telemetry handle. Used by the compile entry-point
-    /// to surface the summary to stderr at end of compilation.
-    pub fn telemetry(&self) -> std::sync::Arc<crate::optim::telemetry::SmtTelemetry> {
-        std::sync::Arc::clone(&self.telemetry)
-    }
 }
 
 impl Resolver for LayeredResolver {

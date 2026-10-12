@@ -109,7 +109,3 @@ pub fn read_all_logical_typed(
         })
         .collect()
 }
-
-pub fn read_all_complex_typed(b: &mut IRBuilder, segment_id: u32, _imag_segment_id: u32, max_len: usize) -> Vec<Value> {
-    read_all_typed(b, segment_id, max_len, NumberType::Complex)
-}

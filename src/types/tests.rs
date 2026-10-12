@@ -76,68 +76,6 @@ mod tests {
     }
 
     #[test]
-    fn test_from_annotation() {
-        assert_eq!(
-            ZinniaType::from_annotation("int", &[]).unwrap(),
-            ZinniaType::Integer
-        );
-        assert_eq!(
-            ZinniaType::from_annotation("Float", &[]).unwrap(),
-            ZinniaType::Float
-        );
-        assert_eq!(
-            ZinniaType::from_annotation(
-                "NDArray",
-                &[
-                    AnnotationArg::Type(ZinniaType::Float),
-                    AnnotationArg::Int(3),
-                    AnnotationArg::Int(4),
-                ]
-            )
-            .unwrap(),
-            ZinniaType::NDArray {
-                shape: vec![3, 4],
-                dtype: NumberType::Float,
-            }
-        );
-        assert_eq!(
-            ZinniaType::from_annotation(
-                "SymbolicNDArray",
-                &[
-                    AnnotationArg::Type(ZinniaType::Float),
-                    AnnotationArg::Symbol("N".to_string()),
-                    AnnotationArg::Int(4),
-                ]
-            )
-            .unwrap(),
-            ZinniaType::SymbolicNDArray {
-                shape: vec![ShapeDim::Symbol("N".to_string()), ShapeDim::Const(4)],
-                dtype: NumberType::Float,
-                bindings: BTreeMap::new(),
-            }
-        );
-        assert_eq!(
-            ZinniaType::from_annotation(
-                "DynamicNDArray",
-                &[
-                    AnnotationArg::Type(ZinniaType::Integer),
-                    AnnotationArg::Int(100),
-                    AnnotationArg::Int(2),
-                ]
-            )
-            .unwrap(),
-            ZinniaType::DynamicNDArray {
-                dtype: NumberType::Integer,
-                max_length: 100,
-                max_rank: 2,
-                max_shape: None,
-            }
-        );
-        assert!(ZinniaType::from_annotation("NDArray", &[]).is_err());
-        assert!(ZinniaType::from_annotation("unknown_type", &[]).is_err());
-    }
-
-    #[test]
     fn test_num_elements() {
         assert_eq!(
             ZinniaType::NDArray {

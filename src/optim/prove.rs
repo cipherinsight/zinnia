@@ -59,7 +59,7 @@ pub fn reset_prove_counters() {
     PROVE_FASTPATH_HITS.store(0, Ordering::Relaxed);
     PROVE_VACUOUS_COUNT.store(0, Ordering::Relaxed);
 }
-use crate::optim::predicates::facts::{Fact, FactScope};
+use crate::optim::predicates::facts::Fact;
 use crate::optim::predicates::formula::{self, ContractTerm, ContractVar, Substitution};
 use crate::optim::z3_budget;
 use crate::types::ValueId;
@@ -528,16 +528,6 @@ impl UnionFind {
             self.parent.insert(ra, rb);
         }
     }
-}
-
-/// Convenience for [`prove`] specifically against a stashed scope —
-/// equivalent to running prove with that scope's facts and path conditions
-/// only, ignoring whatever is currently live on the stack. Useful when
-/// the consumer wants to query a closed scope (e.g., a chip's exported
-/// postcondition).
-pub fn prove_in_scope(scope: &FactScope, term: &ContractTerm) -> ProveOutcome {
-    let facts: Vec<Fact> = scope.facts.all().into_iter().cloned().collect();
-    prove_with_facts(term, &facts, &scope.path_conditions)
 }
 
 pub fn minimize_shape_param(

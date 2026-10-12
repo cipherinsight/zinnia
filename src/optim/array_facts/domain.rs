@@ -388,16 +388,6 @@ impl Order {
     pub fn implies(self, other: Order) -> bool {
         self == other || self.non_strict() == other
     }
-
-    /// Whether the first cell of the segment is its minimum.
-    pub fn first_is_min(self) -> bool {
-        matches!(self, Order::NonDecreasing | Order::Increasing)
-    }
-
-    /// No two cells are equal.
-    pub fn is_strict(self) -> bool {
-        matches!(self, Order::Increasing | Order::Decreasing)
-    }
 }
 
 /// `a[p] = base + step * p` for every position `p` of the segment (positions
@@ -412,15 +402,6 @@ impl Affine {
     /// The cell at position `p`, if it does not overflow.
     pub fn at(&self, p: usize) -> Option<i64> {
         self.step.checked_mul(i64::try_from(p).ok()?)?.checked_add(self.base)
-    }
-
-    /// The order this formula implies.
-    pub fn order(&self) -> Option<Order> {
-        match self.step.signum() {
-            1 => Some(Order::Increasing),
-            -1 => Some(Order::Decreasing),
-            _ => None,
-        }
     }
 
     /// The range of the cells at positions `[from, to]`.

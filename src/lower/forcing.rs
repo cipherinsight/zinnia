@@ -120,10 +120,6 @@ impl Forcing {
         Forcing { names: names.iter().map(|s| s.to_string()).collect(), families: Vec::new() }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.names.is_empty()
-    }
-
     /// The construction names, configurations expanded.
     pub fn names(&self) -> &[String] {
         &self.names

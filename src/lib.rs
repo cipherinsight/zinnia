@@ -400,7 +400,6 @@ fn compile_circuit_impl(
         smt_enable,
         smt_query_rlimit,
         smt_max_formula_size,
-        smt_log_telemetry,
     };
     let (base_graph, output_layout) = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         IRGenerator::generate_from_json_with_chips(ir_config.clone(), ast_json, &chips, &externals)

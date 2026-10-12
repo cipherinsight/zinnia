@@ -1214,7 +1214,7 @@ fn masked_last_source_reuses_scan_and_keeps_index_checks() {
 #[test]
 fn active_while_counter_load_unwraps_only_on_proven_path() {
     let mut gen = IRGenerator::new(IRGenConfig::default());
-    gen.ctx.circuit_enter(crate::types::ZinniaType::None);
+    gen.ctx.circuit_enter();
     let x = gen.builder.ir_read_integer(crate::circuit_input::InputPath::new("x", vec![]), false);
     let zero = gen.builder.ir_constant_int(0);
     let guard = gen.builder.ir_greater_than_i(&x, &zero);

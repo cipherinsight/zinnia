@@ -15,11 +15,6 @@ pub enum ProvingError {
     VerificationFailed { detail: String },
     /// A required witness value is missing or has the wrong type.
     WitnessMissing { key: String },
-    /// The circuit requires more rows than available for the given k.
-    CircuitTooLarge {
-        needed_rows: usize,
-        available_rows: usize,
-    },
     /// The verifier-side IR (recovered from `vk_bytes`) hashed to a value
     /// that does not match `ProofArtifact.ir_hash`. **Distinct from
     /// `VerificationFailed`** so the differential fuzzer's auto-filer can
@@ -36,11 +31,6 @@ pub enum ProvingError {
 }
 
 impl ProvingError {
-    pub fn unsupported(op: &str) -> Self {
-        ProvingError::UnsupportedIR {
-            op_name: op.to_string(),
-        }
-    }
 
     pub fn synthesis(detail: impl Into<String>) -> Self {
         ProvingError::SynthesisError {
@@ -83,16 +73,6 @@ impl fmt::Display for ProvingError {
             }
             ProvingError::WitnessMissing { key } => {
                 write!(f, "Missing witness value for key: {}", key)
-            }
-            ProvingError::CircuitTooLarge {
-                needed_rows,
-                available_rows,
-            } => {
-                write!(
-                    f,
-                    "Circuit too large: needs {} rows but only {} available (increase k)",
-                    needed_rows, available_rows
-                )
             }
             ProvingError::IrHashMismatch { expected, computed } => {
                 write!(

@@ -454,23 +454,6 @@ impl Identity {
         }
     }
 
-    /// The degree, in the challenges, of the polynomial whose vanishing the
-    /// randomized check tests: a false identity passes with probability at
-    /// most `degree / |F|` (Schwartz-Zippel).
-    ///
-    /// * Multiset equality: `Π (γ - t_j(α))` over `len` tuples compressed
-    ///   with the powers of `α` (`t(α) = Σ_l c_l α^l`): each factor has
-    ///   degree `max(1, width - 1)`.
-    /// * Polynomial product: `a(γ)·b(γ) - c(γ)`, degree `n + m - 2`.
-    /// * Matrix product: per row, `Σ_j (A·B - C)_ij γ^j`, degree `cols - 1`.
-    pub fn degree(self) -> u64 {
-        match self {
-            Identity::MultisetEqual { len, width } => u64::from(len) * u64::from(width.saturating_sub(1).max(1)),
-            Identity::PolynomialProduct { n, m } => u64::from(n + m).saturating_sub(2),
-            Identity::MatrixProduct { cols, .. } => u64::from(cols.saturating_sub(1)),
-        }
-    }
-
     pub fn describe(self) -> String {
         match self {
             Identity::MultisetEqual { len, width } => format!("multiset_equal[{len}][{width}]"),
@@ -830,16 +813,6 @@ impl IR {
         )
     }
 
-    /// Whether this operation's value is a handle (an array version, a
-    /// table, a memory version), not a number: only array, table and memory
-    /// operations take it, as their first operand.
-    pub fn defines_handle(&self) -> bool {
-        matches!(
-            self,
-            IR::ArrayInit { .. } | IR::ArrayWrite(_) | IR::RomInit { .. } | IR::RamInit { .. } | IR::RamWrite { .. }
-        )
-    }
-
     /// Returns `true` if this IR is a "fixed" IR that should not be eliminated
     /// by dead code elimination or constant folding.
     /// Mirrors the Python `is_fixed_ir()` method.
@@ -1028,11 +1001,8 @@ impl IR {
     /// enables `serde_json`'s `preserve_order` feature (which switches
     /// `Map` to `IndexMap`, preserving insertion order), this guarantee
     /// silently breaks and `ir_hash` will drift across processes for the
-    /// same IR.** Guarded by:
-    /// 1. The `ir_export_byte_stable_*` determinism regression tests in
-    ///    `prove/halo2/tests.rs`.
-    /// 2. @Sage's `keygen_vk` byte-equality test (a second-layer guard
-    ///    that catches a determinism break one layer up).
+    /// same IR.** `benchmarking/determinism.py` (compiling each kernel
+    /// repeatedly and comparing the IR hashes) catches such a drift.
     pub fn export_data(&self) -> serde_json::Value {
         match self {
             IR::ConstantInt { value } => serde_json::json!({ "value": value }),

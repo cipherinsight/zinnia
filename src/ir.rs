@@ -229,11 +229,6 @@ impl IRGraph {
         self.resolver.telemetry_handle()
     }
 
-    /// Borrow the active [`Resolver`].
-    pub fn resolver(&self) -> &dyn Resolver {
-        &*self.resolver
-    }
-
     /// Borrow the active [`Resolver`] mutably. Optim passes that mutate the
     /// IR call this and invoke `on_ir_mutated(&[])` at the end of `exec` so
     /// future stateful resolvers (P1's `SmtResolver`) can invalidate caches.
@@ -318,11 +313,6 @@ impl IRGraph {
         (self.in_d.clone(), self.out_d.clone())
     }
 
-    /// Returns copies of the in/out link vectors.
-    pub fn get_io_links(&self) -> (Vec<Vec<StmtId>>, Vec<Vec<StmtId>>) {
-        (self.in_links.clone(), self.out_links.clone())
-    }
-
     /// Returns statements in topological order (forward or reverse).
     /// Since statements are always stored in order, this is trivial.
     pub fn get_topological_order(&self, reverse: bool) -> Vec<&IRStatement> {
@@ -331,11 +321,6 @@ impl IRGraph {
         } else {
             self.stmts.iter().collect()
         }
-    }
-
-    /// Retrieve a statement by its ID.
-    pub fn retrieve_stmt_with_id(&self, idx: StmtId) -> &IRStatement {
-        &self.stmts[idx as usize]
     }
 
     /// Remove a single statement and re-index all remaining statements.

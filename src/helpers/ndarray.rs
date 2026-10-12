@@ -512,15 +512,13 @@ pub fn multidim_subscript(
 }
 
 /// Per-call inputs for the sum/prod strategy sets used by `builtin_reduce`.
-/// Carries the flattened element list, the input array's `value_id` (for
-/// precondition construction), the element count, a float-flag for typed
-/// constant lowering, and the optional per-element ValueIds list used by
+/// Carries the flattened element list, the element count, a float-flag for
+/// typed constant lowering, and the optional per-element ValueIds list used by
 /// the post-sweep interval relay. `Value` is `Clone`, so this struct can
 /// live behind the framework's `fn(&mut IRBuilder, &Inputs) -> Output`
 /// signature.
 pub(crate) struct ReductionInputs {
     pub elements: Vec<Value>,
-    pub arr_vid: crate::types::ValueId,
     pub n: i64,
     pub any_float: bool,
     pub element_vids: Option<Vec<crate::types::ValueId>>,
@@ -603,7 +601,7 @@ fn reduction_strategy_set(
     val: &Value,
     op: &str,
 ) -> crate::optim::OpStrategySet<ReductionInputs, Value> {
-    use crate::optim::{decided, CostHint, OpStrategy, OpStrategySet};
+    use crate::optim::{decided, OpStrategy, OpStrategySet};
 
     type Lower = fn(&mut IRBuilder, &ReductionInputs) -> Value;
     let (zero, one, default): (Lower, Lower, Lower) = match op {
@@ -613,10 +611,10 @@ fn reduction_strategy_set(
     };
     let mut strategies = Vec::new();
     if b.array_all_equal(val, 0) {
-        strategies.push(OpStrategy { name: "forall_eq_const_zero", precondition: decided(), cost_hint: CostHint::O1, lower: zero });
+        strategies.push(OpStrategy { name: "forall_eq_const_zero", precondition: decided(), lower: zero });
     }
     if b.array_all_equal(val, 1) {
-        strategies.push(OpStrategy { name: "forall_eq_const_one", precondition: decided(), cost_hint: CostHint::O1, lower: one });
+        strategies.push(OpStrategy { name: "forall_eq_const_one", precondition: decided(), lower: one });
     }
     OpStrategySet { strategies, default }
 }
@@ -652,7 +650,6 @@ pub fn builtin_reduce(b: &mut IRBuilder, op: &str, val: &Value) -> Value {
         "sum" | "prod" => {
             let inputs = ReductionInputs {
                 elements: elements.clone(),
-                arr_vid: val.value_id().unwrap_or_else(ValueId::next),
                 n: n_elements,
                 any_float,
                 element_vids: element_vids.clone(),

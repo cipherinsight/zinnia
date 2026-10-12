@@ -277,16 +277,6 @@ impl IRBuilder {
         self.telemetry.as_ref()
     }
 
-    /// Replace the structured-event sink (test hook). Production code uses
-    /// the env-driven `from_env()` path in `new`; tests need to attach a
-    /// sink pointed at a tmp directory after constructing the builder.
-    pub fn set_telemetry(
-        &mut self,
-        sink: Option<std::sync::Arc<crate::optim::telemetry::TelemetrySink>>,
-    ) {
-        self.telemetry = sink;
-    }
-
     /// Record the `ValueId → StmtId` mapping for a Value, if both halves
     /// are available. Called by every `ir_*` constructor that mints an
     /// SSA stmt for a scalar Value. Composite Values (dyn ndarrays) have
@@ -366,17 +356,6 @@ impl IRBuilder {
     /// `ContractVar::Value(_)` leaves back into IR-layer references.
     pub fn value_id_to_stmt_id(&self, vid: crate::types::ValueId) -> Option<crate::types::StmtId> {
         self.value_to_stmt.get(&vid).copied()
-    }
-
-    /// Borrow the active [`Resolver`] (immutable side; rarely used).
-    pub fn resolver(&self) -> &dyn Resolver {
-        &*self.resolver
-    }
-
-    /// Borrow the active [`Resolver`] mutably. The `&mut` receiver is
-    /// required because P1's SMT resolver memoises per-ptr query results.
-    pub fn resolver_mut(&mut self) -> &mut dyn Resolver {
-        &mut *self.resolver
     }
 
     /// Hand out `&mut dyn Resolver` and `&[IRStatement]` simultaneously
@@ -2327,7 +2306,6 @@ impl IRBuilder {
         ir_not_equal_f              => IR::NeF,    contract = "ne_f",
         ir_less_than_i              => IR::LtI,    contract = "lt_i",
         ir_less_than_i_bounded      => IR::LtIBounded, contract = "lt_i",
-        ir_greater_than_i_bounded   => IR::GtIBounded, contract = "gt_i",
         ir_less_than_f              => IR::LtF,    contract = "lt_f",
         ir_less_than_or_equal_i     => IR::LteI,   contract = "lte_i",
         ir_less_than_or_equal_f     => IR::LteF,   contract = "lte_f",
@@ -2346,52 +2324,6 @@ impl IRBuilder {
         ir_select_bit_i => IR::SelectBitI,
         ir_select_bit_f => IR::SelectBitF,
     );
-
-    pub fn ir_select_many_i(
-        &mut self,
-        cond: &Value,
-        true_values: &[Value],
-        false_values: &[Value],
-    ) -> Vec<Value> {
-        assert_eq!(
-            true_values.len(),
-            false_values.len(),
-            "select_many_i: branch lengths must match"
-        );
-        let len = true_values.len() as u32;
-        (0..len)
-            .map(|lane| {
-                let mut args = Vec::with_capacity(1 + true_values.len() + false_values.len());
-                args.push(cond.clone());
-                args.extend(true_values.iter().cloned());
-                args.extend(false_values.iter().cloned());
-                self.create_ir(&IR::SelectManyI { len, lane }, &args)
-            })
-            .collect()
-    }
-
-    pub fn ir_select_many_f(
-        &mut self,
-        cond: &Value,
-        true_values: &[Value],
-        false_values: &[Value],
-    ) -> Vec<Value> {
-        assert_eq!(
-            true_values.len(),
-            false_values.len(),
-            "select_many_f: branch lengths must match"
-        );
-        let len = true_values.len() as u32;
-        (0..len)
-            .map(|lane| {
-                let mut args = Vec::with_capacity(1 + true_values.len() + false_values.len());
-                args.push(cond.clone());
-                args.extend(true_values.iter().cloned());
-                args.extend(false_values.iter().cloned());
-                self.create_ir(&IR::SelectManyF { len, lane }, &args)
-            })
-            .collect()
-    }
 
     // Casting
     ir_unary!(
@@ -2666,26 +2598,6 @@ impl IRBuilder {
             .collect()
     }
 
-    /// Multi-axis bounded-range mask. Returns Field 0/1 = 1 iff for
-    /// every axis k: `lo_k <= idx_k < hi_k`. `triples` is a slice of
-    /// `(idx_k, lo_k, hi_k)`; arguments are laid out flat as
-    /// `[idx_0, lo_0, hi_0, idx_1, lo_1, hi_1, ...]`. Caller asserts
-    /// every operand is non-negative and fits u128 (same contract as
-    /// `LtIBounded` — see `IR::IndexInBox`). Used by the fused
-    /// multi-axis dynamic slice path to emit one combined boolean
-    /// check per output cell instead of the per-axis
-    /// `LtIBounded + LogicalAnd` chain.
-    pub fn ir_index_in_box(&mut self, triples: &[(Value, Value, Value)]) -> Value {
-        let rank = triples.len();
-        let mut args: Vec<Value> = Vec::with_capacity(rank * 3);
-        for (idx, lo, hi) in triples {
-            args.push(idx.clone());
-            args.push(lo.clone());
-            args.push(hi.clone());
-        }
-        self.create_ir(&IR::IndexInBox { rank }, &args)
-    }
-
     /// State an array fact (`IR::ArrayFact`, `docs/array-facts-lowering.md`):
     /// `kind` holds of the values `cells`, given that every Boolean of
     /// `basis` is true (each one asserted by the program; empty: the claim
@@ -2851,24 +2763,6 @@ impl IRBuilder {
     }
 
     // ── External calls ────────────────────────────────────────────────
-
-    pub fn ir_invoke_external(
-        &mut self,
-        store_idx: u32,
-        func_name: String,
-        args: Vec<serde_json::Value>,
-        kwargs: std::collections::HashMap<String, serde_json::Value>,
-    ) -> Value {
-        self.create_ir(
-            &IR::InvokeExternal {
-                store_idx,
-                func_name,
-                args,
-                kwargs,
-            },
-            &[],
-        )
-    }
 
     pub fn ir_poseidon_hash(&mut self, values: &[Value]) -> Value {
         self.create_ir(&IR::PoseidonHash, values)

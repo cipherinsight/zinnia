@@ -2207,12 +2207,7 @@ impl IRGenerator {
             kwargs: HashMap<String, Value>,
         ) -> Option<Value> {
             let op_args = crate::ops::OpArgs::new(kwargs);
-            crate::ops::registry::build_op(
-                name,
-                Some(crate::ops::registry::OpNamespace::Np),
-                builder,
-                &op_args,
-            )
+            crate::ops::registry::build_op(name, builder, &op_args)
         }
         fn vectorize_unary_np(
             builder: &mut crate::builder::IRBuilder,

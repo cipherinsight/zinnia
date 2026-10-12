@@ -24,7 +24,7 @@ mod tests {
     use crate::builder::IRBuilder;
     use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
     use crate::optim::{
-        dispatch_strategy, CostHint, OpStrategy, OpStrategySet, TelemetryEvent, TelemetrySink,
+        dispatch_strategy, OpStrategy, OpStrategySet, TelemetryEvent, TelemetrySink,
     };
     use crate::types::ValueId;
     use std::io::Read;
@@ -249,7 +249,6 @@ mod tests {
                     lhs: Box::new(ContractTerm::Var(ContractVar::Value(vid))),
                     rhs: Box::new(ContractTerm::LitInt(0)),
                 },
-                cost_hint: CostHint::O1,
                 lower: gated_lower,
             }],
             default: default_lower,

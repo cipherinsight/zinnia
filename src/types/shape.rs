@@ -11,16 +11,6 @@ pub enum ShapeDim {
 }
 
 impl ShapeDim {
-    pub fn as_const(&self) -> Option<usize> {
-        match self {
-            ShapeDim::Const(n) => Some(*n),
-            ShapeDim::Symbol(_) | ShapeDim::Bounded { .. } => None,
-        }
-    }
-
-    pub fn is_symbolic(&self) -> bool {
-        matches!(self, ShapeDim::Symbol(_) | ShapeDim::Bounded { .. })
-    }
 
     pub fn upper_bound(&self, bindings: &BTreeMap<String, usize>) -> Option<usize> {
         match self {

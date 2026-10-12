@@ -58,33 +58,6 @@ pub const LOG2_COEFS: [f64; 15] = [
     -3.1937385492842112,
 ];
 
-/// atan(x) on [-1, 1], degree 15 (Chebyshev least-squares fit).
-/// Max absolute error ≈ 4.3e-8 over the input range.
-///
-/// Unlike the other tables this one is stored **constant-term first**
-/// (`ATAN_COEFS[k]` multiplies `x^k`; `ATAN_COEFS[1] ≈ 1`, `[3] ≈ -1/3`).
-/// The even-indexed coefficients are near zero (atan is odd). Used by the
-/// legacy halo2 backend only; the fixed-point `arcsin` uses the more
-/// accurate [`ATAN_ODD_U_COEFS`].
-pub const ATAN_COEFS: [f64; 16] = [
-    3.8945708106325862e-17,
-    9.9999924908801763e-01,
-    -9.0995364618408146e-16,
-    -3.3329538038525558e-01,
-    2.0198596716501640e-14,
-    1.9943081188176748e-01,
-    -1.3380112780080282e-13,
-    -1.3892041201045824e-01,
-    4.0128381341663972e-13,
-    9.6016563957688830e-02,
-    -6.0766088433310415e-13,
-    -5.5381697876382932e-02,
-    4.5616807587830846e-13,
-    2.1509254247070526e-02,
-    -1.3555701190010715e-13,
-    -3.9602572342678811e-03,
-];
-
 /// `atan(t) / t` as a polynomial in `u = t^2`, constant term first
 /// (`ATAN_ODD_U_COEFS[k]` multiplies `u^k`), so `atan(t) ≈ t * P(t^2)` on
 /// `[-1, 1]`. A degree-9 Chebyshev least-squares fit in `u` (Chebyshev
@@ -117,25 +90,6 @@ pub const SIN_ODD_U_COEFS: [f64; 5] = [
     0.008332926697684203,
     -0.0001980225217649012,
     2.5928110410078364e-06,
-];
-
-/// sin(x) on [0, pi), degree 14 (legacy halo2 backend only).
-pub const SIN_COEFS: [f64; 15] = [
-    -1.1008071636607462e-11,
-    2.4208013888629323e-10,
-    -3.8584805817996712e-10,
-    -2.3786993104309845e-08,
-    -2.9795813710683115e-09,
-    2.7608543130047009e-06,
-    -6.4467066994122565e-09,
-    -0.00019840680551418068,
-    -3.839555844512214e-09,
-    0.0083333350601673614,
-    -5.0943769725466814e-10,
-    -0.16666666657583049,
-    -8.5029878414113731e-12,
-    1.0000000000003146,
-    -1.9323057584419828e-15,
 ];
 
 // ---------------------------------------------------------------------------

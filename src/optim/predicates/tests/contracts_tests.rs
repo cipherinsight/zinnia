@@ -3232,7 +3232,7 @@ fn disable_switch_forces_prove_unknown() {
 fn disable_switch_skips_strategy_dispatch() {
     use crate::builder::IRBuilder;
     use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
-    use crate::optim::{dispatch_strategy, CostHint, OpStrategy, OpStrategySet};
+    use crate::optim::{dispatch_strategy, OpStrategy, OpStrategySet};
     use crate::types::ValueId;
 
     let _guard = ScopedReqDisable::set("1");
@@ -3259,7 +3259,6 @@ fn disable_switch_skips_strategy_dispatch() {
         strategies: vec![OpStrategy {
             name: "gated",
             precondition: fact,
-            cost_hint: CostHint::O1,
             lower: gated_lower,
         }],
         default: default_lower,

@@ -230,7 +230,6 @@ fn is_container(value: &Value) -> bool {
         value,
         Value::StaticArray { .. }
             | Value::DynamicNDArray(_)
-            | Value::NDArray(_)
             | Value::List(_)
             | Value::Tuple(_)
     )

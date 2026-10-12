@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::builder::IRBuilder;
-use crate::types::{Value, ZinniaType};
+use crate::types::Value;
 
 // ---------------------------------------------------------------------------
 // ValueStore — wraps a Value for scope variable storage
@@ -61,7 +61,6 @@ pub struct MasterScopeData {
 pub struct ChipScopeData {
     pub var_table: VarTable,
     pub return_guaranteed: bool,
-    pub return_dtype: ZinniaType,
     pub returns_with_conditions: Vec<(Value, Value)>, // (return_value, condition)
     pub calculated_returning_condition: Option<Value>, // BooleanValue
     /// The caller's execution condition at the call site (`None` when it is
@@ -81,7 +80,6 @@ pub struct ChipScopeData {
 pub struct CircuitScopeData {
     pub var_table: VarTable,
     pub return_guaranteed: bool,
-    pub return_dtype: ZinniaType,
     pub returns_with_conditions: Vec<(Value, Value)>,
     pub calculated_returning_condition: Option<Value>, // BooleanValue
     pub has_none_return: bool,
@@ -230,13 +228,6 @@ impl Scope {
         }
     }
 
-    pub fn get_breaking_condition(&self) -> Option<&Value> {
-        match self {
-            Scope::Loop(d) => d.break_condition.as_ref(),
-            _ => None,
-        }
-    }
-
     pub fn get_returning_condition(&self) -> Option<&Value> {
         match self {
             Scope::Chip(d) => d.calculated_returning_condition.as_ref(),
@@ -303,14 +294,6 @@ impl Scope {
             Scope::Chip(d) => d.has_none_return && d.has_value_return,
             Scope::Circuit(d) => d.has_none_return && d.has_value_return,
             _ => false,
-        }
-    }
-
-    pub fn get_return_dtype(&self) -> Option<&ZinniaType> {
-        match self {
-            Scope::Chip(d) => Some(&d.return_dtype),
-            Scope::Circuit(d) => Some(&d.return_dtype),
-            _ => None,
         }
     }
 
@@ -446,7 +429,6 @@ mod tests {
         let mut scope = Scope::Chip(ChipScopeData {
             var_table: VarTable::new(),
             return_guaranteed: false,
-            return_dtype: ZinniaType::Integer,
             returns_with_conditions: Vec::new(),
             calculated_returning_condition: None,
             entry_condition: None,
@@ -472,7 +454,6 @@ mod tests {
         let chip = Scope::Chip(ChipScopeData {
             var_table: VarTable::new(),
             return_guaranteed: false,
-            return_dtype: ZinniaType::None,
             returns_with_conditions: Vec::new(),
             calculated_returning_condition: None,
             entry_condition: None,

@@ -1,4 +1,4 @@
-use super::composite::{CompositeData, DynamicNDArrayData, NDArrayData};
+use super::composite::{CompositeData, DynamicNDArrayData};
 use super::scalar::{ScalarValue, StringValue};
 use super::zinnia_type::{NumberType, ZinniaType};
 use super::{StmtId, ValueId};
@@ -20,7 +20,6 @@ pub enum Value {
         real: ScalarValue<f64>,
         imag: ScalarValue<f64>,
     },
-    NDArray(NDArrayData),
     DynamicNDArray(DynamicNDArrayData),
     /// Static-shape numeric array backed by a flat ZKRAM segment.
     ///
@@ -56,10 +55,6 @@ pub enum Value {
     },
     List(CompositeData),
     Tuple(CompositeData),
-    PoseidonHashed {
-        dtype: Box<ZinniaType>,
-        inner: Box<Value>,
-    },
 }
 
 impl Value {
@@ -73,10 +68,6 @@ impl Value {
             Value::None => ZinniaType::None,
             Value::Class(inner_type) => inner_type.clone(),
             Value::Complex { .. } => ZinniaType::Complex,
-            Value::NDArray(data) => ZinniaType::NDArray {
-                shape: data.shape.clone(),
-                dtype: data.dtype,
-            },
             Value::DynamicNDArray(data) => ZinniaType::DynamicNDArray {
                 dtype: data.dtype,
                 max_length: data.max_length(),
@@ -92,9 +83,6 @@ impl Value {
             },
             Value::Tuple(data) => ZinniaType::Tuple {
                 elements: data.elements_type.clone(),
-            },
-            Value::PoseidonHashed { dtype, .. } => ZinniaType::PoseidonHashed {
-                dtype: dtype.clone(),
             },
         }
     }
@@ -145,14 +133,6 @@ impl Value {
     /// Returns true if this value is an integer-like type.
     pub fn is_integer(&self) -> bool {
         matches!(self, Value::Integer(_) | Value::Boolean(_))
-    }
-
-    /// Returns true if this value is an NDArray or DynamicNDArray.
-    pub fn is_ndarray(&self) -> bool {
-        matches!(
-            self,
-            Value::NDArray(_) | Value::DynamicNDArray(_) | Value::StaticArray { .. }
-        )
     }
 
     /// Returns the compile-time integer value, if known.

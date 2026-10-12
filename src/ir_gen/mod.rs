@@ -104,12 +104,6 @@ pub struct IRGenConfig {
     /// counting the query as `queries_skipped_oversized` in telemetry).
     /// Default 4096 per spec. P5 commit 3.
     pub smt_max_formula_size: usize,
-    /// P5 telemetry knob. When `true`, the compiler logs
-    /// `SmtTelemetry::summary()` to stderr at end of compilation. Default
-    /// `false`. Wire-only — the counters are always collected (their cost
-    /// is a handful of `AtomicUsize::fetch_add`s per query); this flag
-    /// only controls whether we print the summary.
-    pub smt_log_telemetry: bool,
 }
 
 impl Default for IRGenConfig {
@@ -122,7 +116,6 @@ impl Default for IRGenConfig {
             smt_enable: false,
             smt_query_rlimit: crate::optim::z3_budget::RESOLVER_RLIMIT,
             smt_max_formula_size: 4096,
-            smt_log_telemetry: false,
         }
     }
 }
@@ -484,8 +477,7 @@ impl IRGenerator {
 
         let circuit_return_dt = n.return_dt.as_ref().map(|dt| self.parse_dt_descriptor(dt));
 
-        self.ctx
-            .circuit_enter(circuit_return_dt.clone().unwrap_or(ZinniaType::None));
+        self.ctx.circuit_enter();
 
         // Process inputs
         for (_i, inp) in n.inputs.iter().enumerate() {

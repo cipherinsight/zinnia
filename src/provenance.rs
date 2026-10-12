@@ -524,10 +524,6 @@ impl ProvenanceTable {
         self.block_views.insert(vid, view);
     }
 
-    pub fn clamp_of(&self, vid: ValueId) -> Option<ClampView> {
-        self.clamps.get(&vid).copied()
-    }
-
     pub fn set_clamp(&mut self, vid: ValueId, view: ClampView) {
         self.clamps.insert(vid, view);
     }
@@ -541,19 +537,6 @@ impl ProvenanceTable {
     }
 
     // ── Pass hooks ───────────────────────────────────────────────────
-
-    /// A pass replaced every use of `old` with `new` (duplicate-code
-    /// elimination): re-key records and rewrite term lists. Delegates to
-    /// [`remap_values`](Self::remap_values) with a singleton map so there is
-    /// only one implementation.
-    pub fn remap_value(&mut self, old: ValueId, new: ValueId) {
-        if old == new {
-            return;
-        }
-        let mut map = HashMap::with_capacity(1);
-        map.insert(old, new);
-        self.remap_values(&map);
-    }
 
     /// Batch form of [`remap_value`](Self::remap_value): a pass replaced
     /// every use of each `old` key with its `new` value. Does a SINGLE pass

@@ -46,7 +46,6 @@ use z3::ast::{Bool, Int};
 use crate::circuit_input::PathSegment;
 use crate::ir::IRStatement;
 use crate::ir_defs::IR;
-use crate::optim::predicates::cache::{DischargeCache, DischargeKey, DischargeResult};
 use crate::optim::predicates::registry::registry;
 use crate::optim::smt_encoding::SmtEncodingCtx;
 use crate::types::StmtId;
@@ -172,11 +171,9 @@ impl PredicateConstraints {
 // Discharger
 // ---------------------------------------------------------------------------
 
-/// The discharge orchestrator. Owns the result cache; stateless otherwise.
+/// The discharge orchestrator (stateless).
 #[derive(Debug, Default)]
-pub struct Discharger {
-    cache: DischargeCache,
-}
+pub struct Discharger;
 
 impl Discharger {
     pub fn new() -> Self {
@@ -324,32 +321,6 @@ impl Discharger {
 
         out.meta_facts = std::mem::take(&mut enc_ctx.meta_facts);
         out
-    }
-
-    /// Cache accessor — exposed for tests and future integration points.
-    pub fn cache(&self) -> &DischargeCache {
-        &self.cache
-    }
-
-    pub fn cache_mut(&mut self) -> &mut DischargeCache {
-        &mut self.cache
-    }
-
-    /// Memoised discharge entry. Cards that wire this into a real solver
-    /// pipeline call `try_discharge_with(...)` after running the actual
-    /// Z3 query; the cache stores the outcome under a content-derived
-    /// key so repeated identical queries are O(1).
-    pub fn try_discharge_with<F: FnOnce() -> DischargeResult>(
-        &mut self,
-        key: DischargeKey,
-        run: F,
-    ) -> DischargeResult {
-        if let Some(cached) = self.cache.get(&key) {
-            return cached;
-        }
-        let result = run();
-        self.cache.insert(key, result);
-        result
     }
 }
 

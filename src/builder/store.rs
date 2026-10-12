@@ -166,22 +166,6 @@ impl IRBuilder {
         Some(complex_cell(&cell, imags.get(address)?))
     }
 
-    /// [`Self::known_cell`] without computing deferred cells (`None` for a
-    /// storage whose cells are a deferred product), for a reader that cannot
-    /// build IR. Not complex-aware: the real part's cell.
-    pub fn known_cell_now(&self, storage: u32, address: usize) -> Option<&Value> {
-        // A stale storage's cells are read through the checked readers.
-        let owner = self.storage(self.storage_owner(storage));
-        if !owner.stale.is_empty() || !owner.unshaped.is_empty() {
-            return None;
-        }
-        if self.static_array_product_provenance.contains_key(&storage) {
-            return None;
-        }
-        let State::Cells(cells) = &self.storage(storage).state else { return None };
-        cells.get(address)
-    }
-
     /// Whether the compiler knows every cell of `storage`.
     pub fn knows_cells(&mut self, storage: u32) -> bool {
         self.force_pending_cells(storage);

@@ -84,7 +84,6 @@ pub fn get_composite_shape(val: &Value) -> Vec<usize> {
             }
             shape
         }
-        Value::NDArray(nd) => nd.shape.clone(),
         Value::StaticArray { shape, .. } => shape.clone(),
         // A runtime-shaped array has no static shape; reporting `[]`
         // made static-shape operations treat it as a scalar.

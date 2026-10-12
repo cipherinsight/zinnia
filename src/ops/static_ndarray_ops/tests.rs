@@ -7,7 +7,6 @@ use super::*;
 use crate::builder::IRBuilder;
 use crate::circuit_input::InputPath;
 use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
-use crate::optim::prove::ProveOutcome;
 use crate::optim::resolver::LayeredResolver;
 use crate::types::{CompositeData, NumberType, ScalarValue, Value, ValueId, ZinniaType};
 

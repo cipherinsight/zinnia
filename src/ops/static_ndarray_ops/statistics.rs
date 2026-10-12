@@ -42,7 +42,7 @@ fn static_1d_numeric_values(b: &mut IRBuilder, input: &Value, op: &str) -> Vec<f
                 .map(|cell| static_number(cell, op))
                 .collect()
         }
-        Value::DynamicNDArray(_) | Value::NDArray(_) => {
+        Value::DynamicNDArray(_) => {
             panic!("{op}: first slice supports compile-time-data histogram only; runtime/private values are not supported");
         }
         _ => panic!("{op}: expected 1-D static numeric input"),
@@ -169,7 +169,7 @@ fn validate_cov_kwargs(kwargs: &HashMap<String, Value>) {
 fn cov_input_matrix(b: &mut IRBuilder, input: &Value) -> (Vec<Value>, usize, usize) {
     let (dtype, shape) = match input {
         Value::StaticArray { dtype, shape, .. } => (*dtype, shape.clone()),
-        Value::DynamicNDArray(_) | Value::NDArray(_) => {
+        Value::DynamicNDArray(_) => {
             panic!("cov: first slice supports fixed-shape StaticArray input only")
         }
         _ => panic!("cov: expected fixed-shape StaticArray input"),

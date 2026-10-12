@@ -21,7 +21,6 @@ use serde::{Deserialize, Serialize};
 use crate::prove::error::ProvingError;
 use crate::prove::field::F as Fp;
 use crate::prove::kernel;
-use crate::types::ZinniaType;
 
 // ---------------------------------------------------------------------------
 // InputPath — how IR instructions address circuit input values
@@ -283,26 +282,6 @@ impl CircuitInputs {
         }
         let leaf = param.value.navigate(&path.segments)?;
         leaf.to_fp(precision_bits)
-    }
-
-    pub fn runtime_array_shape(&self, param_name: &str) -> Option<Vec<usize>> {
-        self.params
-            .iter()
-            .find(|p| p.name == param_name)
-            .and_then(|p| {
-                serde_json::from_value::<ZinniaType>(p.dtype.clone())
-                    .ok()
-                    .and_then(|dt| match (dt, &p.value) {
-                        (
-                            ZinniaType::DynamicNDArray { max_rank, .. },
-                            InputNode::Array {
-                                runtime_shape: Some(runtime_shape),
-                                ..
-                            },
-                        ) if max_rank == runtime_shape.len() => Some(runtime_shape.clone()),
-                        _ => None,
-                    })
-            })
     }
 }
 

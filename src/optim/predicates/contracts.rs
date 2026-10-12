@@ -46,13 +46,9 @@ use crate::optim::predicates::formula::ContractTerm;
 /// Frame condition: what state does the op *not* modify?
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum FrameCondition {
-    /// Pure / functional. Default for current Zinnia ops.
+    /// Pure / functional. Every op is pure.
     #[default]
     Pure,
-    /// Op writes to one or more witness-time aux memories. The list names
-    /// the affected segments. Reserved; not used in the foundation
-    /// scope.
-    Effectful(Vec<String>),
 }
 
 // ---------------------------------------------------------------------------

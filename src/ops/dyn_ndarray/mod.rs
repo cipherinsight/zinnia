@@ -1,7 +1,6 @@
 //! DynamicNDArray operations.
 //!
 //! Free functions that operate on `IRBuilder` for all bounded-dynamic array operations.
-//! These mirror the Python `zinnia/op_def/dynamic_ndarray/` operators.
 
 use std::collections::HashMap;
 
@@ -198,28 +197,6 @@ pub fn scalar_i64_to_value(elem: &ScalarValue<i64>, dtype: NumberType) -> Value 
             real: ScalarValue::new(elem.static_val.map(|v| v as f64), elem.stmt_id),
             imag: ScalarValue::new(Some(0.0), None),
         },
-    }
-}
-
-pub fn value_to_complex_parts(val: &Value) -> (ScalarValue<i64>, ScalarValue<i64>) {
-    // A float part keeps its compile-time value only when it is an integer
-    // (as `value_to_scalar_i64`); the imaginary part of a real number is the
-    // constant 0 (no statement: `ensure_ptr` makes the constant).
-    let part = |s: &ScalarValue<f64>| value_to_scalar_i64(&Value::Float(s.clone()));
-    let zero = || ScalarValue::new(Some(0), None);
-    match val {
-        Value::Complex { real, imag } => (part(real), part(imag)),
-        Value::Float(sv) => (part(sv), zero()),
-        Value::Integer(sv) => (sv.clone(), zero()),
-        Value::Boolean(sv) => (ScalarValue::new(sv.static_val.map(i64::from), sv.stmt_id), zero()),
-        _ => (ScalarValue::new(None, None), ScalarValue::new(None, None)),
-    }
-}
-
-pub fn complex_parts_to_value(real: &ScalarValue<i64>, imag: &ScalarValue<i64>) -> Value {
-    Value::Complex {
-        real: ScalarValue::new(real.static_val.map(|v| v as f64), real.stmt_id),
-        imag: ScalarValue::new(imag.static_val.map(|v| v as f64), imag.stmt_id),
     }
 }
 

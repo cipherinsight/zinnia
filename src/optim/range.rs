@@ -58,11 +58,6 @@ impl IntInterval {
         }
     }
 
-    /// `[0, 0]` — used for `ConstantBool { value: false }` and similar.
-    pub fn zero() -> Self {
-        Self::point(0)
-    }
-
     /// `[0, 1]` — used for any boolean-projected-to-int wire.
     pub fn bool_domain() -> Self {
         Self { min: 0, max: 1 }
@@ -225,22 +220,6 @@ impl IntInterval {
             Self::unbounded()
         }
     }
-
-    /// Element-wise minimum.
-    pub fn min_op(a: Self, b: Self) -> Self {
-        Self {
-            min: a.min.min(b.min),
-            max: a.max.min(b.max),
-        }
-    }
-
-    /// Element-wise maximum.
-    pub fn max_op(a: Self, b: Self) -> Self {
-        Self {
-            min: a.min.max(b.min),
-            max: a.max.max(b.max),
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -344,11 +323,6 @@ impl RangeResolver {
     pub fn with_telemetry(mut self, telemetry: Arc<SmtTelemetry>) -> Self {
         self.telemetry = telemetry;
         self
-    }
-
-    /// Borrow the telemetry handle.
-    pub fn telemetry(&self) -> Arc<SmtTelemetry> {
-        Arc::clone(&self.telemetry)
     }
 
     /// Test / telemetry helper: number of cached interval entries. P5 will

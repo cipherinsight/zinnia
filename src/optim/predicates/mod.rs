@@ -1,5 +1,5 @@
-//! Structural-predicate machinery: registry, contracts, formula AST,
-//! discharge orchestrator, and cache.
+//! Structural-predicate machinery: registry, contracts, formula AST and
+//! discharge orchestrator.
 //!
 //! ## Module layout
 //!
@@ -13,7 +13,6 @@
 //!   for contract templates.
 //! - [`discharge`] — the orchestrator: find structural-predicate atoms,
 //!   bridge to Z3, accumulate clauses + meta-facts.
-//! - [`cache`] — `DischargeCache` keyed on (target, obligation, slice).
 //!
 //! ## What this module exposes upstream
 //!
@@ -25,9 +24,8 @@
 //!    into the `SmtEncodingCtx`.
 //! 2. [`op_contract_for`] — called by the contracts framework / discharge
 //!    layer when assembling per-op contracts at chokepoint time.
-//! 3. [`Discharger`] — the orchestrator type. Cards downstream that wire
-//!    contracts into the resolver hot path will instantiate one of these
-//!    per compilation.
+//! 3. [`Discharger`] — the orchestrator type; the SMT resolver uses it to
+//!    collect the structural-predicate constraints of a query.
 //!
 //! ## Extension recipe (per-predicate cards)
 //!
@@ -38,7 +36,6 @@
 //!    [`formula::ContractTerm`] builders.
 //! 3. Add tests under [`tests`].
 
-pub mod cache;
 pub mod contracts;
 pub mod discharge;
 pub mod facts;
@@ -58,7 +55,6 @@ use crate::optim::smt_encoding::{SmtEncodingCtx, Z3Term};
 // Public re-exports
 // ---------------------------------------------------------------------------
 
-pub use cache::{DischargeCache, DischargeKey, DischargeResult};
 pub use contracts::{
     op_contract_by_name, op_contract_for, ContractFormula, FrameCondition, OpContract,
 };

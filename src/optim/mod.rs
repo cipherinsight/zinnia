@@ -49,7 +49,7 @@ pub use resolver::{
     StaticInt, StaticOnlyResolver,
 };
 pub use smt_encoding::{IROp, SmtEncodingCtx, Z3Term};
-pub use strategy::{decided, dispatch_strategy, CostHint, OpStrategy, OpStrategySet};
+pub use strategy::{decided, dispatch_strategy, OpStrategy, OpStrategySet};
 pub use telemetry::{
     discharge_event, now_unix_ns, strategy_dispatch_event, SmtTelemetry, TelemetryEvent,
     TelemetrySink,

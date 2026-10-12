@@ -6,7 +6,7 @@ use crate::circuit_input::InputPath;
 use crate::ir::IRStatement;
 use crate::ir_defs::IR;
 use crate::optim::predicates::{
-    build_input_name_index, find_structural_predicates, DischargeKey, DischargeResult, Discharger,
+    build_input_name_index, find_structural_predicates, Discharger,
 };
 
 // ---------------------------------------------------------------------------
@@ -226,10 +226,6 @@ fn collect_predicate_constraints_dedups_meta_facts_within_one_query() {
 }
 
 // ---------------------------------------------------------------------------
-// Cache integration
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // Load-bearing test: length bound + predicate clause discharges `k <= len(x)`
 // ---------------------------------------------------------------------------
 
@@ -428,38 +424,4 @@ fn full_resolver_chain_proves_k_bound_via_smt() {
         "LayeredResolver must derive `k >= 0` from `nnz(x) >= 0`. got {:?}",
         lower
     );
-}
-
-#[test]
-fn try_discharge_with_caches_first_result() {
-    let mut d = Discharger::new();
-    let key = DischargeKey::new(0, 1, 2);
-    let mut called = 0;
-    let r = d.try_discharge_with(key.clone(), || {
-        called += 1;
-        DischargeResult::Proved
-    });
-    assert_eq!(r, DischargeResult::Proved);
-    assert_eq!(called, 1);
-
-    let mut called2 = 0;
-    let r2 = d.try_discharge_with(key, || {
-        called2 += 1;
-        DischargeResult::Disproved
-    });
-    assert_eq!(
-        r2,
-        DischargeResult::Proved,
-        "cache must return first result"
-    );
-    assert_eq!(called2, 0, "callback must not be invoked on cache hit");
-}
-
-#[test]
-fn try_discharge_with_distinguishes_keys() {
-    let mut d = Discharger::new();
-    d.try_discharge_with(DischargeKey::new(0, 0, 0), || DischargeResult::Proved);
-    let r = d.try_discharge_with(DischargeKey::new(1, 0, 0), || DischargeResult::Unknown);
-    assert_eq!(r, DischargeResult::Unknown);
-    assert_eq!(d.cache().len(), 2);
 }

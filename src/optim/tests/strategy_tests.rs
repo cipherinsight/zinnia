@@ -11,7 +11,7 @@
 mod tests {
     use crate::builder::IRBuilder;
     use crate::optim::predicates::formula::{CmpOp, ContractFloat, ContractTerm, ContractVar};
-    use crate::optim::{dispatch_strategy, CostHint, OpStrategy, OpStrategySet};
+    use crate::optim::{dispatch_strategy, OpStrategy, OpStrategySet};
     use crate::types::ValueId;
 
     /// Build a `ContractTerm` that asks: "is the value at `vid` >= 0?"
@@ -56,7 +56,6 @@ mod tests {
             strategies: vec![OpStrategy {
                 name: "gated",
                 precondition: ge_zero(vid),
-                cost_hint: CostHint::O1,
                 lower: fast_lowering,
             }],
             default: slow_lowering,
@@ -77,7 +76,6 @@ mod tests {
             strategies: vec![OpStrategy {
                 name: "gated",
                 precondition: ge_zero(vid),
-                cost_hint: CostHint::O1,
                 lower: fast_lowering,
             }],
             default: slow_lowering,
@@ -103,13 +101,11 @@ mod tests {
                 OpStrategy {
                     name: "gated-1",
                     precondition: ge_zero(vid),
-                    cost_hint: CostHint::O1,
                     lower: fast_lowering,
                 },
                 OpStrategy {
                     name: "gated-2",
                     precondition: ge_one(vid),
-                    cost_hint: CostHint::O1,
                     lower: fast2_lowering,
                 },
             ],

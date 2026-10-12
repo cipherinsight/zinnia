@@ -1,6 +1,6 @@
 //! NumPy-like operators: np.add, np.subtract, np.multiply, np.divide, etc.
-//! Most np_like ops are thin wrappers that delegate to the core arithmetic/math ops.
-//! Ports `zinnia/op_def/np_like/` (74 files).
+//! Scalar operands go straight to the `IRBuilder`'s integer or float
+//! operation; arrays and composites go through `helpers::value_ops`.
 //!
 //! Vectorization: when invoked on composite values (List/Tuple), the binary
 //! and comparison ops fall through to `apply_binary_op` (which already does
@@ -172,21 +172,8 @@ macro_rules! define_np_arith {
     ($name:ident, $op_name:expr, $sig:expr, $int_method:ident, $float_method:ident) => {
         pub struct $name;
         impl $name {
-            const PARAMS: [crate::ops::ParamEntry; 2] = [
-                crate::ops::ParamEntry::required("x1"),
-                crate::ops::ParamEntry::required("x2"),
-            ];
         }
         impl crate::ops::Op for $name {
-            fn name(&self) -> &'static str {
-                $op_name
-            }
-            fn signature(&self) -> &'static str {
-                $sig
-            }
-            fn params(&self) -> &[crate::ops::ParamEntry] {
-                &Self::PARAMS
-            }
             fn build(
                 &self,
                 builder: &mut crate::builder::IRBuilder,
@@ -240,21 +227,8 @@ macro_rules! define_np_compare {
     ($name:ident, $op_name:expr, $sig:expr, $int_method:ident, $float_method:ident) => {
         pub struct $name;
         impl $name {
-            const PARAMS: [crate::ops::ParamEntry; 2] = [
-                crate::ops::ParamEntry::required("x1"),
-                crate::ops::ParamEntry::required("x2"),
-            ];
         }
         impl crate::ops::Op for $name {
-            fn name(&self) -> &'static str {
-                $op_name
-            }
-            fn signature(&self) -> &'static str {
-                $sig
-            }
-            fn params(&self) -> &[crate::ops::ParamEntry] {
-                &Self::PARAMS
-            }
             fn build(
                 &self,
                 builder: &mut crate::builder::IRBuilder,
@@ -292,7 +266,6 @@ macro_rules! define_np_unary_math {
     ($name:ident, $op_name:expr, $sig:expr, $float_method:ident) => {
         pub struct $name;
         impl $name {
-            const PARAMS: [crate::ops::ParamEntry; 1] = [crate::ops::ParamEntry::required("x")];
         }
         impl $name {
             // Recursively walk composites and apply the scalar op at the
@@ -327,15 +300,6 @@ macro_rules! define_np_unary_math {
             }
         }
         impl crate::ops::Op for $name {
-            fn name(&self) -> &'static str {
-                $op_name
-            }
-            fn signature(&self) -> &'static str {
-                $sig
-            }
-            fn params(&self) -> &[crate::ops::ParamEntry] {
-                &Self::PARAMS
-            }
             fn build(
                 &self,
                 builder: &mut crate::builder::IRBuilder,
@@ -351,10 +315,6 @@ macro_rules! define_np_binary_math {
     ($name:ident, $op_name:expr, $sig:expr, $float_method:ident) => {
         pub struct $name;
         impl $name {
-            const PARAMS: [crate::ops::ParamEntry; 2] = [
-                crate::ops::ParamEntry::required("x1"),
-                crate::ops::ParamEntry::required("x2"),
-            ];
             fn apply_scalar(
                 builder: &mut crate::builder::IRBuilder,
                 a: &crate::types::Value,
@@ -424,15 +384,6 @@ macro_rules! define_np_binary_math {
             }
         }
         impl crate::ops::Op for $name {
-            fn name(&self) -> &'static str {
-                $op_name
-            }
-            fn signature(&self) -> &'static str {
-                $sig
-            }
-            fn params(&self) -> &[crate::ops::ParamEntry] {
-                &Self::PARAMS
-            }
             fn build(
                 &self,
                 builder: &mut crate::builder::IRBuilder,
@@ -450,21 +401,8 @@ macro_rules! define_np_minmax {
     ($name:ident, $op_name:expr, $sig:expr, $int_cmp:ident, $float_cmp:ident) => {
         pub struct $name;
         impl $name {
-            const PARAMS: [crate::ops::ParamEntry; 2] = [
-                crate::ops::ParamEntry::required("x1"),
-                crate::ops::ParamEntry::required("x2"),
-            ];
         }
         impl crate::ops::Op for $name {
-            fn name(&self) -> &'static str {
-                $op_name
-            }
-            fn signature(&self) -> &'static str {
-                $sig
-            }
-            fn params(&self) -> &[crate::ops::ParamEntry] {
-                &Self::PARAMS
-            }
             fn build(
                 &self,
                 builder: &mut crate::builder::IRBuilder,

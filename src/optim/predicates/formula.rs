@@ -197,10 +197,6 @@ impl ContractTerm {
         ContractTerm::LitInt(n)
     }
 
-    pub fn lit_float(f: f64) -> Self {
-        ContractTerm::LitFloat(ContractFloat(f))
-    }
-
     pub fn cmp(op: CmpOp, lhs: ContractTerm, rhs: ContractTerm) -> Self {
         ContractTerm::Cmp {
             op,
@@ -217,10 +213,6 @@ impl ContractTerm {
         Self::cmp(CmpOp::Le, lhs, rhs)
     }
 
-    pub fn ge(lhs: ContractTerm, rhs: ContractTerm) -> Self {
-        Self::cmp(CmpOp::Ge, lhs, rhs)
-    }
-
     pub fn pred(kind: impl Into<String>, args: Vec<ContractTerm>) -> Self {
         ContractTerm::PredicateApp {
             kind: kind.into(),
@@ -232,14 +224,6 @@ impl ContractTerm {
         ContractTerm::BoolComb {
             op: BoolOp::And,
             operands,
-        }
-    }
-
-    pub fn add(lhs: ContractTerm, rhs: ContractTerm) -> Self {
-        ContractTerm::Arith {
-            op: ArithOp::Add,
-            lhs: Box::new(lhs),
-            rhs: Box::new(rhs),
         }
     }
 }
@@ -280,21 +264,6 @@ impl Substitution {
         self
     }
 
-    pub fn with_output(mut self, term: Int) -> Self {
-        self.output = Some(Z3Term::Int(term));
-        self
-    }
-
-    pub fn with_output_term(mut self, term: Z3Term) -> Self {
-        self.output = Some(term);
-        self
-    }
-
-    pub fn with_value_id(mut self, vid: ValueId, term: Int) -> Self {
-        self.value_ids.insert(vid, Z3Term::Int(term));
-        self
-    }
-
     pub fn with_value_id_term(mut self, vid: ValueId, term: Z3Term) -> Self {
         self.value_ids.insert(vid, term);
         self
@@ -319,10 +288,6 @@ impl Substitution {
 
     pub fn shape_param(&self, name: &str) -> Option<&Z3Term> {
         self.shape_params.get(name)
-    }
-
-    pub fn shape_params(&self) -> impl Iterator<Item = (&String, &Z3Term)> {
-        self.shape_params.iter()
     }
 }
 

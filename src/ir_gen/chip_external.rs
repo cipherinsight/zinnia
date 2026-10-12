@@ -63,8 +63,7 @@ impl IRGenerator {
         // condition so writes, assertions and returns inside the body stay
         // predicated on the call actually happening.
         let entry_condition = (call_condition.bool_val() != Some(true)).then_some(call_condition);
-        self.ctx
-            .chip_enter(return_dt.clone().unwrap_or(ZinniaType::None), entry_condition);
+        self.ctx.chip_enter(entry_condition);
         self.builder
             .facts
             .enter(crate::optim::predicates::ScopeKind::Chip, None);

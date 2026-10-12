@@ -45,12 +45,12 @@ impl std::fmt::Display for ValueId {
 }
 
 // Re-export all public types. (`ValueId` is defined in this module above.)
-pub use composite::{CompositeData, DynArrayMeta, DynamicNDArrayData, NDArrayData};
+pub use composite::{CompositeData, DynArrayMeta, DynamicNDArrayData};
 pub use envelope::{broadcast_envelopes, Dim, DimTable, DimVar, Envelope};
 pub use scalar::{ScalarValue, StringValue};
 pub use shape::{bounded_shape_total, concretize_shape_dims, ShapeDim};
 pub use value::Value;
-pub use zinnia_type::{AnnotationArg, NumberType, ZinniaType};
+pub use zinnia_type::{NumberType, ZinniaType};
 
 /// Represents a slice index used inside an `array[…]` subscript.
 ///

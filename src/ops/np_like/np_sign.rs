@@ -1,24 +1,10 @@
 use crate::builder::IRBuilder;
-use crate::ops::{Op, OpArgs, ParamEntry};
+use crate::ops::{Op, OpArgs};
 use crate::types::Value;
 
 pub struct NpSignOp;
 
-impl NpSignOp {
-    const PARAMS: [ParamEntry; 1] = [ParamEntry::required("x")];
-}
-
 impl Op for NpSignOp {
-    fn name(&self) -> &'static str {
-        "sign"
-    }
-    fn signature(&self) -> &'static str {
-        "np.sign"
-    }
-    fn params(&self) -> &[ParamEntry] {
-        &Self::PARAMS
-    }
-
     fn build(&self, builder: &mut IRBuilder, args: &OpArgs) -> Value {
         let x = args.require("x");
         match x {

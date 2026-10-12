@@ -86,15 +86,6 @@ impl DimTable {
     pub fn equal(&mut self, a: DimVar, b: DimVar) -> bool {
         self.find(a) == self.find(b)
     }
-
-    /// Number of allocated dim vars (mostly useful in tests).
-    pub fn len(&self) -> usize {
-        self.parent.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.parent.is_empty()
-    }
 }
 
 // ────────────────────────────────────────────────────────────────────────

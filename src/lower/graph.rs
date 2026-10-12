@@ -100,14 +100,6 @@ impl Group {
         }
     }
 
-    /// The live lanes of output `output` at constant positions, by position.
-    pub fn positions(&self, output: u8) -> impl Iterator<Item = (u32, &Lane)> {
-        self.lanes
-            .iter()
-            .filter(move |lane| lane.output == output)
-            .filter_map(|lane| Some((lane.position?, lane)))
-    }
-
     /// The live lanes of output `output` at runtime positions.
     pub fn runtime_lanes(&self, output: u8) -> impl Iterator<Item = &Lane> {
         self.lanes.iter().filter(move |lane| lane.output == output && lane.position.is_none())

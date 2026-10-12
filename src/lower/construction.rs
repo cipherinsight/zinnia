@@ -122,12 +122,6 @@ pub struct Context<'a> {
 }
 
 impl Context<'_> {
-    /// `true` when `fact` holds without any construction: proved by the
-    /// range / SMT engine, or established by a statement the program emits
-    /// anyway (a scalar gadget's postcondition).
-    pub fn proves(&self, fact: &Fact) -> bool {
-        self.facts.proves(fact)
-    }
 
     /// `true` when `fact` holds on every accepted witness without a new
     /// check: a free fact, a fact one of the program's checks states, or an

@@ -1,109 +1,15 @@
-//! Operator registry — mirrors Python `OperatorFactory`.
-//! Maps (operator_name, namespace) to Op instances.
+//! Operator registry: builds the NumPy-like scalar operators by name. `ir_gen` dispatches builtins and array, list and tuple methods
+//! itself and falls back to this registry for `np.*` / `math.*` calls
+//! (`ir_gen::named_attr::numpy_funcs::try_np_fallback`).
 
 use crate::builder::IRBuilder;
 use crate::ops::*;
 use crate::types::Value;
 
-/// Namespace for operator lookup.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OpNamespace {
-    NoCls, // Global operators (no class prefix)
-    NDArray,
-    DynamicNDArray,
-    Tuple,
-    List,
-    String,
-    Np,     // numpy-like
-    Zinnia, // alias for Np
-    Math,
-}
-
-impl OpNamespace {
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "NDArray" => Some(Self::NDArray),
-            "DynamicNDArray" => Some(Self::DynamicNDArray),
-            "Tuple" => Some(Self::Tuple),
-            "List" => Some(Self::List),
-            "String" => Some(Self::String),
-            "np" => Some(Self::Np),
-            "zinnia" => Some(Self::Zinnia),
-            "math" => Some(Self::Math),
-            _ => None,
-        }
-    }
-
-    pub fn namespaces() -> &'static [&'static str] {
-        &["NDArray", "Tuple", "List", "String", "np", "zinnia", "math"]
-    }
-}
-
-/// Look up and build an operator by name and optional namespace.
-/// Returns None if the operator is not found.
-/// This replaces the Python `Operators.get_operator()` + `op.build()` pattern.
-pub fn build_op(
-    op_name: &str,
-    namespace: Option<OpNamespace>,
-    builder: &mut IRBuilder,
-    args: &OpArgs,
-) -> Option<Value> {
-    match namespace.unwrap_or(OpNamespace::NoCls) {
-        OpNamespace::NoCls => build_nocls_op(op_name, builder, args),
-        OpNamespace::Math => build_math_op(op_name, builder, args),
-        OpNamespace::Np | OpNamespace::Zinnia => build_np_op(op_name, builder, args),
-        OpNamespace::NDArray => None, // Dispatched directly by ir_gen
-        OpNamespace::List => None,    // Dispatched directly by ir_gen
-        OpNamespace::Tuple => None,   // Dispatched directly by ir_gen
-        OpNamespace::DynamicNDArray => None, // Dispatched directly by ir_gen
-        OpNamespace::String => None,  // String methods not yet implemented
-    }
-}
-
-fn build_nocls_op(name: &str, builder: &mut IRBuilder, args: &OpArgs) -> Option<Value> {
-    let result = match name {
-        "tuple" => nocls::TupleOp.build(builder, args),
-        "str" => cast::StrOp.build(builder, args),
-        "range" => nocls::RangeOp.build(builder, args),
-        "print" => nocls::PrintOp.build(builder, args),
-        "pow" => nocls::PowOp.build(builder, args),
-        "min" => nocls::MinOp.build(builder, args),
-        "max" => nocls::MaxOp.build(builder, args),
-        "list" => nocls::ListOp.build(builder, args),
-        "len" => nocls::LenOp.build(builder, args),
-        "float" => cast::FloatCastOp.build(builder, args),
-        "bool" => cast::BoolCastOp.build(builder, args),
-        "int" => cast::IntCastOp.build(builder, args),
-        "sum" => nocls::SumOp.build(builder, args),
-        "any" => nocls::AnyOp.build(builder, args),
-        "all" => nocls::AllOp.build(builder, args),
-        "abs" => nocls::AbsOp.build(builder, args),
-        "poseidon_hash" => nocls::PoseidonHashBuiltinOp.build(builder, args),
-        "merkle_verify" => nocls::MerkleVerifyOp.build(builder, args),
-        _ => return None,
-    };
-    Some(result)
-}
-
-fn build_math_op(name: &str, builder: &mut IRBuilder, args: &OpArgs) -> Option<Value> {
-    let result = match name {
-        "sin" => math_ops::MathSinOp.build(builder, args),
-        "cos" => math_ops::MathCosOp.build(builder, args),
-        "tan" => math_ops::MathTanOp.build(builder, args),
-        "sinh" => math_ops::MathSinHOp.build(builder, args),
-        "cosh" => math_ops::MathCosHOp.build(builder, args),
-        "tanh" => math_ops::MathTanHOp.build(builder, args),
-        "sqrt" => math_ops::MathSqrtOp.build(builder, args),
-        "exp" => math_ops::MathExpOp.build(builder, args),
-        "log" => math_ops::MathLogOp.build(builder, args),
-        "acos" => np_like::NpArcCosOp.build(builder, args),
-        "asin" => np_like::NpArcSinOp.build(builder, args),
-        "atan2" => np_like::NpArcTan2Op.build(builder, args),
-        "fabs" => math_ops::MathFAbsOp.build(builder, args),
-        "inv" => math_ops::MathInvOp.build(builder, args),
-        _ => return None,
-    };
-    Some(result)
+/// Look up and build an operator by name. Returns `None` if the operator is
+/// not found.
+pub fn build_op(op_name: &str, builder: &mut IRBuilder, args: &OpArgs) -> Option<Value> {
+    build_np_op(op_name, builder, args)
 }
 
 fn build_np_op(name: &str, builder: &mut IRBuilder, args: &OpArgs) -> Option<Value> {
@@ -162,28 +68,6 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    fn test_registry_nocls_int() {
-        let mut b = IRBuilder::new();
-        let x = b.ir_constant_float(3.14);
-        let mut kw = HashMap::new();
-        kw.insert("x".to_string(), x);
-        let args = OpArgs::new(kw);
-        let result = build_op("int", None, &mut b, &args).unwrap();
-        assert_eq!(result.int_val(), Some(3));
-    }
-
-    #[test]
-    fn test_registry_math_sqrt() {
-        let mut b = IRBuilder::new();
-        let x = b.ir_constant_float(4.0);
-        let mut kw = HashMap::new();
-        kw.insert("x".to_string(), x);
-        let args = OpArgs::new(kw);
-        let result = build_op("sqrt", Some(OpNamespace::Math), &mut b, &args).unwrap();
-        assert_eq!(result.float_val(), Some(2.0));
-    }
-
-    #[test]
     fn test_registry_np_add() {
         let mut b = IRBuilder::new();
         let a = b.ir_constant_int(10);
@@ -192,7 +76,7 @@ mod tests {
         kw.insert("x1".to_string(), a);
         kw.insert("x2".to_string(), c);
         let args = OpArgs::new(kw);
-        let result = build_op("add", Some(OpNamespace::Np), &mut b, &args).unwrap();
+        let result = build_op("add", &mut b, &args).unwrap();
         assert_eq!(result.int_val(), Some(30));
     }
 }

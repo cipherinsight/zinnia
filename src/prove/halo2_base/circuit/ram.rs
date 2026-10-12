@@ -99,9 +99,6 @@ pub struct Ram {
 }
 
 impl Ram {
-    pub fn is_empty(&self) -> bool {
-        self.traces.is_empty()
-    }
 
     /// The rows the longest trace needs (each trace has its own columns).
     pub fn rows_needed(&self) -> usize {

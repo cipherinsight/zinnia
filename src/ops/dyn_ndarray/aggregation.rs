@@ -266,7 +266,7 @@ fn dyn_aggregate_all_strategies(
     b: &IRBuilder,
     inputs: &DynAggAllInputs,
 ) -> crate::optim::OpStrategySet<DynAggAllInputs, Value> {
-    use crate::optim::{decided, CostHint, OpStrategy, OpStrategySet};
+    use crate::optim::{decided, OpStrategy, OpStrategySet};
 
     let mut strategies: Vec<OpStrategy<DynAggAllInputs, Value>> = Vec::new();
     let array = Value::DynamicNDArray(inputs.data.clone());
@@ -283,7 +283,6 @@ fn dyn_aggregate_all_strategies(
         strategies.push(OpStrategy {
             name: "boundary-read-on-sorted",
             precondition: decided(),
-            cost_hint: CostHint::O1,
             lower: lower_boundary_read_on_sorted,
         });
     }
@@ -295,13 +294,13 @@ fn dyn_aggregate_all_strategies(
     let all_zero = || b.array_all_equal(&array, 0);
     let all_one = || b.array_all_equal(&array, 1);
     if matches!(inputs.agg, DynAggKind::Sum) && all_zero() {
-        strategies.push(OpStrategy { name: "sum_all_zero", precondition: decided(), cost_hint: CostHint::O1, lower: lower_dyn_sum_zero });
+        strategies.push(OpStrategy { name: "sum_all_zero", precondition: decided(), lower: lower_dyn_sum_zero });
     }
     if matches!(inputs.agg, DynAggKind::Sum) && all_one() {
-        strategies.push(OpStrategy { name: "sum_all_one", precondition: decided(), cost_hint: CostHint::O1, lower: lower_dyn_sum_length });
+        strategies.push(OpStrategy { name: "sum_all_one", precondition: decided(), lower: lower_dyn_sum_length });
     }
     if matches!(inputs.agg, DynAggKind::Prod) && all_one() {
-        strategies.push(OpStrategy { name: "prod_all_one", precondition: decided(), cost_hint: CostHint::O1, lower: lower_dyn_prod_one });
+        strategies.push(OpStrategy { name: "prod_all_one", precondition: decided(), lower: lower_dyn_prod_one });
     }
 
     OpStrategySet {

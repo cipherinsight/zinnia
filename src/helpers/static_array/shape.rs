@@ -323,68 +323,6 @@ fn parse_transpose_perm(args: &[Value], ndim: usize) -> Option<Vec<usize>> {
     Some(perm)
 }
 
-/// Compute a transposed StaticArray by materialising into a fresh segment.
-/// Mirrors `dyn_transpose`'s policy.
-fn transpose_materialise(b: &mut IRBuilder, val: &Value, perm: &[usize]) -> Value {
-    let (dtype, shape, _segment_id, strides, offset) = match val {
-        Value::StaticArray {
-            dtype,
-            shape,
-            segment_id,
-            strides,
-            offset,
-            ..
-        } => (*dtype, shape.clone(), *segment_id, strides.clone(), *offset),
-        _ => unreachable!(),
-    };
-    let ndim = shape.len();
-    let new_shape: Vec<usize> = perm.iter().map(|&p| shape[p]).collect();
-    let new_total: usize = new_shape.iter().product();
-    let new_strides_for_decode = row_major_strides(&new_shape);
-
-    // Read source via the cache or per-cell. Use payload_cells when
-    // contiguous (it grabs the cached window); otherwise fall back to
-    // strided reads via materialise_to_flat (which is contiguous-flat).
-    // For transpose we want addressing by source coords with source strides,
-    // so we read raw cells in flat-source order and index by the source's
-    // logical_strides over `shape`. When the view is non-contiguous, we
-    // first build a contiguous flat copy.
-    let src_flat: Vec<Value> = if offset == 0 && strides == row_major_strides(&shape) {
-        payload_cells(b, val)
-    } else {
-        materialise_to_flat(b, val)
-    };
-    let src_strides = row_major_strides(&shape);
-
-    let mut out: Vec<Value> = Vec::with_capacity(new_total);
-    for flat_out in 0..new_total {
-        let out_coords = decode_coords(flat_out, &new_shape, &new_strides_for_decode);
-        // out_coords[i] is along axis perm[i] of the source.
-        let mut src_lin: usize = 0;
-        for i in 0..ndim {
-            src_lin += out_coords[i] * src_strides[perm[i]];
-        }
-        out.push(src_flat[src_lin].clone());
-    }
-    if dtype == NumberType::Complex {
-        let mut reals = Vec::with_capacity(out.len());
-        let mut imags = Vec::with_capacity(out.len());
-        for c in out {
-            match c {
-                Value::Complex { real, imag } => {
-                    reals.push(Value::Float(real));
-                    imags.push(Value::Float(imag));
-                }
-                _ => unreachable!("Complex StaticArray cell expected"),
-            }
-        }
-        return crate::helpers::static_array::base::build_static_array_from_flat_complex(
-            b, reals, imags, new_shape,
-        );
-    }
-    build_static_array_from_flat(b, out, new_shape, dtype)
-}
-
 /// Try to apply `transpose` (or `.T`) natively. Returns `Some(result)` for
 /// the migrated case; `None` otherwise.
 pub fn try_apply_transpose(_b: &mut IRBuilder, val: &Value, args: &[Value]) -> Option<Value> {

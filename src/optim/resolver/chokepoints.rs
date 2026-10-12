@@ -63,10 +63,6 @@ pub enum SiteKind {
     ShapeAxis(usize),
     /// `start` argument of a slice expression.
     SliceStart,
-    /// `stop` argument of a slice expression.
-    SliceStop,
-    /// `step` argument of a slice expression.
-    SliceStep,
     /// `start` argument of `range(...)`.
     RangeStart,
     /// `stop` argument of `range(...)`.
@@ -91,9 +87,6 @@ pub enum SiteKind {
     /// `discharge_index_in_range`. Item #4 of the
     /// `smt-invocation-load-bearing` card.
     DynamicIndexBound,
-    /// Anything not yet enumerated. The string is a short site label;
-    /// promote it to a named variant if it recurs.
-    Other(&'static str),
 }
 
 impl SiteKind {
@@ -104,8 +97,6 @@ impl SiteKind {
         match self {
             SiteKind::ShapeAxis(_) => "shape_axis",
             SiteKind::SliceStart => "slice_start",
-            SiteKind::SliceStop => "slice_stop",
-            SiteKind::SliceStep => "slice_step",
             SiteKind::RangeStart => "range_start",
             SiteKind::RangeStop => "range_stop",
             SiteKind::RangeStep => "range_step",
@@ -116,7 +107,6 @@ impl SiteKind {
             SiteKind::NewAxisPosition => "new_axis_position",
             SiteKind::LinspaceNum => "linspace_num",
             SiteKind::DynamicIndexBound => "dyn_index_bound",
-            SiteKind::Other(label) => label,
         }
     }
 
@@ -130,8 +120,6 @@ impl SiteKind {
                 i
             ),
             SiteKind::SliceStart => "slice start must be a compile-time constant int".to_string(),
-            SiteKind::SliceStop => "slice stop must be a compile-time constant int".to_string(),
-            SiteKind::SliceStep => "slice step must be a compile-time constant int".to_string(),
             SiteKind::RangeStart => "range start must be a compile-time constant int".to_string(),
             SiteKind::RangeStop => "range stop must be a compile-time constant int".to_string(),
             SiteKind::RangeStep => "range step must be a compile-time constant int".to_string(),
@@ -151,9 +139,6 @@ impl SiteKind {
             }
             SiteKind::DynamicIndexBound => {
                 "dynamic array index could not be proved in-bounds at compile time".to_string()
-            }
-            SiteKind::Other(label) => {
-                format!("{} must be a compile-time constant int", label)
             }
         }
     }

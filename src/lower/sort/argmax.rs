@@ -260,12 +260,6 @@ mod tests {
     use crate::circuit_input::InputPath;
     use crate::lower::sort::test_support::mock_run;
 
-    /// `r = argmax((x == a) & (y == b))`, then the test `x[r] != a or
-    /// y[r] != b` (as the frontend emits them), exposed with `r`.
-    fn first_match(rewrite: bool) -> IRGraph {
-        first_match_with(rewrite, false)
-    }
-
     /// The same with the gather family's placeholders (`placeholders`): the
     /// argmax lane and element lanes at it, lowered by the registry.
     fn first_match_with(rewrite: bool, placeholders: bool) -> IRGraph {

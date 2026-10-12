@@ -21,8 +21,7 @@
 //! ## Multiple matches
 //!
 //! When two strategies' preconditions are both currently `Proved`, the
-//! **first declared** wins. `cost_hint` is declared on each strategy but
-//! the v1 dispatcher does not consult it — the op author orders by cost.
+//! **first declared** wins: the op author orders strategies by cost.
 //!
 //! ## Precondition construction
 //!
@@ -35,29 +34,6 @@
 use crate::builder::IRBuilder;
 use crate::optim::predicates::formula::ContractTerm;
 use crate::optim::prove::ProveOutcome;
-
-/// Coarse asymptotic-cost hint used by op authors to document the relative
-/// expense of a strategy.
-///
-/// v1 of [`dispatch_strategy`] does **not** consult this — strategies are
-/// tried in declared order. The enum is part of the public surface so future
-/// cards can introduce cost-based reordering without an API break, and so
-/// readers of an `OpStrategySet` declaration see the trade-off at a glance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CostHint {
-    /// Constant work, e.g. a single memory read.
-    O1,
-    /// Logarithmic in the dominant input length.
-    OLogN,
-    /// Linear in the dominant input length (today's reduction loops).
-    ON,
-    /// Linearithmic.
-    ONLogN,
-    /// Quadratic.
-    ON2,
-    /// Cost not easily expressible; treat as expensive.
-    Opaque,
-}
 
 /// One alternative lowering for an op, gated by a Boolean property of the
 /// op's inputs.
@@ -74,7 +50,6 @@ pub enum CostHint {
 pub struct OpStrategy<Inputs, Output> {
     pub name: &'static str,
     pub precondition: ContractTerm,
-    pub cost_hint: CostHint,
     pub lower: fn(&mut IRBuilder, &Inputs) -> Output,
 }
 

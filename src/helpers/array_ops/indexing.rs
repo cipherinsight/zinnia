@@ -1377,7 +1377,6 @@ fn dyn_gather_rows(b: &mut IRBuilder, data: &DynamicNDArrayData, idx: &Value) ->
     let skip = crate::optim::OpStrategy {
         name: "gather_skip_bounds_check",
         precondition: crate::optim::decided(),
-        cost_hint: crate::optim::CostHint::ON,
         lower: |b, inputs: &DynGatherInputs| dyn_gather_rows_lower(b, &inputs.data, &inputs.idx, false),
     };
     let set = crate::optim::OpStrategySet {

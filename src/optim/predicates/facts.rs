@@ -188,11 +188,6 @@ impl FactScope {
             path_conditions: Vec::new(),
         }
     }
-
-    pub fn with_path(mut self, predicate: Fact) -> Self {
-        self.path_conditions.push(predicate);
-        self
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -332,10 +327,6 @@ impl FactStack {
         self.guard_frames
             .iter()
             .flat_map(|frame| frame.facts.all().into_iter().map(move |f| (frame.atoms.as_slice(), f)))
-    }
-
-    pub fn depth(&self) -> usize {
-        self.scopes.len()
     }
 
     pub fn current(&self) -> &FactScope {

@@ -152,23 +152,6 @@ fn reduce_axis_general(b: &mut IRBuilder, op: &str, val: &Value, axis: usize) ->
     }
 }
 
-/// Public entry point preserving the old `reduce_with_axis` name. Resolves
-/// negative axes here so callers don't have to.
-pub fn reduce_with_axis_general(b: &mut IRBuilder, op: &str, val: &Value, axis: i64) -> Value {
-    let ndim = crate::helpers::composite::get_composite_shape(val).len();
-    if ndim == 0 {
-        return crate::helpers::ndarray::builtin_reduce(b, op, val);
-    }
-    let resolved = if axis < 0 { ndim as i64 + axis } else { axis };
-    if resolved < 0 || resolved >= ndim as i64 {
-        panic!(
-            "reduce: axis {} is out of bounds for array of rank {}",
-            axis, ndim
-        );
-    }
-    reduce_axis_general(b, op, val, resolved as usize)
-}
-
 /// Cast a scalar value to float, leaving floats untouched.
 fn ensure_scalar_float(b: &mut IRBuilder, v: &Value) -> Value {
     match v {
@@ -221,14 +204,14 @@ fn lower_mean_constant_one(b: &mut IRBuilder, _inputs: &MeanInputs) -> Value {
 /// of the array is 0 or 1 (offered only when the array facts of its current
 /// contents decide it, `builder/array_facts.rs`).
 fn mean_strategy_set(b: &IRBuilder, val: &Value) -> crate::optim::OpStrategySet<MeanInputs, Value> {
-    use crate::optim::{decided, CostHint, OpStrategy, OpStrategySet};
+    use crate::optim::{decided, OpStrategy, OpStrategySet};
 
     let mut strategies = Vec::new();
     if b.array_all_equal(val, 0) {
-        strategies.push(OpStrategy { name: "forall_eq_const_zero", precondition: decided(), cost_hint: CostHint::O1, lower: lower_mean_constant_zero });
+        strategies.push(OpStrategy { name: "forall_eq_const_zero", precondition: decided(), lower: lower_mean_constant_zero });
     }
     if b.array_all_equal(val, 1) {
-        strategies.push(OpStrategy { name: "forall_eq_const_one", precondition: decided(), cost_hint: CostHint::O1, lower: lower_mean_constant_one });
+        strategies.push(OpStrategy { name: "forall_eq_const_one", precondition: decided(), lower: lower_mean_constant_one });
     }
     OpStrategySet { strategies, default: lower_mean_generic }
 }

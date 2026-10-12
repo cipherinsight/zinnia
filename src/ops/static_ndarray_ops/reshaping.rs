@@ -519,53 +519,6 @@ pub fn ndarray_repeat(
     }
 }
 
-/// NDArray filter: select elements where mask is true.
-pub fn ndarray_filter(_b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value {
-    let mask = args.first().expect("filter: requires a mask argument");
-    let elements = crate::helpers::composite::flatten_composite(val);
-    let mask_elements = crate::helpers::composite::flatten_composite(mask);
-    assert_eq!(
-        elements.len(),
-        mask_elements.len(),
-        "filter: array and mask must have same size"
-    );
-
-    // For static arrays, we can build a filtered result at compile time
-    // by using select chains. The result length depends on the mask values.
-    // If mask values are all statically known, produce a fixed-size result.
-    let mut static_result = Vec::new();
-    let mut all_static = true;
-    for (elem, m) in elements.iter().zip(mask_elements.iter()) {
-        match m.int_val().or_else(|| {
-            if matches!(m, Value::Boolean(bv) if bv.static_val == Some(true)) {
-                Some(1)
-            } else if matches!(m, Value::Boolean(bv) if bv.static_val == Some(false)) {
-                Some(0)
-            } else {
-                None
-            }
-        }) {
-            Some(v) if v != 0 => static_result.push(elem.clone()),
-            Some(_) => {} // masked out
-            None => {
-                all_static = false;
-                break;
-            }
-        }
-    }
-
-    if all_static {
-        let types = static_result.iter().map(|v| v.zinnia_type()).collect();
-        Value::List(CompositeData {
-            elements_type: types,
-            values: static_result,
-            value_id: ValueId::next(),
-        })
-    } else {
-        panic!("filter: dynamic masks require DynamicNDArray (not yet supported in Rust backend)");
-    }
-}
-
 pub fn ndarray_argmax_argmin_with_axis(
     b: &mut IRBuilder,
     val: &Value,
@@ -636,40 +589,6 @@ pub fn ndarray_argmax_argmin_with_axis(
         }
     }
     crate::helpers::ndarray::ndarray_argmax_argmin(b, val, &[], is_max)
-}
-
-pub fn ndarray_shape(val: &Value) -> Value {
-    // Return the shape as a tuple of constants
-    match val {
-        Value::List(data) => {
-            // For a list, shape is (len,)
-            let len_val = Value::Integer(crate::types::ScalarValue::new(
-                Some(data.values.len() as i64),
-                None,
-            ));
-            Value::Tuple(CompositeData {
-                elements_type: vec![ZinniaType::Integer],
-                values: vec![len_val],
-
-                value_id: ValueId::next(),
-            })
-        }
-        Value::NDArray(nd) => {
-            let shape_vals: Vec<Value> = nd
-                .shape
-                .iter()
-                .map(|&s| Value::Integer(crate::types::ScalarValue::new(Some(s as i64), None)))
-                .collect();
-            let types = shape_vals.iter().map(|_| ZinniaType::Integer).collect();
-            Value::Tuple(CompositeData {
-                elements_type: types,
-                values: shape_vals,
-
-                value_id: ValueId::next(),
-            })
-        }
-        _ => Value::None,
-    }
 }
 
 // ────────────────────────────────────────────────────────────────────────

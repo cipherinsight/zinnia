@@ -258,12 +258,12 @@ fn lower_matmul_rhs_identity_returns_lhs(_b: &mut IRBuilder, inp: &MatmulInputs)
 /// (each offered only when the array facts of the operands' current
 /// contents decide it, `builder/array_facts.rs`).
 fn matmul_strategy_set(b: &IRBuilder, inputs: &MatmulInputs) -> crate::optim::OpStrategySet<MatmulInputs, Value> {
-    use crate::optim::{decided, CostHint, OpStrategy, OpStrategySet};
+    use crate::optim::{decided, OpStrategy, OpStrategySet};
 
     let mut strategies = Vec::new();
     let mut offer = |holds: bool, name: &'static str, lower: fn(&mut IRBuilder, &MatmulInputs) -> Value| {
         if holds {
-            strategies.push(OpStrategy { name, precondition: decided(), cost_hint: CostHint::O1, lower });
+            strategies.push(OpStrategy { name, precondition: decided(), lower });
         }
     };
     offer(b.array_all_equal(&inputs.lhs, 0), "lhs_all_zero", lower_matmul_zero);

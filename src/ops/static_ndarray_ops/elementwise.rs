@@ -5,7 +5,6 @@
 //! plus the Python-builtin helpers `range`/`len`/`enumerate`
 //! that share the same composite-Value plumbing.
 
-use std::collections::HashMap;
 
 use crate::builder::IRBuilder;
 use crate::types::{CompositeData, Value, ValueId, ZinniaType};
@@ -188,109 +187,6 @@ pub fn np_outer_op(b: &mut IRBuilder, args: &[Value], op: &str) -> Value {
         values: rows,
         value_id: ValueId::next(),
     })
-}
-
-pub fn np_allclose(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
-    // np.allclose(a, b, rtol=1e-05, atol=1e-08) — check |a - b| <= atol + rtol * |b|
-    if args.len() < 2 {
-        return Value::None;
-    }
-
-    // Validate argument types
-    fn is_valid_allclose_arg(val: &Value) -> bool {
-        matches!(
-            val,
-            Value::Integer(_)
-                | Value::Float(_)
-                | Value::Boolean(_)
-                | Value::List(_)
-                | Value::Tuple(_)
-        )
-    }
-    if !is_valid_allclose_arg(&args[0]) {
-        panic!("Unsupported argument type for `lhs`");
-    }
-    if !is_valid_allclose_arg(&args[1]) {
-        panic!("Unsupported argument type for `rhs`");
-    }
-    if let Some(atol) = kwargs.get("atol").or_else(|| args.get(3)) {
-        if !is_valid_allclose_arg(atol) {
-            panic!("Unsupported argument type for `atol`");
-        }
-    }
-    if let Some(rtol) = kwargs.get("rtol").or_else(|| args.get(2)) {
-        if !is_valid_allclose_arg(rtol) {
-            panic!("Unsupported argument type for `rtol`");
-        }
-    }
-
-    // Extract atol and rtol from kwargs or positional args
-    let default_rtol = 1e-5_f64;
-    let default_atol = 1e-8_f64;
-
-    fn extract_scalar_float(val: &Value) -> Option<f64> {
-        match val {
-            Value::Float(s) => s.static_val,
-            Value::Integer(s) => s.static_val.map(|i| i as f64),
-            Value::List(d) | Value::Tuple(d) if d.values.len() == 1 => {
-                extract_scalar_float(&d.values[0])
-            }
-            _ => None,
-        }
-    }
-
-    let rtol = kwargs
-        .get("rtol")
-        .and_then(|v| extract_scalar_float(v))
-        .or_else(|| args.get(2).and_then(|v| extract_scalar_float(v)))
-        .unwrap_or(default_rtol);
-    let atol = kwargs
-        .get("atol")
-        .and_then(|v| extract_scalar_float(v))
-        .or_else(|| args.get(3).and_then(|v| extract_scalar_float(v)))
-        .unwrap_or(default_atol);
-
-    let a_flat = crate::helpers::composite::flatten_composite(&args[0]);
-    let b_flat = crate::helpers::composite::flatten_composite(&args[1]);
-
-    // Handle broadcasting: scalar vs array
-    let (a_elems, b_elems) = if a_flat.len() == 1 && b_flat.len() > 1 {
-        (vec![a_flat[0].clone(); b_flat.len()], b_flat)
-    } else if b_flat.len() == 1 && a_flat.len() > 1 {
-        let b_repeated = vec![b_flat[0].clone(); a_flat.len()];
-        (a_flat, b_repeated)
-    } else {
-        (a_flat, b_flat)
-    };
-
-    if a_elems.len() != b_elems.len() {
-        return b.ir_constant_bool(false);
-    }
-
-    // For each element: |a - b| <= atol + rtol * |b|
-    // Since we're in ZK, use static evaluation for compile-time known values
-    let mut result = b.ir_constant_bool(true);
-    for (a_val, b_val) in a_elems.iter().zip(b_elems.iter()) {
-        let a_f = a_val
-            .float_val()
-            .or_else(|| a_val.int_val().map(|i| i as f64));
-        let b_f = b_val
-            .float_val()
-            .or_else(|| b_val.int_val().map(|i| i as f64));
-
-        if let (Some(av), Some(bv)) = (a_f, b_f) {
-            let diff = (av - bv).abs();
-            let threshold = atol + rtol * bv.abs();
-            let close = diff <= threshold;
-            let close_val = b.ir_constant_bool(close);
-            result = b.ir_logical_and(&result, &close_val);
-        } else {
-            // Dynamic: fall back to exact equality
-            let eq = b.ir_equal_i(a_val, b_val);
-            result = b.ir_logical_and(&result, &eq);
-        }
-    }
-    result
 }
 
 // ── Builtin helpers (single-use) ─────────────────────────────────────
@@ -550,16 +446,13 @@ pub fn np_reciprocal(b: &mut IRBuilder, args: &[Value]) -> Value {
     })
 }
 
-/// Per-call inputs for the `np.where` strategy set. Carries the already
-/// broadcast cond / x / y and the original cond's `value_id` (the anchor
-/// the gated preconditions query). `Value` is `Clone`, so this struct can
-/// live behind the Phase F framework's
-/// `fn(&mut IRBuilder, &Inputs) -> Output` signature.
+/// Per-call inputs for the `np.where` strategy set: the already broadcast
+/// cond / x / y. `Value` is `Clone`, so this struct can live behind the
+/// strategy framework's `fn(&mut IRBuilder, &Inputs) -> Output` signature.
 struct WhereInputs {
     cond_b: Value,
     x_b: Value,
     y_b: Value,
-    cond_vid: ValueId,
 }
 
 /// Recursive per-element select. Lifted from the original inline `rec`
@@ -613,14 +506,14 @@ fn lower_where_generic(b: &mut IRBuilder, inp: &WhereInputs) -> Value {
 /// `y` when every one is false (offered only when the array facts of its
 /// current contents decide it, `builder/array_facts.rs`).
 fn where_strategy_set(b: &IRBuilder, cond: &Value) -> crate::optim::OpStrategySet<WhereInputs, Value> {
-    use crate::optim::{decided, CostHint, OpStrategy, OpStrategySet};
+    use crate::optim::{decided, OpStrategy, OpStrategySet};
 
     let mut strategies = Vec::new();
     if b.array_all_equal(cond, 1) {
-        strategies.push(OpStrategy { name: "cond_all_true", precondition: decided(), cost_hint: CostHint::O1, lower: lower_where_to_x });
+        strategies.push(OpStrategy { name: "cond_all_true", precondition: decided(), lower: lower_where_to_x });
     }
     if b.array_all_equal(cond, 0) {
-        strategies.push(OpStrategy { name: "cond_all_false", precondition: decided(), cost_hint: CostHint::O1, lower: lower_where_to_y });
+        strategies.push(OpStrategy { name: "cond_all_false", precondition: decided(), lower: lower_where_to_y });
     }
     OpStrategySet { strategies, default: lower_where_generic }
 }
@@ -677,13 +570,8 @@ pub fn np_where(b: &mut IRBuilder, args: &[Value]) -> Value {
     // in the join of their ranges (array facts, `docs/array-facts.md`).
     let (x_src, y_src) = (x_b.clone(), y_b.clone());
     let out = match cond.value_id() {
-        Some(cond_vid) => {
-            let inputs = WhereInputs {
-                cond_b,
-                x_b,
-                y_b,
-                cond_vid,
-            };
+        Some(_) => {
+            let inputs = WhereInputs { cond_b, x_b, y_b };
             let set = where_strategy_set(b, cond);
             crate::optim::dispatch_strategy(b, "where", &inputs, &set)
         }

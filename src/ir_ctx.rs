@@ -2,13 +2,12 @@ use std::collections::{BTreeMap, HashMap};
 
 use crate::builder::IRBuilder;
 use crate::scope::*;
-use crate::types::{Value, ZinniaType};
+use crate::types::Value;
 
 /// IRContext manages the scope stack and variable bindings during IR generation.
 /// Mirrors Python `IRContext` from `zinnia/compile/ir/ir_ctx.py`.
 pub struct IRContext {
     scopes: Vec<Scope>,
-    pub recursion_depth: i32,
     unreachable_loop_bindings: HashMap<String, String>,
     /// Per function (innermost last): the names that may be unbound where
     /// they are read, each with the execution predicates of the assignments
@@ -35,7 +34,6 @@ impl IRContext {
             scopes: vec![Scope::Master(MasterScopeData {
                 var_table: VarTable::new(),
             })],
-            recursion_depth: 0,
             unreachable_loop_bindings: HashMap::new(),
             possibly_unbound: vec![BTreeMap::new()],
         }
@@ -258,12 +256,11 @@ impl IRContext {
     /// chip called inside a private `if`, after a private `break`, or after
     /// an early `return` cannot write, assert, or return on paths where the
     /// call does not happen.
-    pub fn chip_enter(&mut self, return_dtype: ZinniaType, entry_condition: Option<Value>) {
+    pub fn chip_enter(&mut self, entry_condition: Option<Value>) {
         self.possibly_unbound.push(BTreeMap::new());
         self.scopes.push(Scope::Chip(ChipScopeData {
             var_table: VarTable::new(),
             return_guaranteed: false,
-            return_dtype,
             returns_with_conditions: Vec::new(),
             calculated_returning_condition: None,
             entry_condition,
@@ -272,12 +269,11 @@ impl IRContext {
         }));
     }
 
-    pub fn circuit_enter(&mut self, return_dtype: ZinniaType) {
+    pub fn circuit_enter(&mut self) {
         self.possibly_unbound.push(BTreeMap::new());
         self.scopes.push(Scope::Circuit(CircuitScopeData {
             var_table: VarTable::new(),
             return_guaranteed: false,
-            return_dtype,
             returns_with_conditions: Vec::new(),
             calculated_returning_condition: None,
             has_none_return: false,
@@ -509,15 +505,6 @@ impl IRContext {
         false
     }
 
-    pub fn get_return_dtype(&self) -> Option<ZinniaType> {
-        for scope in self.scopes.iter().rev() {
-            if let Some(dt) = scope.get_return_dtype() {
-                return Some(dt.clone());
-            }
-        }
-        None
-    }
-
     pub fn check_return_guaranteed(&self) -> bool {
         self.scopes.last().is_some_and(|s| s.is_return_guaranteed())
     }
@@ -538,20 +525,6 @@ impl IRContext {
         if let Some(scope) = self.scopes.last_mut() {
             scope.set_terminated_guarantee();
         }
-    }
-
-    // ── Recursion depth ───────────────────────────────────────────────
-
-    pub fn add_recursion_depth(&mut self) {
-        self.recursion_depth += 1;
-    }
-
-    pub fn sub_recursion_depth(&mut self) {
-        self.recursion_depth -= 1;
-    }
-
-    pub fn get_recursion_depth(&self) -> i32 {
-        self.recursion_depth
     }
 
     // ── Internal helpers ──────────────────────────────────────────────
@@ -582,21 +555,6 @@ impl IRContext {
         }
         false
     }
-
-    /// Get a reference to the current (top) scope.
-    pub fn current_scope(&self) -> &Scope {
-        self.scopes.last().unwrap()
-    }
-
-    /// Get a mutable reference to the current (top) scope.
-    pub fn current_scope_mut(&mut self) -> &mut Scope {
-        self.scopes.last_mut().unwrap()
-    }
-
-    /// Get the number of scopes on the stack.
-    pub fn scope_depth(&self) -> usize {
-        self.scopes.len()
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -625,7 +583,7 @@ mod tests {
 
         ctx.set("global_var", Value::Integer(ScalarValue::known(1, 0)));
 
-        ctx.chip_enter(ZinniaType::Integer, None);
+        ctx.chip_enter(None);
         ctx.set("local_var", Value::Integer(ScalarValue::known(2, 1)));
 
         assert!(ctx.exists("local_var"));
@@ -646,7 +604,7 @@ mod tests {
         ctx.set("i", Value::Integer(ScalarValue::known(0, 0)));
 
         // Enter chip scope (creates boundary)
-        ctx.chip_enter(ZinniaType::None, None);
+        ctx.chip_enter(None);
         ctx.set("i", Value::Integer(ScalarValue::known(0, 0)));
 
         // Enter loop scope
@@ -676,7 +634,7 @@ mod tests {
         // the loop terminates, mirroring Python's flat loop scope.
         let mut ctx = IRContext::new();
 
-        ctx.chip_enter(ZinniaType::None, None);
+        ctx.chip_enter(None);
         ctx.loop_enter();
 
         // `x` is new (not in chip / master) — stays in loop var_table during body.
@@ -696,7 +654,7 @@ mod tests {
         // outer loop terminates.
         let mut ctx = IRContext::new();
 
-        ctx.chip_enter(ZinniaType::None, None);
+        ctx.chip_enter(None);
         ctx.loop_enter(); // outer
         ctx.loop_enter(); // inner
 
@@ -718,7 +676,7 @@ mod tests {
         // and must not clobber the parent's already-updated value.
         let mut ctx = IRContext::new();
 
-        ctx.chip_enter(ZinniaType::None, None);
+        ctx.chip_enter(None);
         ctx.set("i", Value::Integer(ScalarValue::known(0, 0)));
 
         ctx.loop_enter();
@@ -737,7 +695,7 @@ mod tests {
         let mut ctx = IRContext::new();
         let mut builder = IRBuilder::new();
 
-        ctx.chip_enter(ZinniaType::None, None);
+        ctx.chip_enter(None);
         ctx.set("x", Value::Integer(ScalarValue::known(0, 0)));
 
         let cond = builder.ir_constant_bool(true);
@@ -767,7 +725,7 @@ mod tests {
         let cond = ctx.get_condition_value(&mut builder);
         assert_eq!(cond.bool_val(), Some(true));
 
-        ctx.chip_enter(ZinniaType::None, None);
+        ctx.chip_enter(None);
 
         // Still no conditions in chip scope
         let cond = ctx.get_condition_value(&mut builder);
@@ -787,7 +745,7 @@ mod tests {
             crate::circuit_input::InputPath::new("c", vec![]),
             false,
         );
-        ctx.chip_enter(ZinniaType::None, Some(caller_cond.clone()));
+        ctx.chip_enter(Some(caller_cond.clone()));
         let at_entry = ctx.get_condition_value(&mut builder);
         assert_eq!(at_entry.stmt_id(), caller_cond.stmt_id());
 
@@ -803,15 +761,5 @@ mod tests {
         assert!(matches!(stmt.ir, crate::ir_defs::IR::LogicalAnd));
         ctx.if_leave();
         ctx.chip_leave();
-    }
-
-    #[test]
-    fn test_recursion_depth() {
-        let mut ctx = IRContext::new();
-        assert_eq!(ctx.get_recursion_depth(), 0);
-        ctx.add_recursion_depth();
-        assert_eq!(ctx.get_recursion_depth(), 1);
-        ctx.sub_recursion_depth();
-        assert_eq!(ctx.get_recursion_depth(), 0);
     }
 }
