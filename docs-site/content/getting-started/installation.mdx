@@ -1,100 +1,67 @@
 ---
 title: Installation
-description: How to install Zinnia and its dependencies, including Python version requirements and backend setup.
+description: How to build Zinnia from source, with or without the proving backends.
 ---
 
 # Installation
 
-This guide covers installing Zinnia from source and verifying that the installation works correctly.
+Zinnia is a Python package with a native extension written in Rust. It is built from source with [maturin](https://www.maturin.rs/).
 
 ## Prerequisites
 
-Zinnia requires **Python 3.10 or later**. You can check your Python version with:
+- **Python 3.10 or later.**
+- **A Rust toolchain** (`cargo` and `rustc`), for example installed with [rustup](https://rustup.rs/).
+- **For the Noir backend only:** the Noir toolchain `nargo` and the Barretenberg prover `bb`. Zinnia looks for them in the `ZINNIA_NARGO_BIN` and `ZINNIA_BB_BIN` environment variables, then at `~/.nargo/bin/nargo` and `~/.bb/bb`, then on `PATH`.
+
+## Building from Source
+
+Clone the repository, create a virtual environment and install the Python dependencies (NumPy, the Z3 solver and the test tools listed in `requirements.txt`) and maturin:
 
 ```bash
-python3 --version
+git clone <repository-url> zinnia
+cd zinnia
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -r requirements.txt
+python -m pip install "maturin>=1,<2"
 ```
 
-If you need to install or upgrade Python, visit [python.org](https://www.python.org/downloads/) or use your system's package manager.
-
-## Installing from Source
-
-Zinnia is distributed as a Python package with a `setup.py` build configuration. To install it, clone the repository and install in development mode:
+Then build the extension and install it into the virtual environment in editable mode:
 
 ```bash
-git clone <repository-url> zinnia-project
-cd zinnia-project/zinnia-src
-pip install -e .
+PYTHON=.venv/bin/python scripts/develop.sh
 ```
 
-The `-e` flag installs the package in editable (development) mode, so changes to the source code take effect immediately without reinstalling.
+`scripts/develop.sh` runs `maturin develop` and passes its arguments through. The Rust core links against Z3, and the script finds `libz3` in the `z3-solver` wheel, so no system Z3 installation is needed. It also sets the PyO3 compatibility flag that Python 3.14 needs.
 
-## Dependencies
+## Proving Backends
 
-Zinnia depends on the following Python packages, listed in `requirements.txt`:
+The default build contains only the **mock** backend, which checks that the inputs satisfy the circuit without producing a proof. The backends that produce real proofs are optional Cargo features:
 
-| Package | Version | Purpose |
+| Feature | Backend name | What it does |
 |---|---|---|
-| `z3-solver` | 4.13.4.0 | SMT solver used during compilation for symbolic execution and constraint resolution |
-| `numpy` | 2.2.2 | Provides the NumPy integration and is used as a fallback for `zinnia.np` |
-| `pytest` | 8.3.4 | Test framework for running the test suite |
-| `boto` | 2.49.0 | AWS integration utilities |
-| `packaging` | 24.2 | Version handling utilities |
-| `pluggy` | 1.5.0 | Plugin framework (pytest dependency) |
-| `iniconfig` | 2.0.0 | Configuration parsing (pytest dependency) |
+| `halo2-base-backend` | `"halo2-base"` | Synthesizes and proves the circuit in-process with halo2-base (Halo2-lib). |
+| `noir-backend` | `"noir"` | Emits a Noir program and proves it with `nargo` and `bb`. |
 
-Install all dependencies at once with:
+To build with both, use an optimized build with the features enabled. The halo2-base dependency uses an unstable Rust feature, so it needs `RUSTC_BOOTSTRAP=1` on a stable toolchain:
 
 ```bash
-pip install -r requirements.txt
+RUSTC_BOOTSTRAP=1 PYTHON=.venv/bin/python scripts/develop.sh --release --features halo2-base-backend,noir-backend
 ```
 
-The most important dependency is `z3-solver`, which provides the Z3 SMT solver that Zinnia uses during compilation to resolve data-dependent behavior into static circuit constraints. Without it, the compiler cannot function.
+Selecting a backend that was not compiled in is an error. See [Execution](/docs/programming-guide/execution) for how to prove and verify.
 
 ## Verifying the Installation
 
-After installation, verify that Zinnia is correctly installed by importing it in a Python session:
-
-```python
-import zinnia
-print("Zinnia installed successfully")
-```
-
-You can also run one of the included examples to confirm end-to-end functionality:
+Run one of the examples. It compiles a circuit and checks it on the mock backend:
 
 ```bash
-cd zinnia-src
 python examples/fibonacci.py
 ```
 
-If the example runs without errors, Zinnia is working correctly. The Fibonacci example defines a circuit that verifies Fibonacci sequence values, compiles it, and executes a mock proof.
-
-## Running the Test Suite
-
-To run the full test suite:
+The script finishes without output when the circuit is satisfied. To run the test suite:
 
 ```bash
-cd zinnia-src
-pytest testing/
+python -m pytest
 ```
-
-## Backends
-
-Zinnia supports multiple proof-system backends for code generation:
-
-- **Halo2** -- The primary and most mature backend. Halo2 is a PLONK-based proving system that does not require a trusted setup.
-- **Circom** -- Generates Circom circuit definitions compatible with the Groth16 and PLONK provers.
-- **Noir** -- Targets Aztec's Noir proving system.
-- **CirC/Zokrates** -- Targets the CirC compiler infrastructure with Zokrates-compatible output.
-
-By default, Zinnia compiles to the Halo2 backend. Backend selection is controlled through the `ZinniaConfig` object:
-
-```python
-from zinnia import ZKCircuit, ZinniaConfig
-
-config = ZinniaConfig()
-# config.set_backend("halo2")  # default
-circuit = ZKCircuit.from_method(my_function, config=config)
-```
-
-Note that backend-specific proving infrastructure (e.g., the Halo2 Rust prover, or the Circom/snarkjs toolchain) must be installed separately if you want to generate and verify actual proofs. Zinnia's compilation and mock execution work without any backend prover installed.

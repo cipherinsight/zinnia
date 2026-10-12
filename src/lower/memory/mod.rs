@@ -19,11 +19,9 @@
 //!   is then dropped);
 //!
 //! each with its preconditions, postconditions, cost formula (`cost.rs`,
-//! calibrated per target) and soundness argument. The measured cost curves
-//! and crossovers of every read construction (including a halo2-base
-//! dynamic-lookup ROM and a shuffle-checked RAM, measured outside the
-//! compiler in `benchmarking/memory_bench`) are in
-//! `eval-redo/layer/layer-memory.md`.
+//! calibrated per target) and soundness argument. A halo2-base
+//! dynamic-lookup ROM and a shuffle-checked RAM were measured outside the
+//! compiler, in `benchmarking/memory_bench`.
 
 pub mod constructions;
 pub mod cost;

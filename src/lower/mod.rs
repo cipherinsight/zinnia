@@ -23,7 +23,6 @@
 //! Families: [`sort`], [`gather`], [`stats`], [`memory`], [`linear`], [`permutation`]; scatter registers its own in [`registry`].
 //! [`challenge`]: the program-wide verifier challenge of the constructions that check
 //! identities at a random point (halo2-base only), and their probabilistic soundness.
-//! See `eval-redo/layer/core-api.md` for how to add a family.
 
 pub mod array_facts;
 pub mod arrays;

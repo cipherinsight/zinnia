@@ -1,23 +1,22 @@
 ---
-title: Execution and Testing
-description: How to run mock executions, inspect results, and test Zinnia circuits.
+title: Execution and Proving
+description: How to run mock executions, generate and verify proofs, and test Zinnia circuits.
 ---
 
-# Execution and Testing
+# Execution and Proving
 
-After writing a Zinnia circuit, you need to verify that it behaves correctly before
-generating real proofs. Zinnia provides mock execution for exactly this purpose -- it
-evaluates the circuit with concrete values and tells you whether all constraints are
-satisfied.
+A compiled Zinnia circuit can be run in two ways. Mock execution evaluates the circuit's
+constraints with concrete inputs and reports whether they hold, without any cryptography.
+Proving runs a zk-SNARK backend that produces a proof which a verifier can check.
 
 ## Mock Execution
 
-Mock execution simulates the full circuit evaluation pipeline without producing a
-cryptographic proof. It is the primary tool for testing and debugging circuits.
+Mock execution is the primary tool for testing and debugging circuits. It is available in
+every build, including the default build without proving backends.
 
 ### Running a Mock Execution
 
-Call `mock()` on a `ZKCircuit` instance with the concrete input values:
+Call `mock()` on a `ZKCircuit` instance with the input values, in parameter order:
 
 ```python
 from zinnia import ZKCircuit, Integer, Private, Public
@@ -30,130 +29,156 @@ result = circuit.mock(3, 7)
 print(result.is_satisfied())  # True
 ```
 
-The `__call__` method is an alias for `mock`, so you can also write:
+Calling the circuit object is equivalent:
 
 ```python
 result = circuit(3, 7)
 ```
 
-### Auto-Compilation
+Calling a function decorated with `@zk_circuit` also runs a mock execution and returns the
+same kind of result.
 
-If the circuit has not been compiled yet, `mock()` automatically calls `compile()` first.
-Subsequent calls reuse the compiled program:
+### Compilation
 
-```python
-circuit = ZKCircuit.from_method(check_sum)
-
-# First call: compiles, then executes
-result1 = circuit.mock(3, 7)
-
-# Second call: reuses compiled program
-result2 = circuit.mock(5, 5)
-```
-
-If you want to separate compilation from execution (for example, to measure compilation
-time), call `compile()` explicitly:
+If the circuit has not been compiled yet, `mock()` calls `compile()` first. Later calls
+reuse the compiled program. Call `compile()` explicitly to separate compilation from
+execution, for example to measure compilation time:
 
 ```python
 circuit = ZKCircuit.from_method(check_sum)
-compiled = circuit.compile()  # Compilation happens here
-result = circuit.mock(3, 7)   # Only execution happens here
+compiled = circuit.compile()  # compilation happens here
+result = circuit.mock(3, 7)   # only execution happens here
 ```
 
-## How Mock Execution Works Internally
+### Steps of a Mock Execution
 
-When `mock()` is called, the following steps occur:
+1. **Compilation** (if needed). The source is parsed, lowered to IR and optimized.
+2. **Input conversion.** The arguments are checked against the parameter annotations and
+   converted to the circuit's witness format.
+3. **Preprocessing.** The IR is evaluated once to resolve calls to external functions,
+   whose results are added to the witness.
+4. **Constraint evaluation.** The mock backend evaluates every constraint with the witness.
+5. **Result.** A `ZKExecResult` reports whether all constraints were satisfied.
 
-1. **Compilation** (if needed). The source is parsed, type-checked, lowered to IR, and
-   optimized.
-2. **Execution context creation.** A `ExecutionContext` is built from the compiled
-   program's inputs, preprocessing IR, and external functions.
-3. **Argument parsing.** The provided arguments are mapped to the circuit's input slots
-   (private and public inputs).
-4. **Preprocessing.** External function calls are evaluated. Their results are substituted
-   into the circuit.
-5. **Constraint evaluation.** The `MockProgramExecutor` walks through the circuit IR and
-   evaluates every constraint against the concrete input values.
-6. **Result.** A `ZKExecResult` is returned indicating whether all constraints were
-   satisfied.
+`circuit.mock(*args)` is shorthand for `circuit.prove(*args, backend="mock")`, wrapped in a
+`ZKExecResult`.
 
 ## ZKExecResult
 
-The `ZKExecResult` class wraps the outcome of a mock execution.
-
-### API
-
-| Method | Return Type | Description |
-|--------|-------------|-------------|
-| `is_satisfied()` | `bool` | Returns `True` if all circuit constraints passed. |
-| `__bool__()` | `bool` | Allows using the result directly in boolean context. |
-
-### Usage
+| Member | Type | Description |
+|--------|------|-------------|
+| `is_satisfied()` | `bool` | `True` if all circuit constraints hold. |
+| `__bool__()` | `bool` | Allows using the result directly in a Boolean context. |
+| `proof` | `ZKProofResult` | The mock backend's artifact. |
 
 ```python
 result = circuit.mock(3, 7)
 
-# Explicit check
-if result.is_satisfied():
-    print("All constraints passed")
-
-# Boolean context (equivalent)
 if result:
     print("All constraints passed")
-
-# Negation
-if not result:
+if not circuit.mock(1, 2):
     print("At least one constraint failed")
 ```
 
-## Parsing Inputs with `argparse`
+## Proving and Verifying
 
-The `argparse` method lets you inspect how arguments map to circuit input slots without
-running the full execution. This is useful for debugging input layout issues or for
-building custom execution pipelines.
+`prove()` compiles the circuit if needed, resolves external calls, and runs the selected
+backend. It returns a `ZKProofResult`. `verify()` checks such a result, using the backend
+recorded in it.
 
 ```python
-from zinnia import ZKCircuit, Integer, Float, NDArray, Private, Public, np
-
-def my_circuit(
-    scores: Private[NDArray],
-    threshold: Public[Float],
-):
-    assert np.mean(scores) >= threshold
-
-circuit = ZKCircuit.from_method(my_circuit)
-parsed = circuit.argparse(np.array([80.0, 90.0, 85.0]), 80.0)
-
-for entry in parsed.get_entries():
-    print(f"  key={entry.get_key()}, kind={entry.get_kind()}, value={entry.get_value()}")
+circuit = ZKCircuit.from_method(check_sum)
+proof = circuit.prove(3, 7, backend="halo2-base")
+assert circuit.verify(proof)
 ```
 
-### ZKParsedInput
+The `backend` argument accepts:
 
-The `argparse` method returns a `ZKParsedInput` object containing a list of `Entry`
-objects. Each entry represents a single scalar input to the circuit.
+| Backend | Description | Build requirement |
+|---------|-------------|-------------------|
+| `"mock"` (default) | Evaluates the constraints without cryptography. | Always available. |
+| `"halo2-base"` | Builds a Halo2 circuit with the halo2-base (Halo2-lib) library and proves it in-process. | Cargo feature `halo2-base-backend`. |
+| `"noir"` | Emits a Noir program and proves it with the `nargo` and `bb` (Barretenberg UltraHonk) tools. | Cargo feature `noir-backend`, plus `nargo` and `bb` installed. |
 
-**Entry methods:**
+The legacy names `"halo2"` and `"halo2-ipa"` are rejected with an error that names
+`"halo2-base"`. An unknown name, or a backend not compiled into the extension, raises an
+error listing the available backends.
 
-| Method | Return Type | Description |
-|--------|-------------|-------------|
-| `get_indices()` | `tuple[int, ...]` | Positional index tuple identifying this input. |
-| `get_kind()` | `str` | One of `"Float"`, `"Integer"`, or `"Hash"`. |
-| `get_key()` | `str` | A string key like `"x_0_1"` or `"hash_0"`, derived from indices and kind. |
-| `get_value()` | `Any` | The concrete value for this input. |
-| `is_float()` | `bool` | Whether this entry is a float input. |
-| `is_integer()` | `bool` | Whether this entry is an integer input. |
-| `is_hash()` | `bool` | Whether this entry is a hash input. |
+The lowering of array operations depends on the target, which is set at compile time by
+`ZinniaConfig(backend=...)` (see [Configuration](/docs/programming-guide/configuration)).
+Compile with `ZinniaConfig(backend="noir")` before proving with `backend="noir"`. The
+default configuration targets halo2-base.
 
-Arrays are flattened into individual scalar entries, each with its own index tuple.
+The Noir backend looks for its tools in the `ZINNIA_NARGO_BIN` and `ZINNIA_BB_BIN`
+environment variables, then at `~/.nargo/bin/nargo` and `~/.bb/bb`, then on `PATH`.
+
+### Proving Parameters
+
+`prove()` accepts an optional `params` dictionary. When it is given, it must contain all
+three keys:
+
+| Key | Meaning |
+|-----|---------|
+| `k` | Base-2 logarithm of the number of rows of the halo2-base circuit. Ignored by Noir, which sizes its circuit itself. |
+| `lookup_bits` | Width in bits of the lookup table used for range checks (halo2-base). |
+| `precision_bits` | Number of fractional bits of the fixed-point encoding of `Float` values (32). |
+
+Without `params`, the backend chooses them: halo2-base estimates `k` and `lookup_bits` from
+the circuit's cell counts, and Noir uses `{"k": 10, "lookup_bits": 8, "precision_bits": 32}`.
+
+```python
+proof = circuit.prove(3, 7, backend="halo2-base",
+                      params={"k": 12, "lookup_bits": 8, "precision_bits": 32})
+```
+
+### ZKProofResult
+
+| Attribute | Description |
+|-----------|-------------|
+| `backend` | Name of the backend that produced the artifact. |
+| `proof_bytes_hex` | The proof, hex-encoded. For the mock backend, `"mock_satisfied"` or an unsatisfied marker. |
+| `vk_bytes_hex` | The verifying key, hex-encoded. |
+| `public_values` | The public values of the proof. |
+| `k` | The circuit size parameter used. |
+| `prove_seconds` | Time spent in the backend's proof generation. |
+
+`to_json()` and `ZKProofResult.from_json()` serialize the artifact, so it can be verified
+in another process.
+
+### Reusing halo2-base Keys
+
+`prove()` generates parameters and keys on every call. For repeated proofs of the same
+compiled program with the halo2-base backend, generate the keys once:
+
+```python
+from zinnia import ZKCompiledProgram
+
+program = circuit.compile()
+keys = program.setup()                 # optional params dict as for prove()
+proof = program.prove_with_keys(keys, 3, 7)
+assert ZKCompiledProgram.verify_with_keys(keys, proof)
+
+keys.save("keys_dir")                  # write parameters and both keys
+prover_keys = ZKCompiledProgram.load_keys("keys_dir", role="prover")
+verifier_keys = ZKCompiledProgram.load_keys("keys_dir", role="verifier")
+```
+
+`prove_with_keys` returns a dictionary with the hex-encoded `"proof"`, its
+`"public_values"`, `k`, and the time of each proving phase. `verify_with_keys_report`
+returns the verdict together with an error message and the verification time.
+
+### Public Values
+
+Inputs annotated `Public` and the circuit's outputs (its return value, or the array
+arguments it writes when it returns `None`) are public values of the proof. Constant
+outputs are not included. `ZKCompiledProgram.describe_publics()` lists what each public
+value is, by index, and `get_output_layout()` gives the position of every output value.
 
 ## Testing Strategy
 
-A recommended approach for testing Zinnia circuits:
+Mock execution makes circuits easy to test with ordinary Python test frameworks.
 
-### 1. Start with Mock Execution
-
-Write your circuit and immediately test it with known-good inputs:
+### Known Inputs and Boundaries
 
 ```python
 from zinnia import ZKCircuit, Integer, Private, Public
@@ -163,32 +188,20 @@ def age_check(age: Private[Integer], min_age: Public[Integer]):
 
 circuit = ZKCircuit.from_method(age_check)
 
-# Should pass
 assert circuit.mock(25, 18).is_satisfied()
-
-# Should fail
 assert not circuit.mock(15, 18).is_satisfied()
-```
 
-### 2. Test Edge Cases
-
-Verify behavior at boundaries:
-
-```python
-# Exactly at the boundary
+# At the boundary and one below
 assert circuit.mock(18, 18).is_satisfied()
-
-# One below
 assert not circuit.mock(17, 18).is_satisfied()
 ```
 
-### 3. Test Chips Independently
+### Chips
 
-If your circuit uses chips, test the full circuit with inputs that exercise each chip's
-logic:
+Test a circuit with inputs that exercise each path of the chips it uses:
 
 ```python
-from zinnia import zk_chip, Integer
+from zinnia import ZKCircuit, zk_chip, Integer, Private, Public
 
 @zk_chip
 def clamp(value: Integer, lo: Integer, hi: Integer) -> Integer:
@@ -199,24 +212,18 @@ def clamp(value: Integer, lo: Integer, hi: Integer) -> Integer:
     return value
 
 def clamped_check(v: Private[Integer], expected: Public[Integer]):
-    result = clamp(v, 0, 100)
-    assert result == expected
+    assert clamp(v, 0, 100) == expected
 
 circuit = ZKCircuit.from_method(clamped_check, chips=[clamp])
 
-# Normal case
 assert circuit.mock(50, 50).is_satisfied()
-
-# Clamped low
 assert circuit.mock(-10, 0).is_satisfied()
-
-# Clamped high
 assert circuit.mock(200, 100).is_satisfied()
 ```
 
-### 4. Test External Functions Independently
+### External Functions
 
-Since external functions are callable outside circuits, unit test them directly:
+External functions are callable outside circuits, so they can be unit tested directly:
 
 ```python
 from zinnia import zk_external, Integer
@@ -225,14 +232,10 @@ from zinnia import zk_external, Integer
 def compute_threshold() -> Integer:
     return 42
 
-# Direct call -- no circuit needed
 assert compute_threshold() == 42
 ```
 
-### 5. Use Python Test Frameworks
-
-Zinnia circuits are standard Python objects, so they integrate naturally with `pytest` or
-`unittest`:
+### pytest
 
 ```python
 import pytest
@@ -250,73 +253,20 @@ circuit = ZKCircuit.from_method(sum_check)
     (0, 0, 0, True),
 ])
 def test_sum_check(a, b, total, expected):
-    result = circuit.mock(a, b, total)
-    assert result.is_satisfied() == expected
+    assert circuit.mock(a, b, total).is_satisfied() == expected
 ```
 
-## Error Handling During Execution
+## Errors
 
-If the circuit source contains errors that are not caught at compile time (such as type
-mismatches that only manifest with certain inputs), mock execution raises a
-`ZinniaException`. Wrap calls in try/except for robust test harnesses:
+Compilation errors (unsupported syntax or operations, invalid annotations, loops or
+recursion that cannot be bounded) raise `ZinniaException`. A failed assertion is not an
+error: it makes the mock result unsatisfied, and no valid proof exists for those inputs.
 
 ```python
 from zinnia import ZinniaException
 
 try:
-    result = circuit.mock(invalid_input)
+    circuit.compile()
 except ZinniaException as e:
-    print(f"Execution error: {e}")
-```
-
-## Complete Example
-
-```python
-from zinnia import (
-    ZKCircuit, zk_chip, zk_external,
-    Integer, NDArray, Public, Private, np,
-    ZKExecResult,
-)
-
-@zk_external
-def load_reference_data() -> NDArray:
-    return np.array([10, 20, 30, 40, 50])
-
-@zk_chip
-def compute_error(predicted: NDArray, actual: NDArray) -> Integer:
-    diff = np.subtract(predicted, actual)
-    return np.sum(np.abs(diff))
-
-def accuracy_circuit(
-    predictions: Private[NDArray],
-    max_error: Public[Integer],
-):
-    reference = load_reference_data()
-    error = compute_error(predictions, reference)
-    assert error <= max_error
-
-circuit = ZKCircuit.from_method(
-    accuracy_circuit,
-    chips=[compute_error],
-    externals=[load_reference_data],
-)
-
-# Compile once
-circuit.compile()
-
-# Test with good predictions
-result = circuit.mock(np.array([10, 20, 30, 40, 50]), 0)
-assert result.is_satisfied()
-
-# Test with some error
-result = circuit.mock(np.array([11, 21, 31, 41, 51]), 5)
-assert result.is_satisfied()
-
-# Test with too much error
-result = circuit.mock(np.array([20, 30, 40, 50, 60]), 5)
-assert not result.is_satisfied()
-
-# Inspect input layout
-parsed = circuit.argparse(np.array([10, 20, 30, 40, 50]), 0)
-print(parsed)
+    print(f"Compilation error: {e}")
 ```

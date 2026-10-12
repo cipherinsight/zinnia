@@ -1,219 +1,67 @@
 ---
 title: Symbolic Execution
-description: How Zinnia uses SMT-backed symbolic execution to convert dynamic, control-flow-rich programs into static, branch-free arithmetic circuits.
+description: How the IR generator turns branches, loops, calls and checks into a straight-line IR, and how it decides what is known at compile time.
 ---
 
 # Symbolic Execution
 
-Symbolic execution is the core mechanism by which Zinnia compiles programs with data-dependent control flow into static arithmetic circuits. This page describes the symbolic state, the key operators, the compilation rules for each language construct, and the invariants that guarantee correctness.
+IR generation (`src/ir_gen/`) runs the circuit function once, over symbolic values instead of concrete ones. Each value is either a compile-time constant or the result of an IR statement. The output is a straight-line list of IR statements: one circuit that is correct for every input. This page explains how each kind of control flow is compiled and how the generator decides what it knows at compile time.
 
-## The Problem
+## State of the Generator
 
-Arithmetic circuits are fixed-topology graphs: every gate and every wire must be determined at compile time. But programs written in Zinnia can contain:
+The `IRGenerator` holds:
 
-- `if`/`else` branches that depend on private inputs.
-- `for` loops whose iteration count depends on runtime values.
-- Array accesses with data-dependent indices.
-- Variables that are reassigned differently in different branches.
+- **The scopes** (`IRContext` in `src/ir_ctx.rs`, scope kinds in `src/scope.rs`): the circuit scope, chip scopes for inlined calls, conditional scopes, loop scopes and generator scopes for comprehensions. A scope maps names to values and records the condition under which its code runs (the branch condition, the loop's not-broken condition, the not-yet-returned condition, a chip's entry condition).
+- **The builder** (`IRBuilder` in `src/builder.rs`): appends statements and computes each statement's compile-time value when its operands are constants (`build_value`). It also holds the *fact stack*, the facts that hold at the current point (path conditions, preconditions, asserted comparisons), and the array store described in [Arrays and Memory](/docs/compiler-internals/memory-model).
 
-The compiler must produce a single circuit that correctly handles all possible executions. Symbolic execution achieves this by executing the program over symbolic values rather than concrete ones, using an SMT solver (Z3) to reason about what can be determined statically.
+The **execution predicate** of a statement is the conjunction of the conditions of all scopes it is in. It is true exactly on the inputs for which Python would execute the statement. Before compiling each statement, the generator sets the builder's *write predicate* to this predicate. Every write and every check the builder emits uses it.
 
-## Symbolic State
+## Branches
 
-At any point during compilation, the compiler maintains a symbolic state consisting of three components:
+`visit_branches` in `src/ir_gen/visitors.rs` compiles `if c: A else: B`:
 
-```
-(Env, phi, G)
-```
+1. If the builder already knows `c` as a constant, only the arm it selects is compiled, and that arm's bindings become the bindings after the `if`.
+2. Otherwise both arms are compiled, `A` in a scope whose condition is `c` and `B` in one whose condition is `not c`. Each arm also pushes its path condition on the fact stack, so code in the arm can use it.
+3. After the arms, a name assigned in both arms is bound to `select(c, value_A, value_B)` (`merge_binding`). A name assigned in only one arm that existed before the `if` already holds the merged value, because the assignment itself merged with the old value under the arm's predicate. A name first bound inside one arm of a runtime branch stays local to that arm.
 
-- **Env** (symbolic environment): A mapping from variable names to their current symbolic values. Each value is a triplet `(type, constraint, witness)` -- see [Type Inference](./type-inference) for details on the type component. The constraint component is a symbolic expression over the circuit's input variables. The witness component tracks concrete values when available (used for constant folding and debugging).
+Selects of structured values are built by `helpers::value_ops::select_value`, element by element for lists, tuples and arrays (see [Types and Values](/docs/compiler-internals/type-inference) for how differing types and shapes are joined). Each arm is compiled once, so the cost of nested branches is the sum of their arms instead of one copy per path.
 
-- **phi** (path condition): A boolean formula representing the conjunction of all branch conditions taken to reach the current program point. When the compiler enters the `then` branch of `if g: ...`, the path condition becomes `phi AND g`. When it enters the `else` branch, the path condition becomes `phi AND NOT g`. The path condition is always satisfiable (the compiler does not explore provably unreachable paths).
+## Loops
 
-- **G** (emitted graph): The list of IR statements emitted so far. Each statement represents a single scalar operation (addition, multiplication, comparison, etc.) over field elements. Statements reference earlier statements by ID, forming a DAG.
+Every loop is unrolled.
 
-## Key Operators
+- **`for` loops and comprehensions** (`src/ir_gen/iteration.rs`). When the number of items is a compile-time constant, the body is compiled once per item. When the trip count is a runtime value (`range(n)` with a private `n`, or the length of a bounded dynamic array), the loop is unrolled to a proven upper bound and each item gets an *activity condition*. Inactive items run under a false predicate, so their writes change nothing and their assertions hold vacuously. For a runtime-bounded `range`, the circuit also asserts that the item after the last unrolled one is inactive, so a bound that was inferred too small makes the circuit unsatisfiable instead of truncating the loop. A loop with no provable bound is rejected, as is a runtime-bounded `range` whose proven bound exceeds 2^24 items.
+- **`while` loops** (`visit_while`). A loop that counts a variable to a bound with one `i += c` is unrolled like the equivalent `range`. Any other `while` loop is unrolled one iteration at a time, with the guard as the iteration's condition, until the guard is a constant false or the resolver (below) proves it false. When a proof rather than a constant ended the unrolling, the circuit asserts that the guard is false where the loop is still running, so a wrong proof makes the circuit unsatisfiable instead of dropping iterations. If the guard is not proved false within `loop_limit` iterations (`ZinniaConfig`, default 1000), compilation fails.
+- **`break` and `continue`** add conditions to the loop scope (`Scope::loop_break`, `Scope::loop_continue`), so the rest of the body and later iterations run under their negation.
 
-Four operators form the foundation of Zinnia's symbolic execution:
+A name first bound inside a loop body that the loop may leave before the assignment is bound only on some paths. `src/ir_gen/unbound_names.rs` asserts at each read that one of its assignments ran, so no proof exists for an input on which Python would raise `UnboundLocalError`.
 
-### resolve(e, Env)
+## Returns
 
-**Purpose:** Determine whether a symbolic expression `e` is a compile-time constant.
+A `return` registers its value together with the current predicate (`IRContext::register_return`), and later statements run under the condition that no return has happened. At the end of the function, the registered values are merged with selects. For the circuit function itself, the merged value becomes the output (`src/ir_gen/outputs.rs`).
 
-**Mechanism:** The compiler asks Z3 whether `e` has a unique value under the current path condition. Formally, it checks whether there exists exactly one value `v` such that `phi => (e = v)`. If so, `resolve` returns that constant value. Otherwise, it returns a sentinel indicating that `e` is not statically determined.
+## Function Calls
 
-**Use cases:**
-- Determining whether a loop bound is a constant (required for unrolling).
-- Determining whether an array index is constant (enabling direct wire selection vs. multiplexer).
-- Constant folding during IR generation.
-- Deciding whether a conditional can be eliminated (one branch is unreachable).
+A call of a `@zk_chip` function is inlined (`visit_chip_call` in `src/ir_gen/chip_external.rs`). The body is compiled in a chip scope whose entry condition is the caller's predicate, so writes, assertions and returns inside the body stay predicated on the call happening. A recursive call is inlined only while the condition under which it is reached may hold, and a call that is not proved unreachable within `recursion_limit` nested calls (default 16) is rejected.
 
-### resolve-max(e, Env)
+A call of a `@zk_external` function is not compiled. It emits `ExportExternalI`/`ExportExternalF` statements for the arguments and an `InvokeExternal` statement, and its result is read with `ReadExternalResult`. The Python function runs during preprocessing, before proving, and its result enters the circuit as a value the prover supplies. Nothing relates the result to the arguments unless the program asserts it.
 
-**Purpose:** Compute a compile-time upper bound for a symbolic expression `e`.
+## Checks
 
-**Mechanism:** The compiler asks Z3 for the maximum value of `e` that is consistent with the current path condition and all accumulated constraints. This uses Z3's optimization capabilities. If no finite bound can be determined, compilation fails with an error.
+Python raises `IndexError`, `ZeroDivisionError` or a math-domain error only on the paths it executes. The circuit must be satisfiable on the other paths, so every check the generator emits goes through `src/builder/guard.rs`, which emits the check `c` as `p → c` for the current execution predicate `p`. An `assert` statement compiles to `Assert(select(p, c, true))`. An operation whose operand has an implicit domain (an index, a divisor) receives a *guarded operand* `select(p, x, s)` with a safe constant `s`, so its constraints can be satisfied where the code does not run. Nothing is emitted where the code never runs or where `p` already implies `c`.
 
-**Use cases:**
-- Determining the maximum iteration count for a loop with a data-dependent bound. The compiler unrolls to this maximum, using guards to skip iterations beyond the actual runtime count.
-- Determining the maximum length of a `DynamicNDArray`. The circuit must allocate enough wires for the worst case.
-- Sizing multiplexers for array accesses with data-dependent indices.
+The checks the generator adds on its own include:
 
-### merge(g, v1, v2)
+- the domain check of every input element (`src/ir_gen/input_domain.rs`): integers and floats in the signed 64-bit window, Booleans in `{0, 1}`;
+- index bounds of runtime-indexed reads and writes, after NumPy's negative-index wrap;
+- the preconditions of the circuit (`@requires`, `src/ir_gen/preconditions.rs`), which are asserted and also recorded as facts.
 
-**Purpose:** Produce a single value that equals `v1` when guard `g` is true and `v2` when `g` is false.
+## What Is Known at Compile Time
 
-**Mechanism:** Emits a `select` (multiplexer) IR instruction: `result = g * v1 + (1 - g) * v2`. This is the fundamental operation that converts control dependence to data dependence. Both `v1` and `v2` are fully computed (both branches are always executed), and the guard selects the correct result.
+Many decisions need a compile-time number: a loop bound, a shape, an index that selects a wire directly, a branch that can be skipped. The generator gets one in three tiers:
 
-**Use cases:**
-- Merging variable values at the join point after an `if`/`else`.
-- Merging array contents modified differently in different branches.
-- Implementing bounded-dynamic loops where some iterations may be "inactive."
+1. **Static values.** The builder computes the value of every statement whose operands are constants, so `Value::int_val()` and `bool_val()` answer immediately.
+2. **Intervals.** `optim::range::RangeResolver` propagates integer intervals forward over the statements that define a value.
+3. **SMT.** `optim::resolver::SmtResolver` encodes those statements, together with the facts that hold at this point, as a Z3 query (`src/optim/smt_encoding.rs`).
 
-### lower(e, Env, G)
-
-**Purpose:** Compile an expression `e` into IR statements, appending them to `G`.
-
-**Mechanism:** Recursively decomposes the expression AST into primitive operations. Each primitive operation becomes an IR statement. The result is the statement ID of the final operation, which can be referenced by subsequent statements.
-
-For example, lowering `a + b * c` produces:
-1. `s1 = load(a)` -- look up `a` in Env
-2. `s2 = load(b)` -- look up `b` in Env
-3. `s3 = load(c)` -- look up `c` in Env
-4. `s4 = mul(s2, s3)` -- multiply b and c
-5. `s5 = add(s1, s4)` -- add a and the product
-
-The result is `s5`.
-
-## Compilation of Language Constructs
-
-### Expressions
-
-Expressions are compiled by `lower(e, Env, G)`. The rules follow the AST structure:
-
-- **Literals** become constant IR statements.
-- **Variable references** look up the current binding in `Env` and return its statement ID.
-- **Binary operations** lower both operands, then emit the corresponding IR operation (e.g., `int_add`, `int_mul`, `float_div`).
-- **Unary operations** lower the operand and emit the unary IR operation.
-- **Comparisons** lower both sides and emit comparison IR (e.g., `int_less_than`, `int_equal`).
-- **Function calls** are handled specially depending on whether the callee is a built-in, a chip method, or a user-defined function.
-- **Array indexing** checks whether the index resolves to a constant. If so, it directly selects the wire. If not, it emits a multiplexer or memory read (depending on the array's memory model).
-
-### Assignments
-
-An assignment `x = e` compiles `e` via `lower`, then updates `Env` to bind `x` to the result. If `x` already exists in `Env`, the binding is replaced (strong update). The old binding remains in the IR graph but is no longer referenced by `Env`.
-
-Augmented assignments (`x += e`, `x *= e`, etc.) are desugared to `x = x op e`.
-
-### Conditionals
-
-Conditionals are the construct that most directly exercises symbolic execution. Given:
-
-```python
-if g:
-    # then-branch
-else:
-    # else-branch
-```
-
-The compiler proceeds as follows:
-
-1. **Lower the guard.** Compile `g` to an IR statement, producing a boolean value `g_ir`.
-
-2. **Check resolvability.** Call `resolve(g, Env)`. If the guard is a compile-time constant:
-   - If true, execute only the then-branch.
-   - If false, execute only the else-branch.
-   - Skip the merge step entirely.
-
-3. **If the guard is not a constant, execute both branches:**
-   - Save the current environment: `Env_pre = copy(Env)`.
-   - Set `phi_then = phi AND g_ir`. Execute the then-branch, producing `Env_then`.
-   - Restore: `Env = Env_pre`. Set `phi_else = phi AND NOT g_ir`. Execute the else-branch, producing `Env_else`.
-
-4. **Merge.** For every variable `x` that was modified in either branch:
-   - `Env[x] = merge(g_ir, Env_then[x], Env_else[x])`
-   - This emits a `select` instruction that picks the correct value based on the guard.
-
-5. **Restore the path condition** to `phi` (the pre-conditional path condition).
-
-This approach avoids path explosion: the compiler always executes exactly two branches per conditional, regardless of nesting depth. A chain of `n` nested conditionals produces `O(n)` merge operations, not `O(2^n)` paths.
-
-### Loops
-
-Loops require that the iteration count be statically bounded. Given:
-
-```python
-for i in range(n):
-    body
-```
-
-The compiler proceeds:
-
-1. **Resolve the bound.** Call `resolve(n, Env)`. If `n` is a compile-time constant, the loop is unrolled exactly `n` times -- each iteration is compiled as a straight-line sequence of statements.
-
-2. **If `n` is not a constant, resolve the upper bound.** Call `resolve-max(n, Env)` to obtain `N_max`. The loop is unrolled `N_max` times. For each iteration `i`:
-   - Set the guard `g_i = (i < n)` (a runtime boolean).
-   - Execute the loop body under path condition `phi AND g_i`.
-   - Merge the environment: for each variable `x` modified in the body, `Env[x] = merge(g_i, Env_body[x], Env_pre[x])`.
-
-3. **If no bound can be determined**, compilation fails with an error indicating that the loop bound must be statically resolvable.
-
-While loops follow the same pattern but require the programmer to provide a bound annotation or the compiler to infer one from the loop condition.
-
-### Assertions
-
-Assertion statements like `assert x == y` or `assert_equal(x, y)` compile to constraint-assertion IR statements. The assertion expression is lowered, and an `assert` IR instruction is emitted. During optimization, the `AlwaysSatisfiedEliminationIRPass` uses Z3 to check whether the assertion is trivially true under the accumulated constraints, and removes it if so.
-
-Assertions under a non-trivial path condition are guarded: the assertion `phi => (x == y)` is emitted rather than the unconditional `x == y`.
-
-### Function Calls
-
-Function calls are compiled by inlining. The compiler:
-
-1. Evaluates argument expressions.
-2. Creates a new scope with formal parameters bound to argument values.
-3. Compiles the function body in this new scope.
-4. Returns the result value to the caller's environment.
-
-Recursive calls are handled by bounding the recursion depth at compile time. The compiler detects recursion and requires a static depth bound, then unrolls the recursion similarly to loops.
-
-### Chip Method Calls
-
-Chip method calls (calls to methods on `ZKChip` instances) are compiled similarly to function calls but within a `ChipScope`. The chip scope manages the chip's internal state and ensures that state updates are correctly sequenced.
-
-## Invariants
-
-Three invariants are maintained throughout symbolic execution:
-
-### 1. Path Soundness
-
-The path condition `phi` is always satisfiable. Before exploring a branch, the compiler checks (via Z3) that the branch condition conjoined with `phi` is satisfiable. If not, the branch is dead code and is skipped. This ensures that the compiler never emits constraints for unreachable code.
-
-### 2. Staticity Invariant
-
-Every value that the circuit topology depends on (loop bounds, array dimensions, type-level parameters) must be resolvable to a compile-time constant or a compile-time upper bound. If a value cannot be resolved, compilation fails. This ensures that the output circuit has a fixed, finite topology.
-
-### 3. Branch-Free Lowering
-
-The emitted IR graph `G` contains no control-flow instructions. All conditionals are converted to `select` (mux) operations. All loops are fully unrolled. The IR is a straight-line sequence of scalar operations. This invariant guarantees that the IR can be directly mapped to circuit wires and gates by any backend.
-
-## Avoiding Path Explosion
-
-A naive approach to compiling conditionals would enumerate all possible execution paths, leading to exponential blowup. Zinnia avoids this through guarded joins:
-
-- Both branches of every conditional are executed exactly once.
-- At the join point, a `select` instruction merges the results.
-- Nested conditionals produce nested `select` instructions, not separate paths.
-
-For a program with `k` nested conditionals, the naive approach would explore `2^k` paths. Zinnia produces `O(k)` merge operations. The trade-off is that both branches are always evaluated (wasting constraints when one branch is never taken at runtime), but the `AlwaysSatisfiedEliminationIRPass` and dead code elimination mitigate this by removing provably unnecessary constraints.
-
-## SMT Solver Integration
-
-The compiler uses Z3 through the `SMTUtils` class in `compile/builder/`. Key interactions with Z3 include:
-
-- **Satisfiability checks**: determining whether a path condition is satisfiable.
-- **Uniqueness checks**: determining whether an expression has a unique value (for `resolve`).
-- **Optimization queries**: finding the maximum value of an expression (for `resolve-max`).
-- **Tautology checks**: determining whether an assertion is always true (for optimization).
-
-Z3 queries are the most expensive part of compilation. The compiler caches query results and structures queries to minimize solver invocations. Despite this, compilation of programs with complex constraints can be significantly slower than traditional compilers.
+`LayeredResolver::range_then_smt` chains the last two and is installed when SMT is enabled (the default, switched off by `ZINNIA_SMT_ENABLE=0`). Callers go through the helpers in `src/optim/resolver/` (`require_static_int`, `resolve_int_or_bounded`, ...), which report a uniform error when a value is not static. Each Z3 query is bounded by a budget of solver steps (`src/optim/z3_budget.rs`) instead of a wall-clock timeout, so the same source always compiles to the same circuit. An answer of "unknown" is never treated as "proved": the generator then takes the general path, which emits more constraints but no wrong ones.

@@ -11,7 +11,7 @@
 //!   itself.
 //! * **Gadget postconditions**: what the constraints of a scalar statement
 //!   the program emits anyway prove about its operands, on every backend.
-//! * **Operator semantics** of array facts (`docs/array-facts.md` 2.7c),
+//! * **Operator semantics** of array facts (`docs/array-facts.md`, section 5),
 //!   from `array_facts::definitional`: for example, the argsort lanes of one
 //!   sorted line, all ranks once, are a permutation of `0..n`, and the value
 //!   lanes are non-decreasing.

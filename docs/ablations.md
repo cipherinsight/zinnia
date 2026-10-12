@@ -13,18 +13,20 @@ targets, IR and `main.nr` digests).
 |---|---|---|
 | `ZINNIA_ABLATE_SMT=1` | Every Z3 query that reasons about values answers `Unknown` without calling Z3: the IR generator's resolver and `prove()` (bounds, preconditions, index checks, strategy choices), the shape-parameter bounds, and the SMT tier of `AlwaysSatisfiedElimination`. Each caller treats `Unknown` as "no information", so what is left is constants, intervals over the IR (`RangeResolver`) and the scans of interval facts (`ask_bounds`). The construction selection of the lowering layer (a Z3 optimization over costs, not reasoning about values) stays on. | `optim::z3_budget::{check, check_assuming, check_optimize}` |
 | `ZINNIA_ABLATE_LAYER_FACTS=1` | The array-lowering layer gets no free facts (no bounds, no gadget postconditions) and ignores the program's checks: no check is dropped as implied by an earlier one or by a construction's postcondition, and no check justifies a construction's precondition. Every precondition fact gets a check node (the selection may still use another construction's postcondition when that is cheaper). | `lower::emit::lower`, `lower::facts::FreeFacts::none` |
-| `ZINNIA_ABLATE_ARRAY_FACTS=1` | Every query of the array facts (`docs/array-facts.md`) sees none: no element range of an array reaches the bound and decision queries, no read gets its array's range, no order or permutation is known (the boundary reads of a sorted runtime-shaped array, the permutation scatter, the layer's argsort-line permutation are not used), and no array is known to be all zeros or ones or an identity matrix (the constant-content strategies of sum, prod, mean, where and matmul are not offered). Sources still state facts; nothing reads them, and no `IR::ArrayFact` is emitted. In the array-lowering layer every array claim is off (`docs/array-facts-lowering.md`): none is established, implied or composed, program checks are read as before array claims (no order, `Holds`, float or strict-bound forms), no value's checks are merged into one range check, no statement is decided by facts, no sort hint is bounded into a range, and the constructions keyed on array claims (a sort of a sorted input, the argmax of a sorted line, scans of monotone flags, a wrap of a non-negative index) do not apply. The measurement scripts call this configuration `abl_array_facts`. | `optim::array_facts::ablated`, `builder/array_facts.rs`, `lower::array_facts::enabled` (`lower::emit::Options::no_array_facts`) |
-| `ZINNIA_ABLATE_CHECK_ELIM=1` | The two optimizer passes that drop program checks, `AlwaysSatisfiedElimination` and `AssertSubsumption`, are not run. Checks the IR generator never emitted (discharged at IR generation by `prove()` or by bounds) are not affected; that is `ZINNIA_ABLATE_SMT`'s territory. | `lib.rs::compile_circuit` |
+| `ZINNIA_ABLATE_ARRAY_FACTS=1` | Every query of the array facts (`docs/array-facts.md`) sees none: no element range of an array reaches the bound and decision queries, no read gets its array's range, no order or permutation is known (the boundary reads of a sorted runtime-shaped array, the permutation scatter, the layer's argsort-line permutation are not used), and no array is known to be all zeros or ones or an identity matrix (the constant-content strategies of sum, prod, mean, where and matmul are not offered). Sources still state facts in the IR generator's store, but nothing reads them, and the store hands none to the layer (`state_definitional_facts` emits no `IR::ArrayFact`). In the array-lowering layer every array claim is off (`docs/array-facts-lowering.md`), including those of the `IR::ArrayFact`s the `@requires` witness emitters still state: none is established, implied or composed, program checks are read as before array claims (no order, `Holds`, float or strict-bound forms), no value's checks are merged into one range check, no statement is decided by facts, no sort hint is bounded into a range, and the constructions keyed on array claims (a sort of a sorted input, the argmax of a sorted line, scans of monotone flags, a wrap of a non-negative index) do not apply. The measurement scripts call this configuration `abl_array_facts`. | `optim::array_facts::ablated`, `builder/array_facts.rs`, `lower::array_facts::enabled` (`lower::emit::Options::no_array_facts`) |
+| `ZINNIA_ABLATE_CHECK_ELIM=1` | The two optimizer passes that drop program checks, `AlwaysSatisfiedElimination` and `AssertSubsumption`, are not run. Checks the IR generator never emitted (discharged at IR generation by `prove()` or by bounds) are not affected; that is `ZINNIA_ABLATE_SMT`'s territory. | `lib.rs::compile_circuit_impl` |
 
-Related, older switches (not ablations of the fact layer):
+Two related switches turn off parts of the reasoning without being ablations of the fact layer:
 
-- `ZINNIA_SMT_ENABLE=0` replaces only the IR generator's resolver (`require_static_int`
+- `ZINNIA_SMT_ENABLE=0` (also `false`, `off`, `no`; or `smt_enable: false` in the compile
+  configuration) replaces only the IR generator's resolver (`require_static_int`
   and the other resolver chokepoints) with the static-only resolver, which also loses the
   interval tier. It does not affect `prove()`, the shape-parameter bounds, or
   `AlwaysSatisfiedElimination` (which builds its own resolver).
-- `ZINNIA_REQ_DISABLE=1` makes `prove()` answer `Unknown`, so every op precondition is
-  checked in the circuit and every strategy takes its default; the interval fallbacks of
-  the index checks still apply.
+- `ZINNIA_REQ_DISABLE=1` (or `true`) makes `prove()` answer `Unknown` and turns the interval
+  relays of `optim::resolver::relays` into no-ops, so every op precondition is checked in the
+  circuit and every strategy takes its default. The interval fallbacks of the index checks
+  still apply.
 
 ## The array-lowering layer's selection
 
@@ -39,6 +41,7 @@ worth.
 | `ZINNIA_ABLATE_JOINT=1` | Local selection: each group chooses its construction on its own, priced as if it were the only group of the program (definition below). Only the decision changes: the chosen constructions are emitted by the normal machinery, so a shared value two groups both chose is built once, a check a chosen construction proves is dropped, and the verifier challenge is laid out once. | `lower::local`, `lower::emit::lower_with`, `Context::sharing_groups` |
 | `ZINNIA_FORCE_CONSTRUCTION=<list>` | No selection: for every group, the first listed construction that applies to it (its candidates produce every live lane of the group) is the only one offered (with its helper, the multiplexer's index bits). The list holds construction names (`Construction::name`) and named configurations `@delegate`, `@selects` (below). A group no listed construction applies to, or whose forced construction cannot be selected together with the rest of the program, keeps the layer's choice (a *fallback*; the layer report counts them). | `lower::forcing` |
 | `ZINNIA_LAYER_REPORT=<path>` | Not an ablation: appends one JSON line per lowering round to `<path>`, with each group's family, the constructions applicable to it, the forced one and the chosen ones. The compiled program does not depend on it. | `lower::report` |
+| `ZINNIA_LAYER_INPUT=<path>` | Not an ablation, a debugging aid: appends the IR the array-lowering layer receives to `<path>`, one statement per line. The compiled program does not depend on it. | `lib.rs::dump_layer_input` |
 
 ### Local selection (`ZINNIA_ABLATE_JOINT=1`)
 
@@ -98,7 +101,7 @@ One fixed construction per family (`OpKind::family`), whatever it costs
 | linear (matmul, correlation) | layer's choice | `linear: direct product sums` |
 | is_permutation | layer's choice | `permutation: hit counts` |
 | mask write | layer's choice | `mask write: selects` |
-| insert, window, permutation scatter, corrcoef | layer's choice | layer's choice |
+| argextreme, insert, window, permutation scatter, corrcoef | layer's choice | layer's choice |
 
 `@delegate` is what a conventional circuit compiler does with array code: every access
 at a runtime index goes through the backend's memory. On Noir the array is a native
@@ -130,5 +133,8 @@ not a fallback).
   input A, a proof of input B equal to NumPy's outputs, verification, a tampered public
   value rejected).
 * `run_configs.sh WT OUT CONFIG [JOBS]`: the remote runner (configurations `final`,
-  `abl_joint`, `fix_delegate`, `fix_selects`, `oracle`, `noir_hw`).
+  `abl_joint`, `fix_delegate`, `fix_selects`, `oracle`, `noir_hw`), each compile run under a
+  memory cap and a timeout by `capped.py`.
+* `compare_digests.py BEFORE AFTER`: compares two `benchmarking/determinism.py --runs 1`
+  outputs case by case (IR and `main.nr` digests, halo2-base cells and `k`).
 

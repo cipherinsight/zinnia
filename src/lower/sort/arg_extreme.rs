@@ -101,7 +101,7 @@ impl Construction for ArgExtremeOfSortedByPosition {
 /// * Preconditions: none. Postconditions: the lane.
 /// * Cost per element after the first: a comparison and two selects
 ///   (halo2-base 55 cells, Noir 10 gates at the full width; measured on
-///   `np.argmax` of 8 and 16 floats, `eval-redo/layer/array-fact-survey.md`).
+///   `np.argmax` of 8 and 16 floats).
 /// * Soundness: no hint; every value is a function of the cells. A strict
 ///   comparison keeps the earlier position on a tie, so `index` is the
 ///   first extreme (NumPy's rule).

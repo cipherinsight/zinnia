@@ -1,157 +1,86 @@
 ---
 title: Optimization Passes
-description: Documentation of Zinnia's 10 IR optimization passes, their ordering, dependencies, and impact on circuit size.
+description: The IR pass pipeline that compile_circuit runs, in order, with what each pass does and the soundness rule every pass follows.
 ---
 
 # Optimization Passes
 
-After IR generation, Zinnia runs 10 optimization passes in a fixed order. Each pass takes an `IRGraph` and produces a transformed `IRGraph`. The passes are implemented in `compile/optim_pass/`.
+After IR generation, `compile_circuit_impl` in `src/lib.rs` builds a list of pass names and `run_pass_pipeline` applies them one after another. Each pass implements the `IRPass` trait of `src/optim/mod.rs`:
 
-Optimization is critical for circuit size. The raw IR produced by symbolic execution contains significant redundancy: both branches of every conditional are fully materialized, loop unrolling duplicates code, and the SMT-backed approach generates conservative constraints. The optimization passes can reduce circuit size by 30-70% in typical programs.
+```rust
+pub trait IRPass {
+    fn exec(&self, ir_graph: IRGraph) -> IRGraph;
+}
+```
 
-## Pass Ordering
+Most passes live in `src/optim/`. The array lowering layer and the passes tied to it live in `src/lower/`.
 
-The passes run in the following order:
+## The Soundness Rule
 
-| # | Pass | Category |
+A pass may change how a value is computed. It must not change which inputs the circuit accepts or which outputs it proves. In particular, a pass may drop a check only when the check holds on every input that satisfies the remaining constraints, and that argument may not rest on the check itself or on another check dropped with it. Facts used to simplify must come from the statements (constants, intervals, gadget postconditions, the program's checks that stay). Witness values are never a source. An answer of "unknown" from the resolver or Z3 is treated as "no information".
+
+## The Pipeline
+
+The passes run in this order. A pass marked with a switch of `OptimizationConfig` (`zinnia/config/optimization_config.py`) runs only when the switch is on. All switches default to on.
+
+| # | Pass | Switch |
 |---|---|---|
-| 1 | `ExternalCallRemoverIRPass` | Structural |
-| 2 | `DynamicNDArrayMetaAssertInjectionIRPass` | Structural |
-| 3 | `DynamicNDArrayMemoryLoweringIRPass` | Structural |
-| 4 | `MemoryTraceInjectionIRPass` | Structural |
-| 5 | `PatternMatchOptimIRPass` | Algebraic simplification |
-| 6 | `ConstantFoldIRPass` | Standard optimization |
-| 7 | `DeadCodeEliminationIRPass` | Standard optimization |
-| 8 | `DuplicateCodeEliminationIRPass` | Standard optimization |
-| 9 | `DoubleNotEliminationIRPass` | Peephole |
-| 10 | `AlwaysSatisfiedEliminationIRPass` | Circuit-specific |
+| 1 | `PatternMatchOptim`, `DoubleNotElimination` | `shortcut_optimization` |
+| 2 | `AssertedEqualityConstantPropagation`, `ConstantFold` | `constant_fold` |
+| 3 | `DeadCodeElimination` | `dead_code_elimination` |
+| 4 | `AlwaysSatisfiedElimination` | `always_satisfied_elimination` |
+| 5 | `DuplicateCodeElimination`, `SelectChainForwarding`, then `ConstantFold` and `DeadCodeElimination` again when those switches are on | `duplicate_code_elimination` |
+| 6 | `SortCountQueries`, `ArgmaxQueries`, `ConstantTableReads` | always |
+| 7 | `ArrayLowering` | always |
+| 8 | `PredicatedSimplification`, `DeadCodeElimination`, `SelectMerge`, `DeadCodeElimination` | always |
+| 9 | `ConstantSelectorQueries`, `NeutralNegation` | `shortcut_optimization` |
+| 10 | `DuplicateCodeElimination`, `SelectChainForwarding`, `DeadCodeElimination` | `duplicate_code_elimination` |
+| 11 | `AssertSubsumption` | always |
+| 12 | `DynamicNDArrayMetaAssertInjection` | see below |
+| 13 | removal of the domain checks of unread inputs, then `DeadCodeElimination` and `CheckedAbsSquare` (the last one under `shortcut_optimization`) | always |
 
-The ordering matters. Structural passes (1-4) must run first because they introduce new IR statements that subsequent passes can optimize. Standard optimizations (5-8) reduce redundancy introduced by both the original compilation and the structural passes. Peephole and circuit-specific passes (9-10) clean up remaining inefficiencies.
+The measurement switch `ZINNIA_ABLATE_CHECK_ELIM=1` (`docs/ablations.md`) leaves out passes 4 and 11, the two that drop program checks.
 
-## Pass Descriptions
+## Passes Before Array Lowering
 
-### 1. ExternalCallRemoverIRPass
+**`PatternMatchOptim`** (`pattern_match_optim.rs`) rebuilds the graph and applies local rewrites: `and`/`or` with a constant operand, selects with a constant condition, with equal branches, or with constant Boolean branches (`select(c, true, false)` is `c`), `x + 0`, `x - 0`, `x - x`, `x * 1`, `x / 1`, comparisons of a value with itself, and the canonical form of ordering comparisons (`a > b` becomes `b < a`, `a >= b` becomes `not (a < b)`), so that complementary comparisons become one statement after duplicate elimination. Rewrites that would remove a hidden check, such as the quotient window of a float division, are not applied.
 
-**What it does:** Removes IR statements corresponding to external function calls. External functions are used for witness generation and other prover-side computations that do not appear in the circuit.
+**`DoubleNotElimination`** replaces `not (not x)` by `x`.
 
-**Why it matters:** External calls are present in the IR for completeness during compilation (they affect the symbolic environment), but they have no circuit representation. Removing them early prevents downstream passes from wasting time on dead code.
+**`AssertedEqualityConstantPropagation`** finds assertions of the form `x == k` for a constant `k` and lets the statements that read `x` read `k`. The assertion itself stays.
 
-**Dependencies:** None. Must run before dead code elimination to avoid interference.
+**`ConstantFold`** rebuilds the graph through a fresh `IRBuilder`, replacing every operand whose value the builder knows by a shared constant statement. The builder computes the value of every statement whose operands are all constant, so these statements are replaced by constants in turn and the original computations become dead.
 
-### 2. DynamicNDArrayMetaAssertInjectionIRPass
+**`DeadCodeElimination`** keeps the fixed statements (`IR::is_fixed`) and everything they depend on, and removes the rest. An `ArrayFact` keeps none of its operands alive, and is kept exactly while all of them are.
 
-**What it does:** Injects assertion statements that constrain the metadata of dynamic arrays. For each `DynamicNDArray`, this pass adds assertions ensuring that the runtime length is non-negative and does not exceed the declared maximum.
+**`AlwaysSatisfiedElimination`** removes an `Assert` whose condition is a constant true, or that range analysis or Z3 proves true from the statements that define it, without assuming any other check of the program. An assertion proved false is a compile error. The input domain checks are not examined.
 
-**Why it matters:** Without these assertions, a malicious prover could claim a dynamic array has a length outside its declared bounds, leading to incorrect circuit behavior. These assertions are hard constraints that the prover must satisfy.
+**`DuplicateCodeElimination`** merges statements with the same instruction (parameters included) and the same operands, in one forward walk, so merged producers make their consumers equal in turn.
 
-**Example:** For a `DynamicNDArray[int, 8, 1]` with runtime length `n`, this pass injects:
-- `assert(n >= 0)`
-- `assert(n <= 8)`
+**`SelectChainForwarding`** resolves a read after a write at the same runtime index. A write `a[i] = w` over known cells and a read `a[i]` become a chain of selects on `i == k`, and when the circuit asserts `i < n` the chain is `w`.
 
-**Dependencies:** Must run before memory lowering (Pass 3), because memory lowering needs these constraints to be present.
+**`SortCountQueries`**, **`ArgmaxQueries`** and **`ConstantTableReads`** (`src/lower/sort/`) rewrite three patterns before array lowering, so that the array values they no longer read are not lowered: a comparison with a sorted value is answered from a count of the same sort, `h[argmax(h)]` is answered as `any(h)`, and a read of a constant affine table at a runtime index is computed in closed form.
 
-### 3. DynamicNDArrayMemoryLoweringIRPass
+## Array Lowering
 
-**What it does:** Lowers dynamic array operations (indexing, slicing, assignment) from high-level array IR to low-level memory IR (`AllocateMemoryIR`, `ReadMemoryIR`, `WriteMemoryIR`). This pass decides whether each array uses the multiplexer strategy or the zkRAM strategy based on its maximum size.
+**`ArrayLowering`** (`src/lower/emit.rs`) replaces every `ArrayOp` placeholder and every array version with real constructions. It runs after dead-code elimination, so it sees only the outputs the program uses, and it chooses constructions by their cost on the compile target. No backend accepts its input, which is why it is not behind a switch. [Arrays and Memory](/docs/compiler-internals/memory-model) describes it.
 
-**Why it matters:** The IR generator produces high-level array operations that are agnostic to the memory model. This pass makes the memory strategy concrete, introducing the specific IR instructions that backends know how to compile.
+## Passes After Array Lowering
 
-**Dependencies:** Must run after metadata assertion injection (Pass 2). Must run before memory trace injection (Pass 4).
+**`PredicatedSimplification`** simplifies each branch of a select under the select's own condition. Code that runs under a runtime condition often computes something the condition decides, such as the wrap of an index that the condition proves non-negative.
 
-### 4. MemoryTraceInjectionIRPass
+**`SelectMerge`** collapses `select(p, x, y)` to `x` when `y` equals `x` wherever `p` is false (and symmetrically), using the integer interval of a value the condition compares with a constant.
 
-**What it does:** For arrays that use the zkRAM memory model, this pass injects memory trace operations (`MemoryTraceEmitIR`, `MemoryTraceSealIR`). Each read and write to a zkRAM array emits a trace entry recording the operation type, address, value, and timestamp. At the end, a seal operation finalizes the trace for the consistency argument.
+**`ConstantSelectorQueries`** answers equality queries on values that are selected from a finite set of constants by reusing the selection's conditions. **`NeutralNegation`** rewrites `-(a - b)` as `b - a` for unrounded subtractions.
 
-**Why it matters:** The zkRAM consistency argument requires a complete, ordered trace of all memory operations. Without the trace, the verifier cannot check that reads return the values most recently written to each address.
+**`AssertSubsumption`** collapses groups of `AssertU128Lt(base + s_k, hi)` with the same runtime `base` and `hi` to the members with the largest and smallest offsets, whose conjunction implies the others.
 
-**Dependencies:** Must run after memory lowering (Pass 3), because it operates on the memory IR introduced by that pass.
+**`DynamicNDArrayMetaAssertInjection`** adds an `AssertDynamicNDArrayMeta` after each `WitnessDynamicNDArrayMeta`, checking a dynamic-array input's runtime shape against its envelope. It runs when the circuit has a bounded dynamic array input or `enable_memory_consistency` is set in `ZinniaConfig`.
 
-### 5. PatternMatchOptimIRPass
+**Unread inputs.** An input that nothing but its own domain check reads takes no part in the proven statement, so `ir_gen::input_domain::drop_checks_of_unread_inputs` removes the check and the final `DeadCodeElimination` removes the read.
 
-**What it does:** Performs algebraic simplification via pattern matching on the IR graph. Recognizes and simplifies common patterns:
+**`CheckedAbsSquare`** (`pattern_match_optim.rs`) runs last. It rewrites the square of an absolute value of a checked input, and turns the implicit domain restriction of that `AbsF` into an explicit assertion. It must follow every algebraic simplification, so that no restriction survives for a square that a later rewrite would have removed.
 
-- `x + 0` becomes `x`
-- `x * 1` becomes `x`
-- `x * 0` becomes `0`
-- `x - x` becomes `0`
-- `x / x` becomes `1` (when `x` is provably non-zero)
-- `select(g, x, x)` becomes `x` (when both branches produce the same value)
-- `not(not(x))` becomes `x`
-- Double negation of boolean expressions
-- Distributive law simplifications
+## Running Passes
 
-This pass is also referred to as "shortcut optimization" in the codebase.
-
-**Why it matters:** Symbolic execution and loop unrolling generate many trivially simplifiable expressions. For example, a loop that accumulates a sum starts with `sum = 0`, and the first iteration computes `sum + arr[0]`, which initially involves `0 + arr[0]` -- simplifiable to just `arr[0]`.
-
-**Dependencies:** Benefits from running after structural passes, which may introduce simplifiable patterns.
-
-### 6. ConstantFoldIRPass
-
-**What it does:** Evaluates operations whose inputs are all compile-time constants, replacing them with a single `ConstantIR` statement. For example, `IntAddIR(ConstantIR(3), ConstantIR(4))` is replaced by `ConstantIR(7)`.
-
-**Why it matters:** Constants propagate through the circuit and can cascade: folding one constant may make another operation foldable. This pass iterates until no more folding is possible.
-
-**Dependencies:** Benefits from running after pattern matching, which may expose new constants (e.g., `x * 0 = 0`).
-
-### 7. DeadCodeEliminationIRPass
-
-**What it does:** Removes IR statements whose results are not used by any output, assertion, or memory operation. Starting from the outputs and assertions, it traces backward through the dependency graph and marks all reachable statements. Unreachable statements are removed.
-
-**Why it matters:** Previous passes (especially external call removal and constant folding) can leave behind statements that no longer contribute to the circuit. Dead code elimination removes these, directly reducing the number of circuit constraints.
-
-**Dependencies:** Should run after constant folding, which may render operations dead (e.g., a conditional whose guard folded to a constant makes one branch's statements dead).
-
-### 8. DuplicateCodeEliminationIRPass
-
-**What it does:** Identifies IR statements that compute the same operation with the same arguments and replaces all references to the duplicates with a single canonical statement. This is equivalent to common subexpression elimination (CSE) in traditional compilers.
-
-**Why it matters:** Loop unrolling and branch materialization can produce many duplicate computations. For example, if both branches of a conditional compute `x + 1`, the two `IntAddIR` statements can be deduplicated into one.
-
-**Dependencies:** Should run after dead code elimination, which simplifies the graph and makes duplicate detection faster.
-
-### 9. DoubleNotEliminationIRPass
-
-**What it does:** Detects patterns of the form `BoolNotIR(BoolNotIR(x))` and replaces them with `x`.
-
-**Why it matters:** Double negations arise from the compilation of complex boolean expressions and from the guard/merge process in conditional compilation. Each `BoolNotIR` becomes a circuit constraint, so eliminating unnecessary ones reduces circuit size.
-
-**Dependencies:** A simple peephole pass with no specific ordering requirements, but placing it after the main optimization passes ensures it catches patterns that earlier passes may have exposed.
-
-### 10. AlwaysSatisfiedEliminationIRPass
-
-**What it does:** Identifies assertion statements that are provably always true and removes them. Uses the constraint structure of the IR (and optionally Z3) to determine whether an assertion is a tautology under the circuit's input constraints.
-
-**Why it matters:** Many assertions are generated conservatively during symbolic execution. For example, an assertion `assert(x >= 0)` may be trivially true if `x` is the result of an unsigned input. Removing tautological assertions directly reduces the constraint count.
-
-**Examples of always-satisfied assertions:**
-- Range checks on values that are already range-checked by construction.
-- Equality assertions between values that are defined to be equal.
-- Non-negativity checks on values that are computed as squares.
-
-**Dependencies:** Runs last because all prior optimizations may create new tautologies (e.g., constant folding may make an assertion trivially true).
-
-## Impact on Circuit Size
-
-The optimization passes have a cumulative effect on circuit size. As a rough guide for typical programs:
-
-| Pass | Typical Reduction |
-|---|---|
-| Pattern matching | 5-15% |
-| Constant folding | 5-10% |
-| Dead code elimination | 10-30% |
-| Duplicate elimination | 5-15% |
-| Double-not elimination | 1-3% |
-| Always-satisfied elimination | 5-20% |
-
-The actual reduction depends heavily on the program. Programs with many conditionals benefit more from dead code and always-satisfied elimination. Programs with loops benefit more from pattern matching and duplicate elimination.
-
-## Adding a New Pass
-
-To add a new optimization pass:
-
-1. Create a new class in `compile/optim_pass/` that takes an `IRGraph` and returns a transformed `IRGraph`.
-2. The pass should not modify the input graph in place; it should produce a new graph (or at minimum, a new statement list with updated references).
-3. Register the pass in the `ZinniaCompiler` orchestrator at the appropriate position in the pass sequence.
-4. Ensure the pass preserves the IR invariants: topological ordering, single assignment, and branch-free structure.
-5. Add tests that verify the pass produces correct and smaller IR for representative inputs.
+`apply_pass` in `src/lib.rs` maps each name to its pass. Passes that rebuild the graph through a new `IRBuilder` lose the graph's side tables, so `apply_pass` carries the elided-output list and the provenance table across each pass and drops provenance records whose values no longer exist. `ZINNIA_COMPILE_PHASE_TRACE=1` prints the time and the statement count after every pass. [Adding Optimization Passes](/docs/contributing/adding-optimization-passes) shows how to add one.

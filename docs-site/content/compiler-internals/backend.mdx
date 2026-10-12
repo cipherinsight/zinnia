@@ -1,86 +1,48 @@
 ---
-title: Backend Code Generation
-description: How Zinnia's backend builders translate optimized IR into target proving system code. Covers the builder interface and current backend status.
+title: Backends
+description: How the compiled IR is evaluated, proved and verified by the mock, halo2-base and Noir backends, and the interfaces they share.
 ---
 
-# Backend Code Generation
+# Backends
 
-The backend is the final stage of the Zinnia compiler pipeline. It translates the optimized IR into source code or circuit descriptions for a specific zk-SNARK proving system.
+A backend takes the compiled IR and a witness and either checks the constraints (the mock backend) or produces a zero-knowledge proof (halo2-base and Noir). All of them live in `src/prove/` and share one interpreter and one definition of the value semantics.
 
-**Note:** The backend subsystem is currently under major refactoring. The information on this page reflects the existing architecture, but the API and implementation details are expected to change. Halo2 is the primary and most complete backend; other backends have varying levels of maturity.
+## Backend Names
 
-## Available Backends
+`prove::create_prover_backend` maps a name to a backend:
 
-Zinnia includes four backend builders, defined in `compile/backend/`:
-
-| Backend | Target | Status |
+| Name | Backend | Cargo feature |
 |---|---|---|
-| `Halo2Builder` | Halo2 (Rust) | Primary, most mature |
-| `CircomBuilder` | Circom | Functional |
-| `NoirBuilder` | Noir | Functional |
-| `CirCZokBuilder` | ZoKrates via CirC | Experimental |
+| `"mock"` | `MockProverBackend`: evaluates the constraints, no proof | always built |
+| `"halo2-base"` | `Halo2BaseProverBackend`: synthesizes and proves in-process with Axiom's halo2-base library | `halo2-base-backend` |
+| `"noir"`, `"noir-ultrahonk"` | `NoirProverBackend`: emits a Noir program and proves it with `nargo` and `bb` (UltraHonk) | `noir-backend` |
 
-### Halo2Builder
+The names `"halo2"` and `"halo2-ipa"` belonged to a retired backend and are an error that names `halo2-base` as the replacement. A backend whose feature was not compiled in is an unknown name.
 
-The Halo2 backend generates Rust source code that uses the Halo2 library to define a circuit. It maps IR statements to Halo2 regions, columns, and cells. This is the most actively maintained backend and supports the full IR instruction set, including memory operations and special gadgets (Poseidon hash, Merkle verification).
+The proving backend is chosen at proving time (`ZKCompiledProgram.prove(..., backend=...)`), while `ZinniaConfig.backend` is chosen at compile time and selects the *compile target* whose costs the array lowering layer minimizes: `"noir"` selects the Noir target, and the default `"halo2"` selects halo2-base. The target also decides which constructions are available. Constructions that check an identity at a verifier challenge exist only on halo2-base, so a program to be proved with Noir must be compiled with `backend="noir"`.
 
-### CircomBuilder
+## Shared Pieces
 
-The Circom backend generates Circom template code. Each IR statement maps to a Circom constraint or signal assignment. Circom's template system is used to structure the output.
+**The kernel** (`src/prove/kernel.rs`) defines the value semantics: field arithmetic over BN254's scalar field, the fixed-point encoding of floats (32 fractional bits by default, `ProvingParams.precision_bits`), floor division and remainder, the polynomial approximations of the transcendental functions, the prover hints, and Poseidon. The mock backend evaluates with these functions, and the other backends constrain the same algorithms.
 
-### NoirBuilder
+**Preprocessing** (`src/prove/preprocess/`) runs before every proof. It evaluates the IR with the kernel, calls the Python function of each `InvokeExternal` through the `ExternalCallback` trait (`PyExternalCallback` in `py_callback.rs`), and stores the results in the `ResolvedWitness` that the backend then reads.
 
-The Noir backend generates Noir source code. IR operations map to Noir expressions and constraint statements.
+**The interpreter** (`interpret_ir` in `src/prove/interpreter.rs`) walks the statements in order and calls one method of the `Synthesizer` trait (`src/prove/traits.rs`) per instruction. Each backend implements `Synthesizer` with its own cell type: a field value for the mock, an assigned cell for halo2-base, a Noir expression for Noir. The interpreter checks the RAM discipline of `src/ir_array.rs` (each memory version written at most once, each read before the write that replaces its version), skips the external-call statements that preprocessing resolved, and rejects an `ArrayOp` placeholder. `ArrayWrite` and `ArrayRead` are evaluated only by the mock, for tests of IR that has not been lowered. A proving backend receives lowered IR.
 
-### CirCZokBuilder
+**`ProverBackend`** (`src/prove/traits.rs`) is the interface `src/lib.rs` uses: `estimate_params` sizes the circuit, `prove` and `prove_with_cached_artifact` return a `ProofArtifact`, and `verify` checks one. An artifact names its backend, carries the public values and the `ir_hash` (a BLAKE2b digest of the IR statements, `src/prove/ir_hash.rs`), so it can be verified on its own (`verify_proof_artifact`).
 
-The CirC/ZoKrates backend generates ZoKrates-compatible code that can be processed by the CirC toolchain. This backend is the least mature.
+## Mock Backend
 
-## Builder Interface
+`src/prove/mock/` evaluates every constraint on the witness and reports whether all hold. It produces no proof: a satisfied run returns an artifact whose proof is the string `mock_satisfied`. Calling a `@zk_circuit` function runs it on this backend.
 
-All backends implement a common interface for iterating over the IR and producing output. The general structure is:
+## halo2-base Backend
 
-1. **Initialization.** The builder receives the optimized `IRGraph` and sets up the output context (file handles, code buffers, etc.).
+`src/prove/halo2_base/` builds the circuit with halo2-base's virtual-region builder, which packs the gadgets into rows automatically. `estimate_params` chooses the circuit size `k` (2^k rows) and the lookup width. An `IdentityCheck` is laid out in a second phase: every value of the first phase is committed, a challenge is drawn from the transcript, and the identity is checked at that point (`circuit.rs`, `identities.rs`). Besides `prove`, this backend registers Python functions for separate key generation and reuse (`ZKCompiledProgram.setup`, `load_keys`, `prove_with_keys`, `verify_with_keys`) and for cell statistics.
 
-2. **Input declaration.** The builder iterates over `InputIR` statements and declares corresponding input signals/variables in the target language.
+## Noir Backend
 
-3. **Statement translation.** The builder iterates over the IR statements in order. For each statement, it dispatches on the IR type and emits the corresponding target-language code. Since the IR is topologically sorted, each statement's operands have already been translated.
+`src/prove/noir/` implements `Synthesizer` as an emitter of Noir source. It writes a package with `Nargo.toml`, `src/main.nr`, `Prover.toml` and the fixed-point library `noir_fpc` (embedded from `benchmarking/noir_fpc` with `include_str!`), runs `nargo execute`, and proves with `bb prove --scheme ultra_honk`. Verification runs `bb verify` against the public values `bb` reports. `NoirProverBackend::execute` runs the program without proving, which the differential tests use to compare Noir's results with the mock backend's.
 
-4. **Output declaration.** The builder processes `OutputIR` statements and declares the circuit outputs.
+## Witness Independence
 
-5. **Finalization.** The builder writes auxiliary code (e.g., circuit configuration in Halo2, template wiring in Circom) and produces the final output files.
-
-### IR-to-Target Mapping
-
-Each IR operation has a target-specific translation. For example:
-
-- `IntAddIR(a, b)` in Halo2 becomes a region that constrains `a + b = c` where `c` is a new cell.
-- `IntAddIR(a, b)` in Circom becomes `signal c <== a + b;`.
-- `SelectIR(g, a, b)` becomes `g * (a - b) + b` in all backends (the standard mux formula).
-
-Some IR operations require gadget-level implementations in the target. For example, `IntLessThanIR` requires a range-check decomposition that varies by backend. `PoseidonHashIR` maps to a pre-built Poseidon gadget in each target.
-
-### Memory Operations
-
-Memory IR operations (`AllocateMemoryIR`, `ReadMemoryIR`, `WriteMemoryIR`, `MemoryTraceEmitIR`, `MemoryTraceSealIR`) are among the most complex to translate. Each backend must implement the zkRAM consistency argument in its native constraint system. This typically involves:
-
-- Sorting the memory trace by (address, timestamp).
-- Checking adjacency constraints (consecutive accesses to the same address return consistent values).
-- Verifying the permutation between the execution-order trace and the sorted trace.
-
-## Output Artifacts
-
-The backend produces:
-
-- **Source files** in the target language (e.g., `.rs` for Halo2, `.circom` for Circom).
-- **Configuration** such as circuit parameters, column counts, and degree bounds.
-- **Auxiliary data** such as lookup tables or precomputed constants needed by the circuit.
-
-## Extending with a New Backend
-
-To add a new backend:
-
-1. Create a new builder class in `compile/backend/`.
-2. Implement the builder interface: handle each IR type by emitting the corresponding target code.
-3. Pay special attention to comparison operations (which require range checks), memory operations (which require the consistency argument), and special operations (which require gadget implementations).
-4. Register the backend in `ZinniaCompiler` so it can be selected via the compilation options.
+The circuit a backend builds must not depend on the witness: the verifier rebuilds it without one. `emit_structural_circuit` in `src/lib.rs` renders a structural form of the circuit (the Noir source, or a halo2-base cell fingerprint, also without any witness) for a given witness, and `testing/lang/test_witness_independence.py` checks that two witnesses give identical renderings.

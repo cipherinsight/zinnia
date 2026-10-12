@@ -1,10 +1,7 @@
 # Archived benchmark material
 
-Nothing here is used for new results. It is kept so earlier claims can be traced to the
-files that produced them. One exception is read by current code:
-`2026-06-agent-sweeps/runners/run_halo2_baselines.py` holds the June 2026 hand-written
-DS-1000 inputs (`INPUT_BUILDERS`), which `testing/phase0/baseline.py` still uses as the input
-of its `allowed_meta` oracle.
+Nothing here is used for new results, and no current code reads it. It is kept so earlier
+claims can be traced to the files that produced them.
 
 - `2026-03-submission/`: the runners, datasets (LeetCode, ML, crypto, early DS-1000) and
   `results-*.json` behind the OOPSLA 2026 submission, copied from the machine that

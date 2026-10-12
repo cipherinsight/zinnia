@@ -1,174 +1,103 @@
 ---
 title: Compiler Architecture
-description: Detailed documentation of the Zinnia compiler pipeline, from Python source parsing through AST transformation, IR generation, optimization, and backend code generation.
+description: The Zinnia compilation pipeline step by step, from a decorated Python function to a compiled IR and a proof.
 ---
 
 # Compiler Architecture
 
-The Zinnia compiler transforms Python-like source code into static arithmetic circuits through a six-stage pipeline. This page documents each stage in detail, including the key classes and their responsibilities.
+This page follows one circuit through the compiler. The Python package prepares the source and translates it into a JSON abstract syntax tree (AST). The Rust core generates the IR, optimizes it, lowers its array operators, and later proves it.
 
 ## Pipeline Overview
 
 ```
-Python Source
+@zk_circuit function
+    |  zinnia/compile/lowering/        source rewrites (imports, helpers, callbacks)
+    v
+lowered Python source
+    |  zinnia/compile/transformer/     Python ast -> JSON AST dict
+    v
+AST + config + chips + externals (JSON)
+    |  src/lib.rs: compile_circuit
+    v
+IRGenerator (src/ir_gen/)            symbolic execution -> IRGraph
     |
     v
-[1] ast.parse()          --> Python AST
+pass pipeline (src/optim/, src/lower/)  -> optimized, lowered IRGraph
     |
     v
-[2] AST Transformers     --> Zinnia AST (60+ node types)
+CompiledIR handle (held by ZKCompiledProgram)
+    |  src/lib.rs: prove_circuit
+    v
+preprocess (src/prove/preprocess/)   external calls, resolved witness
     |
     v
-[3] IRGenerator          --> IR (SSA-style, branch-free)
-    (symbolic execution)
-    |
-    v
-[4] Optimization Passes  --> Optimized IR
-    (10 passes)
-    |
-    v
-[5] Backend Builder       --> Target code (Halo2, Circom, Noir, etc.)
-    |
-    v
-[6] Output artifacts
+backend (src/prove/)                 mock | halo2-base | noir
 ```
 
-## The Orchestrator: ZinniaCompiler
+## The Python Side
 
-The `ZinniaCompiler` class in `compile/zinnia_compiler.py` is the main entry point. It coordinates the entire pipeline:
+### Decorators
 
-1. Accepts Python source code as input.
-2. Calls `ast.parse()` to obtain a Python AST.
-3. Selects and runs the appropriate AST transformer based on the compilation target (circuit, chip, or external function).
-4. Creates an `IRGenerator` and invokes it on the Zinnia AST to produce IR.
-5. Runs the optimization pass sequence on the generated IR.
-6. Invokes the selected backend builder to produce output code.
+`@zk_circuit` (`zinnia/api/zk_circuit.py`) reads the function's source when the module is loaded, but compiles nothing yet. Calling the decorated function creates a `ZKCircuit`, collects the `@zk_chip` and `@zk_external` functions visible from the module and from the caller's locals, compiles, and runs the circuit on the mock backend. `ZKCircuit.compile()` returns a `ZKCompiledProgram` (`zinnia/api/zk_compiled_program.py`), whose `prove`, `verify` and `serialize` methods call into the Rust core.
 
-The compiler supports multiple compilation modes because Zinnia has different top-level constructs (circuits, chips, external functions), each requiring a different transformer but sharing the same IR generation and optimization pipeline.
+### Source Lowering
 
-## Stage 1: Parsing
+`zinnia/compile/lowering/` rewrites the Python source before translation. Its module docstring lists the steps in order. In short:
 
-Zinnia reuses the CPython parser via `ast.parse()`. Because Zinnia source is syntactically valid Python, no custom lexer or parser is needed. The output is a standard `ast.Module` node containing the full Python AST.
+- module-level imports other than `numpy` and `math` are rejected when the function uses them, and names imported from those two modules are spelled `np.` and `math.`;
+- reads of module-level literal constants are replaced by the literals;
+- nested functions, lambdas and function aliases become generated chips that take their captured variables as arguments;
+- `map`, `filter`, `np.vectorize`, `np.piecewise`, `np.apply_along_axis` and `np.fromiter` become calls of generated chips;
+- `for` loops over `zip` and `reversed` are desugared into index loops.
 
-This design choice means:
+Each rewrite keeps Python's meaning or rejects the program with an error naming the construct.
 
-- Zinnia programs can be type-checked and linted by standard Python tools.
-- The parser is well-tested and handles all Python syntax edge cases.
-- Zinnia-specific semantics are entirely a concern of subsequent stages.
+### AST Transformer
 
-## Stage 2: AST Transformation
+`ZinniaCircuitASTTransformer` (`zinnia/compile/transformer/circuit.py`, with the shared visitor in `base.py`) walks Python's `ast` and returns a plain dictionary: the circuit's parameters with their type annotations and privacy (public or private), its preconditions (`requires`, parsed in `_precondition.py`), and its body. `ZinniaChipASTTransformer` (`chip.py`) and `ZinniaExternalFuncASTTransformer` (`external_func.py`) do the same for chips and external functions. The transformer also rejects Python syntax the compiler does not support.
 
-### Transformer Hierarchy
+### The Call into Rust
 
-Four transformer classes convert the Python AST into Zinnia's internal AST:
+`ZinniaCompiler.compile` (`zinnia/compile/zinnia_compiler.py`) serializes four JSON payloads, the AST, the configuration (backend, `loop_limit`, `recursion_limit`, and the optimization switches of `OptimizationConfig`), the chips and the externals, and calls `compile_circuit` from `zinnia._zinnia_core` (re-exported by `zinnia/compile/_bridge.py`). The result is an opaque `CompiledIR` handle. The IR stays in Rust memory; `export_ir_json` and `import_ir_json` serialize it when a program is saved or loaded.
 
-- **`ZinniaBaseASTTransformer`** -- Base class implementing shared transformation logic. Handles expression nodes, operators, literal values, variable references, and common statement forms.
-- **`ZinniaCircuitASTTransformer`** -- Transforms top-level circuit definitions. Handles the `@circuit` decorator, circuit input/output declarations, and the circuit body.
-- **`ZinniaChipASTTransformer`** -- Transforms `ZKChip` class definitions. Handles chip configuration, chip methods, and chip composition.
-- **`ZinniaExternalFuncASTTransformer`** -- Transforms external function declarations used for witness generation and other non-circuit computations.
+## The Rust Core
 
-Each transformer walks the Python AST recursively, converting Python AST nodes into corresponding Zinnia AST nodes. The transformation handles:
+### Entry Point
 
-- **Type annotation resolution.** Python type annotations (e.g., `NDArray[int, 10]`, `DynamicNDArray[int, 8, 1]`) are parsed into Zinnia type descriptors.
-- **Operator mapping.** Python operators are mapped to Zinnia's operator set, with awareness of which operations are valid in a circuit context.
-- **Control flow recognition.** `if`/`else`, `for`, `while`, and `return` statements are converted to Zinnia AST nodes that carry the semantic information needed for symbolic execution.
-- **Built-in function resolution.** Calls to Zinnia built-ins (e.g., `assert_equal`, `poseidon_hash`) are recognized and converted to dedicated AST nodes.
+`compile_circuit` in `src/lib.rs` runs `compile_circuit_impl` on a dedicated thread with a large stack, because IR generation and several passes recurse deeply. `compile_circuit_impl` reads the configuration, runs IR generation, builds the pass list, and runs it.
 
-### Zinnia AST
+### IR Generation
 
-The Zinnia AST consists of 60+ node classes defined in `compile/ast/`. Key categories include:
+`IRGenerator::generate_from_json_with_chips` (`src/ir_gen/mod.rs`) deserializes the AST into the types of `src/ast/mod.rs` and visits it. The generator owns two pieces of state:
 
-- **Expression nodes**: literals, variable references, binary/unary operations, function calls, array indexing, attribute access, comparisons.
-- **Statement nodes**: assignments, augmented assignments, return statements, expression statements, assertion statements.
-- **Control flow nodes**: if/else blocks, for loops, while loops, break/continue.
-- **Declaration nodes**: circuit inputs, circuit outputs, variable declarations with type annotations.
-- **Type nodes**: representations of Zinnia types (int, float, bool, NDArray, DynamicNDArray, etc.).
+- `IRContext` (`src/ir_ctx.rs`): the stack of scopes (`src/scope.rs`) that maps names to values and records the branch, loop, return and chip-entry conditions;
+- `IRBuilder` (`src/builder.rs` and `src/builder/`): appends IR statements, computes the compile-time value of each statement where its operands are known, keeps the array store, the fact stack and the provenance table, and emits every check under the current execution predicate.
 
-Each node carries source location information for error reporting and debug output.
+Statements are visited in `src/ir_gen/visitors.rs`. Calls (`f(...)`, `np.f(...)`, `x.method(...)`) are dispatched in `src/ir_gen/named_attr/`, which calls the implementations in `src/helpers/` and `src/ops/`. Circuit inputs are read in `src/ir_gen/helpers.rs`, each with a domain check (`src/ir_gen/input_domain.rs`). The outputs and their layout on the public vector are built in `src/ir_gen/outputs.rs`. [Symbolic Execution](/docs/compiler-internals/symbolic-execution) describes this step.
 
-## Stage 3: IR Generation (Symbolic Execution)
+### Optimization and Lowering
 
-This is the core of the compiler. The `IRGenerator` class in `compile/ir/` symbolically executes the Zinnia AST, producing a flat, branch-free IR.
+`compile_circuit_impl` builds the list of pass names and `run_pass_pipeline` applies them through `apply_pass`. Some passes depend on the `OptimizationConfig` switches. The array lowering pass (`lower::ArrayLowering`) always runs, because no backend accepts the array placeholders it replaces. Its constructions are priced on a compile *target* chosen from the configured backend name (`Target::from_backend`): `"noir"` selects the Noir cost model and every other name selects halo2-base. [Optimization Passes](/docs/compiler-internals/optimization-passes) lists the pipeline.
 
-### Key Classes
+After the pipeline, `compile_circuit_impl` places the output layout recorded during IR generation on the optimized graph's public vector and returns the `CompiledIR`.
 
-- **`IRGenerator`** -- The main driver. Walks the Zinnia AST and dispatches to handler methods for each node type. Maintains the symbolic state (environment, path condition, constraint graph).
-- **`IRStatement`** -- A single IR instruction. Contains a unique statement ID, an IR type instance (`AbstractIR`), a list of argument statement IDs, and debug information.
-- **`IRGraph`** -- The complete IR program: an ordered list of `IRStatement` objects plus metadata about inputs, outputs, and memory.
-- **`IRContext`** -- Compilation context tracking the current scope, path condition, and accumulated constraints.
+### Proving
 
-### Supporting Modules
+`prove_circuit` in `src/lib.rs` creates the requested backend (`prove::create_prover_backend`), estimates its parameters unless they are given, runs preprocessing (`src/prove/preprocess/`), which calls the Python callables of external functions and builds the resolved witness, and then proves. `verify_proof_artifact` checks a proof artifact with the backend named in it. [Backends](/docs/compiler-internals/backend) describes the three backends.
 
-- **`compile/builder/`** -- Provides `IRBuilderInterface` and `IRBuilderImpl`, which offer a high-level API for emitting IR statements, managing temporaries, and performing SMT queries. `SMTUtils` wraps Z3 interactions.
-- **`compile/scope/`** -- Manages variable scoping. The scope hierarchy includes:
-  - `MasterScope` -- top-level scope for the entire compilation unit.
-  - `ChipScope` -- scope for chip method bodies.
-  - `LoopScope` -- scope for loop bodies, tracking induction variables and iteration bounds.
-  - `ConditionalScope` -- scope for conditional branches, tracking the guard condition.
-  - `GeneratorScope` -- scope for generator expressions.
-- **`compile/triplet/`** -- Represents values as triplets of (type descriptor, constraint expression, witness value). This three-part representation allows the compiler to track the static type, the symbolic constraint, and the concrete witness independently.
-- **`compile/type_sys/`** -- Defines the `DTDescriptor` type hierarchy used for type inference during IR generation.
+## Errors
 
-### How Symbolic Execution Works
+The AST transformer raises subclasses of `InternalZinniaException` (`zinnia/debug/exception/`) that carry the source location, and `ZKCircuit.compile` turns them into a `ZinniaException` whose message shows the offending source line (`zinnia/debug/prettifier.py`). The Rust core reports errors as `ValueError`, `RuntimeError` or a Rust panic, and `ZKCircuit.compile` converts each into a `ZinniaException` with the core's message.
 
-The IR generator maintains a symbolic state `(Env, phi, G)`:
+## Diagnostics
 
-- **Env** (environment): maps variable names to their current symbolic values (triplets).
-- **phi** (path condition): a conjunction of boolean constraints representing the conditions under which the current execution path is reachable.
-- **G** (graph): the accumulated list of emitted IR statements.
+A few environment variables help when working on the core:
 
-For each AST node, the generator updates this state. See the [Symbolic Execution](./symbolic-execution) page for full details on how each language construct is compiled.
+| Variable | Effect |
+|---|---|
+| `ZINNIA_COMPILE_PHASE_TRACE=1` | prints the time and statement count after IR generation and after each pass |
+| `ZINNIA_LAYER_INPUT=<path>` | appends the IR that the array lowering layer receives to `<path>` |
+| `ZINNIA_SMT_ENABLE=0` | answers compile-time constant queries without range analysis or Z3 |
+| `ZINNIA_SMT_LOG_TELEMETRY=1` | prints a summary of the constant-resolution queries at the end of compilation |
 
-## Stage 4: Optimization
-
-After IR generation, 10 optimization passes are run in sequence. Each pass takes an `IRGraph` and returns a transformed `IRGraph`. The passes are:
-
-1. `ExternalCallRemoverIRPass`
-2. `DynamicNDArrayMetaAssertInjectionIRPass`
-3. `DynamicNDArrayMemoryLoweringIRPass`
-4. `MemoryTraceInjectionIRPass`
-5. `PatternMatchOptimIRPass`
-6. `ConstantFoldIRPass`
-7. `DeadCodeEliminationIRPass`
-8. `DuplicateCodeEliminationIRPass`
-9. `DoubleNotEliminationIRPass`
-10. `AlwaysSatisfiedEliminationIRPass`
-
-The first four passes are structural transformations (lowering and instrumentation). The remaining six are standard or circuit-specific optimizations. See [Optimization Passes](./optimization-passes) for detailed documentation of each.
-
-All passes are defined in `compile/optim_pass/`.
-
-## Stage 5: Backend Code Generation
-
-Backend builders translate the optimized IR into target-specific code. The backend module in `compile/backend/` provides:
-
-- **`Halo2Builder`** -- Generates Rust code for the Halo2 proving system. This is the primary and most mature backend.
-- **`CircomBuilder`** -- Generates Circom circuit templates.
-- **`NoirBuilder`** -- Generates Noir source code.
-- **`CirCZokBuilder`** -- Generates ZoKrates-compatible code via the CirC toolchain.
-
-Each builder implements a common interface and iterates over the `IRGraph`, mapping each `IRStatement` to the corresponding target-language construct. See [Backend](./backend) for more details.
-
-## Data Flow Between Stages
-
-The key data structures that flow between stages are:
-
-| From | To | Data Structure |
-|---|---|---|
-| Stage 1 | Stage 2 | `ast.Module` (Python AST) |
-| Stage 2 | Stage 3 | Zinnia AST (tree of Zinnia AST node objects) |
-| Stage 3 | Stage 4 | `IRGraph` (list of `IRStatement` objects) |
-| Stage 4 | Stage 5 | `IRGraph` (optimized) |
-| Stage 5 | Stage 6 | Target-specific source files |
-
-Each stage is designed to be independently testable. The Zinnia AST, IR, and optimized IR can all be inspected and serialized for debugging.
-
-## Error Handling
-
-Errors are reported at each stage with source location information:
-
-- **Parse errors** are reported by the Python parser with line and column numbers.
-- **Transformation errors** (e.g., unsupported syntax, invalid type annotations) include the source location from the Python AST node.
-- **IR generation errors** (e.g., type mismatches, unresolvable bounds) include the source location carried through the Zinnia AST.
-- **Optimization errors** are rare but include the IR statement ID and debug info for tracing back to source.
-- **Backend errors** include the IR statement that caused the issue.
+The measurement switches (`ZINNIA_ABLATE_*`, `ZINNIA_FORCE_CONSTRUCTION`, `ZINNIA_LAYER_REPORT`) are documented in `docs/ablations.md`.

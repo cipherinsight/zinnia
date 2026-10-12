@@ -161,18 +161,16 @@ no backend sees one. Nothing else reads them.
 | Wrap of a non-negative index | `NonNegative(i)` | NumPy's negative-index wrap of a runtime index | `memory::WrapOfNonNegative` |
 | Non-negative by definition | squares, absolute values, sums of them | domain checks (`x >= 0` before `np.sqrt`, halo2-base) | `array_facts::non_negative_by_definition`, `checks::kept_for_backend` |
 
-Each has its soundness argument in its doc comment; `eval-redo/layer/fact-rules.md` has the
-measurements.
+Each has its soundness argument in its doc comment.
 
 ## 6. Measurement switch
 
 `ZINNIA_ABLATE_ARRAY_FACTS=1` turns every array claim off: no claim is established, implied or
 composed; program checks are read as before array claims existed (no `Ordered`, `Holds`, float
 or strict-bound forms); no merge, no fact-decided statement, no narrow hint. The constructions
-keyed on array claims do not apply. On the 179 perf entries the compiled circuits are then those
-of the compiler without array claims (`docs/ablations.md`; the two programs with `np.argmax` of a
-numeric line differ only in where constants are placed, at equal cost). The measurement scripts
-call this configuration `abl_array_facts` (`benchmarking/ablations/common.py`).
+keyed on array claims do not apply. The same switch turns off the IR generator's array facts
+(`docs/ablations.md`). The measurement scripts call this configuration `abl_array_facts`
+(`benchmarking/ablations/common.py`).
 
 ## 7. Not supported yet
 
@@ -184,49 +182,34 @@ call this configuration `abl_array_facts` (`benchmarking/ablations/common.py`).
 - `CountBound` and `Distinct` have no construction of their own (an output capacity sized by
   `nnz` would be the IR generator's decision, before the layer).
 
-## 8. From the frontend's fact store (section by branch `array-facts-port`)
+## 8. Facts from the IR generator's store
 
-*Written by the array-facts-port agent; not part of the fact-rules commits.*
-
-The frontend's store (branch `array-facts-port`, `docs/array-facts.md` there) has the same
-model as `IR::ArrayFact`: a fact describes the cells it lists (SSA values) or an IR array
-version, and every query reads the array's current cells, so nothing expires on a write.
-(The sentence of section 4 that the store "keys them by array" describes fact-staleness's
-value-id records, which array-facts-port replaced.) The interface fits, with three limits:
+The IR generator's fact store (`optim::array_facts`, `docs/array-facts.md`) has the same model
+as `IR::ArrayFact`: a fact describes the cells it lists, or an IR array version, and every query
+reads the array's current cells. What it can hand to the layer is limited in three ways:
 
 1. **Scope.** Each store fact carries a guard: `Always`, or the conjuncts of the execution
-   predicate it was derived under (a range derived inside `if c:` from a check made there).
-   `IR::ArrayFact` has no scope, so the store can state only its `Always` facts. An optional
-   predicate operand (the layer's `Scope::When(p)`) would let it state the others.
+   predicate it was derived under. `IRBuilder::ir_array_fact_scoped` can state a claim under a
+   predicate, but the store states only its `Always` facts.
 2. **Basis.** The store does not record which program checks a derived fact rests on (a range
-   transferred through `a + 1` from a `forall(a, in_range(...))`). It can state with an empty
-   basis only the facts that hold by the constraints computing the cells, and with a basis the
-   `@requires` element facts (the Booleans the witness emitter asserts).
+   transferred through `a + 1` from a `forall(a, in_range(...))`). So it states, with an empty
+   basis, only the facts that hold by the constraints computing the cells.
 3. **Vocabulary.** Segmentations with a runtime cut (`{0} live {count} padding {n}`) and
-   symbolic ends (`<= count - 1`) have no claim; the store can state the constant hull of a
-   whole list, or a prefix cut at a constant.
+   symbolic ends (`<= count - 1`) have no claim. The store states the constant hull of a whole
+   list, with a symbolic end replaced by the bound the interval engine gives its statement, and
+   the order of each segment between constant cuts.
 
-What the store would state through `ir_array_fact`, once both branches are in one tree (a call
-next to each source's `state_defined_facts`, `builder/array_facts.rs`):
+`IRBuilder::state_definitional_facts` (`builder/array_facts.rs`) states these facts:
 
 | source | `ArrayFactKind`, cells, basis |
 |---|---|
 | `np.nonzero` / `np.flatnonzero` lane, `np.argwhere` | `ElementsWithin { 0, extent - 1 }` on the lane's cells (padding 0 included), no basis |
-| `np.unique` inverse | `ElementsWithin { 0, n - 1 }` (the constant hull of `[0, count - 1]`), no basis |
-| `np.unique` values | none (the order holds on the live prefix only, cut at the runtime count) |
-| sort / argsort lines | none (the layer's `definitional` has them; it replaced `FreeFacts::is_argsort_line` at the merge) |
-| `@requires(forall(a, in_range(lo, hi)))` (constant ends), `lt_bound`, `is_nonneg`, `eq_const` | `ElementsWithin` on the input's cells, basis: the asserted comparisons |
-| Boolean input arrays | `ElementsWithin { 0, 1 }`, basis: the domain checks |
-| `np.linspace` with a runtime `num`, constant ascending endpoints | none (ordered on the live prefix only) |
+| `np.unique` inverse | `ElementsWithin` with the constant hull of `[0, count - 1]`, no basis |
+| `np.unique` values | `StrictlyIncreasing` on the live prefix, only when the count is a compile-time constant (otherwise the cut is at runtime and nothing is stated), no basis |
 
-Nothing measured needs these yet (the perf cases' facts are all established by the layer's own
-routes), so array-facts-port does not emit any; the calls are a few lines each.
-
-*Follow-up in fact-rules, after the merge of `array-facts-port` (64b56f03):* limit 1 is lifted
-(`ir_array_fact_scoped` states a fact under a predicate); the sentence of section 4 now describes
-the store as above; and `IRBuilder::state_definitional_facts` hands the definitional facts of the
-table's `np.nonzero` / `np.flatnonzero` / `np.argwhere` and `np.unique` rows to the layer. The
-`@requires` element facts reach the layer from the witness emitters (`optim/predicates/witness.rs`),
-with their asserted comparisons as the basis; the sort and argsort lines from the layer's own
-`definitional`, which replaced `FreeFacts::is_argsort_line`. One switch,
-`ZINNIA_ABLATE_ARRAY_FACTS=1`, turns off both the store's queries and the layer's claims.
+The other facts reach the layer by other routes. The `@requires` element facts and
+`is_sorted`, `is_permutation` and `nnz` preconditions are stated by the predicates' witness
+emitters (`optim/predicates/witness.rs`), with their asserted conditions as the basis. The sort
+and argsort lines need no stated fact: the layer's `array_facts::definitional` reads them off the
+graph. One switch, `ZINNIA_ABLATE_ARRAY_FACTS=1`, turns off both the store's queries and the
+layer's claims.

@@ -1,307 +1,224 @@
 ---
 title: Arrays
-description: Documentation of Zinnia's array system, including fixed-size NDArray, bounded-dynamic DynamicNDArray, array operations, broadcasting, and slicing.
+description: Zinnia's array types, fixed-shape NDArray and bounded-dynamic DynamicNDArray, with creation, indexing, broadcasting and array methods.
 ---
 
 # Arrays
 
-Zinnia provides two array types for N-dimensional numeric computation: `NDArray` for
-fixed-size arrays and `DynamicNDArray` for arrays with runtime-determined shapes. Both
-types offer a NumPy-compatible interface.
+Zinnia has two array types: `NDArray`, whose shape is known at compile time, and
+`DynamicNDArray`, whose shape is a runtime value below a compile-time bound. Both follow
+NumPy's semantics, and arrays are created and transformed inside a circuit with NumPy
+functions (`np.zeros`, `np.asarray`, `np.concatenate`, ...).
 
-## NDArray -- Fixed-Size N-Dimensional Arrays
+## NDArray
 
-`NDArray` is the primary array type. Its shape is fully known at compile time, which
-allows the compiler to generate an exactly sized circuit.
+`NDArray` is the main array type. Its shape is fixed at compile time, so the circuit has
+exactly one cell per element.
 
-### Creation
+### Array Inputs
 
-#### NDArray.zeros
-
-Create an array filled with zeros.
-
-```python
-vec = NDArray.zeros((5,))                       # 1-D, 5 elements
-mat = NDArray.zeros((3, 4))                     # 3x4 matrix
-mat_f = NDArray.zeros((3, 4), dtype=Float)      # 3x4 float matrix
-```
-
-#### NDArray.ones
-
-Create an array filled with ones.
-
-```python
-vec = NDArray.ones((5,))
-mat = NDArray.ones((2, 3), dtype=Float)
-```
-
-#### NDArray.identity
-
-Create a square identity matrix.
-
-```python
-I = NDArray.identity(4)    # 4x4 identity matrix
-```
-
-#### NDArray.eye
-
-Create a matrix with ones on the diagonal and zeros elsewhere. Supports non-square
-matrices.
-
-```python
-I = NDArray.eye(3, 3)     # 3x3 identity
-R = NDArray.eye(3, 5)     # 3x5 matrix with diagonal ones
-```
-
-#### NDArray.asarray
-
-Create an array from a nested list or tuple of values.
-
-```python
-vec = NDArray.asarray([1, 2, 3, 4, 5])
-mat = NDArray.asarray([[1, 2, 3],
-                       [4, 5, 6]])
-```
-
-#### dtype Parameter
-
-The `dtype` parameter specifies the element type. The default is `Integer`.
-
-```python
-int_arr = NDArray.zeros((3, 3))                 # Integer elements
-float_arr = NDArray.zeros((3, 3), dtype=Float)  # Float elements
-```
-
-### NumPy Interop
-
-You can convert from NumPy arrays for testing in standard Python:
+An array input is annotated with its element type and shape (see
+[Type System](/docs/language/type-system#ndarray)) and passed as a NumPy array or a nested
+list of that shape.
 
 ```python
 import numpy as np
+from zinnia import zk_circuit, NDArray, Float
 
-np_arr = np.array([[1, 2], [3, 4]])
-z_arr = NDArray.asarray(np_arr)
+@zk_circuit
+def total(m: NDArray[Float, 2, 3]) -> Float:
+    return m.sum()
+
+total(np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]))
 ```
 
-This is useful for writing tests that run in both Python and the Zinnia compiler.
+### Creating Arrays
+
+```python
+z = np.zeros((3, 4))                  # float zeros, as in NumPy
+zi = np.zeros((3, 4), dtype=int)      # integer zeros
+o = np.ones(5)
+I = np.eye(3)                         # 3x3 identity
+R = np.eye(3, 5)                      # 3x5 with ones on the diagonal
+a = np.asarray([[1, 2, 3], [4, 5, 6]])
+r = np.arange(0, 10, 2)
+```
+
+The [NumPy API](/docs/programming-guide/numpy-api) page lists the supported functions.
 
 ### Indexing
-
-#### Single-Element Access
 
 ```python
 val = vec[0]           # first element of a 1-D array
 val = mat[1, 2]        # element at row 1, column 2
-val = tensor[0, 1, 2]  # element in a 3-D array
-```
+row = mat[0]           # first row, shape reduced by one dimension
 
-#### Slice Access
-
-```python
 sub = vec[1:4]         # elements 1, 2, 3
 sub = vec[::2]         # every other element
 sub = vec[::-1]        # reversed
-
-row = mat[0, :]        # first row
 col = mat[:, 0]        # first column
 block = mat[0:2, 1:3]  # 2x2 sub-matrix
+sub = t[0, :, 1:3]     # integer and slice indices combined
 ```
 
-#### Stepped Slicing
+Integer indexing removes the indexed dimension, and slicing keeps it. An index may be a
+runtime value (for example a private integer), in which case the compiler emits a lookup
+whose cost depends on the array size.
+
+Arrays also accept NumPy's advanced indices: an integer array selects the listed elements,
+and a Boolean array (a mask) selects the elements where the mask is true. The result of a
+mask whose values are only known at runtime has a runtime length, so it is a
+`DynamicNDArray`.
 
 ```python
-sub = vec[0:10:2]      # elements at indices 0, 2, 4, 6, 8
-sub = mat[::2, ::2]    # every other row and column
+picked = vec[np.asarray([0, 2, 4])]
+positives = vec[vec > 0]               # a DynamicNDArray
+```
+
+### Assignment through Indices
+
+```python
+arr[0] = 99
+mat[1, 2] = 42
+arr[0:3] = np.asarray([10, 20, 30])
+arr[arr < 0] = 0
 ```
 
 ### Properties
 
 ```python
 s = arr.shape      # tuple of dimension sizes, e.g. (3, 4)
-d = arr.dtype      # element type: Integer or Float
-n = arr.ndim       # number of dimensions, e.g. 2
-z = arr.size       # total number of elements, e.g. 12
-f = arr.flat       # flat (1-D) view of the array
-t = arr.T          # transpose of the array
+d = arr.dtype      # element type
+n = arr.ndim       # number of dimensions
+z = arr.size       # total number of elements
+t = arr.T          # transpose
+f = arr.flat       # elements in row-major order
 ```
 
-## DynamicNDArray -- Bounded-Dynamic Arrays
+## DynamicNDArray
 
-`DynamicNDArray` is used when the array shape depends on runtime values (such as
-private inputs) but compile-time upper bounds exist.
+A `DynamicNDArray` is used when the shape of an array depends on runtime values (such as
+private inputs) but has a compile-time upper bound.
 
-### Compile-Time Envelope
+### Bounds
 
-Every `DynamicNDArray` is characterized by two static bounds:
+A `DynamicNDArray` has two static bounds:
 
-- **L (max elements)**: the maximum total number of elements the array can hold.
-- **R (max rank)**: the maximum number of dimensions.
+- the maximum number of elements, and
+- the maximum rank (number of dimensions).
 
-The circuit is generated to accommodate the worst case (L elements, R dimensions). At
-runtime, the actual shape may use fewer elements and fewer dimensions.
+The circuit is sized for these bounds. At runtime the array may hold fewer elements and
+have fewer dimensions.
 
-### Metadata
+### Runtime Metadata
 
-A `DynamicNDArray` carries runtime metadata that describes its actual shape:
+| Field          | Description                              |
+|----------------|------------------------------------------|
+| Length         | Number of elements                       |
+| Rank           | Number of dimensions                     |
+| Shape          | Size of each dimension                   |
+| Strides        | Step in storage for each dimension       |
+| Offset         | Position of the first element in storage |
 
-| Field           | Description                              |
-|-----------------|------------------------------------------|
-| Logical length  | Total number of active elements          |
-| Rank            | Actual number of dimensions              |
-| Shape vector    | Size of each dimension                   |
-| Stride vector   | Step size for each dimension             |
-| Offset          | Base index into the underlying storage   |
+### Dynamic Inputs and Results
 
-### Interface
-
-`DynamicNDArray` exposes the same operations as `NDArray`: indexing, slicing,
-reductions, reshaping, and element-wise operations. The compiler generates guarded
-constraints that account for the dynamic sizing.
+A `DynamicNDArray` input is annotated with its bounds, for example
+`DynamicNDArray[Integer, 100, 1]` (at most 100 elements, rank 1) or
+`Integer[DynArray, "N<=100"]`. It is passed as a NumPy array or list of any shape within
+the bounds.
 
 ```python
-def process(n: Public[Integer], data: Private[DynamicNDArray]) -> Integer:
-    total = data.sum()
-    return total
+@zk_circuit
+def process(data: DynamicNDArray[Integer, 100, 1]) -> Integer:
+    return data.sum()
+
+process(np.array([3, 1, 4]))
 ```
 
-### When to Use DynamicNDArray
+Operations whose result shape depends on data also produce `DynamicNDArray` values:
+Boolean-mask indexing, `filter`, `np.nonzero`, `np.argwhere`, `np.unique` and slices with
+runtime bounds. Indexing, slicing, element-wise arithmetic and reductions work on both
+array types. Some operations that need a static shape reject a `DynamicNDArray` operand
+with a compile error.
 
-Use `DynamicNDArray` when:
+### Choosing an Array Type
 
-- The shape of the array depends on a runtime value (e.g., a private input).
-- You can establish an upper bound on the total number of elements.
-- You need the flexibility of runtime sizing but still want to generate a valid circuit.
+Use `NDArray` when the shape is known at compile time. It gives the smallest circuit.
+Use `DynamicNDArray` when the shape depends on data and an upper bound is known. The
+circuit then pays for the bound and for checking the runtime metadata.
 
-Use `NDArray` when:
+## Array Methods
 
-- The shape is known at compile time.
-- You want the most efficient circuit (no overhead from dynamic sizing).
-
-## Array Operations
-
-Both `NDArray` and `DynamicNDArray` support the following operations.
+Both array types support the following methods.
 
 ### Reductions
 
 ```python
 total = arr.sum()              # sum of all elements
 total = arr.sum(axis=0)        # sum along axis 0
-product = arr.prod()           # product of all elements
-largest = arr.max()            # maximum element
-smallest = arr.min()           # minimum element
-idx_max = arr.argmax()         # index of maximum element
-idx_min = arr.argmin()         # index of minimum element
-all_true = arr.all()           # True if all elements are truthy
-any_true = arr.any()           # True if any element is truthy
+product = arr.prod()
+largest = arr.max()
+smallest = arr.min()
+idx_max = arr.argmax()
+idx_min = arr.argmin()
+all_true = arr.all()
+any_true = arr.any()
+m = arr.mean()
+c = arr.cumsum()
 ```
 
 ### Shape Manipulation
 
 ```python
-t = arr.transpose()            # transpose (reverses axes)
-t = arr.T                      # shorthand for transpose
-
+t = arr.transpose()            # reverse the axes
+t = arr.T
 m = arr.moveaxis(0, 1)         # move axis 0 to position 1
-r = arr.reshape((2, 6))        # reshape to new dimensions
-f = arr.flatten()              # flatten to 1-D
-rep = arr.repeat(3)            # repeat elements
-```
-
-### Type Conversion
-
-```python
-float_arr = int_arr.astype(Float)      # convert integers to floats
-int_arr = float_arr.astype(Integer)    # convert floats to integers
-```
-
-### Filtering
-
-```python
-positives = arr.filter(lambda x: x > 0)
+s = arr.swapaxes(0, 1)
+r = arr.reshape((2, 6))
+f = arr.flatten()              # 1-D copy
+f = arr.ravel()
+q = arr.squeeze()
+rep = arr.repeat(3)
 ```
 
 ### Conversion
 
 ```python
-lst = arr.tolist()             # convert to a Python list
+float_arr = int_arr.astype(float)
+lst = arr.tolist()
+c = arr.clip(0, 10)
 ```
 
-### Dimensional Properties
+### Filtering
+
+`filter` takes a Boolean mask of the same shape and returns the selected elements as a
+one-dimensional `DynamicNDArray`. It is a Zinnia method with no NumPy counterpart, and
+`arr[mask]` is the NumPy spelling of the same selection.
 
 ```python
-n = arr.ndim                   # number of dimensions
-s = arr.size                   # total element count
-f = arr.flat                   # flat iterator / 1-D view
+mask = arr > 0
+positives = arr.filter(mask)
 ```
 
 ## Broadcasting
 
-Zinnia supports NumPy-style broadcasting for element-wise operations between arrays of
-compatible shapes.
+Element-wise operations between arrays of different shapes follow NumPy's broadcasting
+rules:
 
-### Broadcasting Rules
-
-1. If two arrays have different numbers of dimensions, the shape of the smaller array
-   is padded with ones on the left.
-2. Arrays with a size of 1 along a particular dimension act as if they had the size of
-   the array with the largest shape along that dimension.
-3. If two arrays have different sizes along a dimension and neither is 1, a compile-time
-   error is raised.
-
-### Examples
+1. If two arrays have different numbers of dimensions, the shape of the smaller one is
+   padded with ones on the left.
+2. A dimension of size 1 is stretched to the size of the other array along that dimension.
+3. If two arrays have different sizes along a dimension and neither is 1, compilation
+   fails.
 
 ```python
-# Scalar broadcast: add a scalar to every element
-result = arr + 5
+result = arr + 5                       # scalar broadcast
 
-# Vector-matrix broadcast: add a row vector to each row
-vec = NDArray.asarray([1, 2, 3])           # shape (3,)
-mat = NDArray.zeros((4, 3))                # shape (4, 3)
-result = mat + vec                         # shape (4, 3)
+vec = np.asarray([1, 2, 3])            # shape (3,)
+mat = np.zeros((4, 3))                 # shape (4, 3)
+result = mat + vec                     # shape (4, 3)
 
-# Column broadcast
-col = NDArray.asarray([[1], [2], [3]])     # shape (3, 1)
-mat = NDArray.zeros((3, 4))                # shape (3, 4)
-result = mat + col                         # shape (3, 4)
-```
-
-## Slicing and Indexing Semantics
-
-### Integer Indexing
-
-Integer indexing reduces the dimensionality by one along the indexed axis.
-
-```python
-mat = NDArray.zeros((3, 4))
-row = mat[0]          # shape (4,) -- first row
-val = mat[0, 0]       # scalar -- single element
-```
-
-### Slice Indexing
-
-Slice indexing preserves dimensionality but may change the size along the sliced axis.
-
-```python
-mat = NDArray.zeros((5, 5))
-sub = mat[1:3]        # shape (2, 5) -- rows 1 and 2
-sub = mat[:, 2:4]     # shape (5, 2) -- columns 2 and 3
-```
-
-### Mixed Indexing
-
-You can combine integer and slice indices.
-
-```python
-mat = NDArray.zeros((4, 5, 6))
-sub = mat[0, :, 1:3]  # shape (5, 2) -- fix first and slice third axis
-```
-
-### Assignment via Indexing
-
-You can assign to indexed positions:
-
-```python
-arr[0] = 99
-mat[1, 2] = 42
-arr[0:3] = NDArray.asarray([10, 20, 30])
+col = np.asarray([[1], [2], [3]])      # shape (3, 1)
+mat = np.zeros((3, 4))                 # shape (3, 4)
+result = mat + col                     # shape (3, 4)
 ```

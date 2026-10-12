@@ -1,27 +1,41 @@
-# Circuit helpers: `@zk_chip` vs `@zk_external` vs no decorator
+# Helper functions in circuits
 
-`@zk_circuit` only captures the source of the function it decorates. Any user-defined
-function called from inside a `@zk_circuit` body must therefore be marked so the
-compiler can find and lower it. Choose one of the three options below.
+`@zk_circuit` reads only the source of the function it decorates. A function that the circuit
+calls must therefore be one the compiler can see: a function marked `@zk_chip` or
+`@zk_external`, or a function defined inside the circuit body.
 
-## When to use which
+## The three kinds of helper
 
-- **`@zk_chip`** — the helper participates in the circuit (it is lowered to IR and
-  proved). Use this for any pure, deterministic helper called from a
-  `@zk_circuit` body. Helpers declared at module scope are auto-discovered by
-  `@zk_circuit` from caller locals (see `zinnia/api/zk_circuit.py:182-191`), so
-  the only change required is to add the decorator.
-- **`@zk_external`** — the helper runs in plain Python during witness
-  generation only; it is *not* lowered into the circuit. Use this when the
-  helper produces auxiliary data (e.g. setup, sampling, hints) that the
-  circuit will then constrain.
-- **No decorator** — only safe for module-level constants / classes that are
-  never called from a `@zk_circuit` body. Calling a bare `def` from a circuit
-  body fails compilation with `Named attribute '.<helper>' not yet implemented`.
+- **`@zk_chip`**: the helper is part of the circuit. It is compiled like the circuit body and
+  inlined at each call, so its result is constrained. Use it for any deterministic helper.
+  `@zk_circuit` finds the chips (and external functions) defined in the circuit's module and in
+  the scope where the circuit is called (`_with_registered_functions` in
+  `zinnia/api/zk_circuit.py`), so adding the decorator is the only change needed. Parameter and
+  return annotations are optional (types are taken from the call site). A recursive chip is
+  inlined until its recursive call is proved unreachable, at most
+  `ZinniaConfig.recursion_limit` calls deep (default 16); a deeper call is a compile error.
+- **`@zk_external`**: the helper runs in plain Python while the witness is generated and is not
+  compiled into the circuit. Its result enters the circuit as a witness value that no constraint
+  ties to the helper's computation, so the circuit must check whatever it relies on (for
+  example, a hint that the circuit then verifies). It needs a return annotation
+  (`def f(...) -> Integer:`).
+- **A function defined inside the circuit body** (a nested `def` or a lambda) is turned into a
+  chip by the compiler (`zinnia/compile/lowering/nested_defs.py`,
+  `zinnia/compile/lowering/helpers.py`), including one that reads the circuit's variables. The
+  module docstring of `helpers.py` lists the forms it rejects (recursion, a helper defined in a
+  branch, `nonlocal`, decorators, and others).
+
+A plain module-level function without a decorator is not visible. Calling it from a circuit is a
+compile error:
+
+```
+Unknown function `relu` in @zk_circuit. If `relu` is a helper you defined, decorate it with
+@zk_chip (or @zk_external for off-circuit witness functions). ...
+```
 
 ## Example
 
-Before (fails to compile, `@zk_circuit` cannot see `relu`):
+This fails to compile, because `relu` is undecorated and defined outside the circuit:
 
 ```python
 from zinnia import *
@@ -31,10 +45,10 @@ def relu(x):
 
 @zk_circuit
 def mlp(x: NDArray[Float, 8, 3], w: NDArray[Float, 3, 16], b: NDArray[Float, 16]):
-    _zinnia_result = relu(x @ w + b)
+    return relu(x @ w + b)
 ```
 
-After (compiles — `relu` is auto-discovered as a chip):
+With the decorator, `@zk_circuit` finds `relu` as a chip and the circuit compiles:
 
 ```python
 from zinnia import *
@@ -45,8 +59,8 @@ def relu(x):
 
 @zk_circuit
 def mlp(x: NDArray[Float, 8, 3], w: NDArray[Float, 3, 16], b: NDArray[Float, 16]):
-    _zinnia_result = relu(x @ w + b)
+    return relu(x @ w + b)
 ```
 
-Recursive helpers (e.g. `fibo`, recursive `partition`) are also valid `@zk_chip`
-targets; the compiler unrolls them up to `ZinniaConfig.recursion_limit`.
+Tests: `testing/lang/test_chip_helpers.py`, `testing/lang/test_unknown_call_diagnostic.py`,
+`testing/api/test_external_func.py`.

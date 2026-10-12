@@ -2,9 +2,9 @@
 //!
 //! Unit costs are measured: reads compiled with each element construction
 //! forced (`ZINNIA_FORCE_CONSTRUCTION`) at several line lengths
-//! (`eval-redo/layer/layer-memory-data/scale.py`, 169 reads at distinct
-//! indices over lines of 2..16 cells): a halo2-base select of two variable
-//! branches in the multiplexer costs 8 cells (reads of one line share the
+//! (169 reads at distinct indices over lines of 2..16 cells): a halo2-base
+//! select of two variable branches in the multiplexer costs 8 cells (reads
+//! of one line share the
 //! first level's branch differences, `index_bits_reads`), the bound and `w`
 //! index bits `4 + 7w` (`7w` when `n` is a power of two), a `select_bit` 12;
 //! on Noir 2 gates per select, the bits `4 + 2w` (`2w`), a `select_bit` 3.

@@ -21,13 +21,15 @@ from zinnia import ZKChip, zk_chip, Integer, Float
 Chips serve the same role as helper functions in ordinary programming, but within the
 zero-knowledge circuit domain. A chip:
 
-- Defines a self-contained piece of circuit logic with typed inputs and a return value.
+- Defines a self-contained piece of circuit logic with inputs and an optional return value.
 - Is parsed into an AST at creation time (not at call time).
 - Is inlined into any circuit that references it during compilation.
 - Cannot be executed on its own outside of a circuit.
 
-Think of chips as "circuit-level functions" -- they exist only to organize and reuse
-constraint logic.
+Chip parameters may carry type annotations such as `Integer` or `Float`, but they are not
+required. A parameter may have a literal default value (for example `k: Integer = 2`). The
+return annotation is also optional, and it must not use `Public` or `Private`, because a
+chip's return value is not a circuit input.
 
 ## Creating Chips
 
@@ -84,11 +86,12 @@ chip = ZKChip(name="double", source=source)
 ## AST Parsing at Creation Time
 
 When a `ZKChip` is instantiated (by any method), its source code is immediately parsed
-into an AST. This means syntax errors and certain structural problems are caught early --
-at chip creation time rather than at circuit compilation time.
+into an AST. Syntax errors and invalid annotations are therefore reported when the chip is
+created rather than when a circuit that uses it is compiled. Malformed Python source raises
+Python's own `SyntaxError`, and an invalid annotation raises a `ZinniaException`.
 
 ```python
-# This raises a ZinniaException immediately if the source is malformed
+# Raises SyntaxError immediately
 chip = ZKChip(name="bad", source="def bad( -> Integer:\n    return")
 ```
 
@@ -117,8 +120,9 @@ print(result.is_satisfied())  # True
 
 ### With the `@zk_circuit` Decorator
 
-When using `@zk_circuit`, chips defined in the calling scope are discovered automatically.
-You do not need to pass them explicitly:
+When using `@zk_circuit`, chips are discovered automatically: every `ZKChip` defined at
+module level in the circuit's module, and every `ZKChip` visible in the local scope where
+the circuit is called. You do not need to pass them explicitly:
 
 ```python
 from zinnia import zk_circuit, zk_chip, Integer, Private, Public
@@ -177,6 +181,22 @@ def triple(x: Integer) -> Integer:
 # `triple` is automatically converted to a ZKChip
 circuit = ZKCircuit.from_method(my_circuit, chips=[triple])
 ```
+
+### Local Functions in a Decorated Circuit
+
+In a `@zk_circuit` function, a `def` placed directly in the circuit body becomes a chip
+when it reads only its own parameters and local names, Python builtins, and globals of the
+circuit's module. A local function that reads the circuit's own variables (a closure) is
+compiled as a helper chip that receives those variables as extra arguments, or rejected
+when it uses a form the helper lifter does not support.
+
+## Recursion
+
+Because chip calls are inlined, a recursive chip is unrolled at compile time. The compiler
+expands a recursive call until it can prove the call's path condition false. A call that is
+still reachable at the nesting depth set by `ZinniaConfig(recursion_limit=...)` (default 16)
+is rejected. Recursions that branch, such as `fib(n - 1) + fib(n - 2)`, grow exponentially
+with the depth.
 
 ## Chips Cannot Be Called Outside Circuits
 

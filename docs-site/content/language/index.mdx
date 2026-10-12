@@ -1,101 +1,110 @@
 ---
 title: Language Overview
-description: An introduction to the Zinnia programming language, a Python-like DSL for writing zk-SNARK circuits.
+description: An introduction to the Zinnia language, a subset of Python and NumPy that compiles to zk-SNARK circuits.
 ---
 
 # Language Overview
 
-Zinnia is a domain-specific language for writing zk-SNARK programs. It uses a Python-like
-syntax that compiles to static arithmetic circuits over a prime field. Programs written in
-Zinnia are also valid Python, which means you can prototype, test, and debug them using
-standard Python tooling before compiling to a zero-knowledge proof circuit.
+Zinnia compiles a subset of Python and NumPy to zk-SNARK circuits. A circuit is an ordinary
+Python function decorated with `@zk_circuit`. Its parameters are the circuit inputs, its
+`assert` statements become constraints, and its return value becomes the public output of
+the proof. Because the source is valid Python, the same function can be run with CPython
+and NumPy (without the decorator) to test it before it is compiled.
 
 ## Design Goals
 
-Zinnia is built around several core design principles:
+- **Python compatibility.** Every Zinnia program is syntactically valid Python, and the
+  compiler follows Python and NumPy semantics for the constructs it accepts. Constructs it
+  cannot represent faithfully are rejected at compile time.
 
-- **Python compatibility.** Every Zinnia program is syntactically valid Python. You can
-  run it with CPython or NumPy for testing, then compile it with the Zinnia compiler for
-  proof generation.
+- **Familiar idioms for privacy and constraints.** Inputs are marked public or private with
+  type hints (`Public[...]`, `Private[...]`), and constraints are written as `assert`
+  statements.
 
-- **Accessibility for data analysts.** The language targets users who are comfortable with
-  Python and NumPy but are not experts in cryptography or circuit design. Privacy
-  annotations and circuit constraints are expressed through familiar Python idioms such as
-  type hints and assertions.
+- **Array programming.** NumPy arrays, broadcasting, slicing, reductions and a large part of
+  the `np` namespace are available inside circuits, so linear algebra, statistics and data
+  transformations can be written as they would be in NumPy.
 
-- **Array-programming style.** Zinnia provides NumPy-compatible array primitives
-  (`NDArray`, broadcasting, slicing, reductions) as first-class constructs. This enables
-  concise expression of linear algebra, statistical computations, and data transformations.
+- **Loops without explicit bounds.** Every loop and recursive call is unrolled at compile
+  time. When the number of iterations depends on a runtime value, the compiler proves an
+  upper bound from constants, value ranges, preconditions and, when needed, an SMT solver
+  (Z3). A program for which no bound can be proved is rejected.
 
-- **Implicit bounded control flow.** Unlike many circuit DSLs that require explicit loop
-  bounds or manual unrolling, Zinnia's compiler uses SMT-based analysis to automatically
-  infer loop and recursion bounds from program structure. You write natural `while` loops
-  and recursive functions; the compiler proves they terminate within static bounds.
-
-- **Data-dependent programs.** Zinnia supports programs whose control flow depends on
-  private inputs. Both branches of an `if` statement are symbolically executed, and the
-  results are merged via guarded joins. This allows expressive programs without leaking
-  information through circuit structure.
+- **Data-dependent control flow.** An `if` whose condition depends on an input is compiled
+  by evaluating both branches and selecting the results with the condition, so the circuit
+  structure does not depend on which branch is taken.
 
 ## A Minimal Example
 
 ```python
-def main(balance: Public[Integer], threshold: Private[Integer]) -> Integer:
+from zinnia import zk_circuit, Public, Private, Integer
+
+@zk_circuit
+def excess(balance: Public[Integer], threshold: Private[Integer]) -> Integer:
     if balance > threshold:
         result = balance - threshold
     else:
         result = 0
     return result
+
+excess(10, 3)   # runs the circuit on the mock backend
 ```
 
-This program takes a public balance and a private threshold, and returns the excess above
-the threshold (or zero). Both branches compile into the circuit; the guard selects which
-result propagates.
+The circuit takes a public balance and a private threshold and returns the excess above
+the threshold (or zero). Both branches are compiled into the circuit and the comparison
+selects which value is returned. A circuit may not be named `main`.
 
 ## What Zinnia Supports
 
-Zinnia supports a substantial subset of Python:
-
-- Scalar types: integers, floats, booleans
-- Composite types: lists, tuples, fixed-size N-dimensional arrays (`NDArray`), and
-  bounded-dynamic arrays (`DynamicNDArray`)
+- Scalar types: integers, floats (fixed point), booleans and complex numbers
+- Composite types: lists, tuples, fixed-shape N-dimensional arrays (`NDArray`) and
+  bounded-dynamic arrays (`DynamicNDArray`), whose shape is a runtime value below a
+  compile-time bound
 - Control flow: `if`/`elif`/`else`, `while`, `for`, `break`, `continue`, early `return`
-- Functions and bounded recursion
+- Helper functions (`@zk_chip`), including bounded recursion, local `def`s and lambdas
+- Calls to Python functions outside the circuit (`@zk_external`)
 - Privacy annotations via `Public[T]` and `Private[T]` type hints
+- Preconditions on inputs (`@zk_circuit(requires=[...])` or `@requires(...)`)
 - Assertions that compile to circuit constraints
-- A NumPy-like library of array operations
-- Cryptographic primitives: Poseidon hashing and Merkle proof verification
+- A large part of NumPy's array API (see [NumPy API](/docs/programming-guide/numpy-api))
+- Inputs committed with a Poseidon hash (`PoseidonHashed[T]`)
 
 ## What Zinnia Does Not Support
 
-Because all programs must compile to finite arithmetic circuits, certain Python features
-are excluded:
+Because every program must compile to a finite circuit, some Python features are rejected:
 
-- Unbounded recursion or loops that the compiler cannot statically bound
-- Dynamic memory allocation (heap objects, dictionaries, sets)
-- String manipulation beyond basic literals
-- Classes and object-oriented programming
-- Exceptions (`try`/`except`)
-- File I/O, networking, or other side effects
-- Importing arbitrary Python modules (only `math` and `np` are available)
+- Loops and recursion for which the compiler cannot prove a static bound
+- Dictionaries and sets
+- Classes
+- `try`/`except` (a `raise` statement is accepted and compiles to a failing assertion on
+  the path that reaches it)
+- File I/O, networking and other side effects
+- Imports of modules other than `numpy` and `math` (including their submodules, such as
+  `numpy.linalg`)
 
 ## How Compilation Works
 
-At a high level, the Zinnia compiler:
+1. The Python front end rewrites the source (resolving imports, inlining module-level
+   constants, turning local functions and lambdas into chips) and translates the function's
+   AST into a form the Rust core reads.
+2. The Rust core executes the program symbolically: loops and calls are unrolled, branches
+   are merged with selects, and every operation is recorded in an intermediate
+   representation (IR).
+3. Optimization passes (constant folding, dead-code elimination, duplicate-code
+   elimination, removal of assertions proved to hold) simplify the IR, and array operations
+   are lowered to constructions suited to the target backend.
+4. A backend turns the IR into a circuit: the `mock` backend checks the constraints
+   directly, `halo2-base` produces a Halo2 proof, and `noir` emits a Noir program and proves
+   it with `nargo` and `bb`.
 
-1. Parses the Python source into an AST.
-2. Performs type inference with flow-sensitive typing.
-3. Analyzes control flow to determine loop and recursion bounds (using an SMT solver).
-4. Symbolically executes the program, producing an arithmetic circuit (a system of
-   rank-1 constraints over a prime field F_p).
-5. Emits the circuit along with public/private input mappings for use with a zk-SNARK
-   backend.
+The rest of this language reference covers each part of the language:
 
-The rest of this language reference covers each aspect of the language in detail:
-
-- [Syntax Reference](/docs/language/syntax) -- the full grammar
-- [Type System](/docs/language/type-system) -- scalars, arrays, and flow-sensitive typing
-- [Control Flow](/docs/language/control-flow) -- branches, loops, recursion
-- [Arrays](/docs/language/arrays) -- NDArray, DynamicNDArray, and operations
-- [Operators and Built-ins](/docs/language/operators) -- arithmetic, comparisons, and library functions
-- [Privacy Annotations](/docs/language/privacy-annotations) -- Public, Private, and PoseidonHashed
+- [Syntax Reference](/docs/language/syntax): the accepted statements and expressions
+- [Type System](/docs/language/type-system): scalars, arrays, annotations and how values
+  are merged after branches
+- [Control Flow](/docs/language/control-flow): branches, loops and recursion
+- [Arrays](/docs/language/arrays): `NDArray`, `DynamicNDArray` and array operations
+- [Operators and Built-ins](/docs/language/operators): arithmetic, comparisons and library
+  functions
+- [Privacy Annotations](/docs/language/privacy-annotations): `Public`, `Private` and
+  `PoseidonHashed`

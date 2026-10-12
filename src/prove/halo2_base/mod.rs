@@ -555,7 +555,7 @@ pub fn fp_from_hex(s: &str) -> Result<Fp, String> {
 }
 
 /// Keygen-stage structural fingerprint for the witness-independence
-/// regression test (docs/provenance-consolidation-plan.md, Step 0a):
+/// regression test (`testing/lang/test_witness_independence.py`):
 /// synthesizes the circuit with the given witness and renders the cell
 /// statistics. A sound (witness-independent) synthesizer yields the same
 /// fingerprint for every witness of the same compiled circuit; any drift

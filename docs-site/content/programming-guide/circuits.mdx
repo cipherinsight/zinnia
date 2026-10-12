@@ -6,9 +6,9 @@ description: How to create, compile, and execute ZKCircuit programs in Zinnia.
 # Circuits
 
 A `ZKCircuit` is the primary entry point for writing zero-knowledge programs in Zinnia. It
-wraps a Python-like function, compiles it to an arithmetic circuit, and provides mock
-execution for testing. This page covers all the ways to create circuits, compile them, and
-run them.
+wraps a Python function, compiles it to an arithmetic circuit, and runs it on the mock
+backend or a proving backend. This page covers the ways to create circuits, compile them,
+and run them.
 
 ## Imports
 
@@ -24,8 +24,9 @@ There are three ways to create a `ZKCircuit`: the `@zk_circuit` decorator, the
 ### Pattern 1: The `@zk_circuit` Decorator
 
 The decorator pattern is the most concise approach. Decorate a function with `@zk_circuit`
-and call it directly. The decorator automatically discovers any `ZKChip` or
-`ZKExternalFunc` instances defined in the calling scope and passes them to the circuit.
+and call it directly. The decorator automatically includes the `ZKChip` and
+`ZKExternalFunc` instances defined at module level in the function's module and those
+visible where the circuit is called.
 
 ```python
 from zinnia import zk_circuit, Integer, Public, Private
@@ -39,26 +40,29 @@ result = add_circuit(3, 7)
 print(result.is_satisfied())  # True
 ```
 
-When you call a decorated function, Zinnia compiles the circuit on the fly and immediately
-runs a mock execution with the provided arguments. The return value is a `ZKExecResult`.
+When you call a decorated function, Zinnia compiles the circuit and runs a mock execution
+with the provided arguments. The return value is a `ZKExecResult`.
 
-You can also pass a custom `ZinniaConfig` to the decorator:
+The decorator also accepts a `ZinniaConfig` and a list of preconditions:
 
 ```python
-from zinnia import zk_circuit, ZinniaConfig
+from zinnia import zk_circuit, ZinniaConfig, Integer, Private
 
-config = ZinniaConfig(loop_limit=500)
-
-@zk_circuit
+@zk_circuit(config=ZinniaConfig(loop_limit=500), requires=[lambda a: a < 1000])
 def my_circuit(a: Private[Integer]):
     assert a > 0
 ```
+
+To obtain a `ZKCircuit` object from a decorated function, pass it to
+`ZKCircuit.from_method`. The decorator's `config` is not carried over, so pass the
+configuration to `from_method` as well.
 
 ### Pattern 2: `ZKCircuit.from_method`
 
 The `from_method` factory gives you an explicit circuit object that you can compile and
 execute in separate steps. This is useful when you want to reuse a compiled circuit across
-multiple test runs.
+multiple runs. It accepts a plain function or a `@zk_circuit` function. A plain function is
+compiled from its source as written, with only the chips and external functions you pass.
 
 ```python
 from zinnia import ZKCircuit, Integer, Public, Private
@@ -168,31 +172,14 @@ result = circuit(3, 7)
 If you call `mock` or `__call__` before compiling, the circuit is automatically compiled
 first.
 
-## Parsing Inputs
-
-The `argparse` method converts arguments into a `ZKParsedInput` structure that maps each
-value to its circuit input slot. This is useful for inspecting how arguments are laid out
-in the circuit:
-
-```python
-circuit = ZKCircuit.from_method(my_func)
-parsed = circuit.argparse(3, 7)
-for entry in parsed.get_entries():
-    print(entry.get_key(), entry.get_kind(), entry.get_value())
-```
-
-Each entry has:
-
-- `get_indices()` -- the positional indices of the input in the circuit.
-- `get_kind()` -- one of `"Float"`, `"Integer"`, or `"Hash"`.
-- `get_value()` -- the concrete value.
-
 ## Serialization
 
 Compiled programs can be serialized to JSON and deserialized later. This is useful for
 saving compilation results to disk or transmitting them over a network.
 
 ```python
+from zinnia import ZKCompiledProgram
+
 circuit = ZKCircuit.from_method(my_func)
 compiled = circuit.compile()
 
@@ -203,11 +190,12 @@ data = compiled.serialize()
 restored = ZKCompiledProgram.deserialize(data, external_funcs=[my_external])
 ```
 
-You can also retrieve the compiled source representation:
+You can also inspect the compiled program:
 
 ```python
-source = compiled.get_compiled_source()
-backend = compiled.get_target_backend_name()
+stmts = compiled.get_ir_stmts()             # IR statements as a list of dicts
+target = compiled.get_target_backend_name()  # the compile target, e.g. "halo2"
+inputs = compiled.get_program_inputs()       # name, type and Public/Private kind of each input
 ```
 
 ## Passing Chips and Externals
@@ -216,7 +204,7 @@ Chips (reusable sub-circuit components) and external functions (non-ZK helpers) 
 as lists to the circuit constructor or factory methods:
 
 ```python
-from zinnia import ZKCircuit, ZKChip, ZKExternalFunc
+from zinnia import ZKCircuit, zk_chip, zk_external, Integer
 
 @zk_chip
 def helper(x: Integer) -> Integer:
@@ -236,9 +224,9 @@ circuit = ZKCircuit.from_method(
 You can pass either `ZKChip`/`ZKExternalFunc` instances or plain Python functions. Plain
 functions are automatically wrapped using `from_method`.
 
-When using the `@zk_circuit` decorator, chips and externals are discovered automatically
-from the local scope of the caller. Any `ZKChip` or `ZKExternalFunc` variable visible at
-the call site is included:
+When using the `@zk_circuit` decorator, chips and externals are discovered automatically:
+those defined at module level in the circuit's module and those visible in the local scope
+where the circuit is called:
 
 ```python
 from zinnia import zk_circuit, zk_chip, Integer, Private
@@ -258,9 +246,10 @@ result = my_circuit(5)
 
 ## Error Handling
 
-Zinnia raises `ZinniaException` for user-facing errors such as type mismatches, unsupported
-operations, or constraint violations during compilation. Internal compiler errors are
-caught and re-raised as prettified exceptions with source location information.
+Zinnia raises `ZinniaException` for compilation errors such as invalid annotations, type
+mismatches, unsupported operations, or loops and recursion that cannot be bounded. Errors
+found by the front end carry the source location. A failed assertion is not an exception:
+it makes the execution result unsatisfied.
 
 ```python
 from zinnia import ZinniaException
@@ -274,11 +263,7 @@ except ZinniaException as e:
 ## Complete Example
 
 ```python
-from zinnia import (
-    ZKCircuit, zk_circuit, zk_chip,
-    Integer, Float, NDArray,
-    Public, Private, np,
-)
+from zinnia import ZKCircuit, zk_chip, Integer, Public, Private
 
 # Define a reusable chip
 @zk_chip

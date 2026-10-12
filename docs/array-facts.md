@@ -1,9 +1,8 @@
 # Array facts: facts about whole arrays
 
 What every element of an array, or of a part of it, satisfies, kept once per array
-instead of once per element, and how the compiler uses it. This is the port of the
-`array-facts` branch (35bebe45, designed on the memory-segment frontend) onto the
-array-SSA frontend (`docs/array-ssa.md`). Code: `src/optim/array_facts/` (the store and
+instead of once per element, and how the compiler uses it. Arrays are SSA values
+(`docs/array-ssa.md`), and the facts are kept by the IR generator. Code: `src/optim/array_facts/` (the store and
 the value domain), `src/builder/array_facts.rs` (stating, deriving and querying facts),
 `src/builder/bound_queries.rs` (the query tiers), and the sources and consumers listed
 below.
@@ -41,9 +40,8 @@ below.
   unconditional facts, array facts stated `Always`). `Here`: everything the current
   execution guard makes visible.
 - **Source**: where an array fact comes from. **Consumer**: a decision that reads one.
-- **Trust rule** (`PAPER-NOTES.md` section 5): a fact may be stated only if a
-  constraint enforces it on every accepted witness where its guard holds, or it holds
-  by the definition of the cells.
+- **Trust rule**: a fact may be stated only if a constraint enforces it on every
+  accepted witness where its guard holds, or it holds by the definition of the cells.
 
 ## 2. What an array fact is about, and why a write expires it
 
@@ -75,17 +73,10 @@ cells), and a view that is still a run of the old cells keeps them, correctly.
 on any path, has no facts (`storage_is_current`); reading its cells is a compile error
 anyway.
 
-This replaces every fact about an array's elements that the base keyed by the
-array's value id, which a write through another name keeps (AF-1: a `forall` bound
-outlived `a[0] = x`; the `is_sorted` and zeros/ones facts outlived `y = x; y[0] =
-100`): the `array_in_range` predicate, the `forall` name scan, the storage cell
-bounds of `np.nonzero`, the known-permutation list, the `is_sorted`,
-`forall_eq_const` (zeros, ones, full) and `is_identity` facts with their contracts and
-the ~45 relays that copied the zeros/ones fact through shape operations, and the
-write-clock records (`ArrayContents`) with which branch `fact-staleness` had made those
-facts lapse. One mechanism is left: a fact describes an array value, and a query reads
-the array's current value. "Every element is `k`" and "an identity matrix" need no
-stated fact at all: the cells of `np.zeros`, `np.ones`, `np.full`, `np.identity` and
+Facts are therefore never keyed by a Python name or a value id, which a write through
+another name would leave unchanged (a `forall` bound must not outlive `a[0] = x`, and
+a sortedness fact must not outlive `y = x; y[0] = 100`). "Every element is `k`" and
+"an identity matrix" need no stated fact at all: the cells of `np.zeros`, `np.ones`, `np.full`, `np.identity` and
 `np.eye` are constants, and so are the cells of every copy, view, reshape, transpose,
 slice, broadcast, tile, concatenation or gather of them (`array_all_equal`,
 `array_is_identity`; a read of an array of constants is one of them, `cell_is`).
@@ -168,7 +159,7 @@ the join.
 | flattened `np.cumsum` of cells in `[lo, hi]`, `lo >= 0` | `ops/static_ndarray_ops/reductions.rs::state_cumsum_facts` | non-decreasing, `[lo, n * hi]` (derived: rests on the input's range) | partial sums of non-negative integers, exact in the field |
 | `np.linspace` with a runtime length, `start <= stop` | `constructors.rs::np_linspace_bounded` | non-decreasing over the capacity | cell `i` is `start + i * step`, `step >= 0`, the integer-times-fixed-point product exact; the integer cast does not decrease |
 | `np.arange` | constructors | (nothing stated) | its cells are constants: range, strict order and formula are read off them |
-| `min` / `max` reduction | `reductions.rs::propagate_forall_bounds_to_reduction_output` | the input's range (derived), also as scalar facts for `prove` | the output is one of the elements |
+| `min` / `max` reduction | `helpers/static_array/reductions.rs::propagate_forall_bounds_to_reduction_output` | the input's range (derived), also as scalar facts for `prove` | the output is one of the elements |
 | branch merges | `state_merged_facts` | `Segmentation::either` (derived) | section 4 |
 
 ## 6. Consumers and why each use is sound
@@ -190,7 +181,7 @@ predicate.
 | boundary reads of a sorted runtime-shaped array | `aggregation.rs` (`live_prefix_has_order`) | `min = x[0]`, `max = x[len - 1]`, `argmin = 0`, `argmax` = first position of the last value | the live prefix lies in an ordered segment of the array's current contents (a segment over the whole capacity holds it: the live length never exceeds the capacity, and a read past it has no witness) |
 | constant-content strategies | `helpers/ndarray.rs::reduction_strategy_set` (sum, prod), `static_ndarray_ops/reductions.rs::mean_strategy_set`, `elementwise.rs::where_strategy_set`, `matmul.rs::matmul_strategy_set`, `dyn_ndarray/aggregation.rs` (sum, prod of a runtime-shaped array) | a constant result, an operand, or the element count when every element is 0 or 1 (or the condition is all true or all false, or an operand is an identity matrix); offered only when `array_all_equal` / `array_is_identity` say so, with the precondition `optim::decided()` | the property holds of the array's current cells where the code runs (constants, or array facts that hold there) |
 | bounds of a runtime-shaped gather | `array_ops/indexing.rs::dyn_gather_rows` | skip the per-index checks when every index is in `[0, n)` (`array_within`) | the indices' facts hold where the gather runs |
-| layer: argsort permutation | `lower/array_facts.rs::definitional` (replaced `FreeFacts::is_argsort_line` at the merge into fact-rules) | `Claim::Permutation(p, 0..n)` free when `p` is the `n` argsort lanes of one sort instance, every rank once | the sort construction's lemma, read off the graph (no fact table survives the passes' renumbering) |
+| layer: argsort permutation | `lower/array_facts.rs::definitional` | `Claim::Permutation(p, 0..n)` free when `p` is the `n` argsort lanes of one sort instance, every rank once | the sort construction's lemma, read off the graph (no fact table survives the passes' renumbering) |
 
 ## 7. The query tiers
 
@@ -214,7 +205,7 @@ every cell, so no quantified formula is built. The SMT resolver remembers each
 statement's extremes and decisions (a statement's formula and the program's
 preconditions are fixed once they exist).
 
-## 8. Not done, and differences from the old branch
+## 8. Limitations
 
 - **Runtime-shaped merges**: a merge of two runtime-shaped arrays gets no merged
   facts (only static arrays of one shape do).
@@ -222,34 +213,39 @@ preconditions are fixed once they exist).
   their consumers, `sqrt`/division guards, are free in the backends); float lists
   carry order only.
 - **No widening** (loops are unrolled), and one expression per segment bound.
-- The old branch's per-storage write history (`StorageFacts`) is replaced by the
-  version facts; its `read_ranges` snapshot is the version a read names.
 
 ## 9. Interface to the lowering layer
 
-The lowering layer (branch `fact-rules`, `docs/array-facts-lowering.md` there) states array
-claims over lists of IR values and establishes them from definitions read off the graph (sort
-lanes, argsort), from bounds, from the program's checks, and from facts the IR generator states
-with `IRBuilder::ir_array_fact(kind, cells, basis)` (an `IR::ArrayFact` statement: the claim
-holds of the listed values, by the constraints computing them when `basis` is empty, or wherever
-the asserted Booleans of `basis` hold). Its model is this store's: a fact is about the SSA values
-it lists, so it needs no expiry in the IR.
+The lowering layer (`docs/array-facts-lowering.md`) states array claims over lists of IR
+values. It establishes them from definitions read off the graph (sort lanes, argsort), from
+bounds, from the program's checks, and from facts the IR generator states with
+`IRBuilder::ir_array_fact(kind, cells, basis)`: an `IR::ArrayFact` statement saying that the
+claim holds of the listed values, by the constraints computing them when `basis` is empty, or
+wherever the asserted Booleans of `basis` hold. Its model is this store's: a fact is about the
+SSA values it lists, so it needs no expiry in the IR.
 
-What the store can hand over, and its limits (section 8 of that document, written from this
-branch): only `Always` facts (`IR::ArrayFact` has no scope); with an empty basis only the facts
-the constraints computing the cells enforce (np.nonzero / flatnonzero / argwhere coordinates in
-`[0, extent - 1]`, np.unique's inverse in the constant hull `[0, n - 1]`), with a basis the
-`@requires` element facts and the Boolean input domains (the store does not record which checks a
-transferred fact rests on, so transferred facts are not handed over); no runtime cuts or symbolic
-ends. At the merge into fact-rules, `IRBuilder::state_definitional_facts` hands these
-definitional facts to the layer as `IR::ArrayFact` statements, and the layer's
-`array_facts::definitional` replaced `FreeFacts::is_argsort_line` (the argsort permutation)
-(`docs/array-facts-lowering.md` section 8).
+What the store hands over is limited:
+
+- Only `Always` facts. `IRBuilder::ir_array_fact_scoped` can state a claim under a predicate,
+  but the store does not use it.
+- With an empty basis, only the facts the constraints computing the cells enforce.
+  `IRBuilder::state_definitional_facts` states these in the store and as `IR::ArrayFact`s (the
+  hull of the ranges, with symbolic ends replaced by the bound the interval engine gives their
+  statements; the order of each segment between constant cuts; a permutation). The sources of
+  `np.nonzero`, `np.flatnonzero`, `np.argwhere` and `np.unique` call it.
+- The store does not record which checks a transferred fact rests on, so transferred facts are
+  not handed over. The `@requires` element facts reach the layer from the predicates' witness
+  emitters (`optim/predicates/witness.rs`), with the asserted comparisons as their basis. The
+  sort and argsort lines need no stated fact: the layer's `array_facts::definitional` reads them
+  off the graph.
+
+`ZINNIA_ABLATE_ARRAY_FACTS=1` (`docs/ablations.md`) turns off both the store's queries and the
+layer's claims.
 
 ## 10. Tests
 
 - `src/optim/array_facts/tests.rs`: domain, segmentations (cuts, slices, the write
-  rules, merges), the store (runs, AF-1, guards), constants.
+  rules, merges), the store (runs, writes through another name, guards), constants.
 - `src/builder/array_facts.rs` (tests): writes through any name, runtime and
   conditional writes, branch-local facts, merges, stale copies, permutations.
 - `src/optim/resolver/tests.rs`: decision queries and remembered extremes.
@@ -261,4 +257,4 @@ definitional facts to the layer as `IR::ArrayFact` statements, and the layer's
   nonzero results), each on the mock against NumPy, with halo2-base and Noir proving
   the mock's values, and the violating inputs without a proof.
 - `testing/lang/test_sorted_reductions.py`, `test_stale_array_bounds.py`: the
-  boundary reads and the AF-1 reproducers.
+  boundary reads, and bounds that must not outlive a write through another name.

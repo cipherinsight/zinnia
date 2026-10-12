@@ -74,7 +74,7 @@ pub(crate) fn emit_hit_counts(b: &mut IRBuilder, values: &[Value], targets: &[Va
 /// values builds them, and they are deduplicated), `n (n - 1)` additions
 /// and `n` asserted equalities. halo2-base cells, Noir gates; calibrated on
 /// the permutation scatters of 0318 / 0319 (unchanged cells and gates on
-/// both backends, `eval-redo/layer/layer-challenge.md`).
+/// both backends).
 pub(crate) fn hit_count_cost(n: u64, target: Target, shared_tests: bool) -> u64 {
     let (test, add, assert) = match target {
         Target::Halo2Base => (7, 1, 2),

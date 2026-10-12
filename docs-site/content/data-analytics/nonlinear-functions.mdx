@@ -1,271 +1,93 @@
 ---
 title: Non-Linear Functions
-description: How Zinnia approximates transcendental and non-linear functions using truncated Taylor series, including precision guarantees, circuit costs, and the full list of supported functions.
+description: The transcendental and other non-linear functions Zinnia supports on Float values, the fixed-point algorithms behind them, their domains, accuracy and backend support.
 ---
 
 # Non-Linear Functions
 
-Arithmetic circuits support addition and multiplication natively, but transcendental
-functions like `exp`, `log`, and `sin` have no direct field representation. Zinnia
-approximates these functions using truncated Taylor series expansions, with the polynomial
-degree chosen to guarantee that the approximation error falls below the fixed-point
-precision threshold.
+Arithmetic circuits natively support only field addition and multiplication. Zinnia computes
+`exp`, `log`, `sqrt`, the trigonometric and hyperbolic functions and `arctan2` on
+[Q32 fixed-point values](/docs/data-analytics/real-arithmetic) with integer algorithms: a
+range reduction followed by a polynomial or a series, in which every product is rounded down.
+The mock backend evaluates the same algorithms that the halo2-base and Noir backends
+constrain, so the mock result is the value a proof attests to. `arccos` is the exception (see
+the table).
 
-## Approximation Strategy
+## Calling the Functions
 
-Each non-linear function f(x) is approximated by a polynomial of degree d:
+The functions are available under `np` and `math` and apply element-wise to arrays:
 
+```python
+import math
+from zinnia import *
+
+@zk_circuit
+def features(x: NDArray[Float, 8]) -> NDArray[Float, 8]:
+    return np.exp(-x) + np.sin(x)
+
+@zk_circuit
+def norm2(a: Float, b: Float) -> Float:
+    return math.sqrt(a * a + b * b)
 ```
-f(x) approx sum(a_i * x^i, i = 0 to d) + R_d(x)
-```
-
-where `a_i` are the Taylor coefficients and `R_d(x)` is the Lagrange remainder term. The
-compiler selects the smallest degree d such that the remainder is bounded below the
-fixed-point precision:
-
-```
-|R_d(x)| < 2^(-s) = 2^(-64)
-```
-
-Since the machine epsilon is 2^(-64), any error smaller than this is invisible in the
-fixed-point representation. The approximated value and the true value will map to the same
-(or adjacent) field elements.
-
-### Degree Selection
-
-The degree d depends on the function and the input range. The Lagrange remainder for a
-Taylor expansion about x = 0 is:
-
-```
-R_d(x) = f^(d+1)(c) * x^(d+1) / (d+1)!
-```
-
-for some c between 0 and x. The compiler computes a conservative upper bound on this
-remainder over the valid input range and increases d until the bound drops below 2^(-64).
-
-For functions with limited convergence radius, the compiler applies range reduction
-techniques first. For example, `exp(x)` for large x is decomposed as
-`exp(n + r) = exp(n) * exp(r)` where n is an integer and `|r| < 1`, so the Taylor series
-for `exp(r)` converges rapidly.
-
-### Circuit Cost
-
-A degree-d polynomial requires:
-- **d multiplications** (computing x^2, x^3, ..., x^d via successive multiplication)
-- **d additions** (accumulating each a\_i * x^i term)
-
-This makes the total circuit cost **2d constraints** (approximately), plus any constraints
-for range reduction. The cost is independent of the precision -- the 64-bit fixed-point
-precision determines d, and d determines the circuit cost.
 
 ## Supported Functions
 
-The following table lists all supported non-linear functions, their typical Taylor degree
-(for inputs in the primary convergence range), and approximate circuit cost.
+| Function | Spelling | Algorithm | Domain |
+|----------|----------|-----------|--------|
+| Exponential | `np.exp`, `math.exp` | `2^(x / ln 2)`: integer part as a shift, fractional part by a degree-12 polynomial for `2^f` on `[0, 1)` | result below `2^31` (`x` up to about 21.48) |
+| Natural logarithm | `np.log`, `math.log` | `x = m * 2^k` with `m` in `[1, 2)`, then `k ln 2 + 2 atanh((m - 1) / (m + 1))` by a series | `x > 0` |
+| Square root | `np.sqrt`, `math.sqrt` | exact integer square root, rounded down | `x >= 0` |
+| Sine, cosine | `np.sin`, `np.cos`, `math.sin`, `math.cos` | reduction modulo `2π` and folding onto `[0, π/2]`, then a degree-9 odd polynomial; `cos(x) = sin(x + π/2)` | all `x` in the Q32 range |
+| Tangent | `np.tan`, `math.tan` | `sin(x) / cos(x)` | mock and Noir backends only |
+| Hyperbolic functions | `np.sinh`, `np.cosh`, `np.tanh` (and `math.*`) | from `exp(x)` and `exp(-x)`; `tanh = sinh / cosh` | both exponentials in range |
+| Arcsine | `np.arcsin`, `math.asin` | `2 atan(x / (1 + sqrt(1 - x^2)))` with a polynomial for `atan` on `[-1, 1]` | `-1 <= x <= 1` |
+| Arccosine | `np.arccos`, `math.acos` | Noir: `π/2 - arcsin(x)`; the mock backend uses the C library's `acos`, so its result can differ from Noir's in the last bits | `-1 <= x <= 1`; mock and Noir backends only |
+| Two-argument arctangent | `np.arctan2`, `math.atan2` | ratio of the smaller to the larger magnitude, polynomial for `atan` on `[0, 1]`, then octant and sign corrections | all `(y, x)`; `arctan2(0, 0) = 0` |
+| Power | `x ** y`, `np.power` | integer exponent: square-and-multiply; float exponent: `exp(y * log x)` | see below |
 
-| Function | Syntax | Taylor Degree (typical) | Constraints (approx.) | Input Range |
-|----------|--------|------------------------|-----------------------|-------------|
-| Exponential | `math.exp(x)` | 20--25 | 40--50 | Arbitrary (range-reduced) |
-| Natural logarithm | `math.log(x)` or `math.ln(1+x)` | 30--40 | 60--80 | x &gt; 0 (for log); \|x\| &lt; 1 (for ln(1+x)) |
-| Sine | `math.sin(x)` | 18--22 | 36--44 | Arbitrary (range-reduced to [-pi, pi]) |
-| Cosine | `math.cos(x)` | 18--22 | 36--44 | Arbitrary (range-reduced to [-pi, pi]) |
-| Tangent | `math.tan(x)` | 20--25 | 40--50 | \|x\| &lt; pi/2 |
-| Hyperbolic sine | `math.sinh(x)` | 20--25 | 40--50 | Arbitrary (range-reduced) |
-| Hyperbolic cosine | `math.cosh(x)` | 20--25 | 40--50 | Arbitrary (range-reduced) |
-| Hyperbolic tangent | `math.tanh(x)` | 20--25 | 40--50 | Arbitrary |
-| Square root | `math.sqrt(x)` | 15--20 | 30--40 | x &gt;= 0 |
-| Absolute value | `math.fabs(x)` | N/A | 2--3 | Arbitrary |
-| Inverse | `math.inv(x)` or `1.0 / x` | N/A | 5--10 | x != 0 |
+`np.abs`, `np.fabs`, `np.sign`, `np.floor`, `np.ceil`, `np.trunc`, `np.round`,
+`np.square`, `np.reciprocal`, `np.minimum`, `np.maximum` and `np.clip` are also supported.
+They need comparisons or rescaling but no approximation.
 
-The "typical" Taylor degree and constraint counts assume inputs in the primary convergence
-range after range reduction. Inputs far outside this range may require higher degrees.
+The halo2-base backend reports an error for `tan` and `arccos` when proving. Express them
+through the supported functions if you need a halo2-base proof, for example
+`np.sin(x) / np.cos(x)`.
 
-## Function Details
+## Domains
 
-### Exponential: exp(x)
+For `sqrt`, `log`, `arcsin` and `arccos`, the compiler checks the domain condition in the
+table. When it can prove the condition from the program (for example from a constant, an
+earlier comparison or a precondition), it adds nothing. When it can prove that the condition
+fails, compilation stops with an error. Otherwise it adds a check to the circuit, so an input
+that violates the condition has no proof.
 
-The Taylor series for exp(x) about x = 0 is:
+The other limits come from the Q32 range. `exp` has no proof when its result would reach
+`2^31`. For powers, `0 ** y` with negative `y` and a negative base with a non-integer
+exponent have no proof, since NumPy returns `inf` or `nan` there. `0 ** 0` is 1, as in NumPy.
 
-```
-exp(x) = 1 + x + x^2/2! + x^3/3! + ... + x^d/d!
-```
+## Accuracy
 
-For large |x|, range reduction decomposes x = n + r where n = floor(x) and |r| &lt; 1. The
-compiler precomputes exp(n) for the range of valid integer parts and evaluates exp(r) via
-the Taylor series. The final result is `exp(n) * exp(r)`.
+The shared fixed-point kernel (`src/prove/kernel.rs`) documents these maximum errors against
+the C math library at 32 fractional bits:
 
-```python
-x: Float = 2.5
-y = math.exp(x)  # y approx 12.1825
-```
+| Function | Measured maximum error |
+|----------|------------------------|
+| `exp` on `[-40, 21.4]` | relative `9.4e-10` for results of at least 1, absolute `9.4e-10` below 1 |
+| `log` on `[2^-32, 2^31)` | absolute `1.3e-9` |
+| `sin` | `9.0e-9` on `[-20, 20]`, `4e-8` on `[-1000, 1000]` |
+| `arcsin` on `[-1, 1]` | `5.9e-9` |
+| `arctan2` | `3.2e-9` |
 
-### Natural Logarithm: ln(1 + x)
-
-The Taylor series for ln(1 + x) about x = 0 is:
-
-```
-ln(1 + x) = x - x^2/2 + x^3/3 - x^4/4 + ...
-```
-
-This series converges for |x| &lt; 1. For `math.log(x)` with arbitrary positive x, the
-compiler rewrites it as `ln(1 + (x - 1))` after range reduction to bring the argument
-close to 1.
-
-```python
-x: Float = 0.5
-y = math.log(1.0 + x)  # y approx 0.4055
-```
-
-### Trigonometric Functions: sin(x), cos(x), tan(x)
-
-Sine and cosine use the standard Taylor expansions:
-
-```
-sin(x) = x - x^3/3! + x^5/5! - ...
-cos(x) = 1 - x^2/2! + x^4/4! - ...
-```
-
-Range reduction maps x into [-pi, pi] using the periodicity of trigonometric functions.
-Tangent is computed as `sin(x) / cos(x)`, combining the Taylor approximations of both.
-
-```python
-angle: Float = 0.7854  # approximately pi/4
-s = math.sin(angle)    # approx 0.7071
-c = math.cos(angle)    # approx 0.7071
-t = math.tan(angle)    # approx 1.0
-```
-
-### Hyperbolic Functions: sinh(x), cosh(x), tanh(x)
-
-The hyperbolic functions use Taylor series analogous to their trigonometric counterparts:
-
-```
-sinh(x) = x + x^3/3! + x^5/5! + ...
-cosh(x) = 1 + x^2/2! + x^4/4! + ...
-tanh(x) = sinh(x) / cosh(x)
-```
-
-Range reduction for sinh and cosh follows the same strategy as exp(x).
-
-```python
-x: Float = 1.0
-s = math.sinh(x)  # approx 1.1752
-c = math.cosh(x)  # approx 1.5431
-t = math.tanh(x)  # approx 0.7616
-```
-
-### Square Root: sqrt(x)
-
-Square root is approximated via Newton's method or a Taylor series expansion of
-`sqrt(1 + u)` after writing `x = a^2 * (1 + u)` where a^2 is the nearest perfect power
-of two.
-
-```
-sqrt(1 + u) = 1 + u/2 - u^2/8 + u^3/16 - ...
-```
-
-```python
-x: Float = 2.0
-y = math.sqrt(x)  # approx 1.4142
-```
-
-### Absolute Value: fabs(x)
-
-Absolute value does not require a Taylor series. It is implemented using the sign bit:
-
-```
-fabs(x) = merge(x >= 0, x, -x)
-```
-
-This requires a comparison (sign check via range proof) and a conditional negation,
-totaling 2--3 constraints.
-
-```python
-x: Float = -3.14
-y = math.fabs(x)  # y = 3.14
-```
-
-### Inverse: inv(x)
-
-The multiplicative inverse `1/x` is computed by finding the field element y such that
-`x * y = 2^s` (the fixed-point representation of 1.0). The compiler introduces y as a
-witness and constrains `x * y = 2^s` directly.
-
-```python
-x: Float = 4.0
-y = 1.0 / x  # y = 0.25
-```
-
-This costs approximately 5--10 constraints including the range proof that the result is
-within bounds.
-
-## Precision Guarantees
-
-### Approximation Error Bound
-
-For every supported function, the compiler guarantees:
-
-```
-|f_approx(x) - f_true(x)| < 2^(-s) = 2^(-64) approx 5.42 * 10^(-20)
-```
-
-within the valid input range. This means the approximation error is below the fixed-point
-resolution -- the encoded field element for the approximation is at most 1 ULP away from
-the encoded field element for the true value.
-
-### Composition of Functions
-
-When non-linear functions are composed (e.g., `exp(sin(x))`), each function introduces
-up to 1 ULP of error. For a chain of k function applications, the total error is bounded
-by approximately:
-
-```
-k * 2^(-64) + higher-order terms
-```
-
-For practical chains (k &lt; 100), this remains well below FP64 precision.
-
-### Input Range Limitations
-
-Some functions have restricted domains:
-
-- `math.log(x)` requires x &gt; 0. The compiler inserts a constraint that x is positive.
-- `math.sqrt(x)` requires x &gt;= 0.
-- `math.tan(x)` is undefined at x = pi/2 + n*pi. The compiler does not check for this --
-  using tan near its poles produces unpredictable results.
-- `1.0 / x` requires x != 0. The compiler constrains x to be non-zero.
-
-Violating these domain constraints will cause proof generation to fail.
+The error of `x ** y` with a float exponent is about `1e-9 + |y| * 1.3e-9` relative, the error
+of `exp` plus `y` times the error of `log`. `sqrt` is exact up to rounding down to Q32.
 
 ## Practical Considerations
 
-1. **Circuit size scales with degree.** Each non-linear function call adds 30--80
-   constraints to the circuit. If you call `math.exp` in a loop of 1000 iterations, expect
-   on the order of 40,000--50,000 additional constraints from that function alone. Plan
-   your circuit budget accordingly.
-
-2. **Prefer simpler approximations when possible.** If you need an approximate sigmoid, a
-   low-degree polynomial approximation written directly in Zinnia may be cheaper than
-   composing `exp` and `div`:
-
-   ```python
-   # Expensive: uses exp + division
-   def sigmoid_exact(x: Float) -> Float:
-       return 1.0 / (1.0 + math.exp(-x))
-
-   # Cheaper: degree-3 polynomial approximation (valid for |x| < 5)
-   def sigmoid_approx(x: Float) -> Float:
-       return 0.5 + 0.25 * x - 0.0208 * x * x * x
-   ```
-
-3. **Range reduction adds cost.** Functions applied to values far from the Taylor expansion
-   point incur extra constraints for range reduction. Normalizing your data to a narrow
-   range before applying non-linear functions can reduce circuit size.
-
-4. **Use fabs and inv directly.** These functions are much cheaper than the transcendental
-   functions because they do not require Taylor series. Prefer them over more expensive
-   alternatives when algebraically equivalent.
-
-5. **Batch evaluations share no state.** Each call to a non-linear function is independent.
-   Evaluating `math.sin(x)` on each element of a 100-element array produces 100
-   independent polynomial evaluations. There is no amortization across calls.
+- Each call is evaluated independently. Applying `np.sin` to a 100-element array produces 100
+  evaluations.
+- Keep arguments of `exp`, `sinh` and `cosh` small enough that the result stays below
+  `2^31`. Normalizing data before applying `exp` (for example subtracting the maximum in a
+  softmax) avoids this limit.
+- A low-degree polynomial written directly in the program can be cheaper than composing
+  `exp` and a division when an approximation of the function is acceptable for the
+  application.

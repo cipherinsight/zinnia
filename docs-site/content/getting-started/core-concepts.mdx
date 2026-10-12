@@ -1,6 +1,6 @@
 ---
 title: Core Concepts
-description: Essential background on zero-knowledge proofs, arithmetic circuits, and how Zinnia bridges expressive programs with static circuit constraints.
+description: Background on zero-knowledge proofs and arithmetic circuits, and how Zinnia compiles Python programs into fixed circuits.
 ---
 
 # Core Concepts
@@ -23,11 +23,10 @@ Zero-knowledge proofs have three defining properties:
 
 **zk-SNARKs** (Zero-Knowledge Succinct Non-Interactive Arguments of Knowledge) are a specific family of zero-knowledge proofs with several desirable properties:
 
-- **Succinct.** Proofs are very small (typically a few hundred bytes) regardless of the complexity of the computation being proved.
-- **Non-interactive.** The prover generates a single proof message; no back-and-forth communication with the verifier is needed.
-- **Fast verification.** Verifying a proof takes milliseconds, even for computations that originally took minutes or hours to execute.
+- **Succinct.** Proofs are short, and checking one is much cheaper than redoing the computation.
+- **Non-interactive.** The prover sends a single proof message. No back-and-forth communication with the verifier is needed.
 
-These properties make zk-SNARKs practical for real-world applications: a prover can perform an expensive computation, produce a compact proof, and any number of verifiers can cheaply confirm correctness. Applications include private transactions, verifiable computation outsourcing, and -- the focus of Zinnia -- verifiable data analytics.
+A prover can therefore perform an expensive computation once, produce a proof, and let any number of verifiers check the result cheaply. Zinnia targets verifiable data analysis: proving that a NumPy-style computation over private data produced a stated result.
 
 ## Arithmetic Circuits
 
@@ -50,7 +49,7 @@ This means:
 - Which gates connect to which is fixed.
 - There is no concept of "skipping" a gate or "conditionally" executing part of the circuit.
 
-Every gate in the circuit is always evaluated, for every proof. There is no branching at the circuit level.
+Every gate in the circuit is evaluated for every proof. There is no branching at the circuit level.
 
 ### Why This Is Challenging
 
@@ -61,23 +60,27 @@ Most programs, especially data-analytic ones, are inherently dynamic:
 - **Array accesses** use indices computed from data.
 - **Variable reassignment** changes what a name refers to depending on which branch was taken.
 
-None of these patterns have a direct representation in a static circuit. Bridging this gap -- allowing developers to write natural, dynamic-looking programs while producing valid static circuits -- is Zinnia's central challenge.
+None of these patterns has a direct representation in a static circuit. Zinnia's compiler translates them into one.
 
-## How Zinnia Bridges the Gap
-
-Zinnia's compiler uses **SMT-backed symbolic execution** to resolve the mismatch between expressive programs and static circuits.
+## How Zinnia Compiles Dynamic Programs
 
 ### Symbolic Execution
 
-Rather than executing the program with concrete values, the compiler executes it **symbolically**: variables hold symbolic expressions (like "input_0 + input_1") instead of concrete numbers. The compiler explores all possible execution paths through the program, building up a set of arithmetic constraints for each path.
+The compiler does not run the program on concrete values. It executes it **symbolically**: a variable holds an expression over the inputs (such as `a + b`) instead of a number. Every statement adds operations to the compiler's intermediate representation (IR).
 
-### SMT Solving
+### Branches, Loops and Facts
 
-At branch points where the path depends on input values, the compiler consults an **SMT solver** (specifically, Z3) to determine which paths are feasible and how to merge constraints from different paths. The SMT solver can also identify constraints that are always satisfied regardless of input values, enabling the compiler to eliminate them from the circuit entirely.
+When a branch condition depends on an input, the compiler executes both branches, each under its condition, and merges every variable that the branches assign differently with a **selection** (a multiplexer that picks one of two values according to the condition). An assertion inside a branch only has to hold when that branch's condition holds.
 
-### Static Circuit Construction
+Loops are unrolled. When the number of iterations depends on an input, the loop is unrolled up to a bound the compiler can prove, and the iterations beyond the actual count have no effect.
 
-The end result is a single static circuit that correctly handles all possible inputs within the program's declared bounds. Conditional branches are compiled using a **multiplexer** pattern: both branches are evaluated, and a selector wire chooses which result to use. Loops are unrolled to their maximum iteration count. Dynamic array operations are compiled with bounds-aware indexing logic.
+To prove such bounds, and facts such as "this index is within the array" or "this assertion always holds", the compiler combines constant folding, a range analysis and an SMT solver (Z3). Facts it can prove need no constraints in the circuit.
+
+### Array Operations
+
+Array operations such as sorting, reading at a private index or selecting the elements that satisfy a condition are kept as whole-array operations in the IR. A later lowering step replaces each one with a circuit construction, for example a permutation check for a sort or a one-hot selection for a read at a private index, choosing the cheapest construction for the target backend.
+
+The result is one static circuit that handles every input in the program's declared domain.
 
 ## Zinnia Concepts
 
@@ -127,19 +130,22 @@ def my_circuit(secret: Private[Integer], commitment: Public[Integer]):
     ...
 ```
 
+An input without either annotation is private.
+
 ### Compilation
 
-Compilation transforms a Zinnia function into a `ZKCompiledProgram` -- a representation of the arithmetic circuit in the target backend's format. The compilation pipeline proceeds through several stages:
+Compilation turns a Zinnia function into a `ZKCompiledProgram`, which holds the optimized IR and the description of the circuit's inputs and outputs. The pipeline has these stages:
 
-1. **Python AST parsing** using the standard `ast` module.
-2. **AST transformation** into Zinnia's internal AST, with flow-sensitive type analysis.
-3. **IR generation** via symbolic execution with SMT solving, producing a flat list of arithmetic constraints.
-4. **Optimization passes** including constant folding, dead code elimination, duplicate code elimination, always-satisfied constraint elimination, and dynamic array memory lowering.
-5. **Backend code generation** targeting Halo2, Circom, Noir, or CirC/Zokrates.
+1. **Parsing and AST transformation** in the Python front end, using the standard `ast` module.
+2. **IR generation** by symbolic execution in the Rust core.
+3. **Optimization passes**, including constant folding, dead-code elimination, duplicate-code elimination and removal of assertions that always hold.
+4. **Array lowering**, which replaces array operations with circuit constructions for the target backend.
+
+The same compiled program can then be run on the mock backend or proved with the halo2-base or Noir backend.
 
 ### Mock Execution
 
-**Mock execution** evaluates a compiled circuit with concrete input values on the CPU, checking that all constraints are satisfied. This is the primary way to test circuits during development. Mock execution does not generate a cryptographic proof -- it verifies logical correctness.
+**Mock execution** evaluates a compiled circuit with concrete input values and checks that all constraints are satisfied. It is the usual way to test circuits during development. It does not generate a cryptographic proof.
 
 ```python
 circuit = ZKCircuit.from_method(my_function)
@@ -147,20 +153,10 @@ circuit.compile()
 result = circuit.mock(arg1, arg2, ...)
 ```
 
-## zkRAM
-
-**zkRAM** (zero-knowledge Random Access Memory) is a circuit-level memory abstraction that enables efficient random-access reads and writes within a zero-knowledge circuit.
-
-In a standard arithmetic circuit, there is no concept of "memory" -- only fixed wires between gates. Accessing an array element at a data-dependent index cannot be expressed as a simple wire connection, because the index is not known at circuit-compile time.
-
-zkRAM solves this by maintaining a **memory trace**: a log of all read and write events that occur during the computation. Each event records an address, a value, and a timestamp. The circuit enforces consistency of this trace -- every read must return the value most recently written to that address -- using a sorting-based argument that costs O(N log N) constraints for N memory operations.
-
-Zinnia uses zkRAM internally when compiling `DynamicNDArray` operations that involve data-dependent indexing. The compiler's `DynamicNDArrayMemoryLoweringIRPass` and `MemoryTraceInjectionIRPass` optimization passes handle the lowering of high-level array operations to zkRAM primitives. From the developer's perspective, this is transparent -- you write natural array code, and the compiler handles the memory-trace machinery.
-
 ## Next Steps
 
 With these concepts in hand, you are ready to explore:
 
 - The [Language Reference](/docs/language) for Zinnia's complete type system and supported operations.
-- The [Programming Guide](/docs/programming-guide) for practical patterns and techniques.
+- The [Programming Guide](/docs/programming-guide/circuits) for circuits, chips, configuration and proving.
 - The [Compiler Internals](/docs/compiler-internals) for a deeper look at how Zinnia's compilation pipeline works.

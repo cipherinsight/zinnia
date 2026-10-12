@@ -1,18 +1,16 @@
 ---
 title: Control Flow
-description: Documentation of control flow constructs in Zinnia, including conditionals, loops, recursion, and how they compile to arithmetic circuits.
+description: Conditionals, loops, recursion and assertions in Zinnia, and how they compile to arithmetic circuits.
 ---
 
 # Control Flow
 
-Zinnia supports standard Python control flow constructs. Because programs compile to
-static arithmetic circuits, every control flow construct must have a statically
-determinable bound on its execution. The compiler uses SMT-based analysis to automatically
-infer these bounds in most cases.
+Zinnia accepts Python's control-flow statements. A circuit has a fixed structure, so every
+loop and recursive call is unrolled at compile time and every branch whose condition
+depends on an input is compiled in full. This page describes how each construct is
+compiled and what the compiler needs to prove for it.
 
 ## If / Elif / Else
-
-Conditional statements use standard Python syntax.
 
 ```python
 if x > 0:
@@ -23,52 +21,26 @@ else:
     result = -x
 ```
 
-### Circuit Compilation: Guarded Joins
+### Compiling Branches
 
-In an arithmetic circuit, both branches of an `if`/`else` are fully executed. The
-compiler evaluates each branch symbolically and then merges the results using a
-**guarded join**. The guard (the boolean condition) selects which branch's values
-propagate.
-
-Concretely, for a statement like:
+When the condition is known at compile time, only the branch that runs is compiled. When it
+depends on an input, the compiler evaluates both branches and merges every variable they
+assign with a select on the condition:
 
 ```python
 if cond:
     x = a
 else:
     x = b
+# compiles to x = select(cond, a, b), that is cond * a + (1 - cond) * b
 ```
 
-The circuit computes both `a` and `b`, then produces:
-
-```
-x = cond * a + (1 - cond) * b
-```
-
-This means both branches contribute constraints to the circuit, regardless of the
-runtime value of `cond`. This is essential for zero-knowledge: the circuit structure
-does not reveal which branch was taken.
-
-For `elif` chains, the compiler nests the guarded joins:
-
-```python
-if c1:
-    x = v1
-elif c2:
-    x = v2
-else:
-    x = v3
-```
-
-This compiles as:
-
-```
-x = c1 * v1 + (1 - c1) * (c2 * v2 + (1 - c2) * v3)
-```
+Both branches contribute constraints, so the circuit structure does not reveal which branch
+was taken. An `elif` chain is a nested `if` in the `else` branch and compiles to nested
+selects. Assertions and writes inside a branch take effect only when the branch's condition
+holds (see [Assert Statements](#assert-statements)).
 
 ## While Loops
-
-While loops repeat a block as long as a condition holds.
 
 ```python
 i = 0
@@ -78,93 +50,79 @@ while i < 10:
     i = i + 1
 ```
 
-### Inductive Unrolling
+### Unrolling
 
-The compiler unrolls while loops by inductively analyzing the loop to determine a
-static upper bound on the number of iterations. It uses an SMT solver to discharge
-the boundedness proof.
-
-#### Implicit Bounded Loops
-
-In many cases, no explicit bound annotation is needed. The compiler infers bounds from
-the loop condition and the update pattern:
+A `while` loop is unrolled one iteration at a time. After each iteration the compiler tries
+to prove that the condition is false, using constant values, the known ranges of the
+values the condition reads, preconditions, and finally an SMT query. When it succeeds, the
+loop ends there and the circuit asserts that the condition is indeed false at that point.
+Each unrolled iteration runs under the condition that the loop is still running, so
+iterations past the actual runtime count have no effect.
 
 ```python
-# The compiler infers that this loop runs at most n iterations
-i = 0
-while i < n:
-    i = i + 1
+@zk_circuit(requires=[lambda n: 0 <= n <= 6])
+def triangle(n: Integer) -> Integer:
+    i = 0
+    total = 0
+    while i < n:          # n is private, but the precondition bounds it by 6
+        total += i
+        i += 1
+    return total
 ```
 
-If the compiler cannot automatically determine a bound, it will report a compilation
-error asking you to restructure the loop or provide more information.
+A counted loop, `while i < b` (or `<=`, `>`, `>=`) where `i` holds a compile-time integer
+before the loop and the body changes `i` only through one `i += c` (or `i -= c`), is
+compiled like the equivalent `for` loop over `range`.
 
-#### Loop Limit
+### Loop Limit
 
-The compiler enforces a configurable maximum iteration count. The default limit is
-**1000 iterations**. If the proven bound exceeds this limit, compilation fails. You can
-adjust this limit in the compiler configuration.
-
-```python
-# This is fine: compiler proves the bound is 100
-i = 0
-while i < 100:
-    process(i)
-    i = i + 1
-
-# This will fail if max_loop_limit < 10000
-i = 0
-while i < 10000:
-    process(i)
-    i = i + 1
-```
-
-### Symbolic Execution of Loops
-
-Each iteration of a while loop is symbolically executed. The loop body produces
-constraints for every unrolled iteration, with path conditions ensuring that iterations
-beyond the actual runtime count are effectively no-ops (their constraints are guarded
-by the negation of the loop condition).
+If the condition is not proved false within `loop_limit` unrolled iterations, compilation
+fails with an error asking for a bound on the values the condition depends on (a bounded
+array annotation or a precondition). The default limit is **1000** and can be changed with
+`ZinniaConfig(loop_limit=...)`.
 
 ## For Loops
-
-For loops iterate over `range(...)` or other iterables.
 
 ### Range-Based For Loops
 
 ```python
-# Fixed range
 total = 0
 for i in range(10):
     total = total + i
 
-# Range with start and stop
 for i in range(1, 11):
-    process(i)
+    total = total + i
 
-# Range with step
 for i in range(0, 20, 2):
-    process(i)
+    total = total + i
 ```
 
-Range-based for loops have a statically known iteration count (determined from the
-range arguments) and are straightforward for the compiler to unroll.
+When the arguments of `range` are known at compile time, the loop has a fixed number of
+iterations. When they are runtime values (for example `range(n)` with a private `n`), the
+loop is unrolled to a proven upper bound, and each unrolled iteration runs only if it
+exists at runtime. The circuit also asserts that the iteration after the last unrolled one
+does not exist, so an input that would need more iterations has no valid proof. If no
+upper bound can be proved, the program is rejected.
 
-### Iterable For Loops
+### Iterating over Values
 
 ```python
 values = [10, 20, 30, 40]
 total = 0
 for v in values:
     total = total + v
+
+for i, v in enumerate(values):
+    total = total + i * v
+
+for a, b in zip(xs, ys):
+    total = total + a * b
 ```
 
-When iterating over a list or array, the compiler determines the iteration count from
-the length of the iterable.
+A loop over a list, tuple or array runs once per element. A loop over a `DynamicNDArray`
+is unrolled to the array's bound, and iterations beyond its runtime length have no effect.
 
 ## Break and Continue
-
-`break` and `continue` are supported inside both `while` and `for` loops.
 
 ```python
 # Find the first negative value
@@ -184,82 +142,61 @@ for v in values:
     total = total + v
 ```
 
-### Circuit Compilation
-
-In the circuit, `break` and `continue` do not actually skip computation. Instead, they
-refine the **path condition** for subsequent statements in the loop body. After a `break`,
-the path condition for all remaining iterations becomes false, effectively nullifying
-their contributions. After a `continue`, the path condition for the rest of the current
-iteration becomes false.
-
-This means the circuit always contains constraints for the full unrolled loop, but
-guarded so that only the logically executed iterations affect the output.
+In the circuit, `break` and `continue` do not remove iterations. They change the condition
+under which later statements run: after a `break`, the remaining iterations run under a
+false condition, and after a `continue`, the rest of the current iteration does.
 
 ## Early Return
 
-Functions may return early from within conditional blocks or loops.
+A function may return from inside a branch or a loop.
 
 ```python
-def find_index(arr: NDArray[Int, 100], target: Integer) -> Integer:
+@zk_circuit
+def find_index(arr: NDArray[Integer, 100], target: Integer) -> Integer:
     for i in range(100):
         if arr[i] == target:
             return i
     return -1
 ```
 
-### Circuit Compilation
-
-Early returns are handled via refined path conditions, similar to `break`. Once a
-`return` is encountered along a path, the path condition for all subsequent statements
-on that path becomes false. The final return value is the guarded merge of all possible
-return points.
+Once a `return` is reached on a path, the statements after it run under a false condition
+on that path. The returned value is the merge of the values at all `return` statements,
+each selected by the condition under which it is reached.
 
 ## Recursion
 
-Zinnia supports recursive functions, provided the compiler can statically prove that
-the recursion depth is bounded.
+A chip (a function decorated with `@zk_chip`) may call itself. Each call is inlined, so the
+recursion must be bounded.
 
 ```python
-def factorial(n: Integer) -> Integer:
-    if n <= 1:
-        return 1
-    return n * factorial(n - 1)
+@zk_chip
+def fibo(n: Integer) -> Integer:
+    if n < 2:
+        return n
+    return fibo(n - 1) + fibo(n - 2)
+
+@zk_circuit(requires=[lambda n: 0 <= n <= 6])
+def fibo_check(n: Integer, out: Public[Integer]):
+    assert fibo(n) == out
 ```
 
-```python
-def fibonacci(n: Integer) -> Integer:
-    if n <= 0:
-        return 0
-    if n == 1:
-        return 1
-    return fibonacci(n - 1) + fibonacci(n - 2)
-```
+### Bounding the Recursion
 
-### Bounded Recursion
+A recursive call is inlined as long as the condition under which it is reached may hold.
+At each depth the compiler tries to prove that condition false, from constants, the ranges
+of the compared values, the preconditions, and finally an SMT query. Once it is proved
+false, the call is not inlined and the circuit asserts that it is not reached. In the
+example, the precondition `n <= 6` bounds the depth. A bound can also come from arguments
+that shrink with every call, or from arguments known at compile time (`fibo(5)`).
 
-A recursive call is unrolled while the condition under which it is reached may hold.
-At each depth the compiler tries to prove that condition false, from constants, the
-bounds of the compared values, the program's preconditions, and finally an SMT query.
-Once it is proved false, the call is not inlined, and the circuit asserts that the call
-is not reached. The bound can come from a precondition
-(`@zk_circuit(requires=[lambda n: 0 <= n <= 8])`) or from arguments whose ranges shrink
-with every call. If the compiler cannot establish a static bound, compilation fails.
+### Recursion Limit
 
-#### Recursion Limit
-
-The default limit on nested calls is **16** (`ZinniaConfig(recursion_limit=...)`). A
+The default limit on nested chip calls is **16** (`ZinniaConfig(recursion_limit=...)`). A
 recursive call that is not proved unreachable within this many nested calls makes
-compilation fail with a `RecursionLimitExceededError` naming the function.
-
-### Circuit Compilation
-
-Recursive calls are inlined up to the proven bound. Each level of recursion adds its
-constraints to the circuit, guarded by the path condition that determines whether the
-recursive case applies.
+compilation fail with a `RecursionLimitExceededError` naming the chip. A branching
+recursion such as `fibo` inlines up to `2^depth` calls, which is why the default is small.
 
 ## Assert Statements
-
-Assert statements introduce constraints into the circuit.
 
 ```python
 assert x >= 0
@@ -267,29 +204,19 @@ assert x + y == expected
 assert balance >= withdrawal, "insufficient funds"
 ```
 
-### Circuit Compilation
-
-An assert compiles to a circuit constraint that enforces the condition. The constraint
-is guarded by the current path condition, so an assert inside an `if` block only applies
+An assertion compiles to a constraint that holds only if the condition is true. It is
+guarded by the condition of the path it is on, so an assertion inside a branch applies only
 when that branch is taken.
 
 ```python
 if mode == 1:
-    assert x > 0    # only enforced when mode == 1
+    assert x > 0    # enforced only when mode == 1
 else:
-    assert x <= 0   # only enforced when mode != 1
+    assert x <= 0   # enforced only when mode != 1
 ```
 
-If the assert message string is provided, it is used for error reporting during
-witness generation but does not affect the circuit.
+The assertion message is ignored by the compiler.
 
 ## Pass Statements
 
-`pass` is a no-op that produces no constraints.
-
-```python
-if condition:
-    process(x)
-else:
-    pass  # do nothing in this branch
-```
+`pass` is a no-op and produces no constraints.

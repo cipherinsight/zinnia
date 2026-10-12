@@ -89,7 +89,7 @@ For each case, in a seeded random order, and each requested system:
    incremented must be rejected.
 
 Every step runs under the same memory cap (a transient systemd scope with `MemoryMax`, no swap,
-as `eval-redo/tools/memrun.sh`, plus `OOMPolicy=continue` so an OOM-killed tool is reported as
+as `eval/tools/memrun.sh`, plus `OOMPolicy=continue` so an OOM-killed tool is reported as
 `out_of_memory` by its step) and the same timeout. On a machine without a systemd user manager
 (a Docker container), `ZINNIA_HARNESS_MEMORY_CAP=watchdog` enforces the cap instead by summing
 the RSS of the step's processes every 0.1 s and killing them all above the cap

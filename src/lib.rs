@@ -630,7 +630,7 @@ fn prove_circuit(
 }
 
 /// Structural-circuit probe for the witness-independence regression test
-/// (docs/provenance-consolidation-plan.md, Step 0a). Runs preprocess +
+/// (`testing/lang/test_witness_independence.py`). Runs preprocess +
 /// circuit construction for the given witness but never invokes a prover,
 /// returning a deterministic structural rendering of the circuit:
 ///

@@ -5,9 +5,9 @@ description: How to define and use ZKExternalFunc for non-ZK helper functions in
 
 # External Functions
 
-A `ZKExternalFunc` represents a helper function that runs outside the zero-knowledge
-circuit. External functions are used for tasks like data preprocessing, loading input data,
-or computing values that the circuit needs but that do not need to be proved.
+A `ZKExternalFunc` represents a helper function that runs in Python, outside the
+zero-knowledge circuit. The circuit receives its result as a witness value that it can then
+check with constraints.
 
 ## Imports
 
@@ -17,20 +17,26 @@ from zinnia import ZKExternalFunc, zk_external
 
 ## What External Functions Are
 
-In a zk-SNARK circuit, every operation produces constraints. But some operations -- reading
-a file, calling an API, or running an expensive preprocessing step -- should happen before
-the circuit runs, not inside it.
+Some values are cheap to check inside a circuit but expensive to compute there, such as a
+square root, a quotient, or the result of a search. An external function lets the prover
+compute such a value in ordinary Python and hand it to the circuit, which then checks it.
+In zk-SNARK terminology the returned value is an *advice* (or *hint*) value: part of the
+private witness, chosen by the prover and not constrained by the call itself.
 
-External functions fill this role. They are:
+External functions are:
 
 - **Callable outside circuits.** Unlike chips, you can call a `ZKExternalFunc` directly in
   Python and it runs the underlying function. This makes them useful for testing and data
   preparation.
-- **Removed during compilation.** The compiler's `ExternalCallRemoverIRPass` strips
-  external function calls from the circuit IR. The values produced by external functions are
-  treated as inputs to the circuit, not as constrained computations.
-- **Parsed at creation time.** Like chips, the source is parsed into an AST when the
-  `ZKExternalFunc` is instantiated, so structural errors are caught early.
+- **Evaluated before the constraints are checked.** When a circuit is executed or proved,
+  a preprocessing pass evaluates the circuit, calls each external function with the values
+  of its arguments, and adds the returned values to the witness.
+- **Unconstrained.** The call adds no constraints that relate the result to the arguments.
+  A dishonest prover can substitute any value, so the circuit must assert whatever property
+  the result is supposed to have.
+- **Typed by their return annotation.** The source is parsed when the `ZKExternalFunc` is
+  created, and a return annotation (without `Public` or `Private`) is required. Parameter
+  annotations are optional.
 
 ## Creating External Functions
 
@@ -124,8 +130,9 @@ print(result.is_satisfied())  # True
 
 ### With the `@zk_circuit` Decorator
 
-When using `@zk_circuit`, external functions defined in the calling scope are discovered
-automatically:
+When using `@zk_circuit`, external functions are discovered automatically: every
+`ZKExternalFunc` defined at module level in the circuit's module, and every one visible in
+the local scope where the circuit is called:
 
 ```python
 from zinnia import zk_circuit, zk_external, Integer, Private
@@ -155,19 +162,30 @@ def get_max_value() -> Integer:
 circuit = ZKCircuit.from_method(my_circuit, externals=[get_max_value])
 ```
 
-## How External Calls Are Handled During Compilation
+## How External Calls Are Handled
 
-When a circuit is compiled, the compiler:
+The compiler records each external call site in the circuit IR, together with the values
+passed to it and the declared return type. When the circuit is executed on the mock backend
+or proved, the preprocessing stage evaluates the IR, invokes the Python function for each
+call, and places the returned value in the witness. The constraints are then evaluated with
+that witness.
 
-1. Parses the external function's source to determine its return type.
-2. Keeps track of external call sites in the circuit body.
-3. During IR optimization, the `ExternalCallRemoverIRPass` removes the external call and
-   replaces it with the precomputed result. The actual Python function is invoked during
-   mock execution (or proof generation) in the preprocessing phase, before the circuit
-   constraints are evaluated.
+Because the external call itself adds no constraints, check its result in the circuit:
 
-This means external functions do not add any constraints to the circuit. Their return
-values flow into the circuit as concrete inputs.
+```python
+from zinnia import zk_circuit, zk_external, Integer, Private
+
+@zk_external
+def isqrt_hint(x) -> Integer:
+    return int(x ** 0.5)
+
+@zk_circuit
+def has_isqrt(x: Private[Integer], r_expected: Integer):
+    r = isqrt_hint(x)
+    assert r * r <= x
+    assert (r + 1) * (r + 1) > x
+    assert r == r_expected
+```
 
 ## Callable Outside Circuits
 
@@ -215,33 +233,21 @@ compilation, a `ZinniaException` is raised.
 ## Complete Example
 
 ```python
-from zinnia import (
-    ZKCircuit, zk_chip, zk_external,
-    Integer, NDArray, Public, Private, np,
-)
+from zinnia import ZKCircuit, zk_external, Integer, Public, Private
 
 @zk_external
-def load_weights() -> NDArray:
-    # In production, this might load from a file
-    return np.array([1, 2, 3, 4, 5])
+def divide_hint(a, b) -> Integer:
+    return a // b
 
-@zk_chip
-def dot_product(a: NDArray, b: NDArray) -> Integer:
-    return np.dot(a, b)
+def division_circuit(a: Private[Integer], b: Public[Integer], q_expected: Public[Integer]):
+    q = divide_hint(a, b)
+    r = a - q * b
+    # The hint is unconstrained: check that q is the floor quotient.
+    assert 0 <= r
+    assert r < b
+    assert q == q_expected
 
-def prediction_circuit(
-    features: Private[NDArray],
-    expected: Public[Integer],
-):
-    weights = load_weights()
-    result = dot_product(features, weights)
-    assert result == expected
-
-circuit = ZKCircuit.from_method(
-    prediction_circuit,
-    chips=[dot_product],
-    externals=[load_weights],
-)
-result = circuit.mock(np.array([1, 1, 1, 1, 1]), 15)
-print(result.is_satisfied())  # True
+circuit = ZKCircuit.from_method(division_circuit, externals=[divide_hint])
+print(circuit.mock(17, 5, 3).is_satisfied())  # True
+print(circuit.mock(17, 5, 4).is_satisfied())  # False
 ```

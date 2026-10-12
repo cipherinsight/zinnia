@@ -1,20 +1,26 @@
 ---
 title: Syntax Reference
-description: Comprehensive syntax reference for the Zinnia language, covering programs, statements, expressions, and assignment targets.
+description: Syntax reference for the Zinnia language, covering circuits, statements, expressions, and assignment targets.
 ---
 
 # Syntax Reference
 
-Zinnia programs are syntactically valid Python. This page documents the complete set of
-syntactic constructs that the Zinnia compiler accepts.
+Zinnia programs are syntactically valid Python. This page lists the statements and
+expressions the Zinnia compiler accepts inside a circuit or a chip. Anything not listed
+here (for example `try`, `with`, `class`, dictionary and set literals) is rejected with a
+compile error.
 
-## Programs
+## Circuits
 
-A program is a sequence of top-level statements. Typically a program defines one or more
-functions (including a main entry point) along with optional top-level declarations.
+A circuit is a function decorated with `@zk_circuit` (or passed to `ZKCircuit.from_method`
+or `ZKCircuit.from_source`). Every parameter must carry a type annotation, which declares
+an input of the circuit. The name `main` is reserved and cannot be used for a circuit.
 
 ```python
-def main(x: Public[Integer], y: Private[Integer]) -> Integer:
+from zinnia import zk_circuit, Public, Private, Integer
+
+@zk_circuit
+def add_inputs(x: Public[Integer], y: Private[Integer]) -> Integer:
     result = x + y
     return result
 ```
@@ -33,8 +39,6 @@ c = a + b
 
 ### If / Elif / Else
 
-Standard Python conditional blocks.
-
 ```python
 if x > 0:
     sign = 1
@@ -46,20 +50,22 @@ else:
 
 ### While Loops
 
-While loops repeat as long as the condition holds. The compiler must be able to prove
-a static upper bound on the number of iterations.
+A `while` loop is unrolled at compile time. The compiler must be able to prove that the
+condition becomes false within a bounded number of iterations (see
+[Control Flow](/docs/language/control-flow)).
 
 ```python
 i = 0
 total = 0
-while i < n:
+while i < 10:
     total = total + i
     i = i + 1
 ```
 
 ### For Loops
 
-For loops iterate over `range(...)` or other iterables.
+`for` loops iterate over `range(...)`, lists, tuples, arrays and iterator builtins such as
+`enumerate`, `zip` and `reversed`.
 
 ```python
 total = 0
@@ -74,9 +80,9 @@ for v in values:
     total = total + v
 ```
 
-### Break and Continue
+Both `for` and `while` accept an `else` block.
 
-Loop control statements work inside `while` and `for` loops.
+### Break and Continue
 
 ```python
 total = 0
@@ -88,45 +94,56 @@ for i in range(100):
     total = total + i
 ```
 
-### Function Definitions
+### Helper Functions
 
-Functions are defined with `def` and may include type annotations for parameters and
-return values.
+A function called from a circuit is either a chip, decorated with `@zk_chip` and inlined at
+each call, or an external function, decorated with `@zk_external` and run in Python outside
+the circuit (see [Chips](/docs/programming-guide/chips) and
+[External Functions](/docs/programming-guide/external-functions)).
 
 ```python
+from zinnia import zk_chip, Integer
+
+@zk_chip
 def add(a: Integer, b: Integer) -> Integer:
     return a + b
 ```
 
-Functions can also have no return type annotation:
+A circuit may also define functions and lambdas in its body. The compiler turns each of
+them into a chip; a local function that reads variables of the circuit receives them as
+extra arguments.
 
 ```python
-def greet():
-    pass
+@zk_circuit
+def scaled_sum(xs: NDArray[Integer, 4], k: Integer) -> Integer:
+    def scale(v):
+        return v * k
+    return sum(scale(v) for v in xs)
 ```
 
 ### Input Declarations
 
-Function parameters annotated with `Public` or `Private` declare circuit inputs.
+Circuit parameters declare the inputs. `Public[T]` marks a public input, `Private[T]` a
+private one, and a parameter annotated with a bare type `T` is private.
 
 ```python
-def circuit(x: Public[Integer], witness: Private[NDArray[Float, 3, 3]]):
+@zk_circuit
+def check(x: Public[Integer], witness: Private[NDArray[Float, 3, 3]]):
     assert x > 0
 ```
 
 ### Assignments
 
-Simple assignment binds a value to a name.
-
 ```python
 x = 42
-name = "hello"
-matrix = NDArray.zeros((3, 3))
+label = "hello"
+matrix = np.zeros((3, 3))
 ```
 
-### Augmented Assignment
+An annotated assignment such as `x: Integer = 42` is accepted. The annotation is ignored
+because types are inferred. A bare annotation without a value (`x: Integer`) is rejected.
 
-Augmented assignment operators update a variable in place.
+### Augmented Assignment
 
 ```python
 x += 1
@@ -136,69 +153,76 @@ w /= 4
 r %= 5
 p **= 2
 q //= 3
+m &= 1
 ```
+
+All binary operators listed under [Binary Operators](#binary-operators) have an augmented
+form. On an array or list, the update is made in place, as in Python.
 
 ### Return Statements
 
-Return a value from a function.
-
 ```python
+@zk_chip
 def square(x: Integer) -> Integer:
     return x * x
 ```
 
 ### Assert Statements
 
-Assert statements compile into circuit constraints. If the condition is false, the
-proof is unsatisfiable.
+An assertion compiles to a circuit constraint. If the condition is false for the given
+inputs, no valid proof exists. The optional message is ignored by the compiler.
 
 ```python
 assert x >= 0
 assert balance == expected, "balance mismatch"
 ```
 
-### Pass Statements
+### Raise Statements
 
-A no-op placeholder.
+A `raise` statement compiles to `assert False` on the path that reaches it.
 
 ```python
-def placeholder():
+if x < 0:
+    raise ValueError("x must be non-negative")
+```
+
+### Imports
+
+`import numpy as np`, `import math` and imports from their submodules are accepted inside
+a circuit and resolved at compile time. Importing any other module is a compile error.
+
+### Pass Statements
+
+```python
+if flag:
     pass
 ```
 
 ## Expressions
 
-### Variables
-
-Variables reference previously assigned names.
-
-```python
-x = 10
-y = x + 1
-```
-
 ### Literals
 
-Zinnia supports integer, float, boolean, string, and `None` literals.
+Integer, float, complex, boolean, string and `None` literals are accepted. Strings serve as
+labels (for example in `print` or assertion messages) and f-strings are accepted for the
+same purpose.
 
 ```python
 a = 42          # integer
 b = 3.14        # float
-c = True        # boolean
-d = "hello"     # string
-e = None        # None
+c = 1 + 2j      # complex
+d = True        # boolean
+e = "hello"     # string
+f = None        # None
 ```
 
 ### Binary Operators
-
-Arithmetic, comparison, logical, and matrix operators.
 
 ```python
 # Arithmetic
 a = x + y
 b = x - y
 c = x * y
-d = x / y
+d = x / y       # true division: always a float
 e = x % y
 f = x ** 2
 g = x // y
@@ -206,10 +230,23 @@ g = x // y
 # Matrix multiplication
 h = A @ B
 
+# Bitwise (integers and booleans)
+i = x & y
+j = x | y
+k = x ^ y
+l = x << 2
+m = x >> 2
+
 # Logical
 p = a and b
 q = a or b
 ```
+
+### Comparisons
+
+`==`, `!=`, `<`, `<=`, `>`, `>=`, `in` and `not in` are accepted. Chained comparisons such
+as `lo <= x < hi` are evaluated as a conjunction. `is` and `is not` are rejected because
+circuit values have no object identity.
 
 ### Unary Operators
 
@@ -217,146 +254,89 @@ q = a or b
 a = -x
 b = +x
 c = not flag
+d = ~mask
 ```
 
-### Array and List Indexing
+### Indexing and Slicing
 
 ```python
-# Single element
-val = arr[0]
-
-# Multi-dimensional
-val = matrix[i, j]
-
-# Slicing
-sub = arr[1:5]
-sub = arr[0:10:2]
-sub = arr[:, 0]
+val = arr[0]           # single element
+val = matrix[i, j]     # multi-dimensional
+sub = arr[1:5]         # slice
+sub = arr[0:10:2]      # slice with step
+sub = arr[::-1]        # reversed
+col = matrix[:, 0]     # first column
 ```
 
-### List Construction
+Indices may be runtime values, and arrays also accept integer-array and boolean-mask
+indices (see [Arrays](/docs/language/arrays)).
+
+### List and Tuple Construction
 
 ```python
 xs = [1, 2, 3, 4, 5]
 empty = []
 nested = [[1, 2], [3, 4]]
-```
-
-### Tuple Construction
-
-```python
 pair = (1, 2)
-triple = (1, 2, 3)
 single = (42,)
 ```
 
 ### Function Calls
 
 ```python
-result = add(3, 4)
+result = add(3, 4)          # a chip
 length = len(my_list)
 total = sum(values)
 s = math.sin(theta)
 arr = np.zeros((3, 3))
 ```
 
-### Conditional Expressions
+Positional, keyword and starred (`f(*args)`) arguments are accepted.
 
-Ternary inline conditionals.
+### Conditional Expressions
 
 ```python
 result = a if condition else b
 ```
 
-### Generator Expressions
+### Comprehensions and Generator Expressions
 
-Generator expressions are supported inside function calls such as `sum` and `any`.
+List comprehensions and generator expressions are accepted, including `if` filters and
+several `for` clauses.
 
 ```python
+squares = [x * x for x in values]
 total = sum(x * x for x in values)
 has_positive = any(v > 0 for v in data)
-all_valid = all(v >= 0 for v in data)
-```
-
-### Subscript Expressions
-
-Subscript syntax is used for type parameterization and array access.
-
-```python
-# Type subscript
-x: Public[Integer]
-arr: NDArray[Int, 3, 4]
-
-# Value subscript
-val = my_list[idx]
-```
-
-### Slicing
-
-Slicing uses the standard Python `start:stop:step` syntax.
-
-```python
-sub = arr[1:5]         # elements 1 through 4
-sub = arr[::2]         # every other element
-sub = arr[::-1]        # reversed
-row = matrix[0, :]     # first row
-col = matrix[:, 0]     # first column
 ```
 
 ### Attribute Access
 
-Attribute access is used for module functions, array properties, and method calls.
+Attributes give access to module functions, array properties and methods.
 
 ```python
 s = arr.shape
-d = arr.dtype
 t = arr.T
 n = arr.ndim
-result = math.sqrt(2.0)
+r = math.sqrt(2.0)
 ```
 
 ## Assignment Targets
 
-### Name
-
-Assign to a simple variable name.
-
 ```python
-x = 10
-```
-
-### Subscript
-
-Assign to an indexed position in a list or array.
-
-```python
-arr[0] = 99
+x = 10                     # name
+arr[0] = 99                # subscript
 matrix[i, j] = 1.0
-```
-
-### List Unpacking
-
-Unpack a list or tuple into multiple variables.
-
-```python
-[a, b, c] = [1, 2, 3]
-```
-
-### Tuple Unpacking
-
-```python
-a, b = 1, 2
-x, y, z = get_coordinates()
+[a, b, c] = [1, 2, 3]      # list unpacking
+a, b = 1, 2                # tuple unpacking
+first, *rest = values      # starred unpacking
 ```
 
 ## Comments
 
-Zinnia uses standard Python comments. Comments are ignored by the compiler.
+Comments are ignored by the compiler.
 
 ```python
 # This is a comment
 x = 42  # inline comment
-
-# Multi-line comments use multiple # lines
-# like this
 ```

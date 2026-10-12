@@ -1,40 +1,48 @@
 ---
 title: Operators and Built-in Functions
-description: Reference for all operators, built-in functions, math functions, NumPy-like functions, and type methods available in Zinnia.
+description: Reference for Zinnia's operators, Python built-in functions, math functions, and list, tuple and array methods.
 ---
 
 # Operators and Built-in Functions
 
-All operations in Zinnia ultimately compile to field arithmetic over a prime field F_p.
-This page documents every operator and function available in the language.
+This page lists the operators and built-in functions available inside a circuit. NumPy
+functions are listed on the [NumPy API](/docs/programming-guide/numpy-api) page.
 
 ## Arithmetic Operators
 
-| Operator | Description         | Integer | Float |
-|----------|---------------------|---------|-------|
-| `+`      | Addition            | Yes     | Yes   |
-| `-`      | Subtraction         | Yes     | Yes   |
-| `*`      | Multiplication      | Yes     | Yes   |
-| `/`      | Division            | Yes     | Yes   |
-| `//`     | Floor division      | Yes     | Yes   |
-| `%`      | Modulo              | Yes     | Yes   |
-| `**`     | Exponentiation      | Yes     | Yes   |
-| `@`      | Matrix multiply     | NDArray | NDArray |
+| Operator | Description         | Operands                         |
+|----------|---------------------|----------------------------------|
+| `+`      | Addition            | numbers, arrays                  |
+| `-`      | Subtraction         | numbers, arrays                  |
+| `*`      | Multiplication      | numbers, arrays                  |
+| `/`      | True division       | numbers, arrays (result is float)|
+| `//`     | Floor division      | numbers, arrays                  |
+| `%`      | Modulo              | numbers, arrays                  |
+| `**`     | Exponentiation      | numbers, arrays                  |
+| `@`      | Matrix multiply     | arrays                           |
 
 ```python
 a = 10 + 3      # 13
 b = 10 - 3      # 7
 c = 10 * 3      # 30
-d = 10 / 3      # 3 (integer division) or 3.333... (float)
+d = 10 / 4      # 2.5 (true division always gives a float)
 e = 10 // 3     # 3
 f = 10 % 3      # 1
 g = 2 ** 10     # 1024
 
-# Matrix multiplication
-A = NDArray.asarray([[1, 2], [3, 4]])
-B = NDArray.asarray([[5, 6], [7, 8]])
+A = np.asarray([[1, 2], [3, 4]])
+B = np.asarray([[5, 6], [7, 8]])
 C = A @ B       # [[19, 22], [43, 50]]
 ```
+
+Arithmetic between an integer and a float gives a float, and arithmetic involving a complex
+number gives a complex number. On lists and tuples, `+` concatenates and `*` repeats, as in
+Python.
+
+## Bitwise Operators
+
+`&`, `|`, `^`, `<<`, `>>` and `~` apply to integers and Booleans. On Booleans, `&`, `|` and
+`^` are the logical connectives. Shifts follow NumPy's `int64` shifts.
 
 ## Comparison Operators
 
@@ -46,14 +54,16 @@ C = A @ B       # [[19, 22], [43, 50]]
 | `<=`     | Less than or equal       |
 | `>`      | Greater than             |
 | `>=`     | Greater than or equal    |
+| `in`     | Membership in a list, tuple or array |
+| `not in` | Negated membership       |
 
-Comparison operators return `Bool` values. They work on scalars and are broadcast
-element-wise on arrays.
+Comparisons return Booleans. On arrays they apply element-wise and return a Boolean array.
+Ordering comparisons need range checks in the circuit, so they cost more constraints than
+equality.
 
 ```python
 is_positive = x > 0
-is_equal = a == b
-in_range = x >= lo and x <= hi
+in_range = lo <= x <= hi
 ```
 
 ## Logical Operators
@@ -66,254 +76,106 @@ in_range = x >= lo and x <= hi
 
 ```python
 valid = x > 0 and y > 0
-either = a or b
 negated = not flag
 ```
-
-In the circuit, `and` compiles to multiplication of boolean field elements, `or` to
-`a + b - a * b`, and `not` to `1 - a`.
 
 ## Unary Operators
 
 | Operator | Description       |
 |----------|-------------------|
-| `+x`    | Unary positive     |
-| `-x`    | Unary negation     |
-
-```python
-pos = +x      # identity
-neg = -x      # negation (field subtraction from 0)
-```
+| `+x`     | Unary plus        |
+| `-x`     | Negation          |
+| `~x`     | Bitwise inversion |
 
 ## Built-in Functions
 
 ### General
 
-| Function  | Description                                    |
-|-----------|------------------------------------------------|
-| `len(x)`  | Length of a list, tuple, or array              |
-| `range(...)` | Integer range for iteration                |
-| `sum(x)`  | Sum of elements                                |
-| `any(x)`  | True if any element is truthy                  |
-| `all(x)`  | True if all elements are truthy                |
-| `min(x)`  | Minimum value                                  |
-| `max(x)`  | Maximum value                                  |
-| `abs(x)`  | Absolute value                                 |
-| `pow(x, y)` | Exponentiation (equivalent to `x ** y`)     |
-| `print(...)` | Debug output (no-op in circuit)             |
+| Function       | Description                                       |
+|----------------|---------------------------------------------------|
+| `len(x)`       | Length of a list, tuple or array                  |
+| `range(...)`   | Integer range for iteration                       |
+| `enumerate(x)` | Pairs of index and element                        |
+| `zip(...)`     | Elements of several sequences taken together      |
+| `sum(x)`       | Sum of elements                                   |
+| `any(x)`       | True if any element is true                       |
+| `all(x)`       | True if all elements are true                     |
+| `min(...)`     | Minimum of the arguments or of a sequence         |
+| `max(...)`     | Maximum of the arguments or of a sequence         |
+| `abs(x)`       | Absolute value                                    |
+| `pow(x, y)`    | Exponentiation (same as `x ** y`)                 |
+| `print(...)`   | Debug output when the circuit is evaluated        |
 
 ```python
 n = len([1, 2, 3])          # 3
 total = sum([1, 2, 3, 4])   # 10
 has_neg = any(v < 0 for v in data)
-all_pos = all(v > 0 for v in data)
-lo = min(3, 7)               # 3
-hi = max(3, 7)               # 7
-a = abs(-5)                  # 5
-p = pow(2, 10)               # 1024
+lo = min(3, 7)              # 3
+a = abs(-5)                 # 5
+p = pow(2, 10)              # 1024
 ```
+
+`map` and `filter` with a function argument are also accepted and are compiled as
+generator expressions.
 
 ### Type Conversion
 
-| Function   | Description                    |
-|------------|--------------------------------|
-| `int(x)`   | Convert to integer             |
-| `float(x)` | Convert to float              |
-| `bool(x)`  | Convert to boolean            |
-| `list(x)`  | Convert to list               |
-| `tuple(x)` | Convert to tuple              |
-| `str(x)`   | Convert to string (limited)   |
+| Function     | Description            |
+|--------------|------------------------|
+| `int(x)`     | Convert to integer     |
+| `float(x)`   | Convert to float       |
+| `bool(x)`    | Convert to Boolean     |
+| `complex(x)` | Convert to complex     |
+| `list(x)`    | Convert to list        |
+| `tuple(x)`   | Convert to tuple       |
 
 ```python
-i = int(3.14)       # 3
+i = int(3.7)        # 3
 f = float(42)       # 42.0
 b = bool(1)         # True
-lst = list((1, 2))  # [1, 2]
-tup = tuple([1, 2]) # (1, 2)
 ```
 
-### Cryptographic Functions
+## Math Module
 
-| Function          | Description                                          |
-|-------------------|------------------------------------------------------|
-| `hash(x)`         | Poseidon hash of a value                            |
-| `merkle_verify(root, leaf, path)` | Verify a Merkle proof          |
+`math` functions apply to scalars. The following are available:
 
-```python
-h = hash(secret_value)
-assert h == public_commitment
-
-valid = merkle_verify(root, leaf, proof_path)
-assert valid
-```
-
-## Math Module Functions
-
-The `math` module provides standard mathematical functions. These compile to
-circuit-friendly approximations or exact field computations where applicable.
-
-| Function       | Description                     |
-|----------------|---------------------------------|
-| `math.sin(x)`  | Sine                           |
-| `math.cos(x)`  | Cosine                         |
-| `math.tan(x)`  | Tangent                        |
-| `math.sinh(x)` | Hyperbolic sine                |
-| `math.cosh(x)` | Hyperbolic cosine              |
-| `math.tanh(x)` | Hyperbolic tangent             |
-| `math.exp(x)`  | Exponential (e^x)             |
-| `math.log(x)`  | Natural logarithm              |
-| `math.sqrt(x)` | Square root                    |
-| `math.fabs(x)` | Absolute value (float)         |
-| `math.inv(x)`  | Multiplicative inverse (1/x)   |
+| Function or constant | Description              |
+|----------------------|--------------------------|
+| `math.sqrt(x)`       | Square root              |
+| `math.exp(x)`        | Exponential              |
+| `math.log(x)`        | Natural logarithm        |
+| `math.sin(x)`, `math.cos(x)`, `math.tan(x)` | Trigonometric functions |
+| `math.sinh(x)`, `math.cosh(x)`, `math.tanh(x)` | Hyperbolic functions |
+| `math.asin(x)`, `math.acos(x)` | Inverse sine and cosine |
+| `math.atan2(y, x)`   | Two-argument arctangent  |
+| `math.fabs(x)`       | Absolute value as a float |
+| `math.pow(x, y)`     | Power                    |
+| `math.pi`, `math.e`  | Constants                |
 
 ```python
 import math
 
-y = math.sin(3.14159 / 2)    # approximately 1.0
-z = math.exp(1.0)             # approximately 2.718
-r = math.sqrt(2.0)            # approximately 1.414
-inv = math.inv(5.0)           # 0.2
+y = math.sin(math.pi / 2)    # approximately 1.0
+r = math.sqrt(2.0)           # approximately 1.414
 ```
 
-## NumPy-Like Functions (np namespace)
-
-Zinnia provides a `np` namespace with NumPy-compatible functions that operate on arrays.
-
-### Array Creation
-
-| Function                | Description                              |
-|-------------------------|------------------------------------------|
-| `np.zeros(shape)`       | Array of zeros                          |
-| `np.ones(shape)`        | Array of ones                           |
-| `np.eye(n, m=None)`     | Identity/diagonal matrix                |
-| `np.identity(n)`        | Square identity matrix                  |
-| `np.array(data)`        | Create array from data                  |
-| `np.arange(start, stop, step)` | Array of evenly spaced values   |
-| `np.linspace(start, stop, num)` | Array of linearly spaced values |
-
-```python
-z = np.zeros((3, 3))
-o = np.ones((2, 4))
-I = np.identity(5)
-a = np.arange(0, 10, 1)
-ls = np.linspace(0.0, 1.0, 11)
-```
-
-### Array Manipulation
-
-| Function                        | Description                        |
-|---------------------------------|------------------------------------|
-| `np.concatenate((a, b), axis)`  | Concatenate arrays along an axis  |
-| `np.stack((a, b), axis)`        | Stack arrays along a new axis     |
-| `np.transpose(a)`               | Transpose an array                |
-| `np.moveaxis(a, src, dst)`      | Move an axis to a new position    |
-
-```python
-a = np.array([1, 2, 3])
-b = np.array([4, 5, 6])
-c = np.concatenate((a, b))        # [1, 2, 3, 4, 5, 6]
-s = np.stack((a, b))              # [[1, 2, 3], [4, 5, 6]]
-```
-
-### Linear Algebra
-
-| Function        | Description                  |
-|-----------------|------------------------------|
-| `np.dot(a, b)`  | Dot product / matrix multiply |
-
-```python
-v1 = np.array([1, 2, 3])
-v2 = np.array([4, 5, 6])
-d = np.dot(v1, v2)               # 32
-```
-
-### Statistical Functions
-
-| Function           | Description                       |
-|--------------------|-----------------------------------|
-| `np.mean(a)`       | Mean of array elements           |
-| `np.sum(a)`        | Sum of array elements            |
-| `np.prod(a)`       | Product of array elements        |
-| `np.amax(a)`       | Maximum element                  |
-| `np.amin(a)`       | Minimum element                  |
-| `np.argmax(a)`     | Index of maximum element         |
-| `np.argmin(a)`     | Index of minimum element         |
-
-```python
-data = np.array([3, 1, 4, 1, 5, 9])
-m = np.mean(data)
-s = np.sum(data)                  # 23
-p = np.prod(data)                 # 540
-hi = np.amax(data)                # 9
-lo = np.amin(data)                # 1
-```
-
-### Element-Wise Math
-
-| Function              | Description                    |
-|-----------------------|--------------------------------|
-| `np.abs(a)`           | Absolute value                |
-| `np.add(a, b)`        | Element-wise addition         |
-| `np.subtract(a, b)`   | Element-wise subtraction      |
-| `np.multiply(a, b)`   | Element-wise multiplication   |
-| `np.divide(a, b)`     | Element-wise division         |
-| `np.floor_divide(a, b)` | Element-wise floor division |
-| `np.negative(a)`      | Element-wise negation         |
-| `np.positive(a)`      | Element-wise identity         |
-| `np.power(a, b)`      | Element-wise exponentiation   |
-| `np.sign(a)`          | Element-wise sign             |
-| `np.sqrt(a)`          | Element-wise square root      |
-| `np.exp(a)`           | Element-wise exponential      |
-| `np.log(a)`           | Element-wise natural log      |
-| `np.fabs(a)`          | Element-wise float abs        |
-
-```python
-a = np.array([1, -2, 3, -4])
-b = np.abs(a)                     # [1, 2, 3, 4]
-c = np.sqrt(np.array([1.0, 4.0, 9.0]))  # [1.0, 2.0, 3.0]
-```
-
-### Trigonometric Functions
-
-| Function           | Description                |
-|--------------------|----------------------------|
-| `np.sin(a)`        | Element-wise sine         |
-| `np.cos(a)`        | Element-wise cosine       |
-| `np.tan(a)`        | Element-wise tangent      |
-| `np.asin(a)`       | Element-wise arcsine      |
-| `np.acos(a)`       | Element-wise arccosine    |
-| `np.atan(a)`       | Element-wise arctangent   |
-
-### Comparison Functions
-
-| Function              | Description                       |
-|-----------------------|-----------------------------------|
-| `np.equal(a, b)`      | Element-wise equality            |
-| `np.greater(a, b)`    | Element-wise greater than        |
-| `np.less(a, b)`       | Element-wise less than           |
-| `np.allclose(a, b)`   | True if all elements are close   |
-
-```python
-a = np.array([1, 2, 3])
-b = np.array([1, 2, 4])
-eq = np.equal(a, b)               # [True, True, False]
-close = np.allclose(a, b)         # False
-```
+The transcendental functions are computed in fixed point and are approximations. See
+[Nonlinear Functions](/docs/data-analytics/nonlinear-functions).
 
 ## List Methods
 
 | Method              | Description                                 |
 |---------------------|---------------------------------------------|
-| `list.append(x)`    | Add an element to the end                  |
-| `list.extend(xs)`   | Extend with elements from an iterable      |
-| `list.insert(i, x)` | Insert element at position i              |
-| `list.pop(i=-1)`    | Remove and return element at position i    |
-| `list.copy()`       | Return a shallow copy                      |
-| `list.clear()`      | Remove all elements                        |
-| `list.reverse()`    | Reverse the list in place                  |
-| `list.index(x)`     | Return index of first occurrence of x      |
-| `list.count(x)`     | Count occurrences of x                     |
-| `list.remove(x)`    | Remove first occurrence of x               |
+| `list.append(x)`    | Add an element to the end                   |
+| `list.extend(xs)`   | Append the elements of a sequence           |
+| `list.insert(i, x)` | Insert an element at position i             |
+| `list.pop(i=-1)`    | Remove and return the element at position i |
+| `list.copy()`       | Return a shallow copy                       |
+| `list.clear()`      | Remove all elements                         |
+| `list.reverse()`    | Reverse the list in place                   |
+| `list.index(x)`     | Index of the first occurrence of x          |
+| `list.count(x)`     | Number of occurrences of x                  |
+| `list.remove(x)`    | Remove the first occurrence of x            |
 
 ```python
 xs = [1, 2, 3]
@@ -322,7 +184,6 @@ xs.extend([5, 6])     # [1, 2, 3, 4, 5, 6]
 xs.insert(0, 0)       # [0, 1, 2, 3, 4, 5, 6]
 last = xs.pop()       # 6, xs = [0, 1, 2, 3, 4, 5]
 idx = xs.index(3)     # 3
-n = xs.count(1)       # 1
 xs.reverse()          # [5, 4, 3, 2, 1, 0]
 ```
 
@@ -330,68 +191,57 @@ xs.reverse()          # [5, 4, 3, 2, 1, 0]
 
 | Method            | Description                            |
 |-------------------|----------------------------------------|
-| `tuple.count(x)`  | Count occurrences of x                |
-| `tuple.index(x)`  | Return index of first occurrence of x |
+| `tuple.count(x)`  | Number of occurrences of x             |
+| `tuple.index(x)`  | Index of the first occurrence of x     |
 
-```python
-t = (1, 2, 3, 2, 1)
-n = t.count(2)        # 2
-i = t.index(3)        # 2
-```
+## Array Methods and Properties
 
-## NDArray Methods
-
-| Method / Property         | Description                                |
+| Method or property        | Description                                |
 |---------------------------|--------------------------------------------|
-| `arr.sum(axis=None)`      | Sum of elements (optionally along axis)   |
-| `arr.prod(axis=None)`     | Product of elements                       |
-| `arr.max(axis=None)`      | Maximum element                           |
-| `arr.min(axis=None)`      | Minimum element                           |
-| `arr.argmax(axis=None)`   | Index of maximum element                  |
-| `arr.argmin(axis=None)`   | Index of minimum element                  |
-| `arr.all(axis=None)`      | True if all elements are truthy           |
-| `arr.any(axis=None)`      | True if any element is truthy             |
-| `arr.transpose()`         | Transpose the array                       |
-| `arr.T`                   | Shorthand for transpose                   |
-| `arr.moveaxis(src, dst)`  | Move axis from src to dst                 |
-| `arr.reshape(shape)`      | Reshape to new dimensions                 |
-| `arr.flatten()`           | Return a 1-D copy                         |
-| `arr.tolist()`            | Convert to Python list                    |
-| `arr.astype(dtype)`       | Cast to a different element type          |
-| `arr.repeat(n)`           | Repeat elements n times                   |
-| `arr.filter(pred)`        | Filter elements by predicate              |
-| `arr.shape`               | Tuple of dimension sizes                  |
-| `arr.dtype`               | Element type                              |
-| `arr.ndim`                | Number of dimensions                      |
-| `arr.size`                | Total number of elements                  |
-| `arr.flat`                | Flat (1-D) view                           |
+| `arr.sum(axis=None)`      | Sum of elements                            |
+| `arr.prod(axis=None)`     | Product of elements                        |
+| `arr.max(axis=None)`      | Maximum element                            |
+| `arr.min(axis=None)`      | Minimum element                            |
+| `arr.argmax(axis=None)`   | Index of the maximum element               |
+| `arr.argmin(axis=None)`   | Index of the minimum element               |
+| `arr.all(axis=None)`      | True if all elements are true              |
+| `arr.any(axis=None)`      | True if any element is true                |
+| `arr.mean(axis=None)`     | Mean of elements                           |
+| `arr.cumsum()`, `arr.cumprod()` | Cumulative sum and product           |
+| `arr.clip(lo, hi)`        | Limit values to an interval                |
+| `arr.nonzero()`           | Indices of non-zero elements               |
+| `arr.transpose()`, `arr.T`| Transpose                                  |
+| `arr.moveaxis(src, dst)`  | Move an axis                               |
+| `arr.swapaxes(a, b)`      | Swap two axes                              |
+| `arr.reshape(shape)`      | Reshape                                    |
+| `arr.flatten()`, `arr.ravel()` | Flatten to 1-D                        |
+| `arr.squeeze()`           | Remove dimensions of size 1                |
+| `arr.repeat(n)`           | Repeat elements                            |
+| `arr.astype(dtype)`       | Convert the element type                   |
+| `arr.tolist()`            | Convert to a (nested) list                 |
+| `arr.copy()`              | Copy                                       |
+| `arr.filter(mask)`        | Elements where `mask` is true, as a `DynamicNDArray` |
+| `arr.real`, `arr.imag`, `arr.conjugate()` | Complex parts and conjugate |
+| `arr.shape`, `arr.dtype`, `arr.ndim`, `arr.size` | Shape, element type, rank, element count |
+| `arr.flat`                | Elements in row-major order                |
 
 ```python
-mat = NDArray.asarray([[3, 1], [4, 1]])
+mat = np.asarray([[3, 1], [4, 1]])
 
 s = mat.sum()              # 9
 p = mat.prod()             # 12
 mx = mat.max()             # 4
-mn = mat.min()             # 1
-
 t = mat.T                  # [[3, 4], [1, 1]]
 f = mat.flatten()          # [3, 1, 4, 1]
-r = mat.reshape((1, 4))   # [[3, 1, 4, 1]]
-lst = mat.tolist()         # [[3, 1], [4, 1]]
+r = mat.reshape((1, 4))    # [[3, 1, 4, 1]]
 ```
 
-## A Note on Field Arithmetic
+## Numbers in the Circuit
 
-All Zinnia operations compile to arithmetic over a prime field F_p, where p is determined
-by the zk-SNARK backend. This has several implications:
+All values are represented by elements of the backend's prime field (the BN254 scalar
+field for `halo2-base` and `noir`). This has the following consequences:
 
-- **Integer overflow**: integers are elements of F_p, so arithmetic wraps modulo p.
-  In practice, p is very large (e.g., 2^254 for BN254), so overflow is rarely a concern
-  for typical program values.
-- **Division**: division computes the multiplicative inverse in F_p, not truncated
-  integer division. The `//` operator provides floor division semantics via additional
-  constraints.
-- **Comparison**: ordering comparisons (`<`, `>`, `<=`, `>=`) require range checks,
-  which add constraints to the circuit.
-- **Float precision**: floating-point values are encoded as fixed-point or rational
-  representations over F_p, with precision bounded by the encoding scheme.
+- **Integers.** Integer inputs are constrained to NumPy's `int64` range.
+- **Floats.** Floats are fixed-point numbers with 32 fractional bits, so their resolution
+  is `2^-32` (about `2.3e-10`), and float inputs lie in `[-2^31, 2^31)`.
+- **Comparisons.** Ordering comparisons need range checks, which add constraints.

@@ -1,210 +1,77 @@
 ---
-title: Memory Model
-description: How Zinnia handles arrays and memory in arithmetic circuits, using two strategies -- multiplexer-based access for small arrays and zkRAM for large or dynamic arrays.
+title: Arrays and Memory
+description: How Zinnia represents arrays during IR generation and in the IR, and how the array lowering layer chooses the circuit construction for array reads, writes and operators.
 ---
 
-# Memory Model
+# Arrays and Memory
 
-Arithmetic circuits have no native concept of random-access memory. Every wire in a circuit is fixed at compile time, so reading from or writing to an array at a data-dependent index requires special handling. Zinnia provides two strategies, selected automatically based on array size and usage patterns.
+A circuit has no addressable memory: every wire is fixed when the circuit is built. A read `a[i]` at a runtime index `i` must therefore be built from constraints that work for every possible `i`, and so must a write and an operator such as `np.sort`. There are many ways to do this (a chain of selects, an inner product with a one-hot vector, a lookup in a table, a memory-consistency argument, a sorting network, a prover hint with a check), and the cheapest depends on the sizes, on how the result is used, and on the proving system.
 
-## The Challenge
+Zinnia therefore separates *what* an array holds from *how* the circuit builds it. IR generation records array values and array operators in a compact form, and the array lowering layer (`src/lower/`) chooses the constructions after dead-code elimination, when it knows which results the program uses.
 
-Consider a simple array access:
+## Arrays During IR Generation
 
-```python
-value = arr[i]
-```
+**Storages.** A *storage* is the compile-time identity of the cells that some Python names reach. An array and every view of it (a slice, a transpose, a contiguous reshape, an alias `b = a`) share one storage and address it through their own offset and strides. Storages exist only in the IR generator, in the array store of `src/builder/store.rs`. Each is in one of two states:
 
-If `i` is a compile-time constant, the compiler can directly connect the wire for `arr[i]` to `value`. But if `i` depends on runtime inputs, the compiler does not know which element will be accessed. It must produce a circuit that can return any element, with the correct one selected at proving time.
+- `Cells`: the compiler knows every cell as a value (a statement or a constant), and no IR exists for the array as a whole;
+- `Version`: after a write at a runtime position, the cells are those of an IR array version.
 
-Two approaches are available, each with different performance characteristics.
+Every read and write goes through the store, which applies the current write predicate:
 
-## Strategy 1: Index-Oblivious Multiplexers
+| Access | `Cells(c)` | `Version(v)` |
+|---|---|---|
+| read at a constant address `k` | `c[k]`, no IR | `ArrayRead(v, k)` |
+| read at a runtime address `i` | `ArrayRead(ArrayInit(c), i)` | `ArrayRead(v, i)` |
+| write `x` at a constant address under predicate `p` | `c[k] := select(p, x, c[k])` | `ArrayWrite(v, k, x, p)` |
+| write `x` at a runtime address under `p` | `ArrayWrite(ArrayInit(c), i, x, p)`, the storage becomes `Version` | `ArrayWrite(v, i, x, p)` |
 
-For small, statically-sized arrays (typically fewer than ~100 elements), the compiler uses a multiplexer tree.
+A program whose arrays are only accessed at compile-time positions therefore produces no array IR at all.
 
-### How It Works
+**Sharing that Zinnia does not keep.** NumPy shares memory in cases where Zinnia makes a copy: a view whose layout depends on a private value, or a name bound to one of two arrays depending on a runtime condition. The generator links such storages (`src/ir_gen/detached_copies.rs`), and a write to one makes the other *stale* (`src/builder/stale.rs`). Reading a stale array is a compile error, so the program never observes a difference from NumPy. Python lists are values in Zinnia, so mutating a list that is reachable through another binding is rejected too (`src/ir_gen/list_sharing.rs`).
 
-Given an array `arr` of `n` elements and a runtime index `i`, the compiler emits a chain of `SelectIR` operations that checks each possible index:
+**Bounded dynamic arrays.** A `DynamicNDArray` value has a storage of `max_length` cells and runtime metadata (length, rank, shape, strides and offset as scalar values) within its compile-time envelope. Its operations are in `src/ops/dyn_ndarray/`. The inputs' metadata is read with `WitnessDynamicNDArrayMeta` and checked against the envelope (see `DynamicNDArrayMetaAssertInjection` in [Optimization Passes](/docs/compiler-internals/optimization-passes)).
 
-```
-result = select(i == 0, arr[0],
-         select(i == 1, arr[1],
-         select(i == 2, arr[2],
-         ...
-         select(i == n-2, arr[n-2], arr[n-1])...)))
-```
+## Arrays in the IR
 
-This is equivalent to a multiplexer (mux): a circuit that takes `n` data inputs and a selector, and outputs the selected input.
-
-### Cost
-
-- **Per access:** O(n) constraints, where `n` is the array length. Each access requires `n - 1` comparisons and `n - 1` select operations.
-- **Total for `m` accesses:** O(n * m) constraints.
-
-### When It Is Used
-
-The multiplexer strategy is used when:
-
-- The array is a static `NDArray` with a small number of elements.
-- The array is a `DynamicNDArray` with a small maximum size.
-- The compiler determines (via `resolve-max`) that the effective size is small.
-
-The threshold (approximately 100 elements) is a heuristic that balances the per-access cost of multiplexers against the fixed overhead of zkRAM.
-
-### Advantages
-
-- No fixed overhead -- cost is purely proportional to array size and access count.
-- Simple implementation -- no sorting network or memory trace required.
-- No timestamp tracking or consistency arguments.
-
-### Limitations
-
-- Cost grows linearly with array size per access. For large arrays, this becomes prohibitively expensive.
-- Every access touches every element (the circuit evaluates all comparisons), so there is no "short-circuit" for constant indices within the mux tree.
-
-## Strategy 2: zkRAM (Memory Trace Model)
-
-For large or dynamic arrays, the compiler uses a memory-trace model inspired by the RAM-to-circuit reductions in the SNARK literature.
-
-### Concept
-
-Instead of selecting from all elements on every access, the zkRAM model records a **trace** of all memory operations (reads and writes) and then proves that the trace is **consistent** -- that every read returns the value most recently written to that address.
-
-### Memory Trace
-
-A memory trace is a sequence of entries, each recording:
-
-| Field | Description |
-|---|---|
-| `op` | Operation type: read or write |
-| `address` | Memory address being accessed |
-| `value` | Value read or written |
-| `timestamp` | Monotonically increasing counter |
-
-During circuit execution, every `ReadMemoryIR` and `WriteMemoryIR` emits a trace entry via `MemoryTraceEmitIR`. At the end of the circuit, `MemoryTraceSealIR` finalizes the trace.
-
-### Consistency Argument
-
-The consistency argument proves that the trace is valid without revealing which addresses were accessed. It works in two steps:
-
-**Step 1: Sort by (address, timestamp).** The trace is reordered so that all accesses to the same address are grouped together, in chronological order. The sort is verified using a permutation argument (the sorted trace is a permutation of the original trace).
-
-**Step 2: Adjacency check.** For each pair of consecutive entries in the sorted trace:
-- If they access the same address, the read value must equal the most recently written value.
-- If they access different addresses, no constraint is needed (the transition is to a new address).
-
-Formally, for consecutive sorted entries `(op_i, addr_i, val_i, t_i)` and `(op_{i+1}, addr_{i+1}, val_{i+1}, t_{i+1})`:
-- If `addr_i == addr_{i+1}` and `op_{i+1} == read`, then `val_{i+1} == val_i`.
-- If `addr_i == addr_{i+1}` and `op_{i+1} == write`, no value constraint (the write overwrites).
-- If `addr_i != addr_{i+1}`, the entries are for different memory locations and are independent.
-
-### Cost
-
-- **Per access:** O(log N) constraints, where N is the total number of memory operations. The log factor comes from the permutation argument (typically implemented via a grand product or lookup argument).
-- **Fixed overhead:** The sorting network and adjacency check circuit. This is proportional to the total trace length.
-- **Total:** O(M log M) for M total memory operations.
-
-### When It Is Used
-
-The zkRAM strategy is used when:
-
-- The array is a `DynamicNDArray` with a large maximum size.
-- The array is accessed many times with data-dependent indices.
-- The multiplexer cost (O(n) per access) would exceed the zkRAM cost (O(log N) per access plus fixed overhead).
-
-### Advantages
-
-- Per-access cost is logarithmic in the trace size, not linear in the array size.
-- Scales to arrays with thousands or millions of elements.
-- Supports dynamic allocation (new arrays can be allocated at runtime within the circuit).
-
-### Limitations
-
-- Fixed overhead for the sorting and consistency-check circuits, which is wasteful for small arrays.
-- More complex backend implementation.
-- The permutation argument adds non-trivial constraints.
-
-## IR Primitives for Memory
-
-The memory model is reflected in five IR operations:
-
-### AllocateMemoryIR
-
-Allocates a contiguous region of memory. Takes the size as an argument and returns a base address.
+An array version is a statement whose value is a vector of `len` cells (`src/ir_array.rs`):
 
 ```
-s10: AllocateMemoryIR()   args=[s9]    # allocate s9 cells, return base address
+v  = ArrayInit  { len, elem }   (c_0, ..., c_{len-1})
+v' = ArrayWrite (access)        (v, i_0, ..., i_{r-1}, x, p)
+y  = ArrayRead  (access)        (v, i_0, ..., i_{r-1})
 ```
 
-### ReadMemoryIR
+An `ArrayAccess` names the cell `offset + Σ_k i_k · stride_k`. Constant indices are folded into the offset, and each runtime position `i_k` must lie in `[0, len_k)`, otherwise there is no witness. The generator passes positions after NumPy's negative-index wrap and checks them where the access runs, so this only rejects inputs on which NumPy raises. `ArrayWrite` sets the cell to `x` where the predicate `p` is nonzero and leaves the version unchanged where it is zero. All three operations are pure. A write defines a new version and leaves the old one unchanged.
 
-Reads a value from a memory address. Takes the base address and offset as arguments.
+When it builds these statements, the builder applies the definitions where the operands decide them (`src/builder/arrays.rs`): a read of an `ArrayInit` at a constant address is that cell, a read of a write at an address the write cannot reach reads the older version, a read of an unconditional write at the same access is the written value, and a write under a false predicate is the old version.
 
-```
-s15: ReadMemoryIR()        args=[s10, s12]   # read from base s10 at offset s12
-```
+## Array Operators
 
-### WriteMemoryIR
+For operators whose element-by-element expansion is expensive, IR generation emits one `ArrayOp` placeholder statement per output element, a *lane* (`src/lower/op.rs`). All lanes of one operator instance share the operator kind and the leading operands (the inputs), and together they form a *group*. Examples are sorts and argsorts (`np.sort`, `np.argsort`, `np.median`, `np.percentile`), `np.searchsorted` on a constant table, reads at runtime indices, crops and slices with runtime bounds, the first or last set position of a flag vector, `np.insert` at a runtime position, masked writes `a[mask] = v`, permutation scatters, `np.correlate`, `np.convolve`, float matrix products and `np.corrcoef`. Dead-code elimination removes the lanes nothing reads, so `np.argsort(a)[:3]` keeps three lanes of the argsort.
 
-Writes a value to a memory address. Takes the base address, offset, and value as arguments.
+## The Array Lowering Layer
 
-```
-s20: WriteMemoryIR()       args=[s10, s12, s18]   # write s18 to base s10 at offset s12
-```
+`ArrayLowering` (`src/lower/emit.rs`) replaces every placeholder and every array version. It works in four steps:
 
-### MemoryTraceEmitIR
+1. **Groups and requirements.** Placeholders of one operator instance form a group, and each version tree (an `ArrayInit` with the versions written from it and their reads) forms a *memory group*. The things the program needs are *requirements* (`src/lower/graph.rs`): the value of each live lane, values several constructions of a group can share, and *facts* such as "`i` lies in `[0, n)` wherever this code runs".
+2. **Candidates.** Every registered *construction* (the `Construction` trait in `src/lower/construction.rs`, listed by `lower::registry`) looks at each group and offers candidates. A candidate states the requirements it produces (postconditions), the facts it needs (preconditions), its cost on the compile target and an emitter. Facts that hold without any construction (interval bounds, guarantees of scalar gadgets the program emits anyway, and the definitions of operators) are *free facts* (`src/lower/facts.rs`). The program's own checks are candidates too: a check that a construction proves anyway can be dropped, and a check can justify another construction's precondition.
+3. **Selection.** `src/lower/select.rs` chooses a minimum-cost set of candidates that justifies every requirement without circular justification, with Z3 and a greedy fallback. A candidate is paid once however many requirements it serves, so a value two groups share or a program-wide facility (the verifier challenge, the RAM trace) is paid once.
+4. **Emission.** The selected constructions emit scalar IR, tables and memories, prover hints together with the constraints under which each hint has only one accepted value, and identity checks. A precondition that nothing establishes becomes a check emitted through `src/builder/guard.rs`.
 
-Emits a memory trace entry. Generated by the `MemoryTraceInjectionIRPass` after each read or write.
+Every construction documents its preconditions, postconditions, cost formula per target, and its soundness argument next to its code. The families are:
 
-```
-s16: MemoryTraceEmitIR()   args=[s15, ...]   # emit trace entry for the read at s15
-```
+| Family | Code | Constructions (examples) |
+|---|---|---|
+| sort | `src/lower/sort/` | sorting networks, a hinted sort pinned by a permutation check (routed through a Waksman network, or a grand product at a verifier challenge), rank selectors, a sort of an input already known to be sorted; `searchsorted` by counts or a hinted position |
+| gather | `src/lower/gather/` | an element by a select chain, by equality indicators or by a one-hot vector; first and last set positions by running products or a select chain; windows by a shared one-hot shift; permutation scatters |
+| memory | `src/lower/memory/` | an element by the bits of its index, or by a read-only table (`RomInit`/`RomRead`); version trees as an overlay of selects, as products of keep bits for writes of zero, or as one memory (`RamInit`/`RamWrite`/`RamRead`), a shuffle-checked RAM trace on halo2-base and a native RAM block on Noir |
+| scatter | `src/lower/scatter/` | `np.insert` at a runtime position; masked writes as selects or as decision lists |
+| linear | `src/lower/linear/` | correlations and matrix products as direct sums, or checked as a polynomial identity or by Freivalds' check |
+| stats | `src/lower/stats/` | `np.corrcoef`, by exact integer sums or a centred fixed-point computation, chosen by element type |
+| permutation | `src/lower/permutation.rs` | the `is_permutation` precondition, by hit counts or a grand product |
 
-### MemoryTraceSealIR
+**Verifier challenges.** Identities such as a multiset equality or a matrix product are much cheaper to check at a random point than to compute. On halo2-base the challenge is drawn after the first proof phase commits every value (`src/lower/challenge.rs`), and the check is sound except with probability `degree / |F|`. Noir has no such challenge, so these constructions are never offered on the Noir target.
 
-Finalizes the memory trace for a memory region. Generated at the end of the circuit for each zkRAM region.
+## Array Facts
 
-```
-s99: MemoryTraceSealIR()   args=[s10]   # seal trace for memory region at base s10
-```
-
-## Compilation Pipeline for Memory
-
-Memory operations are processed across multiple compilation stages:
-
-1. **IR Generation.** The `IRGenerator` produces high-level array access operations. At this stage, the memory strategy has not been decided.
-
-2. **DynamicNDArrayMetaAssertInjectionIRPass (Pass 2).** Injects bounds assertions for dynamic arrays, ensuring runtime lengths are within declared maximums.
-
-3. **DynamicNDArrayMemoryLoweringIRPass (Pass 3).** Decides the memory strategy for each array and lowers high-level array operations to `AllocateMemoryIR`, `ReadMemoryIR`, and `WriteMemoryIR`. Small arrays may be lowered to multiplexer chains instead.
-
-4. **MemoryTraceInjectionIRPass (Pass 4).** For zkRAM arrays, injects `MemoryTraceEmitIR` after each read/write and `MemoryTraceSealIR` at the end.
-
-5. **Optimization (Passes 5-10).** Standard optimizations (constant folding, dead code elimination, etc.) can simplify memory operations. For example, a read from a known constant address in a known array may be folded to a direct value.
-
-6. **Backend.** The backend translates memory IR to the target proving system's constraint representation, including the sorting network and adjacency checks for the consistency argument.
-
-## Example: Dynamic Array Sum
-
-Consider:
-
-```python
-def circuit(arr: DynamicNDArray[int, 100, 1], n: int) -> int:
-    total = 0
-    for i in range(n):
-        total += arr[i]
-    return total
-```
-
-The array `arr` has up to 100 elements. Because 100 exceeds the multiplexer threshold, the compiler uses zkRAM:
-
-1. `AllocateMemoryIR(100)` allocates memory for the array.
-2. The input values are written to memory via `WriteMemoryIR`.
-3. The loop is unrolled up to 100 times (the maximum of `n`).
-4. Each iteration issues `ReadMemoryIR` for `arr[i]`, guarded by `i < n`.
-5. Memory trace entries are emitted for each read and write.
-6. `MemoryTraceSealIR` finalizes the trace.
-7. The backend generates the sorting network and adjacency checks.
-
-The total circuit cost is dominated by the memory trace (up to 200 entries: 100 writes + up to 100 reads) and the sorting/consistency argument over that trace.
+An *array fact* is a claim about all cells of an array value or a part of it: every element in a range, the elements non-decreasing or strictly increasing, distinct, at most `k` of them nonzero, or the array a permutation of `0..n`. The IR generator states the facts that the program's preconditions and Boolean inputs give, and derives the facts of written and merged arrays (`src/builder/array_facts.rs`, `src/optim/array_facts/`). Further facts hold by the definition of the statements (the value lanes of a sort are non-decreasing), by interval bounds, or by the program's checks. The lowering layer reads them (`IR::ArrayFact`, `src/lower/array_facts.rs`) to drop checks and to choose cheaper constructions, for example a sort of an input that is already sorted. A construction that relies on an array fact is offered only when the fact is already established, and the layer never adds a check for one, since that would reject inputs the program accepts. A fact may be stated only if a constraint enforces it wherever it is claimed to hold, or it holds by the definition of the cells. `docs/array-facts.md` has the full design.

@@ -1,373 +1,91 @@
 ---
 title: Adding Operators
-description: Step-by-step guide to adding new operators to Zinnia, including the AbstractOp interface, operator registration, namespace organization, and a complete walkthrough example.
+description: How a call or an operator in a circuit reaches its implementation, and the steps to add a NumPy function, a method or a builtin, and when needed a new IR instruction.
 ---
 
 # Adding Operators
 
-Operators are the primary mechanism through which Zinnia translates high-level Python operations into IR builder calls. This guide walks you through adding a new operator from scratch.
+An *operator* here is anything a circuit calls or applies: a Python operator (`+`, `<`, `@`), a builtin (`len`, `sum`), a NumPy function (`np.sort`), or a method (`a.reshape(...)`, `lst.append(x)`). This guide shows where each kind is dispatched and what to change to add one.
 
-## Overview
+## How a Call Is Dispatched
 
-When a user writes something like `len(my_array)` or `np.dot(a, b)` in a Zinnia circuit, the compiler:
+Python operators go through `IRGenerator::visit_binary_op` and `apply_unary_op` (`src/ir_gen/visitors.rs`) to `helpers::value_ops::apply_binary_op`, which dispatches on the operand values: scalars, complex numbers, static arrays, dynamic arrays, lists and tuples.
 
-1. Resolves the function name and the type of its receiver (if any) to find the correct `AbstractOp` subclass.
-2. Parses the arguments using the operator's `get_param_entries()` method.
-3. Calls the operator's `build()` method, passing the `IRBuilderInterface` and the parsed arguments.
-4. The `build()` method uses builder calls to emit IR statements and returns a `Value`.
+Calls go through `visit_named_attr` in `src/ir_gen/named_attr/mod.rs`. It evaluates the arguments, then tries the dispatchers in this order and takes the first that answers:
 
-To add a new operator, you need to:
+1. `try_builtin` (`builtins.rs`): calls without a receiver, such as `len`, `range`, `zip`, `sum`, `min`;
+2. `try_numpy_func` (`numpy_funcs.rs`): explicit `("np", name)` arms for NumPy functions;
+3. `try_list_method` (`list_methods.rs`): methods of lists;
+4. `try_ndarray_method` (`ndarray_methods.rs` and the `*_compat.rs` files): array methods and properties;
+5. `try_np_fallback` (`numpy_funcs.rs`): `np.*`, `math.*` and `zinnia.*` calls built by name through `ops::registry::build_op`;
+6. a registered `@zk_chip` or `@zk_external` function of that name.
 
-1. Create a new operator file in the appropriate namespace directory under `op_def/`.
-2. Define a class that extends `AbstractOp`.
-3. Implement the required methods.
-4. Register the operator in `operator_factory.py`.
-5. Export it from the namespace's `__init__.py`.
-6. Write tests.
+A call that none of them answers is a compile error. After an `np.*` call is built, `finish_numpy_call` converts list results of array-returning functions into arrays (the `returns_one_ndarray` list), records views and read-only results, and writes into an `out=` argument.
 
-## The `AbstractOp` Interface
+The implementations themselves live in `src/helpers/` (array semantics: indexing, assignment, broadcasting, reductions, shapes, dtype conversion) and `src/ops/` (the scalar NumPy functions in `np_like/`, static-array operations in `static_ndarray_ops/`, dynamic-array operations in `dyn_ndarray/`).
 
-Every operator extends `AbstractOp`, defined in `zinnia/op_def/abstract/abstract_op.py`. Here are the methods you must implement:
+## Adding an Element-Wise NumPy Function
 
-### `get_name() -> str` (classmethod)
+A function that applies a scalar operation to each element, such as `np.sign`, is the simplest case. It needs a scalar implementation, and `try_np_fallback` applies it to every element of an array argument.
 
-Returns the operator's name as it appears in user code. This is used by the `Operators` registry to look up operators by name.
+1. **Implement `Op`.** Create `src/ops/np_like/np_<name>.rs` with a type implementing `ops::Op`. A unary function reads its argument as `"x"`, a binary one as `"x1"` and `"x2"`. `np.sign` is a complete example:
 
-```python
-@classmethod
-def get_name(cls) -> str:
-    return "abs"
-```
+   ```rust
+   use crate::builder::IRBuilder;
+   use crate::ops::{Op, OpArgs};
+   use crate::types::Value;
 
-### `get_signature() -> str`
+   pub struct NpSignOp;
 
-Returns a string signature for the operator, typically the same as `get_name()`. Used for display and debugging.
+   impl Op for NpSignOp {
+       fn build(&self, builder: &mut IRBuilder, args: &OpArgs) -> Value {
+           let x = args.require("x");
+           match x {
+               Value::Integer(_) | Value::Boolean(_) => builder.ir_sign_i(x),
+               Value::Float(_) => builder.ir_sign_f(x),
+               _ => panic!("np.sign: unsupported type {:?}", x.zinnia_type()),
+           }
+       }
+   }
+   ```
 
-```python
-def get_signature(self) -> str:
-    return "abs"
-```
+   The macros at the top of `src/ops/np_like/mod.rs` (`define_np_unary_math`, `define_np_binary_math`, `define_np_compare`, `define_np_arith`, `define_np_minmax`) generate the common shapes, for example `define_np_unary_math!(NpSqrtOp, "sqrt", "np.sqrt", ir_sqrt_f);`.
+2. **Export it** with `pub mod np_<name>;` and `pub use np_<name>::Np<Name>Op;` in `src/ops/np_like/mod.rs`.
+3. **Register the name** with an arm in `build_np_op` in `src/ops/registry.rs`, for example `"sign" => np_like::NpSignOp.build(builder, args),`.
+4. **Check the array cases.** `try_np_fallback` maps a unary function over lists, static arrays and dynamic arrays. A binary function reaches `apply_binary_op`, with broadcasting, only when its name is in the `binary_apply_name` table of `try_np_fallback`. Otherwise both arguments must be scalars. If NumPy's function accepts a positional `out` argument, its name belongs in `ufunc_input_count` (`src/ir_gen/named_attr/mod.rs`).
 
-### `get_param_entries() -> List[AbstractOp._ParamEntry]`
+## Adding Other Functions and Methods
 
-Defines the operator's parameter list. Each `_ParamEntry` has a name and an optional `default` flag. Parameters without defaults must come before parameters with defaults.
+Functions that are not element-wise (reductions, reshaping, sorting, indexing helpers) and methods are written directly against the values:
 
-```python
-def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
-    return [
-        AbstractOp._ParamEntry("operand"),              # required
-        AbstractOp._ParamEntry("axis", default=True),   # optional
-    ]
-```
+1. Add an arm to the matching dispatcher, `("np", "<name>") => ...` in `try_numpy_func`, a method name in `try_ndarray_method` or `try_list_method`, or a name in `try_builtin`.
+2. Implement the operation in `src/helpers/` or `src/ops/` as a function of the `IRBuilder` and the argument values. Handle the value kinds the function accepts: `Value::StaticArray` (fixed shape, cells in a storage), `Value::DynamicNDArray` (runtime shape within an envelope), and Python lists and tuples. `src/helpers/array_ops/` has entry points that already handle static and dynamic arrays together.
+3. If the function returns one array, add its name to `returns_one_ndarray`. If NumPy returns a view, add it to `RETURNS_A_VIEW`.
+4. Add the function to the user documentation in `docs-site/content/programming-guide/numpy-api.mdx`.
 
-The base class `argparse()` method uses these entries to map positional and keyword arguments into a dictionary. You do not need to override `argparse()` unless you have unusual parsing needs.
+Follow these rules when emitting IR:
 
-### `build(builder, kwargs, dbg) -> Value`
+- **Build values through `IRBuilder`.** Use the `ir_*` methods (`ir_add_i`, `ir_mul_f`, `ir_select_i`, `ir_less_than_i`, ...), which fold compile-time constants as they go. Compute a result in Rust only when every input is a compile-time constant (`Value::int_val()`, `float_val()`).
+- **Read and write arrays through the store.** Use the helpers in `src/helpers/static_array/` and `src/helpers/array_ops/` instead of building `ArrayRead`/`ArrayWrite` yourself. They apply the write predicate, so a write in a branch that is not taken changes nothing, and they emit the index checks.
+- **Emit checks through `src/builder/guard.rs`** (`ir_assert`, `ir_assert_u128_lt`, ...). They hold only where the code runs, so a check in an untaken branch cannot make the circuit unsatisfiable.
+- **Reject what you do not support.** A `panic!` with a message naming the function and the unsupported case becomes a compile error for the user. Never return a value that differs from NumPy's.
+- **Ask, do not assume.** When a cheaper lowering needs a fact (an index in range, a non-negative value), ask the builder's bound and fact queries, and fall back to the general lowering when the answer is not "proved".
 
-The core method. Receives:
+## Adding an IR Instruction
 
-- `builder`: An `IRBuilderInterface` instance. Use this to emit IR and create values.
-- `kwargs`: An `OpArgsContainer` with the parsed arguments. Access arguments with `kwargs["name"]` or `kwargs.get("name", default)`.
-- `dbg`: Optional `DebugInfo` for error reporting.
+Most operators need no new instruction. When one is needed:
 
-This method should:
+1. Add the variant to `IR` in `src/ir_defs.rs`, with its cases in `signature`, `class_name` and `import_from`, in `export_data` if it has parameters, and in `is_fixed` if dead-code elimination must keep it.
+2. Give it a value in `build_value` (`src/builder.rs`): its result type, and its compile-time value when the operands are constants. Add a typed `ir_*` method to `IRBuilder`.
+3. Define its semantics in the kernel (`src/prove/kernel.rs`) and evaluate it in preprocessing (`src/prove/preprocess/mod.rs`).
+4. Add a method to the `Synthesizer` trait (`src/prove/traits.rs`), its case in `interpret_ir` (`src/prove/interpreter.rs`), and implementations for the mock, halo2-base and Noir synthesizers. Each implementation must accept exactly the values the kernel defines.
 
-1. Extract arguments from `kwargs`.
-2. Check argument types (using `isinstance` on `Value` subclasses).
-3. Call builder methods to emit IR and compute the result.
-4. Return the resulting `Value`.
+Most `match` statements over `IR` have no wildcard arm, so `cargo check --features halo2-base-backend,noir-backend` lists the places that still need a case. The range analysis (`src/optim/range.rs`) and the SMT encoding (`src/optim/smt_encoding.rs`) treat an unknown instruction as an unconstrained value. Add a case there if the optimizer should reason about the new one.
 
-### Optional: `is_inplace() -> bool` (classmethod)
+## Adding an Array Operator with Lowering Choices
 
-Return `True` if the operator modifies its receiver in place (e.g., `list.append()`). Defaults to `False`.
+An operator whose best circuit depends on the target or on which outputs are used (like `np.sort`) is emitted as `ArrayOp` placeholders, one per output element, and lowered by constructions in `src/lower/`. This needs an `OpKind` in `src/lower/op.rs`, a frontend function that emits the lanes, and at least one `Construction` with its preconditions, postconditions, cost on each target and soundness argument, registered in `lower::registry`. The module documentation of `src/lower/mod.rs` and the existing families (`sort/`, `gather/`, `scatter/`, `linear/`) are the reference.
 
-### Optional: `requires_condition() -> bool` (classmethod)
+## Testing
 
-Return `True` if the operator needs the current branch condition (for operations inside `if`/`else` blocks that have side effects). Defaults to `False`. When `True`, the condition is available via `kwargs.get_condition()`.
-
-## Builder Methods
-
-Inside `build()`, you interact with the `IRBuilderInterface`. Key methods include:
-
-**Creating constants:**
-
-- `builder.ir_constant_int(value)` -- returns an `IntegerValue` for a compile-time integer
-- `builder.ir_constant_float(value)` -- returns a `FloatValue`
-- `builder.ir_constant_bool(value)` -- returns a `BooleanValue`
-- `builder.op_constant_none()` -- returns a `NoneValue`
-
-**Arithmetic:**
-
-- `builder.op_add(a, b, dbg)` -- integer or float addition
-- `builder.op_subtract(a, b, dbg)` -- subtraction
-- `builder.op_multiply(a, b, dbg)` -- multiplication
-- `builder.op_divide(a, b, dbg)` -- division
-- `builder.op_floor_divide(a, b, dbg)` -- floor division
-- `builder.op_modulo(a, b, dbg)` -- modulo
-
-**Comparisons:**
-
-- `builder.op_less_than(a, b, dbg)`
-- `builder.op_less_than_or_equal(a, b, dbg)`
-- `builder.op_equal(a, b, dbg)`
-- `builder.op_not_equal(a, b, dbg)`
-- `builder.op_greater_than(a, b, dbg)`
-- `builder.op_greater_than_or_equal(a, b, dbg)`
-
-**Control flow:**
-
-- `builder.op_select(condition, a, b, dbg)` -- multiplexer: returns `a` if condition is true, else `b`
-- `builder.op_assert(test, condition, dbg)` -- emit an assertion constraint
-
-**Array access:**
-
-- `builder.op_get_item(condition, array, index, dbg)` -- array element access
-
-**IR creation:**
-
-- `builder.create_ir(ir_instance, args, dbg)` -- emit a raw IR statement (for cases where no convenience method exists)
-
-## Operator Namespaces
-
-Operators are organized into namespaces. The namespace determines where the operator can be called from:
-
-| Namespace | Directory | How invoked in user code |
-|-----------|-----------|-------------------------|
-| `None` (global) | `op_def/nocls/` | `len(x)`, `sum(x)`, `range(n)` |
-| `NDArray` | `op_def/ndarray/` | `my_array.sum()`, `my_array.reshape(...)` |
-| `DynamicNDArray` | `op_def/dynamic_ndarray/` | Same as NDArray, for dynamic arrays |
-| `np` | `op_def/np_like/` | `np.zeros(...)`, `np.dot(a, b)` |
-| `math` | `op_def/math/` | `math.sin(x)`, `math.exp(x)` |
-| `List` | `op_def/lst/` | `my_list.append(x)` |
-| `Tuple` | `op_def/tupl/` | `my_tuple.count(x)` |
-
-Choose the namespace based on how users will invoke the operator.
-
-## Registration in `operator_factory.py`
-
-After creating your operator class, you must register it in `zinnia/op_def/operator_factory.py`. The `Operators` class has a list for each namespace:
-
-```python
-class Operators:
-    NoCls = [
-        global_ops.LenOp, global_ops.SumOp, ...
-    ]
-    NDArray = [
-        ndarray_ops.NDArray_SumOp, ndarray_ops.NDArray_ProdOp, ...
-    ]
-    # etc.
-```
-
-Add your operator class to the appropriate list. Also add the import at the top of the file.
-
-## Complete Walkthrough: Adding an `abs()` Operator
-
-Let us walk through adding a global `abs()` function that works on integer and float values.
-
-### Step 1: Create the Operator File
-
-Create `zinnia/op_def/nocls/op_abs.py`:
-
-```python
-from typing import List, Optional
-
-from zinnia.compile.builder.op_args_container import OpArgsContainer
-from zinnia.debug.exception import TypeInferenceError
-from zinnia.op_def.abstract.abstract_op import AbstractOp
-from zinnia.debug.dbg_info import DebugInfo
-from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
-from zinnia.compile.triplet import Value, IntegerValue, FloatValue
-
-
-class AbsOp(AbstractOp):
-    def __init__(self):
-        super().__init__()
-
-    def get_signature(self) -> str:
-        return "abs"
-
-    @classmethod
-    def get_name(cls) -> str:
-        return "abs"
-
-    def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
-        return [
-            AbstractOp._ParamEntry("operand")
-        ]
-
-    def build(
-        self,
-        builder: IRBuilderInterface,
-        kwargs: OpArgsContainer,
-        dbg: Optional[DebugInfo] = None
-    ) -> Value:
-        operand = kwargs["operand"]
-
-        if isinstance(operand, IntegerValue):
-            # For integers: abs(x) = x if x >= 0 else -x
-            zero = builder.ir_constant_int(0)
-            is_non_negative = builder.op_greater_than_or_equal(operand, zero, dbg)
-            negated = builder.op_subtract(zero, operand, dbg)
-            return builder.op_select(is_non_negative, operand, negated, dbg)
-
-        elif isinstance(operand, FloatValue):
-            # For floats: abs(x) = x if x >= 0.0 else -x
-            zero = builder.ir_constant_float(0.0)
-            is_non_negative = builder.op_greater_than_or_equal(operand, zero, dbg)
-            negated = builder.op_subtract(zero, operand, dbg)
-            return builder.op_select(is_non_negative, operand, negated, dbg)
-
-        raise TypeInferenceError(
-            dbg, f"`abs` is not defined on `{operand.type()}`"
-        )
-```
-
-Key observations:
-
-- We check the type of the operand using `isinstance` on `Value` subclasses.
-- We use builder methods to emit IR rather than computing the result directly.
-- We raise `TypeInferenceError` for unsupported types, including the debug info for source location.
-- The select pattern (`condition ? a : b`) is the standard way to implement conditional logic in circuit IR.
-
-### Step 2: Export from the Namespace
-
-Add the import to `zinnia/op_def/nocls/__init__.py`:
-
-```python
-from .op_abs import AbsOp
-```
-
-### Step 3: Register in the Factory
-
-In `zinnia/op_def/operator_factory.py`, add the import and registration:
-
-```python
-import zinnia.op_def.nocls as global_ops
-
-class Operators:
-    NoCls = [
-        global_ops.AbsOp,       # <-- add this
-        global_ops.TupleOp, global_ops.StrOp, ...
-    ]
-```
-
-### Step 4: Write Tests
-
-Create `testing/operator/nocls/test_abs.py`:
-
-```python
-import zinnia
-from zinnia import ZKCircuit, zk_circuit, Integer, Private, MockProgramExecutor
-
-
-def test_abs_positive_integer():
-    @zk_circuit
-    def circuit(x: Private[Integer]):
-        return abs(x)
-
-    zk = ZKCircuit(circuit)
-    compiled = zk.compile()
-    executor = MockProgramExecutor(compiled)
-    result = executor.execute({"x": 5})
-    assert result.output == 5
-
-
-def test_abs_negative_integer():
-    @zk_circuit
-    def circuit(x: Private[Integer]):
-        return abs(x)
-
-    zk = ZKCircuit(circuit)
-    compiled = zk.compile()
-    executor = MockProgramExecutor(compiled)
-    result = executor.execute({"x": -3})
-    assert result.output == 3
-```
-
-### Step 5: Run Tests
-
-```bash
-pytest testing/operator/nocls/test_abs.py -v
-```
-
-## Handling Multiple Types
-
-Many operators need to handle different types differently. The pattern is to use `isinstance` checks on the incoming `Value` subclasses:
-
-```python
-def build(self, builder, kwargs, dbg=None):
-    operand = kwargs["operand"]
-
-    if isinstance(operand, IntegerValue):
-        # Integer-specific logic
-        ...
-    elif isinstance(operand, FloatValue):
-        # Float-specific logic
-        ...
-    elif isinstance(operand, NDArrayValue):
-        # Array-specific logic (e.g., element-wise operation)
-        ...
-    else:
-        raise TypeInferenceError(dbg, f"...")
-```
-
-For array operations, you typically iterate over elements and apply the operation to each one:
-
-```python
-if isinstance(operand, NDArrayValue):
-    results = []
-    for i in range(operand.shape()[0]):
-        element = builder.op_get_item(
-            builder.ir_constant_bool(False),
-            operand,
-            builder.op_square_brackets([builder.ir_constant_int(i)]),
-            dbg
-        )
-        results.append(some_operation(element))
-    # Construct a new NDArrayValue from results
-    ...
-```
-
-## Handling Optional Parameters
-
-Use `_ParamEntry` with `default=True` for optional parameters, then `kwargs.get()` with a default value:
-
-```python
-def get_param_entries(self):
-    return [
-        AbstractOp._ParamEntry("iterable"),
-        AbstractOp._ParamEntry("start", default=True)
-    ]
-
-def build(self, builder, kwargs, dbg=None):
-    iterable = kwargs["iterable"]
-    start = kwargs.get("start", builder.op_constant_none())
-
-    # Check if start was provided
-    if not isinstance(start, NoneValue):
-        # Use the provided start value
-        ...
-```
-
-## How Operators Connect to the Rest of the System
-
-Understanding the full call chain helps when debugging:
-
-1. **User code**: `result = sum(my_array)`
-2. **AST Transformer**: Produces an `ASTCall` node with function name `"sum"` and one argument.
-3. **IR Generator**: Encounters the `ASTCall`, resolves it to `Operators.get_operator("sum", None)`, which returns `SumOp`.
-4. **Operator dispatch**: The generator calls `op.argparse(dbg, args, kwargs)` to map arguments, then `op.build(builder, parsed_args, dbg)`.
-5. **Operator build**: `SumOp.build()` calls `builder.op_add()` repeatedly, emitting `AddIIR` or `AddFIR` statements into the IR graph.
-6. **Result**: The returned `Value` becomes the IR representation of `result`, which can be used by subsequent operations.
-
-## Checklist for Adding a New Operator
-
-- [ ] Create operator file in `op_def/<namespace>/op_<name>.py`
-- [ ] Extend `AbstractOp`
-- [ ] Implement `get_name()`, `get_signature()`, `get_param_entries()`, `build()`
-- [ ] Handle all relevant `Value` types with `isinstance` checks
-- [ ] Raise `TypeInferenceError` for unsupported types
-- [ ] Export from `op_def/<namespace>/__init__.py`
-- [ ] Register in `Operators` list in `operator_factory.py`
-- [ ] Write tests in `testing/operator/<namespace>/`
-- [ ] Run the full test suite to check for regressions
+Add Python tests next to the existing ones for the same kind of operator: `testing/operator/ndarray/` for array functions and methods, `testing/operator/nocls/` for builtins, `testing/operator/lst/` for list methods. Compare with NumPy on several inputs, including negative values and indices, empty and single-element arrays, inputs that reach the edges of the documented range, and calls inside a branch whose condition is a private value. Check that unsupported cases fail at compile time with a clear message.

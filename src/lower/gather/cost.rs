@@ -64,10 +64,10 @@ pub(crate) fn units(target: Target) -> Units {
 }
 
 /// The unit costs of element reads: `units` with halo2-base's equality test
-/// and two-branch select as measured on reads (`eval-redo/layer/
-/// layer-memory.md`, "Calibration": `np.take_along_axis` and gathers compiled
-/// with each element construction forced; a select chain's link costs about
-/// 18 cells unfused, an indicator term about 13, a multiplexer select 8).
+/// and two-branch select as measured on reads (`np.take_along_axis` and
+/// gathers compiled with each element construction forced; a select chain's
+/// link costs about 18 cells unfused, an indicator term about 13, a
+/// multiplexer select 8).
 /// The other families' operations keep `units`.
 pub(crate) fn element_units(target: Target) -> Units {
     let u = units(target);

@@ -1,7 +1,7 @@
 //! The value domain of array facts: what every cell of a segment satisfies.
 //!
 //! A segment's [`ElemFacts`] combine three facts about the integer cells
-//! `a[p]`, `p` in the segment (design: `docs/array-facts.md` 2.3):
+//! `a[p]`, `p` in the segment (design: `docs/array-facts.md`, section 1):
 //!
 //! * a [`Range`] `lo <= a[p] <= hi`, whose ends are constants or a runtime
 //!   integer plus a constant ([`Bound`]);

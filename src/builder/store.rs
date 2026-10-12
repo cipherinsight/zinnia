@@ -22,10 +22,10 @@
 //! | write `x` at a constant address under `p` | `c[a] := select(p, x, c[a])` | `ArrayWrite(v, a, x, p)` |
 //! | write `x` at a runtime address under `p` | `ArrayWrite(ArrayInit(c), i, x, p)` → `Version` | `ArrayWrite(v, i, x, p)` |
 //!
-//! A storage is typed (integer or float cells; a complex array is a float
-//! storage of (real, imaginary) pairs): a value is converted to the
-//! storage's type when it is stored, so a read returns a value of the
-//! array's type.
+//! A storage is typed (integer or float cells; a static complex array is
+//! two paired float storages, a runtime-shaped one a float storage of
+//! (real, imaginary) pairs): a value is converted to the storage's type
+//! when it is stored, so a read returns a value of the array's type.
 
 use std::collections::{BTreeMap, HashMap};
 

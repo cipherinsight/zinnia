@@ -148,8 +148,8 @@ pub(crate) struct RoutingCosts {
 /// slot; `KeyLess` is about 55 cells; an order statistic 56 cells per
 /// element and 14 once (a comparison of 43-46, an equality test of 7, two
 /// additions of 3; a second statistic of `np.sort(a)` at a runtime rank adds
-/// 617, 1,177, 2,857 and 5,657 cells at 10, 20, 50 and 100 elements,
-/// `eval-redo/layer/cost-model-misses.md`); the extreme pin 42 cells per
+/// 617, 1,177, 2,857 and 5,657 cells at 10, 20, 50 and 100 elements); the
+/// extreme pin 42 cells per
 /// element plus 31 (fitted on maxima of 5 and minima of 48 values in the
 /// perf cases 0436 and 0314 as 42 plus 38; row maxima and minima of 3 to
 /// 100 elements cost exactly 7 cells less than that at every length),
@@ -202,7 +202,7 @@ const HALO2_BASE_GRAND_PRODUCT: GrandProductCosts =
 /// cells); a carried array adds a difference and two selects (12); an
 /// asserted link is one range check of a gap of up to `65 + b` bits (40
 /// cells at lookup width 8, 41 for the difference). Measured on argsorts of
-/// 3 to 100 elements (`eval-redo/layer/sort-route.md`).
+/// 3 to 100 elements.
 const HALO2_BASE_ROUTING: RoutingCosts = RoutingCosts { switch: 16, carried: 12, link: 42 };
 
 /// Noir: an argsort of 100 by the permutation check costs 1,520 gates (a
