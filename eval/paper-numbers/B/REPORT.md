@@ -1,5 +1,59 @@
 # Task B: cost of bounds
 
+## Final compiler (2569c9ed, remote), 2026-10-12
+
+All stages were rerun on the final compiler, commit `2569c9edb8a2bf0b88e9351ca5752f164d2fad24`
+(checkout `/home/zhantong/zinnia-eval-run/zinnia-sizefix`, clean, extension SHA-256 `637a5c9a…1324` =
+the epoch-fz build), on the remote host shuaicpu6 (container zhantong-dev), program set = the
+final compiler's `accepted_correct` account (`final/accept-merged.json`, same 214 entries).
+Scripts, logs and all outputs are in `final/`; everything below this section is the older
+3ebe0558 run, kept as it was.
+
+Command (remote, `$RUN=/home/zhantong/zinnia-eval-run`; logs `$RUN/logs/pnB.log`, `pnB2.log`,
+`final/reproduce.log`):
+
+```sh
+source $RUN/env.sh; cd $RUN/paper-numbers-final/B && ./reproduce.sh
+```
+
+Changes to the scripts: remote paths, 16 workers per stage, `ulimit -v` 32 GiB per process
+instead of `systemd-run`, and one added stage, `final/static_audit_final.py`. On 2569c9ed two
+observational probe rewrites (not the original programs) no longer compile:
+`npbench_polybench_durbin_durbin/kernel` (the probe keeps views `y[:k]` that the loop later
+modifies, which the compiler now rejects) and `pythran_multitype/check2` (the probe returns lists
+of different structure from the two branches; the compiler panics with an internal error,
+`IRBuilder::create_ir(SelectI): arg[1] has no stmt_id`, instead of rejecting it cleanly). Both had
+no bounded arrays in the 3ebe0558 run; the stage records them as fixed-shape after checking that
+their original layouts have no dynamic part and that Task A's instrumentation on 2569c9ed
+(`../A/final/classification.json`) finds no runtime-shaped value in them. The first run stopped at
+`report.py` on these two issues; the pipeline was resumed from that stage (`pnB2`).
+
+**Result: unchanged.** `final/arrays.csv` is byte-identical to `arrays.csv` (36 programs, 141
+arrays, same capacities and lengths on A and B). With the definitions of the paper
+(`fig/data/rq1-bounds.py`):
+
+| Quantity | 3ebe0558 | 2569c9ed |
+|---|---:|---:|
+| Programs with data-dependent shapes / arrays | 36 / 141 | 36 / 141 |
+| Mean fill (elements/capacity, summed per program, mean of A and B, mean over 36 programs) | 53.6% | 53.6% |
+| Median program ratio capacity/elements (all 36, ∞ included) | 2.0 | 2.0 |
+| Geometric mean / median over the 34 finite programs | 2.215 / 1.869 | 2.215 / 1.869 |
+| Shape-control specialization, Halo2 cells GM (not in the paper) | 3.665 | 3.703 |
+| Shape-control specialization, Noir gates GM (not in the paper) | 1.586 | 1.585 |
+
+Worst cases (2569c9ed):
+
+- Empty arrays: 26 arrays are empty on both inputs, in two programs. `pythran_periodic_dist/dist`:
+  all 12 of its arrays are empty (fill 0%, ratio ∞). `pythran_tax/tax`: 14 of its arrays are empty
+  (fill 17.6%, ratio ∞).
+- Largest finite program ratio: `ds1000 case0508` 14.67 (fill 6.8%), then `case0383` 14.29 (fill
+  7.0%), `case0481` 9.0 (11.1%), `case0392` 6.67 (15.0%).
+- Largest finite single-array ratio: `case0490`, `a[np.logical_and(temp >= t1, temp < t2)]`,
+  capacity 50 with 8 elements on A and 2 on B (6.25 and 25).
+
+The full report of the rerun is `final/REPORT.md` (per-program and per-array tables, cost tables).
+
+
 Compiler `3ebe0558f25592a0c1f8b6cf9bf7ad09f3ddb1d1`; acceptance membership is the supplied remote `accepted_correct` account (older compiler), not a new acceptance run. All 214 accepted entry functions compile on the final compiler.
 
 **Result:** 36 programs contain bounded runtime-shaped source array values (141 expression-result array occurrences). The equal-program capacity/actual geometric mean is **∞**, because two programs contain empty arrays on both fixtures. Over the 34 programs with no empty measured array it is **2.21509×**, median **1.86898×**. Sound checked shape-control specialization was measured for **17 programs**: default/specialized Halo2 cells have geometric mean **3.66497×** (range 1.04579–11.3009×); Noir gates **1.5858×** (range 1.01358–10.4513×). These circuit ratios include savings from knowing shape-control values; they are not an isolated padding-only causal effect.
@@ -14,7 +68,7 @@ Probe handling: branch-local crop results in 0507/0509/0510 use the original com
 
 For program p and fixture f, r[p,f] is the geometric mean of C/L over its arrays. The program’s combined ratio is sqrt(r[p,A] r[p,B]); the headline geometric mean and median weight programs equally. C>0,L=0 is +∞, never silently omitted or replaced by one. “Finite complete programs” drops the entire program if any measured array is empty. The finite-observation alternative drops only empty array/fixture pairs. A/B are the supplied fixtures, not a representative input distribution.
 
-## (a) Capacity divided by actual elements
+## (a) Capacity divided by actual elements (older run, 3ebe0558)
 
 | Population / weighting | A GM | B GM | A+B GM | A+B median |
 |---|---:|---:|---:|---:|

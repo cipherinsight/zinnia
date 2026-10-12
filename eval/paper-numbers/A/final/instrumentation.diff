@@ -1,0 +1,87 @@
+--- /home/zhantong/zinnia-eval-run/zinnia-sizefix/src/ir_gen/mod.rs	2026-10-11 12:02:00.981343631 +0000
++++ /home/zhantong/zinnia-eval-run/paper-numbers-final/A/compiler/src/ir_gen/mod.rs	2026-10-12 08:04:24.938772713 +0000
+@@ -397,6 +397,11 @@
+     /// it calls, keeps the old cell on paths where the statement does not
+     /// execute. Expressions inherit the predicate of their statement.
+     fn visit(&mut self, node: &ASTNode) -> Value {
++        let result = self.visit_audit_original(node);
++        crate::types::composite::audit_value(&result);
++        result
++    }
++    fn visit_audit_original(&mut self, node: &ASTNode) -> Value {
+         if !is_statement(node) {
+             return self.visit_inner(node);
+         }
+--- /home/zhantong/zinnia-eval-run/zinnia-sizefix/src/types/composite.rs	2026-10-11 12:02:01.017343319 +0000
++++ /home/zhantong/zinnia-eval-run/paper-numbers-final/A/compiler/src/types/composite.rs	2026-10-12 08:04:24.938772713 +0000
+@@ -65,6 +65,7 @@
+ impl DynamicNDArrayData {
+     /// Backing-buffer slot count, derived from the envelope's total bound.
+     pub fn max_length(&self) -> usize {
++        audit_dynamic(self);
+         self.envelope.total_bound
+     }
+ 
+@@ -114,3 +115,31 @@
+         }
+     }
+ }
++
++// Measurement only: observe compiler values, without allocating compiler IDs or IR.
++pub(crate) fn audit_value(value: &Value) {
++    match value {
++        Value::DynamicNDArray(d) => audit_dynamic(d),
++        Value::List(d) | Value::Tuple(d) => { for v in &d.values { audit_value(v); } },
++        _ => {},
++    }
++}
++fn audit_dynamic(d: &DynamicNDArrayData) {
++    let Some(path) = std::env::var_os("ZINNIA_AUDIT_DYNAMIC") else { return };
++    use std::io::Write;
++    let scalar = |v: &ScalarValue<i64>| serde_json::json!({"constant": v.static_val, "stmt": v.stmt_id});
++    let row = serde_json::json!({
++        "value_id": format!("{:?}", d.value_id), "segment": d.segment_id,
++        "bound": d.envelope.total_bound,
++        "length": scalar(&d.meta.runtime_length), "rank": scalar(&d.meta.runtime_rank),
++        "shape": d.meta.runtime_shape.iter().map(scalar).collect::<Vec<_>>(),
++        "offset": scalar(&d.meta.runtime_offset),
++    });
++    // Log each distinct metadata record once per worker process.
++    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
++    let line = row.to_string();
++    if SEEN.get_or_init(Default::default).lock().unwrap().insert(line.clone()) {
++        let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path).unwrap();
++        writeln!(file, "{}", line).unwrap();
++    }
++}
+--- /home/zhantong/zinnia-eval-run/zinnia-sizefix/src/lib.rs	2026-10-11 12:02:00.985343597 +0000
++++ /home/zhantong/zinnia-eval-run/paper-numbers-final/A/compiler/src/lib.rs	2026-10-12 08:04:24.938772713 +0000
+@@ -241,6 +241,10 @@
+ /// receives to `<path>`, one statement per line. The compiled program does
+ /// not depend on it.
+ fn dump_layer_input(graph: &IRGraph) {
++    if let Some(path) = std::env::var_os("ZINNIA_AUDIT_IR") {
++        std::fs::write(path, serde_json::to_string(&graph.export_stmts()).unwrap()).unwrap();
++    }
++
+     let Some(path) = std::env::var_os("ZINNIA_LAYER_INPUT").filter(|p| !p.is_empty()) else { return };
+     let mut text = String::from("── array lowering input ──\n");
+     for stmt in &graph.stmts {
+--- /home/zhantong/zinnia-eval-run/zinnia-sizefix/src/ops/dyn_ndarray/memory_ops.rs	2026-10-11 12:02:00.989343562 +0000
++++ /home/zhantong/zinnia-eval-run/paper-numbers-final/A/compiler/src/ops/dyn_ndarray/memory_ops.rs	2026-10-12 08:04:24.942772682 +0000
+@@ -63,6 +63,15 @@
+     default_val: &Value,
+     trailing_total: usize,
+ ) -> Compaction {
++    if mask_cells.iter().any(|v| v.bool_val().is_none() && v.int_val().is_none()) {
++        if let Some(path) = std::env::var_os("ZINNIA_AUDIT_COMPACTION") {
++            use std::io::Write;
++            let row = serde_json::json!({"rows": mask_cells.len(), "trailing": trailing_total,
++                "runtime_masks": mask_cells.iter().filter_map(|v| v.stmt_id()).collect::<Vec<_>>()});
++            let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path).unwrap();
++            writeln!(file, "{}", row).unwrap();
++        }
++    }
+     let trailing_total = trailing_total.max(1);
+     let leading_total = mask_cells.len();
+     let total = leading_total * trailing_total;

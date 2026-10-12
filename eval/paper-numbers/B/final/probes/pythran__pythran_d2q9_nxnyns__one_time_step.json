@@ -1,0 +1,183 @@
+{
+  "id": "pythran__pythran_d2q9_nxnyns__one_time_step",
+  "sites": {
+    "85:11:85:23:Call": "np.zeros(ns)",
+    "86:11:86:23:Call": "np.zeros(ns)"
+  },
+  "numpy": {
+    "A": [
+      {
+        "site": "85:11:85:23:Call",
+        "value": {
+          "shape": [
+            9
+          ],
+          "length": 9
+        }
+      },
+      {
+        "site": "86:11:86:23:Call",
+        "value": {
+          "shape": [
+            9
+          ],
+          "length": 9
+        }
+      }
+    ],
+    "B": [
+      {
+        "site": "85:11:85:23:Call",
+        "value": {
+          "shape": [
+            9
+          ],
+          "length": 9
+        }
+      },
+      {
+        "site": "86:11:86:23:Call",
+        "value": {
+          "shape": [
+            9
+          ],
+          "length": 9
+        }
+      }
+    ]
+  },
+  "selected": [
+    "85:11:85:23:Call",
+    "86:11:86:23:Call"
+  ],
+  "source": "def one_time_step(f1: Float[Array, '16 16 9'], f2: Float[Array, '16 16 9']):\n    bprobe_trace = []\n    nx, ny, ns = f1.shape\n    bprobe_v0 = np.zeros(ns)\n    bprobe_trace.append((0, bprobe_v0))\n    floc = bprobe_v0\n    bprobe_v1 = np.zeros(ns)\n    bprobe_trace.append((1, bprobe_v1))\n    mloc = bprobe_v1\n    periodic_bc(f1)\n    for i in range(1, nx - 1):\n        for j in range(1, ny - 1):\n            getf(f1, floc, i, j)\n            f2m_loc(floc, mloc)\n            relaxation_loc(mloc)\n            m2f_loc(mloc, floc)\n            setf(f2, floc, i, j)\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [
+        {
+          "constant": 0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 0
+        },
+        {
+          "kind": "f",
+          "public": 1
+        },
+        {
+          "kind": "f",
+          "public": 2
+        },
+        {
+          "kind": "f",
+          "public": 3
+        },
+        {
+          "kind": "f",
+          "public": 4
+        },
+        {
+          "kind": "f",
+          "public": 5
+        },
+        {
+          "kind": "f",
+          "public": 6
+        },
+        {
+          "kind": "f",
+          "public": 7
+        },
+        {
+          "kind": "f",
+          "public": 8
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1
+        ]
+      },
+      "shape": [
+        9
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 1
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 9
+        },
+        {
+          "kind": "f",
+          "public": 10
+        },
+        {
+          "kind": "f",
+          "public": 11
+        },
+        {
+          "kind": "f",
+          "public": 12
+        },
+        {
+          "kind": "f",
+          "public": 13
+        },
+        {
+          "kind": "f",
+          "public": 14
+        },
+        {
+          "kind": "f",
+          "public": 15
+        },
+        {
+          "kind": "f",
+          "public": 16
+        },
+        {
+          "kind": "f",
+          "public": 17
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1
+        ]
+      },
+      "shape": [
+        9
+      ]
+    }
+  ],
+  "dynamic": []
+}

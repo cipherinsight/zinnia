@@ -1,0 +1,40 @@
+{
+  "id": "pythran__pythran_multitype__check2",
+  "sites": {
+    "18:16:18:21:BinOp": "x + x"
+  },
+  "numpy": {
+    "A": [
+      {
+        "site": "18:16:18:21:BinOp",
+        "value": {
+          "shape": [
+            1
+          ],
+          "length": 1
+        }
+      }
+    ],
+    "B": [
+      {
+        "site": "18:16:18:21:BinOp",
+        "value": {
+          "shape": [
+            1
+          ],
+          "length": 1
+        }
+      }
+    ]
+  },
+  "selected": [
+    "18:16:18:21:BinOp"
+  ],
+  "source": "def check2(x: Float[Array, '1'], y: Boolean[Array, '1']):\n    bprobe_trace = []\n    if y:\n        return bprobe_trace\n    else:\n        bprobe_v0 = x + x\n        bprobe_trace.append((0, bprobe_v0))\n        return bprobe_trace\n    return bprobe_trace",
+  "traceback": "Traceback (most recent call last):\n  File \"/home/zhantong/zinnia-eval-run/zinnia-sizefix/zinnia/api/zk_circuit.py\", line 102, in compile\n    self.program = ZinniaCompiler(self.config).compile(\n                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^\n        self.source, self.name,\n        ^^^^^^^^^^^^^^^^^^^^^^^\n        {k: v.to_internal_object() for k, v in self.chips.items()},\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        {k: v.to_internal_object() for k, v in self.externals.items()},\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/zhantong/zinnia-eval-run/zinnia-sizefix/zinnia/compile/zinnia_compiler.py\", line 154, in compile\n    compiled_ir = compile_circuit(\n        json.dumps(ast_dict), json.dumps(config_dict),\n        json.dumps(chips_dict), json.dumps(externals_dict),\n    )\nValueError: IR generation failed: IRBuilder::create_ir(SelectI): arg[1] has no stmt_id after ensure_ptr; raw=Integer(ScalarValue { static_val: None, stmt_id: None, value_id: ValueId(30) }) materialized=Integer(ScalarValue { static_val: None, stmt_id: None, value_id: ValueId(30) })\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/zhantong/zinnia-eval-run/paper-numbers-final/B/probe.py\", line 104, in probe\n    c=ZKCircuit(p.function,source,chips=chips).compile();layout=c.get_output_layout()\n  File \"/home/zhantong/zinnia-eval-run/zinnia-sizefix/zinnia/api/zk_circuit.py\", line 111, in compile\n    raise ZinniaException(str(e))\nzinnia.debug.exception.base.ZinniaException: IR generation failed: IRBuilder::create_ir(SelectI): arg[1] has no stmt_id after ensure_ptr; raw=Integer(ScalarValue { static_val: None, stmt_id: None, value_id: ValueId(30) }) materialized=Integer(ScalarValue { static_val: None, stmt_id: None, value_id: ValueId(30) })\n",
+  "repair_error": "IR generation failed: IRBuilder::create_ir(SelectI): arg[1] has no stmt_id after ensure_ptr; raw=Integer(ScalarValue { static_val: None, stmt_id: None, value_id: ValueId(378017) }) materialized=Integer(ScalarValue { static_val: None, stmt_id: None, value_id: ValueId(378017) })",
+  "probe_error": "IR generation failed: IRBuilder::create_ir(SelectI): arg[1] has no stmt_id after ensure_ptr; raw=Integer(ScalarValue { static_val: None, stmt_id: None, value_id: ValueId(30) }) materialized=Integer(ScalarValue { static_val: None, stmt_id: None, value_id: ValueId(30) })",
+  "dynamic": [],
+  "layout": [],
+  "repair": "Probe of check2 crashes the final compiler (IRBuilder SelectI, arg without stmt_id) because the probe returns lists of different structure from the two branches. The only array, x + x, has the fixed shape of x (1,)."
+}

@@ -1,0 +1,7 @@
+{
+  "id": "pythran__pythran_matmul__matrix_multiply",
+  "dynamic": [],
+  "layout": [],
+  "repair": "zero(len(m0), len(m1[0])) constructs a static nested list; all loop bounds are fixed input lengths and all arithmetic is scalar indexing. No value-dependent array shape.",
+  "source": "# pythran program matmul.py (serge-sans-paille/pythran pythran/tests/cases).\n# Function bodies are the upstream text. Entry-function annotations are derived from upstream\n# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.\n\nfrom zinnia import *\n\n@zk_chip\ndef zero(n, m):\n    return [[0 for row in range(n)] for col in range(m)]\n\n@zk_circuit\ndef matrix_multiply(m0: Float[Array, '16 16'], m1: Float[Array, '16 16']):\n    new_matrix = zero(len(m0), len(m1[0]))\n    for i in range(len(m0)):\n        for j in range(len(m1[0])):\n            r = 0\n            'omp parallel for reduction(+:r)'\n            for k in range(len(m1)):\n                r += m0[i][k] * m1[k][j]\n            new_matrix[i][j] = r\n    return new_matrix\n"
+}

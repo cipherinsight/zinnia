@@ -1,0 +1,481 @@
+{
+  "id": "ds1000_numpy__case0453__kernel",
+  "sites": {
+    "11:18:11:21:BinOp": "X * X",
+    "11:17:11:35:Call": "(X * X).sum(axis=-1)",
+    "11:9:11:36:Call": "np.sqrt((X * X).sum(axis=-1))",
+    "12:17:12:34:Call": "l2.reshape(-1, 1)",
+    "12:13:12:34:BinOp": "X / l2.reshape(-1, 1)"
+  },
+  "numpy": {
+    "A": [
+      {
+        "site": "11:18:11:21:BinOp",
+        "value": {
+          "shape": [
+            5,
+            4
+          ],
+          "length": 20
+        }
+      },
+      {
+        "site": "11:17:11:35:Call",
+        "value": {
+          "shape": [
+            5
+          ],
+          "length": 5
+        }
+      },
+      {
+        "site": "11:9:11:36:Call",
+        "value": {
+          "shape": [
+            5
+          ],
+          "length": 5
+        }
+      },
+      {
+        "site": "12:17:12:34:Call",
+        "value": {
+          "shape": [
+            5,
+            1
+          ],
+          "length": 5
+        }
+      },
+      {
+        "site": "12:13:12:34:BinOp",
+        "value": {
+          "shape": [
+            5,
+            4
+          ],
+          "length": 20
+        }
+      }
+    ],
+    "B": [
+      {
+        "site": "11:18:11:21:BinOp",
+        "value": {
+          "shape": [
+            5,
+            4
+          ],
+          "length": 20
+        }
+      },
+      {
+        "site": "11:17:11:35:Call",
+        "value": {
+          "shape": [
+            5
+          ],
+          "length": 5
+        }
+      },
+      {
+        "site": "11:9:11:36:Call",
+        "value": {
+          "shape": [
+            5
+          ],
+          "length": 5
+        }
+      },
+      {
+        "site": "12:17:12:34:Call",
+        "value": {
+          "shape": [
+            5,
+            1
+          ],
+          "length": 5
+        }
+      },
+      {
+        "site": "12:13:12:34:BinOp",
+        "value": {
+          "shape": [
+            5,
+            4
+          ],
+          "length": 20
+        }
+      }
+    ]
+  },
+  "selected": [
+    "11:17:11:35:Call",
+    "11:18:11:21:BinOp",
+    "11:9:11:36:Call",
+    "12:13:12:34:BinOp",
+    "12:17:12:34:Call"
+  ],
+  "source": "def kernel(X: Integer[Array, '5 4']):\n    bprobe_trace = []\n    bprobe_v0 = X * X\n    bprobe_trace.append((1, bprobe_v0))\n    bprobe_v1 = bprobe_v0.sum(axis=-1)\n    bprobe_trace.append((0, bprobe_v1))\n    bprobe_v2 = np.sqrt(bprobe_v1)\n    bprobe_trace.append((2, bprobe_v2))\n    l2 = bprobe_v2\n    bprobe_v3 = l2.reshape(-1, 1)\n    bprobe_trace.append((4, bprobe_v3))\n    bprobe_v4 = X / bprobe_v3\n    bprobe_trace.append((3, bprobe_v4))\n    result = bprobe_v4\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [
+        {
+          "constant": 1
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 0
+        },
+        {
+          "kind": "i",
+          "public": 1
+        },
+        {
+          "kind": "i",
+          "public": 2
+        },
+        {
+          "kind": "i",
+          "public": 3
+        },
+        {
+          "kind": "i",
+          "public": 4
+        },
+        {
+          "kind": "i",
+          "public": 5
+        },
+        {
+          "kind": "i",
+          "public": 6
+        },
+        {
+          "kind": "i",
+          "public": 7
+        },
+        {
+          "kind": "i",
+          "public": 8
+        },
+        {
+          "kind": "i",
+          "public": 9
+        },
+        {
+          "kind": "i",
+          "public": 10
+        },
+        {
+          "kind": "i",
+          "public": 11
+        },
+        {
+          "kind": "i",
+          "public": 12
+        },
+        {
+          "kind": "i",
+          "public": 13
+        },
+        {
+          "kind": "i",
+          "public": 14
+        },
+        {
+          "kind": "i",
+          "public": 15
+        },
+        {
+          "kind": "i",
+          "public": 16
+        },
+        {
+          "kind": "i",
+          "public": 17
+        },
+        {
+          "kind": "i",
+          "public": 18
+        },
+        {
+          "kind": "i",
+          "public": 19
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1
+        ]
+      },
+      "shape": [
+        5,
+        4
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 20
+        },
+        {
+          "kind": "i",
+          "public": 21
+        },
+        {
+          "kind": "i",
+          "public": 22
+        },
+        {
+          "kind": "i",
+          "public": 23
+        },
+        {
+          "kind": "i",
+          "public": 24
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1
+        ]
+      },
+      "shape": [
+        5
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 2
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 25
+        },
+        {
+          "kind": "f",
+          "public": 26
+        },
+        {
+          "kind": "f",
+          "public": 27
+        },
+        {
+          "kind": "f",
+          "public": 28
+        },
+        {
+          "kind": "f",
+          "public": 29
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1
+        ]
+      },
+      "shape": [
+        5
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 4
+        }
+      ],
+      "output": {
+        "return": [
+          3,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 30
+        },
+        {
+          "kind": "f",
+          "public": 31
+        },
+        {
+          "kind": "f",
+          "public": 32
+        },
+        {
+          "kind": "f",
+          "public": 33
+        },
+        {
+          "kind": "f",
+          "public": 34
+        }
+      ],
+      "output": {
+        "return": [
+          3,
+          1
+        ]
+      },
+      "shape": [
+        5,
+        1
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 3
+        }
+      ],
+      "output": {
+        "return": [
+          4,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 35
+        },
+        {
+          "kind": "f",
+          "public": 36
+        },
+        {
+          "kind": "f",
+          "public": 37
+        },
+        {
+          "kind": "f",
+          "public": 38
+        },
+        {
+          "kind": "f",
+          "public": 39
+        },
+        {
+          "kind": "f",
+          "public": 40
+        },
+        {
+          "kind": "f",
+          "public": 41
+        },
+        {
+          "kind": "f",
+          "public": 42
+        },
+        {
+          "kind": "f",
+          "public": 43
+        },
+        {
+          "kind": "f",
+          "public": 44
+        },
+        {
+          "kind": "f",
+          "public": 45
+        },
+        {
+          "kind": "f",
+          "public": 46
+        },
+        {
+          "kind": "f",
+          "public": 47
+        },
+        {
+          "kind": "f",
+          "public": 48
+        },
+        {
+          "kind": "f",
+          "public": 49
+        },
+        {
+          "kind": "f",
+          "public": 50
+        },
+        {
+          "kind": "f",
+          "public": 51
+        },
+        {
+          "kind": "f",
+          "public": 52
+        },
+        {
+          "kind": "f",
+          "public": 53
+        },
+        {
+          "kind": "f",
+          "public": 54
+        }
+      ],
+      "output": {
+        "return": [
+          4,
+          1
+        ]
+      },
+      "shape": [
+        5,
+        4
+      ]
+    }
+  ],
+  "dynamic": []
+}

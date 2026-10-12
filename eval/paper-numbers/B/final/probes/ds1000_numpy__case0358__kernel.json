@@ -1,0 +1,296 @@
+{
+  "id": "ds1000_numpy__case0358__kernel",
+  "sites": {
+    "11:23:11:43:Call": "a.sum(axis=(1, 2))",
+    "11:12:11:44:Call": "np.argsort(a.sum(axis=(1, 2)))",
+    "12:13:12:27:Subscript": "b[index, :, :]"
+  },
+  "numpy": {
+    "A": [
+      {
+        "site": "11:23:11:43:Call",
+        "value": {
+          "shape": [
+            3
+          ],
+          "length": 3
+        }
+      },
+      {
+        "site": "11:12:11:44:Call",
+        "value": {
+          "shape": [
+            3
+          ],
+          "length": 3
+        }
+      },
+      {
+        "site": "12:13:12:27:Subscript",
+        "value": {
+          "shape": [
+            3,
+            3,
+            3
+          ],
+          "length": 27
+        }
+      }
+    ],
+    "B": [
+      {
+        "site": "11:23:11:43:Call",
+        "value": {
+          "shape": [
+            3
+          ],
+          "length": 3
+        }
+      },
+      {
+        "site": "11:12:11:44:Call",
+        "value": {
+          "shape": [
+            3
+          ],
+          "length": 3
+        }
+      },
+      {
+        "site": "12:13:12:27:Subscript",
+        "value": {
+          "shape": [
+            3,
+            3,
+            3
+          ],
+          "length": 27
+        }
+      }
+    ]
+  },
+  "selected": [
+    "11:12:11:44:Call",
+    "11:23:11:43:Call",
+    "12:13:12:27:Subscript"
+  ],
+  "source": "def kernel(a: Float[Array, '3 3 3'], b: Integer[Array, '3 3 3']):\n    bprobe_trace = []\n    bprobe_v0 = a.sum(axis=(1, 2))\n    bprobe_trace.append((1, bprobe_v0))\n    bprobe_v1 = np.argsort(bprobe_v0)\n    bprobe_trace.append((0, bprobe_v1))\n    index = bprobe_v1\n    bprobe_v2 = b[index, :, :]\n    bprobe_trace.append((2, bprobe_v2))\n    result = bprobe_v2\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [
+        {
+          "constant": 1
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 0
+        },
+        {
+          "kind": "f",
+          "public": 1
+        },
+        {
+          "kind": "f",
+          "public": 2
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1
+        ]
+      },
+      "shape": [
+        3
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 3
+        },
+        {
+          "kind": "i",
+          "public": 4
+        },
+        {
+          "kind": "i",
+          "public": 5
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1
+        ]
+      },
+      "shape": [
+        3
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 2
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 6
+        },
+        {
+          "kind": "i",
+          "public": 7
+        },
+        {
+          "kind": "i",
+          "public": 8
+        },
+        {
+          "kind": "i",
+          "public": 9
+        },
+        {
+          "kind": "i",
+          "public": 10
+        },
+        {
+          "kind": "i",
+          "public": 11
+        },
+        {
+          "kind": "i",
+          "public": 12
+        },
+        {
+          "kind": "i",
+          "public": 13
+        },
+        {
+          "kind": "i",
+          "public": 14
+        },
+        {
+          "kind": "i",
+          "public": 15
+        },
+        {
+          "kind": "i",
+          "public": 16
+        },
+        {
+          "kind": "i",
+          "public": 17
+        },
+        {
+          "kind": "i",
+          "public": 18
+        },
+        {
+          "kind": "i",
+          "public": 19
+        },
+        {
+          "kind": "i",
+          "public": 20
+        },
+        {
+          "kind": "i",
+          "public": 21
+        },
+        {
+          "kind": "i",
+          "public": 22
+        },
+        {
+          "kind": "i",
+          "public": 23
+        },
+        {
+          "kind": "i",
+          "public": 24
+        },
+        {
+          "kind": "i",
+          "public": 25
+        },
+        {
+          "kind": "i",
+          "public": 26
+        },
+        {
+          "kind": "i",
+          "public": 27
+        },
+        {
+          "kind": "i",
+          "public": 28
+        },
+        {
+          "kind": "i",
+          "public": 29
+        },
+        {
+          "kind": "i",
+          "public": 30
+        },
+        {
+          "kind": "i",
+          "public": 31
+        },
+        {
+          "kind": "i",
+          "public": 32
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1
+        ]
+      },
+      "shape": [
+        3,
+        3,
+        3
+      ]
+    }
+  ],
+  "dynamic": []
+}

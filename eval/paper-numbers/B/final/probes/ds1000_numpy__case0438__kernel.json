@@ -1,0 +1,135 @@
+{
+  "id": "ds1000_numpy__case0438__kernel",
+  "sites": {
+    "11:13:11:40:Call": "np.corrcoef(post, distance)",
+    "11:13:11:43:Subscript": "np.corrcoef(post, distance)[0]"
+  },
+  "numpy": {
+    "A": [
+      {
+        "site": "11:13:11:40:Call",
+        "value": {
+          "shape": [
+            2,
+            2
+          ],
+          "length": 4
+        }
+      },
+      {
+        "site": "11:13:11:43:Subscript",
+        "value": {
+          "shape": [
+            2
+          ],
+          "length": 2
+        }
+      }
+    ],
+    "B": [
+      {
+        "site": "11:13:11:40:Call",
+        "value": {
+          "shape": [
+            2,
+            2
+          ],
+          "length": 4
+        }
+      },
+      {
+        "site": "11:13:11:43:Subscript",
+        "value": {
+          "shape": [
+            2
+          ],
+          "length": 2
+        }
+      }
+    ]
+  },
+  "selected": [
+    "11:13:11:40:Call",
+    "11:13:11:43:Subscript"
+  ],
+  "source": "def kernel(post: Integer[Array, '4'], distance: Integer[Array, '4']):\n    bprobe_trace = []\n    bprobe_v0 = np.corrcoef(post, distance)\n    bprobe_trace.append((0, bprobe_v0))\n    bprobe_v1 = bprobe_v0[0]\n    bprobe_trace.append((1, bprobe_v1))\n    result = bprobe_v1[1]\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [
+        {
+          "constant": 0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "constant": 1.0
+        },
+        {
+          "kind": "f",
+          "public": 0
+        },
+        {
+          "kind": "f",
+          "public": 1
+        },
+        {
+          "constant": 1.0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1
+        ]
+      },
+      "shape": [
+        2,
+        2
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 1
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "constant": 1.0
+        },
+        {
+          "kind": "f",
+          "public": 2
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1
+        ]
+      },
+      "shape": [
+        2
+      ]
+    }
+  ],
+  "dynamic": []
+}

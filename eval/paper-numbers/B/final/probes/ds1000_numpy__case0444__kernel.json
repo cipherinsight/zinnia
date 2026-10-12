@@ -1,0 +1,1159 @@
+{
+  "id": "ds1000_numpy__case0444__kernel",
+  "sites": {
+    "11:25:11:33:Compare": "A > B[0]",
+    "11:35:11:43:Compare": "A < B[1]",
+    "11:10:11:44:Call": "np.logical_and(A > B[0], A < B[1])",
+    "11:62:11:70:Compare": "A > B[1]",
+    "11:72:11:80:Compare": "A < B[2]",
+    "11:47:11:81:Call": "np.logical_and(A > B[1], A < B[2])",
+    "11:10:11:81:BinOp": "np.logical_and(A > B[0], A < B[1]) | np.logical_and(A > B[1], A < B[2])",
+    "11:8:11:82:Subscript": "A[np.logical_and(A > B[0], A < B[1]) | np.logical_and(A > B[1], A < B[2])]"
+  },
+  "numpy": {
+    "A": [
+      {
+        "site": "11:25:11:33:Compare",
+        "value": {
+          "shape": [
+            20
+          ],
+          "length": 20
+        }
+      },
+      {
+        "site": "11:35:11:43:Compare",
+        "value": {
+          "shape": [
+            20
+          ],
+          "length": 20
+        }
+      },
+      {
+        "site": "11:10:11:44:Call",
+        "value": {
+          "shape": [
+            20
+          ],
+          "length": 20
+        }
+      },
+      {
+        "site": "11:62:11:70:Compare",
+        "value": {
+          "shape": [
+            20
+          ],
+          "length": 20
+        }
+      },
+      {
+        "site": "11:72:11:80:Compare",
+        "value": {
+          "shape": [
+            20
+          ],
+          "length": 20
+        }
+      },
+      {
+        "site": "11:47:11:81:Call",
+        "value": {
+          "shape": [
+            20
+          ],
+          "length": 20
+        }
+      },
+      {
+        "site": "11:10:11:81:BinOp",
+        "value": {
+          "shape": [
+            20
+          ],
+          "length": 20
+        }
+      },
+      {
+        "site": "11:8:11:82:Subscript",
+        "value": {
+          "shape": [
+            12
+          ],
+          "length": 12
+        }
+      }
+    ],
+    "B": [
+      {
+        "site": "11:25:11:33:Compare",
+        "value": {
+          "shape": [
+            20
+          ],
+          "length": 20
+        }
+      },
+      {
+        "site": "11:35:11:43:Compare",
+        "value": {
+          "shape": [
+            20
+          ],
+          "length": 20
+        }
+      },
+      {
+        "site": "11:10:11:44:Call",
+        "value": {
+          "shape": [
+            20
+          ],
+          "length": 20
+        }
+      },
+      {
+        "site": "11:62:11:70:Compare",
+        "value": {
+          "shape": [
+            20
+          ],
+          "length": 20
+        }
+      },
+      {
+        "site": "11:72:11:80:Compare",
+        "value": {
+          "shape": [
+            20
+          ],
+          "length": 20
+        }
+      },
+      {
+        "site": "11:47:11:81:Call",
+        "value": {
+          "shape": [
+            20
+          ],
+          "length": 20
+        }
+      },
+      {
+        "site": "11:10:11:81:BinOp",
+        "value": {
+          "shape": [
+            20
+          ],
+          "length": 20
+        }
+      },
+      {
+        "site": "11:8:11:82:Subscript",
+        "value": {
+          "shape": [
+            17
+          ],
+          "length": 17
+        }
+      }
+    ]
+  },
+  "selected": [
+    "11:10:11:44:Call",
+    "11:10:11:81:BinOp",
+    "11:25:11:33:Compare",
+    "11:35:11:43:Compare",
+    "11:47:11:81:Call",
+    "11:62:11:70:Compare",
+    "11:72:11:80:Compare",
+    "11:8:11:82:Subscript"
+  ],
+  "source": "def kernel(A: Integer[Array, '20'], B: Integer[Array, '3']):\n    bprobe_trace = []\n    bprobe_v0 = A > B[0]\n    bprobe_trace.append((2, bprobe_v0))\n    bprobe_v1 = A < B[1]\n    bprobe_trace.append((3, bprobe_v1))\n    bprobe_v2 = np.logical_and(bprobe_v0, bprobe_v1)\n    bprobe_trace.append((0, bprobe_v2))\n    bprobe_v3 = A > B[1]\n    bprobe_trace.append((5, bprobe_v3))\n    bprobe_v4 = A < B[2]\n    bprobe_trace.append((6, bprobe_v4))\n    bprobe_v5 = np.logical_and(bprobe_v3, bprobe_v4)\n    bprobe_trace.append((4, bprobe_v5))\n    bprobe_v6 = bprobe_v2 | bprobe_v5\n    bprobe_trace.append((1, bprobe_v6))\n    bprobe_v7 = A[bprobe_v6]\n    bprobe_trace.append((7, bprobe_v7))\n    C = bprobe_v7\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [
+        {
+          "constant": 2
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 0
+        },
+        {
+          "kind": "i",
+          "public": 1
+        },
+        {
+          "kind": "i",
+          "public": 2
+        },
+        {
+          "kind": "i",
+          "public": 3
+        },
+        {
+          "kind": "i",
+          "public": 4
+        },
+        {
+          "kind": "i",
+          "public": 5
+        },
+        {
+          "kind": "i",
+          "public": 6
+        },
+        {
+          "kind": "i",
+          "public": 7
+        },
+        {
+          "kind": "i",
+          "public": 8
+        },
+        {
+          "kind": "i",
+          "public": 9
+        },
+        {
+          "kind": "i",
+          "public": 10
+        },
+        {
+          "kind": "i",
+          "public": 11
+        },
+        {
+          "kind": "i",
+          "public": 12
+        },
+        {
+          "kind": "i",
+          "public": 13
+        },
+        {
+          "kind": "i",
+          "public": 14
+        },
+        {
+          "kind": "i",
+          "public": 15
+        },
+        {
+          "kind": "i",
+          "public": 16
+        },
+        {
+          "kind": "i",
+          "public": 17
+        },
+        {
+          "kind": "i",
+          "public": 18
+        },
+        {
+          "kind": "i",
+          "public": 19
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1
+        ]
+      },
+      "shape": [
+        20
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 3
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 20
+        },
+        {
+          "kind": "i",
+          "public": 21
+        },
+        {
+          "kind": "i",
+          "public": 22
+        },
+        {
+          "kind": "i",
+          "public": 23
+        },
+        {
+          "kind": "i",
+          "public": 24
+        },
+        {
+          "kind": "i",
+          "public": 25
+        },
+        {
+          "kind": "i",
+          "public": 26
+        },
+        {
+          "kind": "i",
+          "public": 27
+        },
+        {
+          "kind": "i",
+          "public": 28
+        },
+        {
+          "kind": "i",
+          "public": 29
+        },
+        {
+          "kind": "i",
+          "public": 30
+        },
+        {
+          "kind": "i",
+          "public": 31
+        },
+        {
+          "kind": "i",
+          "public": 32
+        },
+        {
+          "kind": "i",
+          "public": 33
+        },
+        {
+          "kind": "i",
+          "public": 34
+        },
+        {
+          "kind": "i",
+          "public": 35
+        },
+        {
+          "kind": "i",
+          "public": 36
+        },
+        {
+          "kind": "i",
+          "public": 37
+        },
+        {
+          "kind": "i",
+          "public": 38
+        },
+        {
+          "kind": "i",
+          "public": 39
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1
+        ]
+      },
+      "shape": [
+        20
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 40
+        },
+        {
+          "kind": "i",
+          "public": 41
+        },
+        {
+          "kind": "i",
+          "public": 42
+        },
+        {
+          "kind": "i",
+          "public": 43
+        },
+        {
+          "kind": "i",
+          "public": 44
+        },
+        {
+          "kind": "i",
+          "public": 45
+        },
+        {
+          "kind": "i",
+          "public": 46
+        },
+        {
+          "kind": "i",
+          "public": 47
+        },
+        {
+          "kind": "i",
+          "public": 48
+        },
+        {
+          "kind": "i",
+          "public": 49
+        },
+        {
+          "kind": "i",
+          "public": 50
+        },
+        {
+          "kind": "i",
+          "public": 51
+        },
+        {
+          "kind": "i",
+          "public": 52
+        },
+        {
+          "kind": "i",
+          "public": 53
+        },
+        {
+          "kind": "i",
+          "public": 54
+        },
+        {
+          "kind": "i",
+          "public": 55
+        },
+        {
+          "kind": "i",
+          "public": 56
+        },
+        {
+          "kind": "i",
+          "public": 57
+        },
+        {
+          "kind": "i",
+          "public": 58
+        },
+        {
+          "kind": "i",
+          "public": 59
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1
+        ]
+      },
+      "shape": [
+        20
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 5
+        }
+      ],
+      "output": {
+        "return": [
+          3,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 60
+        },
+        {
+          "kind": "i",
+          "public": 61
+        },
+        {
+          "kind": "i",
+          "public": 62
+        },
+        {
+          "kind": "i",
+          "public": 63
+        },
+        {
+          "kind": "i",
+          "public": 64
+        },
+        {
+          "kind": "i",
+          "public": 65
+        },
+        {
+          "kind": "i",
+          "public": 66
+        },
+        {
+          "kind": "i",
+          "public": 67
+        },
+        {
+          "kind": "i",
+          "public": 68
+        },
+        {
+          "kind": "i",
+          "public": 69
+        },
+        {
+          "kind": "i",
+          "public": 70
+        },
+        {
+          "kind": "i",
+          "public": 71
+        },
+        {
+          "kind": "i",
+          "public": 72
+        },
+        {
+          "kind": "i",
+          "public": 73
+        },
+        {
+          "kind": "i",
+          "public": 74
+        },
+        {
+          "kind": "i",
+          "public": 75
+        },
+        {
+          "kind": "i",
+          "public": 76
+        },
+        {
+          "kind": "i",
+          "public": 77
+        },
+        {
+          "kind": "i",
+          "public": 78
+        },
+        {
+          "kind": "i",
+          "public": 79
+        }
+      ],
+      "output": {
+        "return": [
+          3,
+          1
+        ]
+      },
+      "shape": [
+        20
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 6
+        }
+      ],
+      "output": {
+        "return": [
+          4,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 80
+        },
+        {
+          "kind": "i",
+          "public": 81
+        },
+        {
+          "kind": "i",
+          "public": 82
+        },
+        {
+          "kind": "i",
+          "public": 83
+        },
+        {
+          "kind": "i",
+          "public": 84
+        },
+        {
+          "kind": "i",
+          "public": 85
+        },
+        {
+          "kind": "i",
+          "public": 86
+        },
+        {
+          "kind": "i",
+          "public": 87
+        },
+        {
+          "kind": "i",
+          "public": 88
+        },
+        {
+          "kind": "i",
+          "public": 89
+        },
+        {
+          "kind": "i",
+          "public": 90
+        },
+        {
+          "kind": "i",
+          "public": 91
+        },
+        {
+          "kind": "i",
+          "public": 92
+        },
+        {
+          "kind": "i",
+          "public": 93
+        },
+        {
+          "kind": "i",
+          "public": 94
+        },
+        {
+          "kind": "i",
+          "public": 95
+        },
+        {
+          "kind": "i",
+          "public": 96
+        },
+        {
+          "kind": "i",
+          "public": 97
+        },
+        {
+          "kind": "i",
+          "public": 98
+        },
+        {
+          "kind": "i",
+          "public": 99
+        }
+      ],
+      "output": {
+        "return": [
+          4,
+          1
+        ]
+      },
+      "shape": [
+        20
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 4
+        }
+      ],
+      "output": {
+        "return": [
+          5,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 100
+        },
+        {
+          "kind": "i",
+          "public": 101
+        },
+        {
+          "kind": "i",
+          "public": 102
+        },
+        {
+          "kind": "i",
+          "public": 103
+        },
+        {
+          "kind": "i",
+          "public": 104
+        },
+        {
+          "kind": "i",
+          "public": 105
+        },
+        {
+          "kind": "i",
+          "public": 106
+        },
+        {
+          "kind": "i",
+          "public": 107
+        },
+        {
+          "kind": "i",
+          "public": 108
+        },
+        {
+          "kind": "i",
+          "public": 109
+        },
+        {
+          "kind": "i",
+          "public": 110
+        },
+        {
+          "kind": "i",
+          "public": 111
+        },
+        {
+          "kind": "i",
+          "public": 112
+        },
+        {
+          "kind": "i",
+          "public": 113
+        },
+        {
+          "kind": "i",
+          "public": 114
+        },
+        {
+          "kind": "i",
+          "public": 115
+        },
+        {
+          "kind": "i",
+          "public": 116
+        },
+        {
+          "kind": "i",
+          "public": 117
+        },
+        {
+          "kind": "i",
+          "public": 118
+        },
+        {
+          "kind": "i",
+          "public": 119
+        }
+      ],
+      "output": {
+        "return": [
+          5,
+          1
+        ]
+      },
+      "shape": [
+        20
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 1
+        }
+      ],
+      "output": {
+        "return": [
+          6,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 120
+        },
+        {
+          "kind": "i",
+          "public": 121
+        },
+        {
+          "kind": "i",
+          "public": 122
+        },
+        {
+          "kind": "i",
+          "public": 123
+        },
+        {
+          "kind": "i",
+          "public": 124
+        },
+        {
+          "kind": "i",
+          "public": 125
+        },
+        {
+          "kind": "i",
+          "public": 126
+        },
+        {
+          "kind": "i",
+          "public": 127
+        },
+        {
+          "kind": "i",
+          "public": 128
+        },
+        {
+          "kind": "i",
+          "public": 129
+        },
+        {
+          "kind": "i",
+          "public": 130
+        },
+        {
+          "kind": "i",
+          "public": 131
+        },
+        {
+          "kind": "i",
+          "public": 132
+        },
+        {
+          "kind": "i",
+          "public": 133
+        },
+        {
+          "kind": "i",
+          "public": 134
+        },
+        {
+          "kind": "i",
+          "public": 135
+        },
+        {
+          "kind": "i",
+          "public": 136
+        },
+        {
+          "kind": "i",
+          "public": 137
+        },
+        {
+          "kind": "i",
+          "public": 138
+        },
+        {
+          "kind": "i",
+          "public": 139
+        }
+      ],
+      "output": {
+        "return": [
+          6,
+          1
+        ]
+      },
+      "shape": [
+        20
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 7
+        }
+      ],
+      "output": {
+        "return": [
+          7,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "dynamic": {
+        "cells": [
+          {
+            "kind": "i",
+            "public": 141
+          },
+          {
+            "kind": "i",
+            "public": 142
+          },
+          {
+            "kind": "i",
+            "public": 143
+          },
+          {
+            "kind": "i",
+            "public": 144
+          },
+          {
+            "kind": "i",
+            "public": 145
+          },
+          {
+            "kind": "i",
+            "public": 146
+          },
+          {
+            "kind": "i",
+            "public": 147
+          },
+          {
+            "kind": "i",
+            "public": 148
+          },
+          {
+            "kind": "i",
+            "public": 149
+          },
+          {
+            "kind": "i",
+            "public": 150
+          },
+          {
+            "kind": "i",
+            "public": 151
+          },
+          {
+            "kind": "i",
+            "public": 152
+          },
+          {
+            "kind": "i",
+            "public": 153
+          },
+          {
+            "kind": "i",
+            "public": 154
+          },
+          {
+            "kind": "i",
+            "public": 155
+          },
+          {
+            "kind": "i",
+            "public": 156
+          },
+          {
+            "kind": "i",
+            "public": 157
+          },
+          {
+            "kind": "i",
+            "public": 158
+          },
+          {
+            "kind": "i",
+            "public": 159
+          },
+          {
+            "kind": "i",
+            "public": 160
+          }
+        ],
+        "dims": [
+          {
+            "kind": "i",
+            "public": 140
+          }
+        ],
+        "length": {
+          "kind": "i",
+          "public": 140
+        },
+        "offset": 0,
+        "rank": {
+          "constant": 1
+        },
+        "strides": [
+          1
+        ]
+      },
+      "output": {
+        "return": [
+          7,
+          1
+        ]
+      }
+    }
+  ],
+  "dynamic": [
+    {
+      "dynamic": {
+        "cells": [
+          {
+            "kind": "i",
+            "public": 141
+          },
+          {
+            "kind": "i",
+            "public": 142
+          },
+          {
+            "kind": "i",
+            "public": 143
+          },
+          {
+            "kind": "i",
+            "public": 144
+          },
+          {
+            "kind": "i",
+            "public": 145
+          },
+          {
+            "kind": "i",
+            "public": 146
+          },
+          {
+            "kind": "i",
+            "public": 147
+          },
+          {
+            "kind": "i",
+            "public": 148
+          },
+          {
+            "kind": "i",
+            "public": 149
+          },
+          {
+            "kind": "i",
+            "public": 150
+          },
+          {
+            "kind": "i",
+            "public": 151
+          },
+          {
+            "kind": "i",
+            "public": 152
+          },
+          {
+            "kind": "i",
+            "public": 153
+          },
+          {
+            "kind": "i",
+            "public": 154
+          },
+          {
+            "kind": "i",
+            "public": 155
+          },
+          {
+            "kind": "i",
+            "public": 156
+          },
+          {
+            "kind": "i",
+            "public": 157
+          },
+          {
+            "kind": "i",
+            "public": 158
+          },
+          {
+            "kind": "i",
+            "public": 159
+          },
+          {
+            "kind": "i",
+            "public": 160
+          }
+        ],
+        "dims": [
+          {
+            "kind": "i",
+            "public": 140
+          }
+        ],
+        "length": {
+          "kind": "i",
+          "public": 140
+        },
+        "offset": 0,
+        "rank": {
+          "constant": 1
+        },
+        "strides": [
+          1
+        ]
+      },
+      "output": {
+        "return": [
+          7,
+          1
+        ]
+      }
+    }
+  ]
+}

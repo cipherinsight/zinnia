@@ -1,0 +1,906 @@
+{
+  "id": "ds1000_numpy__case0356__kernel",
+  "sites": {
+    "11:19:11:40:Call": "np.argsort(a, axis=0)",
+    "12:21:12:40:Call": "np.indices(a.shape)",
+    "13:24:13:41:Subscript": "static_indices[1]",
+    "13:43:13:60:Subscript": "static_indices[2]",
+    "13:8:13:61:Subscript": "b[sort_indices, static_indices[1], static_indices[2]]"
+  },
+  "numpy": {
+    "A": [
+      {
+        "site": "11:19:11:40:Call",
+        "value": {
+          "shape": [
+            3,
+            3,
+            3
+          ],
+          "length": 27
+        }
+      },
+      {
+        "site": "12:21:12:40:Call",
+        "value": {
+          "shape": [
+            3,
+            3,
+            3,
+            3
+          ],
+          "length": 81
+        }
+      },
+      {
+        "site": "13:24:13:41:Subscript",
+        "value": {
+          "shape": [
+            3,
+            3,
+            3
+          ],
+          "length": 27
+        }
+      },
+      {
+        "site": "13:43:13:60:Subscript",
+        "value": {
+          "shape": [
+            3,
+            3,
+            3
+          ],
+          "length": 27
+        }
+      },
+      {
+        "site": "13:8:13:61:Subscript",
+        "value": {
+          "shape": [
+            3,
+            3,
+            3
+          ],
+          "length": 27
+        }
+      }
+    ],
+    "B": [
+      {
+        "site": "11:19:11:40:Call",
+        "value": {
+          "shape": [
+            3,
+            3,
+            3
+          ],
+          "length": 27
+        }
+      },
+      {
+        "site": "12:21:12:40:Call",
+        "value": {
+          "shape": [
+            3,
+            3,
+            3,
+            3
+          ],
+          "length": 81
+        }
+      },
+      {
+        "site": "13:24:13:41:Subscript",
+        "value": {
+          "shape": [
+            3,
+            3,
+            3
+          ],
+          "length": 27
+        }
+      },
+      {
+        "site": "13:43:13:60:Subscript",
+        "value": {
+          "shape": [
+            3,
+            3,
+            3
+          ],
+          "length": 27
+        }
+      },
+      {
+        "site": "13:8:13:61:Subscript",
+        "value": {
+          "shape": [
+            3,
+            3,
+            3
+          ],
+          "length": 27
+        }
+      }
+    ]
+  },
+  "selected": [
+    "11:19:11:40:Call",
+    "12:21:12:40:Call",
+    "13:24:13:41:Subscript",
+    "13:43:13:60:Subscript",
+    "13:8:13:61:Subscript"
+  ],
+  "source": "def kernel(a: Float[Array, '3 3 3'], b: Integer[Array, '3 3 3']):\n    bprobe_trace = []\n    bprobe_v0 = np.argsort(a, axis=0)\n    bprobe_trace.append((0, bprobe_v0))\n    sort_indices = bprobe_v0\n    bprobe_v1 = np.indices(a.shape)\n    bprobe_trace.append((1, bprobe_v1))\n    static_indices = bprobe_v1\n    bprobe_v2 = static_indices[1]\n    bprobe_trace.append((2, bprobe_v2))\n    bprobe_v3 = static_indices[2]\n    bprobe_trace.append((3, bprobe_v3))\n    bprobe_v4 = b[sort_indices, bprobe_v2, bprobe_v3]\n    bprobe_trace.append((4, bprobe_v4))\n    c = bprobe_v4\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [
+        {
+          "constant": 0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 0
+        },
+        {
+          "kind": "i",
+          "public": 1
+        },
+        {
+          "kind": "i",
+          "public": 2
+        },
+        {
+          "kind": "i",
+          "public": 3
+        },
+        {
+          "kind": "i",
+          "public": 4
+        },
+        {
+          "kind": "i",
+          "public": 5
+        },
+        {
+          "kind": "i",
+          "public": 6
+        },
+        {
+          "kind": "i",
+          "public": 7
+        },
+        {
+          "kind": "i",
+          "public": 8
+        },
+        {
+          "kind": "i",
+          "public": 9
+        },
+        {
+          "kind": "i",
+          "public": 10
+        },
+        {
+          "kind": "i",
+          "public": 11
+        },
+        {
+          "kind": "i",
+          "public": 12
+        },
+        {
+          "kind": "i",
+          "public": 13
+        },
+        {
+          "kind": "i",
+          "public": 14
+        },
+        {
+          "kind": "i",
+          "public": 15
+        },
+        {
+          "kind": "i",
+          "public": 16
+        },
+        {
+          "kind": "i",
+          "public": 17
+        },
+        {
+          "kind": "i",
+          "public": 18
+        },
+        {
+          "kind": "i",
+          "public": 19
+        },
+        {
+          "kind": "i",
+          "public": 20
+        },
+        {
+          "kind": "i",
+          "public": 21
+        },
+        {
+          "kind": "i",
+          "public": 22
+        },
+        {
+          "kind": "i",
+          "public": 23
+        },
+        {
+          "kind": "i",
+          "public": 24
+        },
+        {
+          "kind": "i",
+          "public": 25
+        },
+        {
+          "kind": "i",
+          "public": 26
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1
+        ]
+      },
+      "shape": [
+        3,
+        3,
+        3
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 1
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "constant": 0
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1
+        ]
+      },
+      "shape": [
+        3,
+        3,
+        3,
+        3
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 2
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "constant": 0
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 2
+        }
+      ],
+      "output": {
+        "return": [
+          2,
+          1
+        ]
+      },
+      "shape": [
+        3,
+        3,
+        3
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 3
+        }
+      ],
+      "output": {
+        "return": [
+          3,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        },
+        {
+          "constant": 0
+        },
+        {
+          "constant": 1
+        },
+        {
+          "constant": 2
+        }
+      ],
+      "output": {
+        "return": [
+          3,
+          1
+        ]
+      },
+      "shape": [
+        3,
+        3,
+        3
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 4
+        }
+      ],
+      "output": {
+        "return": [
+          4,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 27
+        },
+        {
+          "kind": "i",
+          "public": 28
+        },
+        {
+          "kind": "i",
+          "public": 29
+        },
+        {
+          "kind": "i",
+          "public": 30
+        },
+        {
+          "kind": "i",
+          "public": 31
+        },
+        {
+          "kind": "i",
+          "public": 32
+        },
+        {
+          "kind": "i",
+          "public": 33
+        },
+        {
+          "kind": "i",
+          "public": 34
+        },
+        {
+          "kind": "i",
+          "public": 35
+        },
+        {
+          "kind": "i",
+          "public": 36
+        },
+        {
+          "kind": "i",
+          "public": 37
+        },
+        {
+          "kind": "i",
+          "public": 38
+        },
+        {
+          "kind": "i",
+          "public": 39
+        },
+        {
+          "kind": "i",
+          "public": 40
+        },
+        {
+          "kind": "i",
+          "public": 41
+        },
+        {
+          "kind": "i",
+          "public": 42
+        },
+        {
+          "kind": "i",
+          "public": 43
+        },
+        {
+          "kind": "i",
+          "public": 44
+        },
+        {
+          "kind": "i",
+          "public": 45
+        },
+        {
+          "kind": "i",
+          "public": 46
+        },
+        {
+          "kind": "i",
+          "public": 47
+        },
+        {
+          "kind": "i",
+          "public": 48
+        },
+        {
+          "kind": "i",
+          "public": 49
+        },
+        {
+          "kind": "i",
+          "public": 50
+        },
+        {
+          "kind": "i",
+          "public": 51
+        },
+        {
+          "kind": "i",
+          "public": 52
+        },
+        {
+          "kind": "i",
+          "public": 53
+        }
+      ],
+      "output": {
+        "return": [
+          4,
+          1
+        ]
+      },
+      "shape": [
+        3,
+        3,
+        3
+      ]
+    }
+  ],
+  "dynamic": []
+}

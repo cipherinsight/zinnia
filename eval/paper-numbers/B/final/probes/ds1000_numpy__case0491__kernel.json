@@ -1,0 +1,165 @@
+{
+  "id": "ds1000_numpy__case0491__kernel",
+  "sites": {
+    "11:15:11:32:Call": "np.isclose(s1, s2)",
+    "11:14:11:32:UnaryOp": "~np.isclose(s1, s2)"
+  },
+  "numpy": {
+    "A": [
+      {
+        "site": "11:15:11:32:Call",
+        "value": {
+          "shape": [
+            6,
+            1
+          ],
+          "length": 6
+        }
+      },
+      {
+        "site": "11:14:11:32:UnaryOp",
+        "value": {
+          "shape": [
+            6,
+            1
+          ],
+          "length": 6
+        }
+      }
+    ],
+    "B": [
+      {
+        "site": "11:15:11:32:Call",
+        "value": {
+          "shape": [
+            6,
+            1
+          ],
+          "length": 6
+        }
+      },
+      {
+        "site": "11:14:11:32:UnaryOp",
+        "value": {
+          "shape": [
+            6,
+            1
+          ],
+          "length": 6
+        }
+      }
+    ]
+  },
+  "selected": [
+    "11:14:11:32:UnaryOp",
+    "11:15:11:32:Call"
+  ],
+  "source": "def kernel(s1: Float[Array, '6 1'], s2: Float[Array, '6 1']):\n    bprobe_trace = []\n    bprobe_v0 = np.isclose(s1, s2)\n    bprobe_trace.append((1, bprobe_v0))\n    bprobe_v1 = ~bprobe_v0\n    bprobe_trace.append((0, bprobe_v1))\n    result = bprobe_v1.sum()\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [
+        {
+          "constant": 1
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 0
+        },
+        {
+          "kind": "i",
+          "public": 1
+        },
+        {
+          "kind": "i",
+          "public": 2
+        },
+        {
+          "kind": "i",
+          "public": 3
+        },
+        {
+          "kind": "i",
+          "public": 4
+        },
+        {
+          "kind": "i",
+          "public": 5
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1
+        ]
+      },
+      "shape": [
+        6,
+        1
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "i",
+          "public": 6
+        },
+        {
+          "kind": "i",
+          "public": 7
+        },
+        {
+          "kind": "i",
+          "public": 8
+        },
+        {
+          "kind": "i",
+          "public": 9
+        },
+        {
+          "kind": "i",
+          "public": 10
+        },
+        {
+          "kind": "i",
+          "public": 11
+        }
+      ],
+      "output": {
+        "return": [
+          1,
+          1
+        ]
+      },
+      "shape": [
+        6,
+        1
+      ]
+    }
+  ],
+  "dynamic": []
+}

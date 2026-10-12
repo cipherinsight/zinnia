@@ -1,0 +1,4 @@
+
+thread 'zinnia-compile' (924239) panicked at src/ir_gen/detached_copies.rs:332:13:
+Reading `bprobe_v1` is not supported here: it is linked by NumPy view semantics to an array that was modified afterwards, but Zinnia had to copy it (the view's position depends on a private index, it is a reversed or runtime-bounded slice, a reshape of a non-contiguous array, or the result of a function NumPy returns a view from, such as `np.flip` or `np.rot90`), so it would not show the modification. Index the original array directly instead of keeping the view.
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

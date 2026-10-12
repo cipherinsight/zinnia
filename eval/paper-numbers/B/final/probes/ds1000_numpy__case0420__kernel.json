@@ -1,0 +1,87 @@
+{
+  "id": "ds1000_numpy__case0420__kernel",
+  "sites": {
+    "11:38:11:81:Call": "np.where(x > x_max, x_max, 3 * x ** 2 - 2 * x ** 3)",
+    "11:11:11:82:Call": "np.where(x < x_min, x_min, np.where(x > x_max, x_max, 3 * x ** 2 - 2 * x ** 3))"
+  },
+  "numpy": {
+    "A": [
+      {
+        "site": "11:38:11:81:Call",
+        "value": {
+          "shape": [],
+          "length": 1
+        }
+      },
+      {
+        "site": "11:11:11:82:Call",
+        "value": {
+          "shape": [],
+          "length": 1
+        }
+      }
+    ],
+    "B": [
+      {
+        "site": "11:38:11:81:Call",
+        "value": {
+          "shape": [],
+          "length": 1
+        }
+      },
+      {
+        "site": "11:11:11:82:Call",
+        "value": {
+          "shape": [],
+          "length": 1
+        }
+      }
+    ]
+  },
+  "selected": [
+    "11:11:11:82:Call",
+    "11:38:11:81:Call"
+  ],
+  "source": "def kernel(x: Float, x_min: Integer, x_max: Integer):\n    bprobe_trace = []\n    bprobe_v0 = np.where(x > x_max, x_max, 3 * x ** 2 - 2 * x ** 3)\n    bprobe_trace.append((1, bprobe_v0))\n    bprobe_v1 = np.where(x < x_min, x_min, bprobe_v0)\n    bprobe_trace.append((0, bprobe_v1))\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [
+        {
+          "constant": 1
+        },
+        {
+          "kind": "f",
+          "public": 0
+        }
+      ],
+      "output": {
+        "return": [
+          0
+        ]
+      },
+      "shape": [
+        2
+      ]
+    },
+    {
+      "cells": [
+        {
+          "constant": 0
+        },
+        {
+          "kind": "f",
+          "public": 1
+        }
+      ],
+      "output": {
+        "return": [
+          1
+        ]
+      },
+      "shape": [
+        2
+      ]
+    }
+  ],
+  "dynamic": []
+}

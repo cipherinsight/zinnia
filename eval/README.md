@@ -17,7 +17,7 @@ Final compiler: branch `sizefix-cairo`, commit 2569c9ed.
 | `all-work/abl214/` | Size-ablation runner (`run.py`, `child.py`, `analyze.py`) |
 | `all-work/rq1-ds-accepted.txt` | DS-1000 programs accepted in RQ1 |
 | `post-freeze/` | Acceptance results used for the RQ1 taxonomy; remote acceptance and compile-timing scripts used by `fz.sh` |
-| `paper-numbers/` | Analyses behind text numbers: A (accepted programs), B (cost of bounds, `arrays.csv`), C (SMT statistics), D (running example), NumPy coverage probe |
+| `paper-numbers/` | Analyses behind text numbers: A (accepted programs), B (cost of bounds, `arrays.csv`), C (SMT statistics), D (running example), NumPy coverage probe. Reruns on 2569c9ed (remote, 2026-10-12): `A/final/`, `B/final/`, `np-probe/`, `fixed-point-error/`, `loc/` (lines of code) |
 | `study-analysis/` | User study (RQ3) task data and analysis |
 | `tools/` | Remote launch, pooling, memory cap (`memrun.sh`) and assembly scripts |
 

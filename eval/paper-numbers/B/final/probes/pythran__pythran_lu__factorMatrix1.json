@@ -1,0 +1,22 @@
+{
+  "id": "pythran__pythran_lu__factorMatrix1",
+  "sites": {},
+  "numpy": {
+    "A": [],
+    "B": []
+  },
+  "selected": [],
+  "source": "def factorMatrix1(M: Float[Array, '5 5']):\n    bprobe_trace = []\n    n = M.shape[0]\n    m = M.shape[1]\n    for line in range(0, n - 1):\n        cmax = line\n        vmax = abs(M[line, line])\n        for i in range(line + 1, n):\n            if abs(M[i, line]) > vmax:\n                vmax = abs(M[i, line])\n                cmax = i\n        if cmax != line:\n            for j in range(line, m):\n                t = M[line, j]\n                M[line, j] = M[cmax, j]\n                M[cmax, j] = t\n        pivot = M[line, line]\n        for j in range(line + 1, n):\n            v = M[j, line] / pivot\n            for k in range(line, m):\n                M[j, k] -= v * M[line, k]\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [],
+      "output": {
+        "return": []
+      },
+      "shape": [
+        0
+      ]
+    }
+  ],
+  "dynamic": []
+}

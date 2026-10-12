@@ -1,0 +1,184 @@
+{
+  "id": "ds1000_numpy__case0399__kernel",
+  "sites": {
+    "11:8:11:24:Call": "np.empty(len(A))"
+  },
+  "numpy": {
+    "A": [
+      {
+        "site": "11:8:11:24:Call",
+        "value": {
+          "shape": [
+            30
+          ],
+          "length": 30
+        }
+      }
+    ],
+    "B": [
+      {
+        "site": "11:8:11:24:Call",
+        "value": {
+          "shape": [
+            30
+          ],
+          "length": 30
+        }
+      }
+    ]
+  },
+  "selected": [
+    "11:8:11:24:Call"
+  ],
+  "source": "def kernel(A: Float[Array, '30'], a: Integer, b: Integer, c: Integer):\n    bprobe_trace = []\n    bprobe_v0 = np.empty(len(A))\n    bprobe_trace.append((0, bprobe_v0))\n    B = bprobe_v0\n    for k in range(0, len(B)):\n        if k == 0:\n            B[k] = a * A[k]\n        elif k == 1:\n            B[k] = a * A[k] + b * B[k - 1]\n        else:\n            B[k] = a * A[k] + b * B[k - 1] + c * B[k - 2]\n    return bprobe_trace",
+  "layout": [
+    {
+      "cells": [
+        {
+          "constant": 0
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          0
+        ]
+      },
+      "shape": []
+    },
+    {
+      "cells": [
+        {
+          "kind": "f",
+          "public": 0
+        },
+        {
+          "kind": "f",
+          "public": 1
+        },
+        {
+          "kind": "f",
+          "public": 2
+        },
+        {
+          "kind": "f",
+          "public": 3
+        },
+        {
+          "kind": "f",
+          "public": 4
+        },
+        {
+          "kind": "f",
+          "public": 5
+        },
+        {
+          "kind": "f",
+          "public": 6
+        },
+        {
+          "kind": "f",
+          "public": 7
+        },
+        {
+          "kind": "f",
+          "public": 8
+        },
+        {
+          "kind": "f",
+          "public": 9
+        },
+        {
+          "kind": "f",
+          "public": 10
+        },
+        {
+          "kind": "f",
+          "public": 11
+        },
+        {
+          "kind": "f",
+          "public": 12
+        },
+        {
+          "kind": "f",
+          "public": 13
+        },
+        {
+          "kind": "f",
+          "public": 14
+        },
+        {
+          "kind": "f",
+          "public": 15
+        },
+        {
+          "kind": "f",
+          "public": 16
+        },
+        {
+          "kind": "f",
+          "public": 17
+        },
+        {
+          "kind": "f",
+          "public": 18
+        },
+        {
+          "kind": "f",
+          "public": 19
+        },
+        {
+          "kind": "f",
+          "public": 20
+        },
+        {
+          "kind": "f",
+          "public": 21
+        },
+        {
+          "kind": "f",
+          "public": 22
+        },
+        {
+          "kind": "f",
+          "public": 23
+        },
+        {
+          "kind": "f",
+          "public": 24
+        },
+        {
+          "kind": "f",
+          "public": 25
+        },
+        {
+          "kind": "f",
+          "public": 26
+        },
+        {
+          "kind": "f",
+          "public": 27
+        },
+        {
+          "kind": "f",
+          "public": 28
+        },
+        {
+          "kind": "f",
+          "public": 29
+        }
+      ],
+      "output": {
+        "return": [
+          0,
+          1
+        ]
+      },
+      "shape": [
+        30
+      ]
+    }
+  ],
+  "dynamic": []
+}

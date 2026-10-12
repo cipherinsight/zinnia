@@ -2,7 +2,44 @@
 
 Generated from compiler evidence by `report.py`; the unit is a **(corpus, program, entry function)**, not a distinct source file. The supplied acceptance account selects only `outcome == "accepted_correct"`. Its 214 entries comprise 132 DS-1000, 32 NPBench, and 50 Pythran entries. All 214 compile successfully with final compiler `3ebe0558f25592a0c1f8b6cf9bf7ad09f3ddb1d1`.
 
-## Results
+## Final compiler (2569c9ed, remote), 2026-10-12
+
+The whole pipeline was rerun on the final compiler, commit `2569c9edb8a2bf0b88e9351ca5752f164d2fad24`
+(branch `sizefix-cairo`, checkout `/home/zhantong/zinnia-eval-run/zinnia-sizefix`, clean, extension
+SHA-256 `637a5c9a…1324` = the epoch-fz build), on the remote host shuaicpu6 (container zhantong-dev).
+Scripts, logs and outputs are in `final/`; the sections below this one are the older 3ebe0558 run
+and are kept as they were. The program set is the `accepted_correct` account of the final compiler
+(`final/accept-merged.json`, epoch fz), which has the same 214 entries as the older account.
+
+Command (remote, `$RUN=/home/zhantong/zinnia-eval-run`, logs in `$RUN/logs/pnA.log`):
+
+```sh
+source $RUN/env.sh; cd $RUN/paper-numbers-final/A && ./reproduce.sh
+```
+
+`final/reproduce.sh` is the old `reproduce.sh` with three changes: paths point at the remote
+checkout, 16 compilation workers per stage, and `ulimit -v` 32 GiB per process instead of
+`systemd-run` (the container has no systemd). The instrumentation patch applied unchanged
+(`final/instrumentation.diff`). Run 2026-10-12 08:04–08:13 UTC.
+
+| Definition | DS-1000 | NPBench | Pythran | Total (old 3ebe0558) |
+|---|---:|---:|---:|---:|
+| Runtime-shaped array (Q1, primary) | 33 | 0 | 3 | **36** (36) |
+| Runtime shape OR runtime-position insert | 36 | 0 | 3 | 39 (39) |
+| Input-dependent selection/placement (Q2, primary) | 54 | 3 | 10 | **67** (67) |
+| Q2 lowering input only | 46 | 3 | 9 | 58 (58) |
+| Q2 explicit runtime addresses only | 23 | 1 | 5 | 29 (29) |
+| Q2 without Sort-only programs | 43 | 1 | 8 | 52 (52) |
+
+The membership of every definition, and the kinds of evidence per program, are identical to the
+3ebe0558 run (compared program by program against `classification.json`). The final IR differs
+from 3ebe0558 for 15 programs (later optimizations), without changing any classification. For all
+214 programs the stock and instrumented compilers produce identical final IR, output layouts and
+pre-lowering dumps (asserted by `summarize.py`). Outputs: `final/classification.json`,
+`final/REPORT.md` (full per-program tables), `final/summary.txt`, `final/provenance.json`.
+The per-program records (`records/`, ~1 GB) stay on the remote under `$RUN/paper-numbers-final/A/records`.
+
+## Results (older run, compiler 3ebe0558, local)
 
 | Definition | DS-1000 | NPBench | Pythran | Total |
 |---|---:|---:|---:|---:|
