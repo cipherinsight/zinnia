@@ -2,9 +2,12 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
 use crate::ast::*;
-use crate::types::{NumberType, Value, ZinniaType};
+use crate::helpers::static_array::base::{
+    build_static_array_from_flat, build_static_array_from_flat_complex,
+};
+use crate::types::{CompositeData, NumberType, Value, ZinniaType};
 
-use super::{ChipCallFrame, IRGenerator};
+use super::IRGenerator;
 
 impl IRGenerator {
     pub(crate) fn visit_chip_call(
@@ -19,148 +22,6 @@ impl IRGenerator {
             None => return Value::None,
         };
 
-        // P4 round 2 — recursive-chip bound discharge.
-        //
-        // Find the most recent prior frame for the same chip name. If
-        // present, this call is recursive into `name` and we have its
-        // parent's argument bindings available for the heuristic; if
-        // absent, this is a non-recursive entry — keep today's
-        // behaviour (full `recursion_limit` budget for the new frame).
-        //
-        // The heuristic picks the integer arg with the most-negative
-        // delta (`args[i].int_val() - parent.int_args[i]`). Tie-break
-        // by lowest index for determinism. If no integer arg strictly
-        // decreases, no measure is selectable and we fall through to
-        // the global `recursion_limit` budget — telemetry's
-        // `recursion_no_measure_found` counter surfaces those calls.
-        //
-        // SMT-resolved bounds only ever **tighten** the new frame's
-        // forward-looking depth allowance (`remaining_bound`); they
-        // never loosen it past `recursion_limit`. The check fires when
-        // a recursive call is attempted but the parent's
-        // `remaining_bound` is already zero. This preserves round-1's
-        // safety net against exponentially-branching recursions
-        // (e.g. naive fibonacci) regardless of what the resolver
-        // returns.
-        let parent_frame_idx = self
-            .chip_call_stack
-            .iter()
-            .rposition(|f| f.chip_name == name);
-
-        let new_frame_bound: u32 = if let Some(idx) = parent_frame_idx {
-            let parent_remaining = self.chip_call_stack[idx].remaining_bound;
-            // The parent must permit at least one more descent. Without
-            // this check a misbehaving heuristic could let recursion
-            // descend past today's safety net.
-            if parent_remaining == 0 {
-                let cited = self.config.recursion_limit;
-                panic!(
-                    "RecursionLimitExceededError: recursion limit ({}) exceeded while inlining @zk_chip `{}`. \
-                    Each recursive call into a chip is unrolled at compile time; if your chip recurses with \
-                    multiple call sites per level (e.g. fibo(n-1) + fibo(n-2)), the unrolled depth grows \
-                    exponentially. Either reduce the recursion in the chip body or raise \
-                    ZinniaConfig.recursion_limit (current default is intentionally small).",
-                    cited,
-                    name,
-                );
-            }
-
-            // Pick the recursion measure: the integer arg with the
-            // most-negative delta vs the parent's binding. Args at the
-            // recursive call site are `args[i]`; parent's bindings are
-            // `chip_call_stack[idx].int_args[i]`. Only positions where
-            // both sides have a compile-time `int_val()` are considered
-            // for the delta comparison; the picked measure's value is
-            // the one we hand to `resolve_max`.
-            let parent_int_args = self.chip_call_stack[idx].int_args.clone();
-            let mut best: Option<(usize, i64, Value)> = None; // (i, delta, child_val)
-            for (i, child_val) in args.iter().enumerate() {
-                let child_int = match child_val.int_val() {
-                    Some(v) => v,
-                    None => continue,
-                };
-                let parent_int = match parent_int_args.get(i).and_then(|p| *p) {
-                    Some(v) => v,
-                    None => continue,
-                };
-                let delta = child_int - parent_int;
-                if delta >= 0 {
-                    continue;
-                }
-                let take = match &best {
-                    None => true,
-                    Some((_bi, bd, _bv)) => delta < *bd,
-                };
-                if take {
-                    best = Some((i, delta, child_val.clone()));
-                }
-            }
-
-            // Resolve the measure to an upper bound, with fast-path
-            // discipline (round-1.5 lesson): `int_val()` first
-            // (zero-cost); only consult the layered resolver when the
-            // value is non-trivially symbolic.
-            let measure_bound: Option<u32> = match best {
-                Some((_i, _d, ref measure)) => {
-                    if let Some(n) = measure.int_val() {
-                        if let Some(t) = self.builder.resolver_telemetry() {
-                            t.recursion_bound_static_val.fetch_add(1, Ordering::Relaxed);
-                        }
-                        Some(n.max(0) as u32)
-                    } else {
-                        let (resolver, stmts) = self.builder.split_resolver_and_stmts();
-                        let resolved = resolver.resolve_max_with_stmts(measure, stmts);
-                        if let Some(n) = resolved {
-                            if let Some(t) = self.builder.resolver_telemetry() {
-                                t.recursion_bound_resolver_proved
-                                    .fetch_add(1, Ordering::Relaxed);
-                            }
-                            Some(n.max(0) as u32)
-                        } else {
-                            None
-                        }
-                    }
-                }
-                None => {
-                    if let Some(t) = self.builder.resolver_telemetry() {
-                        t.recursion_no_measure_found.fetch_add(1, Ordering::Relaxed);
-                    }
-                    None
-                }
-            };
-
-            // Forward-looking budget for the new frame: at most
-            // `parent_remaining - 1` (we just consumed one level of the
-            // parent's allowance) AND at most `measure_bound` (an upper
-            // bound on the measure ⇒ at most that many further
-            // descents). Either side may be looser; we pick the tighter
-            // one. SMT-resolved bound only ever tightens — never
-            // loosens past `recursion_limit`.
-            let from_parent = parent_remaining.saturating_sub(1);
-            match measure_bound {
-                Some(b) => from_parent.min(b).min(self.config.recursion_limit),
-                None => from_parent.min(self.config.recursion_limit),
-            }
-        } else {
-            // Non-recursive entry — fresh budget at today's safety net.
-            self.config.recursion_limit
-        };
-
-        // Check the global recursion-depth safety net. This is today's
-        // hard cap; the round-2 wiring layered above only ever
-        // tightens, never loosens. So this check is the floor.
-        if self.recursion_depth >= self.config.recursion_limit {
-            panic!(
-                "RecursionLimitExceededError: recursion limit ({}) exceeded while inlining @zk_chip `{}`. \
-                Each recursive call into a chip is unrolled at compile time; if your chip recurses with \
-                multiple call sites per level (e.g. fibo(n-1) + fibo(n-2)), the unrolled depth grows \
-                exponentially. Either reduce the recursion in the chip body or raise \
-                ZinniaConfig.recursion_limit (current default is intentionally small).",
-                self.config.recursion_limit,
-                name,
-            );
-        }
-
         // Parse chip AST
         let chip_ast: ASTNode = match serde_json::from_value(chip.chip_ast.clone()) {
             Ok(node) => node,
@@ -171,22 +32,43 @@ impl IRGenerator {
             _ => return Value::None,
         };
 
-        // Enter chip scope. The call executes only under the caller's
-        // current condition; the chip body inherits it as its entry
-        // condition so writes, assertions and returns inside the body stay
-        // predicated on the call actually happening.
         let return_dt = chip
             .return_dt
             .as_ref()
             .map(|dt| self.parse_dt_descriptor(dt));
         let call_condition = self.ctx.get_condition_value(&mut self.builder);
+
+        // A recursive call is unrolled only while the condition under which
+        // it is reached may hold. Once that path condition is proved false,
+        // the call never runs and is not inlined. A call that is not proved
+        // unreachable within `recursion_limit` nested calls is rejected.
+        let recursive = self.inlined_chips.iter().any(|inlined| inlined == name);
+        if recursive && self.proves_call_unreachable(&call_condition) {
+            return self.unreachable_call_value(name, &call_condition, return_dt.as_ref());
+        }
+        if self.inlined_chips.len() >= self.config.recursion_limit as usize {
+            panic!(
+                "RecursionLimitExceededError: recursion limit ({}) exceeded while inlining \
+                 @zk_chip `{}`: the call is not proven unreachable within that many nested \
+                 chip calls. Bound the values its path condition depends on (a bounded array \
+                 annotation or a `requires` precondition), or raise ZinniaConfig.recursion_limit \
+                 if a larger bound exists",
+                self.config.recursion_limit,
+                name,
+            );
+        }
+
+        // Enter chip scope. The call executes only under the caller's
+        // current condition; the chip body inherits it as its entry
+        // condition so writes, assertions and returns inside the body stay
+        // predicated on the call actually happening.
         let entry_condition = (call_condition.bool_val() != Some(true)).then_some(call_condition);
         self.ctx
             .chip_enter(return_dt.clone().unwrap_or(ZinniaType::None), entry_condition);
         self.builder
             .facts
             .enter(crate::optim::predicates::ScopeKind::Chip, None);
-        self.recursion_depth += 1;
+        self.inlined_chips.push(name.to_string());
 
         // Bind arguments. Positional args first, then kwargs by name, then
         // fall back to the chip's ``def f(x, epsilon=1e-6)``-style default
@@ -203,22 +85,6 @@ impl IRGenerator {
         }
 
         self.register_global_datatypes();
-
-        // P4 round 2 — push our frame onto the chip-call stack so any
-        // recursive call from inside this body can diff against our
-        // bindings. Snapshot only the integer-value-known args; non-int
-        // and unknown-int args become `None` slots (the heuristic
-        // ignores them).
-        let int_args: Vec<Option<i64>> = chip_node
-            .inputs
-            .iter()
-            .map(|inp| self.ctx.get(&inp.name).and_then(|v| v.int_val()))
-            .collect();
-        self.chip_call_stack.push(ChipCallFrame {
-            chip_name: name.to_string(),
-            int_args,
-            remaining_bound: new_frame_bound,
-        });
 
         // Visit chip body
         for stmt in &chip_node.block {
@@ -254,8 +120,7 @@ impl IRGenerator {
 
         self.ctx.chip_leave();
         let _chip_facts = self.builder.facts.leave();
-        self.recursion_depth -= 1;
-        self.chip_call_stack.pop();
+        self.inlined_chips.pop();
 
         // Merge return values using conditional select
         if returns.is_empty() {
@@ -287,6 +152,112 @@ impl IRGenerator {
             }
         }
         result
+    }
+
+    /// Whether the compiler proves that a call reached under `condition`
+    /// never runs: a constant, the proven bounds of the compared values (as
+    /// for a `while` guard, `provably_false`), then the decision query
+    /// `condition <= 0` (`IRBuilder::proves_at_most`: intervals, scalar and
+    /// array facts, then one Z3 check within its step budget, assuming the
+    /// program's preconditions). A decision query, unlike `resolve_bool`,
+    /// caches nothing about `condition` as unknown, so the next, deeper call
+    /// is still encoded with the full definition of this one's condition.
+    fn proves_call_unreachable(&mut self, condition: &Value) -> bool {
+        if let Some(holds) = condition.bool_val().or_else(|| condition.int_val().map(|v| v != 0)) {
+            return !holds;
+        }
+        if self.provably_false(condition) {
+            return true;
+        }
+        self.builder.proves_at_most(condition, 0)
+    }
+
+    /// The value of a recursive call to `name` that never runs. No
+    /// execution observes it, so any value of the chip's return type serves:
+    /// zero. When the conclusion came from reasoning rather than a constant,
+    /// the circuit also asserts that the call is not reached, so a wrong
+    /// conclusion makes the circuit unsatisfiable instead of dropping the
+    /// call (as for a `while` loop, `assert_while_exhausted`).
+    fn unreachable_call_value(
+        &mut self,
+        name: &str,
+        condition: &Value,
+        return_dt: Option<&ZinniaType>,
+    ) -> Value {
+        if let Some(t) = self.builder.resolver_telemetry() {
+            t.recursive_calls_proved_unreachable.fetch_add(1, Ordering::Relaxed);
+        }
+        if condition.bool_val().is_none() {
+            let unreached = self.builder.ir_logical_not(condition);
+            self.assert_value(&unreached);
+        }
+        // Without an annotation, the chip's type is that of the values the
+        // calling frame (the same chip, for direct recursion) returned so far.
+        let inferred = || -> Option<ZinniaType> {
+            if self.inlined_chips.last().map(String::as_str) != Some(name) {
+                return None;
+            }
+            let returns = self.ctx.get_returns_with_conditions();
+            returns.first().map(|(value, _)| value.zinnia_type())
+        };
+        let return_type = return_dt.cloned().or_else(inferred);
+        return_type
+            .and_then(|ty| self.zero_of_type(&ty))
+            .unwrap_or_else(|| {
+                panic!(
+                    "the recursive call to @zk_chip `{}` is proven unreachable, but its result \
+                     has no known type to stand in for it. Annotate the chip's return type \
+                     (a scalar, a fixed-shape array, or a tuple or list of them)",
+                    name
+                )
+            })
+    }
+
+    /// The zero value of a scalar, fixed-shape array, or tuple or list of
+    /// them; `None` for any other type.
+    fn zero_of_type(&mut self, ty: &ZinniaType) -> Option<Value> {
+        let b = &mut self.builder;
+        Some(match ty {
+            ZinniaType::None => Value::None,
+            ZinniaType::Integer => b.ir_constant_int(0),
+            ZinniaType::Float => b.ir_constant_float(0.0),
+            ZinniaType::Boolean => b.ir_constant_bool(false),
+            ZinniaType::Complex => crate::helpers::value_ops::pack_complex_value(
+                b.ir_constant_float(0.0),
+                b.ir_constant_float(0.0),
+            ),
+            ZinniaType::NDArray { shape, dtype } => {
+                let cells = shape.iter().product::<usize>();
+                let shape = shape.clone();
+                match dtype {
+                    NumberType::Complex => {
+                        let zeros = vec![b.ir_constant_float(0.0); cells];
+                        build_static_array_from_flat_complex(b, zeros.clone(), zeros, shape)
+                    }
+                    NumberType::Float => {
+                        let zeros = vec![b.ir_constant_float(0.0); cells];
+                        build_static_array_from_flat(b, zeros, shape, *dtype)
+                    }
+                    NumberType::Integer => {
+                        let zeros = vec![b.ir_constant_int(0); cells];
+                        build_static_array_from_flat(b, zeros, shape, *dtype)
+                    }
+                }
+            }
+            ZinniaType::Tuple { elements } | ZinniaType::List { elements } => {
+                let values = elements
+                    .iter()
+                    .map(|element| self.zero_of_type(element))
+                    .collect::<Option<Vec<_>>>()?;
+                let data = CompositeData::new(elements.clone(), values);
+                if matches!(ty, ZinniaType::Tuple { .. }) {
+                    Value::Tuple(data)
+                } else {
+                    Value::List(data)
+                }
+            }
+            _ => return None,
+        })
     }
 
     fn composite_matches_ndarray_return(

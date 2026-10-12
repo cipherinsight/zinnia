@@ -1,10 +1,12 @@
 """Regression tests for @zk_chip recursion handling.
 
-Each recursive @zk_chip call is unrolled at compile time. Branching
-recursions (e.g. fibo(n-1) + fibo(n-2)) explode as 2**depth and used to
-silently hang the unroller. The compiler now caps unroll depth at
-ZinniaConfig.recursion_limit (default 16) and raises a clear
-RecursionLimitExceededError pointing at the offending chip.
+Each @zk_chip call is inlined at compile time. A recursive call is
+unrolled while the condition under which it is reached may hold; once the
+compiler proves that path condition false (from constants, the bounds of
+the compared values, or the SMT solver under the program's preconditions)
+the call is not inlined. A recursive call that is not proved unreachable
+within ZinniaConfig.recursion_limit nested chip calls (default 16) is
+rejected with a RecursionLimitExceededError naming the chip.
 """
 import pytest
 
@@ -76,75 +78,142 @@ def test_default_recursion_limit_is_small_enough_to_fail_fast():
     )
 
 
-def test_recursion_bound_discharge_tightens_to_measure():
-    """P4 round 2 — the recursive-chip bound discharger picks the
-    decreasing integer arg as the recursion measure and tightens the
-    per-call unroll cap via `resolve_max(measure)`.
+def _compile(circuit, chips, recursion_limit=16):
+    cfg = ZinniaConfig(recursion_limit=recursion_limit)
+    compiled = ZKCircuit.from_method(circuit, chips=chips, config=cfg)
+    compiled.compile()
+    return compiled
 
-    Build a tail-recursive sum chip that recurses with `n - 1` until
-    `n == 0`, and configure `recursion_limit=64` (deliberately lax).
-    For `sum_to(8)` the per-call effective limit lands at 8 — strictly
-    smaller than `recursion_limit`. The pre-round-2 path would have
-    unrolled the chip up to the hard `recursion_limit` budget; with
-    round 2 the inferred bound caps the unroll early.
 
-    We verify the path fired by checking compile success at a
-    `recursion_limit` lower than what unbounded unrolling would need
-    while higher than the inferred bound, and by exercising the
-    correct numeric result. (Constraint count is harder to assert
-    portably; the qualitative signal that the heuristic discharged the
-    bound is enough — a regression to today's behaviour would still
-    compile here, so the stronger signal is the static-val
-    `recursion_bound_*` telemetry, exercised below in
-    test_recursion_bound_discharge_does_not_loosen_safety_net.)
-    """
+def test_recursion_depth_bounded_by_precondition():
+    """`fibo(n)` with a private `n`: the depth depends on the input, and the
+    precondition `n <= 6` lets the compiler prove that the call reached
+    after six nested calls (which needs `n - 6 >= 2`) never runs."""
 
     @zk_chip
-    def sum_to(n) -> Integer:
+    def fibo(n: Integer) -> Integer:
+        if n < 2:
+            return n
+        return fibo(n - 1) + fibo(n - 2)
+
+    @zk_circuit(requires=[lambda n: 0 <= n <= 6])
+    def fibo_check(n: Integer, out: Public[Integer]):
+        assert fibo(n) == out
+
+    circuit = _compile(fibo_check, [fibo])
+    for n, expected in enumerate([0, 1, 1, 2, 3, 5, 8]):
+        assert circuit(n, expected).satisfied
+    assert not circuit(6, 7).satisfied
+
+
+def test_recursion_depth_bounded_by_shrinking_arguments():
+    """Euclid's algorithm by subtraction: every call lowers `a + b`, so with
+    `1 <= a, b <= 5` the solver proves the call after enough nested calls
+    unreachable although neither argument is a constant."""
+
+    @zk_chip
+    def gcd(a: Integer, b: Integer) -> Integer:
+        if a == b:
+            return a
+        if a > b:
+            return gcd(a - b, b)
+        return gcd(a, b - a)
+
+    @zk_circuit(requires=[lambda a: 1 <= a <= 5, lambda b: 1 <= b <= 5])
+    def gcd_check(a: Integer, b: Integer, out: Public[Integer]):
+        assert gcd(a, b) == out
+
+    circuit = _compile(gcd_check, [gcd])
+    assert circuit(4, 2, 2).satisfied
+    assert circuit(5, 3, 1).satisfied
+    assert circuit(5, 5, 5).satisfied
+    assert not circuit(4, 2, 4).satisfied
+
+
+def test_recursive_binary_search_over_a_fixed_array():
+    """Binary search halves a constant index range, so its depth is a
+    compile-time number while the comparisons depend on private data."""
+
+    @zk_chip
+    def search(xs: NDArray[Integer, 8], x: Integer, lo: Integer, hi: Integer) -> Integer:
+        if lo > hi:
+            return -1
+        mid = (lo + hi) // 2
+        if xs[mid] == x:
+            return mid
+        if xs[mid] < x:
+            return search(xs, x, mid + 1, hi)
+        return search(xs, x, lo, mid - 1)
+
+    @zk_circuit
+    def search_check(xs: NDArray[Integer, 8], x: Integer, out: Public[Integer]):
+        assert search(xs, x, 0, 7) == out
+
+    circuit = _compile(search_check, [search])
+    xs = [1, 3, 5, 7, 9, 11, 13, 15]
+    assert circuit(xs, 11, 5).satisfied
+    assert circuit(xs, 1, 0).satisfied
+    assert circuit(xs, 4, -1).satisfied
+    assert not circuit(xs, 11, 4).satisfied
+
+
+def test_unannotated_recursive_chip_bounded_by_precondition():
+    """Without a return annotation, the value standing in for a call that
+    never runs takes the type of the values the chip already returned."""
+
+    @zk_chip
+    def sum_to(n):
+        if n <= 0:
+            return 0
+        return n + sum_to(n - 1)
+
+    @zk_circuit(requires=[lambda n: n <= 5])
+    def sum_check(n: Integer, out: Public[Integer]):
+        assert sum_to(n) == out
+
+    circuit = _compile(sum_check, [sum_to])
+    assert circuit(5, 15).satisfied
+    assert circuit(-3, 0).satisfied
+    assert not circuit(5, 14).satisfied
+
+
+def test_recursion_without_a_provable_bound_is_rejected():
+    """The same countdown without a maximum for `n`: the call is reachable at
+    every depth, so the program is rejected at the limit, with a message
+    naming the chip, rather than truncated."""
+
+    @zk_chip
+    def sum_to(n: Integer) -> Integer:
         if n <= 0:
             return 0
         return n + sum_to(n - 1)
 
     @zk_circuit
-    def sum_check(witness: Public[Integer]):
-        # sum_to(8) = 36. The compiler unrolls to depth 9 (8 recursive
-        # calls + the base case); `recursion_limit=12` leaves headroom
-        # so this checks the call compiles, not that the limit is
-        # tight.
-        assert sum_to(8) == witness
+    def sum_check(n: Integer, out: Public[Integer]):
+        assert sum_to(n) == out
 
-    cfg = ZinniaConfig(recursion_limit=12)
-    circuit = ZKCircuit.from_method(sum_check, chips=[sum_to], config=cfg)
-    circuit.compile()
-    assert circuit(36)
-
-
-def test_recursion_bound_discharge_does_not_loosen_safety_net():
-    """The SMT-resolved bound only ever **tightens** the per-call
-    unroll cap — it never loosens it past the configured
-    `recursion_limit`. A branching-recursive chip with a measure that
-    appears to allow more depth than `recursion_limit` must still hit
-    the hard cap, not blow past it.
-
-    Sanity-check by running fibonacci with recursion_limit=4 — the
-    measure heuristic picks `n - 1` (the most-decreasing arg of
-    `fibo(n-1) + fibo(n-2)`), but the hard cap fires first.
-    """
-
-    @zk_chip
-    def fibo(n) -> Integer:
-        if n < 2:
-            return n
-        return fibo(n - 1) + fibo(n - 2)
-
-    @zk_circuit
-    def fibo_test(n: Public[Integer]):
-        assert fibo(n) >= 0
-
-    cfg = ZinniaConfig(recursion_limit=4)
     with pytest.raises(Exception) as exc_info:
-        ZKCircuit.from_method(fibo_test, chips=[fibo], config=cfg).compile()
-
+        _compile(sum_check, [sum_to], recursion_limit=8)
     msg = str(exc_info.value)
     assert "RecursionLimitExceeded" in msg
-    assert "fibo" in msg
+    assert "`sum_to`" in msg
+    assert "not proven unreachable" in msg
+
+
+def test_precondition_bound_above_the_limit_is_rejected():
+    """A bound exists (`n <= 10`) but exceeds `recursion_limit`: the call is
+    still reachable at the limit, so the program is rejected."""
+
+    @zk_chip
+    def sum_to(n: Integer) -> Integer:
+        if n <= 0:
+            return 0
+        return n + sum_to(n - 1)
+
+    @zk_circuit(requires=[lambda n: n <= 10])
+    def sum_check(n: Integer, out: Public[Integer]):
+        assert sum_to(n) == out
+
+    with pytest.raises(Exception, match="RecursionLimitExceeded"):
+        _compile(sum_check, [sum_to], recursion_limit=6)
+    assert _compile(sum_check, [sum_to], recursion_limit=12)(10, 55).satisfied
