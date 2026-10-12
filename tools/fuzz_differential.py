@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 3a — minimal viable differential fuzzer for Zinnia.
+"""Differential fuzzer for Zinnia: NumPy is the oracle.
 
 Generates small numpy-like programs from eighteen shapes:
 
@@ -67,8 +67,7 @@ catch PyO3 panics) raised while compiling/running Zinnia.
 
 Run:
 
-    cd zinnia-src
-    python3.13 tools/fuzz_differential.py --iterations 30
+    .venv/bin/python tools/fuzz_differential.py --iterations 30   # from the repository root
 
 Each non-success iteration writes a JSON report under
 ``tools/fuzz_reports/<timestamp>/<index>.json``. Success cases are
@@ -1746,7 +1745,7 @@ def _zinnia_child_worker(
     (which routes through ZKCircuit.__call__ → mock backend → ZKExecResult).
 
     For backend="halo2": builds a ZKCircuit via ZKCircuit.from_method, calls
-    prove(backend="halo2", params=halo2_params), then verify(). Both prove
+    prove(backend="halo2-base", params=halo2_params), then verify(). Both prove
     success AND verify=True are required for satisfied=True. Any other
     outcome surfaces as either satisfied=False or a compile_failure.
 
@@ -1837,7 +1836,7 @@ def _zinnia_child_worker(
             # MockProver gate caught everything), satisfied=False.
             prove_t0 = time.time()
             try:
-                proof = circuit.prove(*pos_args, backend="halo2", params=params)
+                proof = circuit.prove(*pos_args, backend="halo2-base", params=params)
             except BaseException as pe:  # noqa: BLE001
                 # prove() can fail in three meaningfully-different ways:
                 #   (1) capacity: K too small for the circuit (NotEnoughRows…).
@@ -2230,7 +2229,7 @@ def main(argv=None) -> int:
         "--backend",
         choices=["mock", "halo2"],
         default="mock",
-        help="executor backend; halo2 routes through prove+verify",
+        help="executor backend; halo2 proves and verifies on the halo2-base backend",
     )
     parser.add_argument("--halo2-k", type=int, default=14,
                         help="halo2 K parameter (log2 rows). Default 14.")
