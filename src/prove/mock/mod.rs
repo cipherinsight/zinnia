@@ -1,7 +1,7 @@
 //! Mock proving backend.
 //!
 //! Evaluates IR circuits concretely using the same field arithmetic and
-//! approximations as the halo2 backend, but without generating ZK proofs.
+//! approximations as the proving backends, but without generating ZK proofs.
 //! Used for fast development-time testing and validation.
 
 pub mod synthesizer;

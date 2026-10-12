@@ -186,31 +186,3 @@ fn test_mock_product_sum_f_rejects_invalid_operand_shape() {
         "unexpected error: {err}"
     );
 }
-
-/// Test that mock and halo2 produce the same result for a simple circuit.
-#[test]
-fn test_mock_halo2_consistency_add() {
-    use crate::prove::halo2;
-
-    let ir = make_graph(vec![
-        (IR::ConstantInt { value: 7 }, vec![]),
-        (IR::ConstantInt { value: 11 }, vec![]),
-        (IR::AddI, vec![0, 1]),
-        (IR::ConstantInt { value: 18 }, vec![]),
-        (IR::EqI, vec![2, 3]),
-        (IR::Assert, vec![4]),
-    ]);
-    let params = ProvingParams {
-        k: 8,
-        ..Default::default()
-    };
-    let resolved = empty_resolved(params.precision_bits);
-
-    // Mock backend
-    let mock = MockProverBackend;
-    let mock_artifact = mock.prove(&ir, &resolved, &params).unwrap();
-    assert_eq!(mock_artifact.proof_bytes, "mock_satisfied");
-
-    // Halo2 MockProver (built-in constraint checker)
-    halo2::mock_prove(&ir, &resolved, &params, vec![]).unwrap();
-}

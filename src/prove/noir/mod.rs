@@ -5,8 +5,8 @@
 //! plus its resolved witness, then shells out to `nargo execute` +
 //! `bb prove --scheme ultra_honk` to produce a proof. The `prove_seconds`
 //! field on the resulting [`ProofArtifact`] times only the `bb prove`
-//! call (after `bb write_vk` runs separately), matching the
-//! apples-to-apples timing convention used by the halo2 backend.
+//! call (after `bb write_vk` runs separately), matching the timing
+//! convention of the halo2-base backend.
 //!
 //! ## Public values and verification
 //!

@@ -2,19 +2,15 @@
 //!
 //! The `ir_hash` is a BLAKE2b-256 digest over `serde_json::to_vec(&ir_stmts)`,
 //! hex-encoded for transport. It is computed eagerly on the always-compiled
-//! prove path (cached on `CompiledIR`) because the halo2-IPA backend carries
-//! it in `ProofArtifact.ir_hash` and uses it as the VK-cache key, and because
-//! re-serializing + re-hashing a 40k-statement IR on every prove call is
-//! ~200 ms of overhead for output-heavy kernels.
+//! prove path (cached on `CompiledIR`) because every proof artifact carries
+//! it in `ProofArtifact.ir_hash`, and because re-serializing and re-hashing a
+//! 40k-statement IR on every prove call is ~200 ms of overhead for
+//! output-heavy kernels.
 //!
-//! It lives here, in the always-compiled core, rather than under
-//! `src/prove/halo2/` so that the `--features noir-backend` (and mock-only)
-//! builds — which never link `halo2_proofs` — can still compute it. The
-//! halo2-IPA `artifact_format::compute_ir_hash` delegates here, so the
-//! on-the-wire hash is byte-for-byte identical to before this seam existed.
-//!
-//! Only `blake2b_simd` is needed (a light, fast crate already present in the
-//! tree via `halo2curves`); no proving-system dependency.
+//! It lives in the always-compiled core so that the `--features
+//! noir-backend` and mock-only builds, which never link `halo2_proofs`, can
+//! compute it. Only `blake2b_simd` is needed (a light crate already present
+//! in the tree via `halo2curves`).
 
 /// Hex-encode a byte slice (lowercase, two chars per byte).
 pub fn hex_encode(bytes: &[u8]) -> String {
@@ -61,7 +57,7 @@ pub fn canonical_ir_bytes(ir_stmts: &[serde_json::Value]) -> Result<Vec<u8>, Str
 ///
 /// BLAKE2b-256 (32-byte output, personalization `b"zinnia-ir-hash-1"`) over
 /// the [`canonical_ir_bytes`] of `ir_stmts`, hex-encoded. This is the hash used
-/// as `ProofArtifact.ir_hash` and as the halo2-IPA VK-cache key.
+/// as `ProofArtifact.ir_hash`.
 pub fn compute_ir_hash(ir_stmts: &[serde_json::Value]) -> Result<String, String> {
     let bytes = canonical_ir_bytes(ir_stmts)?;
     let hash = blake2b_simd::Params::new()

@@ -48,8 +48,8 @@ pub struct CompiledIR {
 
 impl CompiledIR {
     /// Return the cached `(ir_stmts, ir_hash)`, computing on first call.
-    /// Both are needed by the halo2-IPA prove path (carried in the proof
-    /// artifact + used as the VK cache key).
+    /// Both are needed by the prove path (the artifact carries them so a
+    /// verifier can rebuild the keys from the same IR).
     pub fn cached_artifact_inputs(&self) -> Result<&(Vec<serde_json::Value>, String), String> {
         let mut error: Option<String> = None;
         let result = self.artifact_cache.get_or_init(|| {

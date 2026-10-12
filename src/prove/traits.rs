@@ -23,11 +23,11 @@ fn unsupported(op: &str) -> ProvingError {
 
 /// A pluggable ZK proving backend.
 ///
-/// Each backend (mock, halo2-ipa, future circom, etc.) implements this trait
+/// Each backend (mock, halo2-base, Noir) implements this trait
 /// to provide the full prove/verify lifecycle. The trait is object-safe so
 /// backends can be dispatched dynamically via `Box<dyn ProverBackend>`.
 pub trait ProverBackend: Send + Sync {
-    /// A human-readable identifier for this backend (e.g., "halo2-ipa").
+    /// A human-readable identifier for this backend (e.g., "halo2-base").
     fn name(&self) -> &'static str;
 
     /// Analyze the IR to recommend circuit-size parameters.
@@ -43,12 +43,12 @@ pub trait ProverBackend: Send + Sync {
 
     /// Generate a proof using caller-provided pre-serialized IR statements
     /// and ir_hash. For backends that need them on every prove call (the
-    /// halo2-IPA path uses them to populate the artifact for cross-process
+    /// halo2-base backend puts them in the artifact for cross-process
     /// verify), this skips the per-call re-serialize / re-hash and lets the
     /// caller cache them once at compile time.
     ///
-    /// The default implementation re-derives them on every call — backends
-    /// that benefit from the cache (halo2) override this.
+    /// The default implementation ignores them; backends that use the cache
+    /// (halo2-base) override this.
     fn prove_with_cached_artifact(
         &self,
         ir: &IRGraph,
@@ -251,18 +251,14 @@ pub trait Synthesizer {
         b: &Self::CellRef,
     ) -> Result<Self::CellRef, ProvingError>;
     /// Float base raised to an Integer exponent with `|b| < 2^exponent_bits`
-    /// (`IR::PowFI`, `kernel::fp_pow_int`). The mock, halo2-base and Noir
-    /// implement the kernel's chain; the default (the legacy halo2
-    /// backend) falls back to `pow_f` after a float cast.
+    /// (`IR::PowFI`, `kernel::fp_pow_int`), by the kernel's multiplication
+    /// chain.
     fn pow_f_int(
         &mut self,
         a: &Self::CellRef,
         b: &Self::CellRef,
-        _exponent_bits: u32,
-    ) -> Result<Self::CellRef, ProvingError> {
-        let bf = self.float_cast(b)?;
-        self.pow_f(a, &bf)
-    }
+        exponent_bits: u32,
+    ) -> Result<Self::CellRef, ProvingError>;
     fn abs_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
     fn sign_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
 

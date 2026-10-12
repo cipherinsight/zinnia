@@ -283,7 +283,7 @@ impl ProverBackend for Halo2BaseProverBackend {
         // is being handed a proof for a different circuit than the IR it is
         // told it is checking. Surface the typed `IrHashMismatch` (not a
         // generic invalid result) so artifact-transport regressions are
-        // attributable. Mirrors the legacy halo2-IPA verify path.
+        // attributable.
         let computed_ir_hash =
             compute_ir_hash(&payload.ir_stmts).map_err(|e| ProvingError::VerificationFailed {
                 detail: format!("ir_hash recompute failed: {}", e),

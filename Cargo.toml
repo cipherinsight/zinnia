@@ -8,14 +8,12 @@ name = "_zinnia_core"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["halo2-backend", "extension-module"]
-halo2-backend = ["halo2_proofs", "rand"]
-halo2-base-backend = ["halo2-backend", "halo2-base", "rayon"]
-# Source-to-source Noir backend: emits .nr text from IR and shells out to
-# nargo + bb. No new Rust deps; the Q32 fixed-point library lives in
-# benchmarking/noir_fpc and is vendored into emitted packages via
-# include_str! so the handwritten baselines and the auto-emitted ones
-# share a single source of truth.
+default = ["extension-module"]
+# The halo2-base (Halo2-lib) backend: synthesizes and proves circuits in-process.
+halo2-base-backend = ["halo2-base", "rand", "rayon"]
+# The Noir backend: emits Noir source and runs nargo and bb. The Q32 fixed-point
+# library in benchmarking/noir_fpc is embedded with include_str!, so the
+# handwritten Noir baselines and the emitted programs share one source.
 noir-backend = ["dep:base64", "dep:flate2", "dep:rmp-serde"]
 extension-module = ["pyo3/extension-module"]
 
@@ -30,47 +28,26 @@ pythonize = "0.23"
 num-bigint = "0.4"
 num-traits = "0.2"
 num-integer = "0.1"
-# Use the same PSE git v0.3.0 that halo2-base's halo2-pse feature uses.
-# This unlocks BN254 (`halo2_proofs::halo2curves::bn256`) so Zinnia and
-# the HW baselines (under halo2-base/halo2-pse) run on the SAME library
-# AND the SAME curve.
-halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", tag = "v0.3.0", features = ["circuit-params", "derive_serde"], optional = true }
-# Light-weight curve crate carrying BN254 (`halo2curves::bn256::Fr`) and the
-# `ff` field traits. This is the SAME version (`0.6.1`) that `halo2_proofs`
-# v0.3.0 depends on, so `Fr` is ABI-identical across both — a witness field
-# element built here is the exact same type the halo2 backend constrains
-# (cargo feature unification guarantees a single monomorphization). Made
-# NON-optional so the always-compiled core (`ResolvedWitness`, kernel, mock,
-# preprocess) has a field type *without* pulling in the entire `halo2_proofs`
-# proving system. That is what makes `halo2_proofs` genuinely optional: only
-# the two halo2 backends (`src/prove/halo2*/`) link it now, so
-# `--no-default-features --features noir-backend` builds without it. The
-# `derive_serde` feature matches what halo2_proofs requests, keeping a single
-# unified feature set whether or not the halo2 backends are enabled.
+# BN254 (`halo2curves::bn256::Fr`) and the `ff` field traits for the
+# always-compiled core (witnesses, kernel, mock backend, preprocessing). This is
+# the version halo2-base's halo2_proofs (PSE v0.3.0) uses, so the core and the
+# halo2-base backend share one `Fr` type; `derive_serde` matches the features
+# halo2_proofs requests.
 halo2curves = { version = "0.6.1", features = ["derive_serde"] }
 halo2-base = { git = "https://github.com/axiom-crypto/halo2-lib.git", branch = "community-edition", default-features = false, features = ["halo2-pse"], optional = true }
 rand = { version = "0.8", optional = true }
-# The thread pool halo2_proofs proves on (already in the tree through it);
-# the halo2-base backend starts it before its timed `create_proof` window,
-# as the handwritten halo2_hw baseline does.
+# The thread pool halo2_proofs proves on; the halo2-base backend starts it
+# before its timed `create_proof` window, as the handwritten halo2_hw baseline
+# does.
 rayon = { version = "1", optional = true }
-# BLAKE2b for the canonical `ir_hash` (`ProofArtifact.ir_hash` + the
-# halo2-IPA VK-cache key). NON-optional: the hash is computed eagerly on the
-# always-compiled prove path (`crate::prove::ir_hash`, cached on `CompiledIR`)
-# so it must be available without any backend feature. The crate is light and
-# already pulled in transitively by `halo2curves`, so naming it directly costs
-# nothing while keeping the dep visible in `cargo tree`.
+# BLAKE2b for the canonical `ir_hash` (`ProofArtifact.ir_hash`), computed on
+# the always-compiled prove path (`crate::prove::ir_hash`).
 blake2b_simd = { version = "1.0" }
-# P1 SMT-resolver foundation. Keep the Rust crate unbundled so clean builds do
-# not spend several minutes compiling libz3 from source. Local development can
-# link either a system libz3 or the libz3 shipped in the Python `z3-solver`
-# wheel; `scripts/develop.sh` discovers the wheel location and sets the linker
-# search path/rpath for that case.
+# Unbundled, so that builds do not compile libz3 from source: link a system
+# libz3 or the one in the Python `z3-solver` wheel (`scripts/develop.sh` finds
+# it and sets the linker search path and rpath).
 z3 = "0.20"
-# Lightweight structured logging. We only use the `debug!` / `info!`
-# macros, so the dependency is essentially zero-cost in default builds
-# (no subscriber attached → events become no-ops). Pulled in directly
-# (it was already transitively present via z3's dependency tree).
+# `debug!` / `info!` events; no subscriber is attached by default.
 tracing = "0.1"
 
 [dev-dependencies]
@@ -79,27 +56,14 @@ pyo3 = { version = "0.23", features = ["auto-initialize"] }
 [build-dependencies]
 pyo3-build-config = "0.23"
 
-# Match the codegen settings of the standalone halo2_proofs micro-benchmark
-# so the prove path runs against an identically-optimized halo2 codebase.
-# Without this, the default `release` profile (no LTO, 16 codegen units)
-# can leave 15-25 % performance on the table for tight halo2 hot loops —
-# specifically the witness-assignment closures inside `create_proof` that
-# the standalone bench inlines and Zinnia previously did not.
+# Fat LTO and one codegen unit, as in the handwritten halo2 baselines, so the
+# prove path is compiled the same way as the halo2_proofs code it is compared
+# with. `panic` stays `unwind`: the Python harnesses catch Rust panics as
+# per-program failures.
 [profile.release]
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-# Closes ~50 ms of the prior 0387 (output-heavy reshape) residual by giving
-# the LLVM whole-program optimizer all of `halo2_proofs` + Zinnia's prove
-# path. Previously the default release profile (no LTO, codegen-units=16)
-# left function boundaries in the witness-assignment hot loops; under LTO
-# those inline through.
-#
-# NOTE: `panic = "abort"` would shave another ~5 ms but is incompatible
-# with the Python-side fuzzer / runner, which relies on Python catching
-# panics from pre-existing bug cases (e.g. 0298) and treating them as
-# per-case failures rather than process-wide aborts. Kept on default
-# (unwind) so the benchmark runner survives those cases.
 debug = false
 debug-assertions = false
 incremental = false

@@ -14,17 +14,16 @@
 //! preprocessor). It aliases `halo2curves::bn256::Fr` — the BN254 scalar
 //! field — pulled from the *light* `halo2curves` crate rather than the full
 //! `halo2_proofs` proving system. Because `halo2_proofs` v0.3.0 depends on
-//! this same `halo2curves` version, `F` is ABI-identical to the `Fr` the
-//! halo2 backends constrain, so no conversion happens at the backend
-//! boundary. Routing the core through this alias is what lets
-//! `halo2_proofs` be a genuinely optional dependency: a `--features
-//! noir-backend` build never links it.
+//! this same `halo2curves` version, `F` is the same type as the `Fr` the
+//! halo2-base backend constrains, so no conversion happens at the backend
+//! boundary. Routing the core through this alias keeps `halo2_proofs` an
+//! optional dependency: a `--features noir-backend` build never links it.
 
 /// The proving field: BN254's scalar field, `halo2curves::bn256::Fr`.
 ///
-/// This is the one place the concrete curve is named for the core. The two
-/// halo2 backends use `halo2_proofs::halo2curves::bn256::Fr`, which resolves
-/// to this identical type (same `halo2curves` crate version).
+/// This is the one place the concrete curve is named for the core. The
+/// halo2-base backend uses `halo2_proofs::halo2curves::bn256::Fr`, which
+/// resolves to this identical type (same `halo2curves` crate version).
 pub type F = halo2curves::bn256::Fr;
 
 /// Re-export of the `ff::Field` trait so core modules can call `.invert()`,

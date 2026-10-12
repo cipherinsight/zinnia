@@ -1,14 +1,13 @@
 //! Shared computation kernel for all proving backends.
 //!
 //! This module provides pure functions for field arithmetic, fixed-point
-//! quantization, and transcendental function evaluation that are used
-//! identically by both the mock and halo2 synthesizers. This ensures
-//! semantic consistency: the mock backend produces the exact same values
-//! that the halo2 backend constrains.
+//! quantization, and transcendental function evaluation. They define the
+//! value semantics: the mock backend evaluates with them, and the halo2-base
+//! and Noir backends constrain the same algorithms.
 //!
 //! All functions operate on [`crate::prove::field::F`] — BN254's scalar field
-//! (`halo2curves::bn256::Fr`). This is the same `Fr` the halo2 backends
-//! constrain, sourced from the light `halo2curves` crate so the shared kernel
+//! (`halo2curves::bn256::Fr`). This is the same `Fr` the halo2-base backend
+//! constrains, sourced from the light `halo2curves` crate so the shared kernel
 //! does not link the full `halo2_proofs` proving system.
 
 use crate::prove::field::F as Fp;

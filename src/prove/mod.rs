@@ -3,28 +3,25 @@
 //! # Architecture
 //!
 //! ```text
-//!                              ProverBackend trait
-//!         ┌──────────────┬──────────────┴───────────┬──────────────┐
-//!         │              │                          │              │
-//!  MockProver-    Halo2Prover-            Halo2BaseProver-    NoirProver-
-//!    Backend         Backend                  Backend           Backend
-//!         │              │                          │              │
-//!    Mock-         Halo2-                  Halo2Base-         NoirEmitter
-//! Synthesizer    Synthesizer              Synthesizer    (emits Noir source)
-//!         │              │                          │
-//!         └───── kernel ─┴── (shared Fp arithmetic, quantization, Remez
-//!                            polynomials, Poseidon — value-level semantics)
+//!                    ProverBackend trait
+//!         ┌──────────────────┼──────────────────┐
+//!         │                  │                  │
+//!  MockProverBackend  Halo2BaseProverBackend  NoirProverBackend
+//!         │                  │                  │
+//!  MockSynthesizer    Halo2BaseSynthesizer    NoirEmitter
+//!         │                  │             (emits Noir source)
+//!         └──── kernel ──────┘
+//!   (shared field arithmetic, quantization, Remez polynomials, Poseidon)
 //! ```
 //!
-//! The mock and halo2 backends share the same computation kernel
-//! (`kernel.rs`), ensuring that the mock backend produces the exact same
-//! values that halo2 constrains. The halo2-base backend constrains the
-//! same value semantics via the `halo2-base` gadget library, and the noir
-//! backend emits Noir source (`noir_fpc`) rather than synthesizing a
-//! circuit in-process. They are selected behind the `ProverBackend`
-//! trait; the halo2/halo2-base/noir backends are feature-gated. The legacy
-//! halo2 (IPA) backend is retired: `create_prover_backend` refuses it
-//! (see [`LEGACY_HALO2_RETIRED`]).
+//! The mock backend evaluates the IR with the computation kernel
+//! (`kernel.rs`), which fixes the value semantics. The halo2-base backend
+//! constrains the same semantics with the `halo2-base` gadget library, and
+//! the Noir backend emits Noir source (using the `noir_fpc` fixed-point
+//! library) instead of synthesizing a circuit in-process. They are selected
+//! behind the `ProverBackend` trait; the halo2-base and Noir backends are
+//! feature-gated. The legacy halo2 (IPA) backend has been removed:
+//! `create_prover_backend` refuses its names (see [`LEGACY_HALO2_RETIRED`]).
 //!
 //! The `Synthesizer` trait is the per-operation dispatch interface.
 //! The `ProverBackend` trait is the top-level prove/verify API.
@@ -40,9 +37,6 @@ pub mod preprocess;
 pub mod traits;
 pub mod types;
 
-#[cfg(feature = "halo2-backend")]
-pub mod halo2;
-
 #[cfg(feature = "halo2-base-backend")]
 pub mod halo2_base;
 
@@ -56,11 +50,11 @@ pub use types::{ProofArtifact, ProvingParams, Value, VerifyResult};
 
 /// Why the legacy halo2 (IPA) backend is not selectable.
 ///
-/// Its signed comparisons accept operands that differ by less than 2^56
-/// (`halo2::synthesizer::SIGNED_MAGNITUDE_BITS`), so the input-domain checks
-/// every circuit with an integer or float input carries (`x >= i64::MIN`,
-/// `x <= i64::MAX`, `ir_gen::input_domain`) are unsatisfiable there. The
-/// module is kept for its own unit tests and the mock's cross-checks.
+/// Its signed comparisons accepted only operands that differ by less than
+/// 2^56, so the input-domain checks every circuit with an integer or float
+/// input carries (`x >= i64::MIN`, `x <= i64::MAX`, `ir_gen::input_domain`)
+/// were unsatisfiable there. The backend has been removed; its names stay
+/// reserved so that selecting it reports the replacement.
 pub const LEGACY_HALO2_RETIRED: &str =
     "the legacy halo2 backend cannot prove circuits with 64-bit input checks; use backend='halo2-base'";
 
