@@ -237,14 +237,19 @@ def fibonacci(n: Integer) -> Integer:
 
 ### Bounded Recursion
 
-The compiler uses SMT analysis to prove that each recursive call decreases a well-founded
-measure (such as an integer argument) toward a base case. If the compiler cannot
-establish a static bound, compilation fails.
+A recursive call is unrolled while the condition under which it is reached may hold.
+At each depth the compiler tries to prove that condition false, from constants, the
+bounds of the compared values, the program's preconditions, and finally an SMT query.
+Once it is proved false, the call is not inlined, and the circuit asserts that the call
+is not reached. The bound can come from a precondition
+(`@zk_circuit(requires=[lambda n: 0 <= n <= 8])`) or from arguments whose ranges shrink
+with every call. If the compiler cannot establish a static bound, compilation fails.
 
 #### Recursion Limit
 
-The default recursion depth limit is **100**. This is configurable in the compiler
-settings. If the proven recursion depth exceeds this limit, compilation fails.
+The default limit on nested calls is **16** (`ZinniaConfig(recursion_limit=...)`). A
+recursive call that is not proved unreachable within this many nested calls makes
+compilation fail with a `RecursionLimitExceededError` naming the function.
 
 ### Circuit Compilation
 

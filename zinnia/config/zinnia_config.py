@@ -9,10 +9,11 @@ class ZinniaConfig(ConfigBase):
     BACKEND_CIRCOM = "circom"
     BACKEND_NOIR = "noir"
     BACKEND_CIRC_ZOK = "circ_zok"
-    # Each recursive @zk_chip call is unrolled at compile time. Branching
-    # recursions (e.g. fibo(n-1) + fibo(n-2)) explode as 2**depth, so we
-    # default to a small limit that fails fast on runaway recursion.
-    # Users with legitimate deep recursion can raise this explicitly.
+    # Each @zk_chip call is inlined at compile time, and a recursive call is
+    # unrolled until the compiler proves its path condition false. A call
+    # still not proved unreachable at this nesting depth is rejected.
+    # Branching recursions (e.g. fibo(n-1) + fibo(n-2)) grow as 2**depth, so
+    # the default is small; programs with deeper bounded recursion can raise it.
     DEFAULT_RECURSION_LIMIT = 16
     DEFAULT_LOOP_LIMIT = 1000
 

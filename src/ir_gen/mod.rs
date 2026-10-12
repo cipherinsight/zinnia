@@ -77,6 +77,9 @@ pub use crate::types::SliceIndex;
 #[derive(Debug, Clone)]
 pub struct IRGenConfig {
     pub loop_limit: u32,
+    /// The deepest nesting of `@zk_chip` calls. A recursive call is
+    /// unrolled until its path condition is proved false; one that is still
+    /// not proved unreachable at this depth is rejected.
     pub recursion_limit: u32,
     /// SMT-resolver toggle. When `true`, `IRGenerator::new` installs
     /// [`crate::optim::resolver::LayeredResolver::range_then_smt`]; when
@@ -144,16 +147,11 @@ pub struct IRGenerator {
     config: IRGenConfig,
     registered_chips: HashMap<String, RegisteredChip>,
     registered_externals: HashMap<String, RegisteredExternal>,
-    recursion_depth: u32,
     next_external_store_idx: u32,
-    /// P4 round 2 — per-active-call snapshot of integer-arg bindings,
-    /// keyed by chip name. When `visit_chip_call("foo", args, …)` runs
-    /// and finds a prior frame with the same name, that frame is the
-    /// parent of a recursive call: we diff `args[i]` against the
-    /// snapshotted parent value to pick the recursion measure.
-    /// `int_args[i]` is `None` when the i-th input parameter wasn't
-    /// integer-valued (so the heuristic skips it).
-    pub(crate) chip_call_stack: Vec<ChipCallFrame>,
+    /// The chips whose bodies are being inlined, outermost first: one entry
+    /// per active `@zk_chip` call. Its length is the depth of nested chip
+    /// calls, and a call to a chip already on it is recursive.
+    pub(crate) inlined_chips: Vec<String>,
     pub(crate) for_loop_frames: Vec<ForLoopFrame>,
     pub(crate) induction_origins: HashMap<String, String>,
     pub(crate) loop_index_bound_contexts: Vec<LoopIndexBoundContext>,
@@ -174,27 +172,6 @@ pub struct IRGenerator {
     /// `detached_copies::merge_of_different_shapes`), by storage: the merge
     /// `select(condition, a, b)` each stands for.
     pub(crate) different_shape_merges: HashMap<u32, (Value, Value, Value)>,
-}
-
-/// One entry in [`IRGenerator::chip_call_stack`]. See round-2 doc on
-/// `chip_call_stack` for semantics.
-#[derive(Debug, Clone)]
-pub(crate) struct ChipCallFrame {
-    pub chip_name: String,
-    /// One slot per chip-input parameter. `Some(n)` if the bound value
-    /// was an integer with a known compile-time int_val; `None`
-    /// otherwise (non-integer parameter, or symbolic int with no
-    /// static_val cache hit). Used by the recursion-measure heuristic
-    /// in `visit_chip_call`.
-    pub int_args: Vec<Option<i64>>,
-    /// Forward-looking depth allowance for this frame and any
-    /// recursive-call descendants of it. Initialised at entry to
-    /// `min(parent.remaining_bound - 1, freshly_resolved_bound)`,
-    /// always `≤ recursion_limit`. A descendant recursive call panics
-    /// if its parent's `remaining_bound == 0`. Non-recursive entries
-    /// (no prior same-name frame) start at `recursion_limit` — today's
-    /// behaviour, no tightening.
-    pub remaining_bound: u32,
 }
 
 /// IR-gen-local structural loop context. This is deliberately not a resolver
@@ -277,9 +254,8 @@ impl IRGenerator {
             config,
             registered_chips: HashMap::new(),
             registered_externals: HashMap::new(),
-            recursion_depth: 0,
             next_external_store_idx: 1,
-            chip_call_stack: Vec::new(),
+            inlined_chips: Vec::new(),
             for_loop_frames: Vec::new(),
             induction_origins: HashMap::new(),
             loop_index_bound_contexts: Vec::new(),

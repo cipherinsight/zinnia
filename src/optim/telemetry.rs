@@ -101,19 +101,10 @@ pub struct SmtTelemetry {
     /// the failing path). P4 round 1.
     pub assertions_provably_false: AtomicUsize,
 
-    // -- Recursive-chip bound discharge counters (P4 round 2) ---------
-    /// Recursive chip call where the measure was a literal int — bound
-    /// proved by `int_val()` without consulting the resolver.
-    pub recursion_bound_static_val: AtomicUsize,
-    /// Recursive chip call where `resolve_max(measure)` returned `Some(n)`.
-    /// We tightened the per-call unroll cap to `min(n, recursion_limit)`.
-    pub recursion_bound_resolver_proved: AtomicUsize,
-    /// Recursive chip call where the heuristic could not pick a measure
-    /// (no integer arg decreased across the call). Falls back to the
-    /// hard `recursion_limit` budget. High counter values suggest the
-    /// heuristic needs a user-side `# zinnia: recursion_measure=...`
-    /// pragma escape hatch.
-    pub recursion_no_measure_found: AtomicUsize,
+    // -- Recursive chip calls ------------------------------------------
+    /// Recursive chip call that was not inlined because the compiler proved
+    /// that its path condition never holds (`IRGenerator::visit_chip_call`).
+    pub recursive_calls_proved_unreachable: AtomicUsize,
 
     // -- Per-chokepoint telemetry (item #7 of smt-invocation-load-bearing) -
     /// Per-`SiteKind` invocation counts. Bumped by `require_static_int`
@@ -204,9 +195,7 @@ impl SmtTelemetry {
             .load(Ordering::Relaxed);
         let asserts_resolver = self.assertions_eliminated_resolver.load(Ordering::Relaxed);
         let asserts_false = self.assertions_provably_false.load(Ordering::Relaxed);
-        let rec_static = self.recursion_bound_static_val.load(Ordering::Relaxed);
-        let rec_resolver = self.recursion_bound_resolver_proved.load(Ordering::Relaxed);
-        let rec_no_measure = self.recursion_no_measure_found.load(Ordering::Relaxed);
+        let rec_unreachable = self.recursive_calls_proved_unreachable.load(Ordering::Relaxed);
 
         // Cache hit % (over total queries).
         let cache_pct = if total > 0 {
@@ -261,16 +250,8 @@ impl SmtTelemetry {
             asserts_false
         ));
         s.push_str(&format!(
-            "  recursion_bound_static_val   = {}\n",
-            rec_static
-        ));
-        s.push_str(&format!(
-            "  recursion_bound_resolver     = {}\n",
-            rec_resolver
-        ));
-        s.push_str(&format!(
-            "  recursion_no_measure_found   = {}\n",
-            rec_no_measure
+            "  recursive_calls_unreachable  = {}\n",
+            rec_unreachable
         ));
 
         // Histogram.
