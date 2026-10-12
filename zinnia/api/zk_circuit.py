@@ -116,43 +116,6 @@ class ZKCircuit:
             raise
         return self.program
 
-    def analyze_shapes(self, pretty: bool = True) -> Dict[str, Any]:
-        """Run phase 0 (array-level shape analysis) on this circuit.
-
-        Mirrors :meth:`compile` — same chips, same externals, same config —
-        but stops after phase 0 and returns its record instead of a compiled
-        program. The result is either the phase-0 JSON document or
-        ``{"rejected": {"reason": ..., "detail": ...}}``.
-
-        ``pretty`` writes the ``*_pretty`` fields of the record; without them
-        the document is smaller and carries the same terms.
-        """
-        return ZinniaCompiler(self.config).analyze_shapes(
-            self.source, self.name,
-            {k: v.to_internal_object() for k, v in self.chips.items()},
-            {k: v.to_internal_object() for k, v in self.externals.items()},
-            pretty,
-        )
-
-    def build_candidates(
-        self,
-        query_timeout_ms: int = 3000,
-        program_timeout_ms: int = 60000,
-    ) -> Dict[str, Any]:
-        """Run phase 0 and then phase 1 on this circuit.
-
-        Mirrors :meth:`analyze_shapes` — same chips, same externals, same
-        config — but continues into phase 1 and returns its candidate graph,
-        answer record and statistics, or the rejection of whichever phase
-        refused the program.
-        """
-        return ZinniaCompiler(self.config).build_candidates(
-            self.source, self.name,
-            {k: v.to_internal_object() for k, v in self.chips.items()},
-            {k: v.to_internal_object() for k, v in self.externals.items()},
-            query_timeout_ms, program_timeout_ms,
-        )
-
     def __call__(self, *args):
         """Execute the circuit using the mock backend (default).
 
