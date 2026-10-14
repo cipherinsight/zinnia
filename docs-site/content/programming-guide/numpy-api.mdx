@@ -51,7 +51,7 @@ compile-time error.
 | `np.array`, `np.asarray` |
 | `np.zeros`, `np.ones`, `np.empty`, `np.full` |
 | `np.zeros_like`, `np.ones_like`, `np.empty_like`, `np.full_like` |
-| `np.eye`, `np.identity`, `np.diag`, `np.indices` |
+| `np.eye`, `np.identity`, `np.diag`, `np.tri`, `np.vander`, `np.indices` |
 | `np.arange`, `np.linspace` |
 | `np.copy` |
 | NumPy scalar types as constructors and dtypes, e.g. `np.int64(x)`, `np.float64`, `np.bool_` |
@@ -66,6 +66,7 @@ compile-time error.
 | `np.square`, `np.reciprocal` |
 | `np.floor`, `np.ceil`, `np.trunc`, `np.round`, `np.around` |
 | `np.minimum`, `np.maximum`, `np.fmin`, `np.fmax`, `np.clip` |
+| `np.heaviside` |
 
 ### Transcendental Functions
 
@@ -95,9 +96,10 @@ fixed-point `Float` values (see [Real Arithmetic](/docs/data-analytics/real-arit
 | Functions |
 |-----------|
 | `np.sum`, `np.prod`, `np.min`, `np.amin`, `np.max`, `np.amax`, `np.any`, `np.all` |
-| `np.mean`, `np.var`, `np.std`, `np.median`, `np.percentile` |
+| `np.mean`, `np.average`, `np.var`, `np.std`, `np.median`, `np.percentile` |
+| `np.ptp`, `np.count_nonzero` |
 | `np.argmax`, `np.argmin` |
-| `np.cumsum`, `np.cumprod`, `np.diff` |
+| `np.cumsum`, `np.cumprod`, `np.diff`, `np.ediff1d`, `np.trapezoid` |
 | `np.cov`, `np.corrcoef`, `np.histogram`, `np.bincount` |
 
 The following ufunc methods are supported:
@@ -112,12 +114,19 @@ The following ufunc methods are supported:
 
 | Functions |
 |-----------|
-| `np.dot`, `np.inner`, `np.outer`, `np.matmul` (and the `@` operator) |
+| `np.dot`, `np.vdot`, `np.inner`, `np.outer`, `np.matmul` (and the `@` operator) |
+| `np.kron`, `np.cross` |
 | `np.tensordot`, `np.einsum` |
-| `np.linalg.norm` |
+| `np.linalg.norm`, `np.linalg.det` |
 | `np.linalg.verify_inverse`, `np.linalg.verify_solve`, `np.linalg.verify_cholesky` |
 | `np.correlate`, `np.convolve` |
-| `np.triu`, `np.tril` |
+| `np.triu`, `np.tril`, `np.diagonal`, `np.trace` |
+| `np.polyval` |
+
+`np.linalg.det` expands the determinant by minors, sharing each minor between the
+expansions that use it (`n * 2^(n-1)` products for an `n x n` matrix, up to 16 x 16). Every
+minor is one fixed-point product sum, rounded once; a matrix of integers has an exact
+determinant.
 
 `np.linalg.inv`, `np.linalg.solve` and `np.linalg.cholesky` are not compiled. Calling one
 is an error that points to the verification functions, which check a result supplied by
@@ -136,7 +145,7 @@ the prover (for example `verify_inverse(A, Y)` checks that `Y` is the inverse of
 
 | Functions |
 |-----------|
-| `np.reshape`, `np.transpose`, `np.swapaxes`, `np.moveaxis` |
+| `np.reshape`, `np.ravel`, `np.transpose`, `np.swapaxes`, `np.moveaxis` |
 | `np.squeeze`, `np.expand_dims`, `np.broadcast_to` |
 | `np.atleast_1d`, `np.atleast_2d`, `np.atleast_3d` |
 | `np.flip`, `np.flipud`, `np.fliplr`, `np.rot90`, `np.roll` |

@@ -14,6 +14,7 @@ mod dynamic_array_compat;
 mod linalg_norm;
 mod list_methods;
 mod ndarray_methods;
+mod numpy_derived;
 mod numpy_funcs;
 
 /// Write `result` into the existing array `target` (element-wise, through
@@ -249,10 +250,12 @@ impl IRGenerator {
             value
         };
         // NumPy returns these read-only: a write to them raises. The
-        // diagonal of a 2-D array (`np.diag(m)`) is a read-only view; the
-        // diagonal matrix built from a 1-D array is a new, writable array.
+        // diagonal of a 2-D array (`np.diag(m)`, `np.diagonal(a)`) is a
+        // read-only view; the diagonal matrix built from a 1-D array is a
+        // new, writable array.
         let real_argument = ctx.args_orig.first().is_some_and(|a| !is_complex_value(a));
-        let diagonal_of_matrix = ctx.member == "diag" && ctx.args_orig.first().is_some_and(is_matrix);
+        let diagonal_of_matrix = (ctx.member == "diag" && ctx.args_orig.first().is_some_and(is_matrix))
+            || ctx.member == "diagonal";
         if ctx.member == "broadcast_to" || (ctx.member == "imag" && real_argument) || diagonal_of_matrix {
             self.builder.mark_read_only_in(&value, READ_ONLY_RESULT);
         }
@@ -683,6 +686,12 @@ impl IRGenerator {
             "inv" | "solve" | "cholesky" => {
                 crate::ops::static_ndarray_ops::np_linalg_implicit_result(n.member.as_str())
             }
+            "det" => {
+                let [a] = visited_args.as_slice() else {
+                    panic!("np.linalg.det takes one argument, got {}", visited_args.len());
+                };
+                crate::ops::static_ndarray_ops::np_linalg_det(&mut self.builder, a)
+            }
             "verify_inverse" => crate::ops::static_ndarray_ops::np_linalg_verify_inverse(
                 &mut self.builder,
                 &visited_args,
@@ -696,7 +705,7 @@ impl IRGenerator {
                 &visited_args,
             ),
             other => panic!(
-                "np.linalg.{} is not implemented; supported: norm and the verification helpers verify_inverse, verify_solve, verify_cholesky",
+                "np.linalg.{} is not implemented; supported: norm, det and the verification helpers verify_inverse, verify_solve, verify_cholesky",
                 other
             ),
         };

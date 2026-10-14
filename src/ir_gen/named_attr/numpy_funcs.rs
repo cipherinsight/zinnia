@@ -1836,6 +1836,9 @@ impl IRGenerator {
                 }
             }
             ("np", "diag") => np_diag(&mut self.builder, visited_args),
+            ("np", name) if super::numpy_derived::FUNCTIONS.contains(&name) => {
+                super::numpy_derived::call(&mut self.builder, name, visited_args_orig, visited_kwargs_orig)
+            }
             ("np", "indices") => np_indices(&mut self.builder, visited_args),
             ("np", "unravel_index") => crate::ops::static_ndarray_ops::np_unravel_index(
                 &mut self.builder,

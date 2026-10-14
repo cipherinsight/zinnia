@@ -56,6 +56,7 @@ fn build_np_op(name: &str, builder: &mut IRBuilder, args: &OpArgs) -> Option<Val
         "maximum" => np_like::NpMaximumOp.build(builder, args),
         "fmin" => np_like::NpFMinOp.build(builder, args),
         "fmax" => np_like::NpFMaxOp.build(builder, args),
+        "heaviside" => np_like::NpHeavisideOp.build(builder, args),
         // Remaining np ops are dispatched directly by ir_gen
         _ => return None,
     };
