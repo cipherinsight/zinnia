@@ -9,6 +9,7 @@ import re
 
 import numpy as np
 
+from testing.numpy_reference import np as numpy_reference
 from zinnia import ZKCircuit
 
 Q32 = 2**32
@@ -63,7 +64,8 @@ def run_mock(program, *args):
 
 def numpy_kernel(source: str):
     """The same kernel source as a plain NumPy function (annotations and
-    decorators such as ``@requires`` dropped)."""
+    decorators such as ``@requires`` dropped), with ``np`` from
+    `testing.numpy_reference`."""
     import ast
 
     tree = ast.parse(source)
@@ -73,7 +75,7 @@ def numpy_kernel(source: str):
         if isinstance(node, ast.FunctionDef):
             node.returns = None
             node.decorator_list = []
-    env = {"np": np}
+    env = {"np": numpy_reference}
     exec(compile(ast.fix_missing_locations(tree), "<kernel>", "exec"), env)
     return env["kernel"]
 

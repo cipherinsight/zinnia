@@ -7,6 +7,8 @@ from typing import Any, Callable
 
 import numpy as np
 
+from testing.numpy_reference import np as numpy_reference
+
 from .manifest import ArrayMode, ExpectedStatus, OperatorCase, ShapeCase, load_manifest
 
 
@@ -621,7 +623,7 @@ def _numpy_dtype(dtype: str | None) -> Any:
 
 
 def _eval_oracle_expr(expr: str, env: dict[str, Any] | None = None) -> Any:
-    base_env = {"np": np, "int": int, "float": float, "bool": bool}
+    base_env = {"np": numpy_reference, "int": int, "float": float, "bool": bool}
     if env:
         base_env.update(env)
     return eval(expr, base_env)
@@ -638,7 +640,7 @@ def _oracle_env(case: GeneratedCase) -> dict[str, Any]:
 
 class _OracleNP:
     def __getattr__(self, name: str) -> Any:
-        return getattr(np, name)
+        return getattr(numpy_reference, name)
 
     @staticmethod
     def promote_to_dynamic(value: Any) -> Any:
