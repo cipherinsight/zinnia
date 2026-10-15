@@ -1170,10 +1170,14 @@ mod tests {
         let mut b = IRBuilder::new();
         let a = make_2d_int(&mut b, &[&[1, 2, 3], &[4, 5, 6]]);
         let out = try_apply_transpose(&mut b, &a, &[]).expect("native");
+        // A lazy view: the source's segment with permuted strides; the
+        // cells are read through the strides (`payload_cells`).
+        let Value::StaticArray { segment_id: a_seg, .. } = &a else { panic!() };
         match &out {
-            Value::StaticArray { shape, strides, .. } => {
+            Value::StaticArray { shape, strides, segment_id, .. } => {
                 assert_eq!(*shape, vec![3, 2]);
-                assert_eq!(*strides, vec![2, 1]);
+                assert_eq!(*strides, vec![1, 3]);
+                assert_eq!(segment_id, a_seg, "transpose must share the source's segment");
             }
             _ => panic!(),
         }
