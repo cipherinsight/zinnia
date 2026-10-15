@@ -33,7 +33,7 @@ use halo2_base::halo2_proofs::{
     halo2curves::bn256::{Fr as Fp, G1Affine as EqAffine},
     plonk::{create_proof, keygen_pk, keygen_vk, verify_proof, Circuit, ProvingKey, VerifyingKey},
     poly::{
-        commitment::{Params, ParamsProver},
+        commitment::Params,
         ipa::{
             commitment::{IPACommitmentScheme, ParamsIPA},
             multiopen::{ProverIPA, VerifierIPA},
@@ -251,7 +251,7 @@ fn io_error<'a>(action: &'a str, path: &'a Path) -> impl Fn(std::io::Error) -> P
 pub fn keygen(ir: &IRGraph, params: &ProvingParams) -> Result<Halo2BaseKeys, ProvingError> {
     let ir_hash = crate::prove::ir_hash::compute_ir_hash(&ir.export_stmts())
         .map_err(|e| ProvingError::other(format!("ir_hash compute failed: {}", e)))?;
-    let ipa_params = ParamsIPA::<EqAffine>::new(params.k);
+    let ipa_params = ParamsIPA::clone(&super::ipa_params(params.k));
     let (mut circuit, _) = build_circuit(ir, None, params, CircuitBuilderStage::Keygen, None)?;
     let vk = without_panic("keygen_vk", params.k, || keygen_vk(&ipa_params, &circuit))?.map_err(|e| {
         ProvingError::ProvingFailed { detail: format!("halo2-base keygen_vk failed: {:?}", e) }

@@ -179,7 +179,7 @@ impl ProverBackend for Halo2BaseProverBackend {
             canonical_ir_hash.as_str()
         };
 
-        let ipa_params = Arc::new(ParamsIPA::<EqAffine>::new(params.k));
+        let ipa_params = ipa_params(params.k);
 
         let (mut keygen_circuit, _keygen_public) =
             build_circuit(ir, Some(witness), params, CircuitBuilderStage::Keygen, None)?;
@@ -335,8 +335,8 @@ impl ProverBackend for Halo2BaseProverBackend {
             )),
         )?
         .0;
-        let ipa_params = ParamsIPA::<EqAffine>::new(artifact.k);
-        let vk = keygen_vk(&ipa_params, &keygen_circuit).map_err(|e| {
+        let ipa_params = ipa_params(artifact.k);
+        let vk = keygen_vk(&*ipa_params, &keygen_circuit).map_err(|e| {
             ProvingError::VerificationFailed {
                 detail: format!("halo2-base re-keygen failed: {:?}", e),
             }
@@ -344,7 +344,7 @@ impl ProverBackend for Halo2BaseProverBackend {
 
         let mut transcript =
             Blake2bRead::<_, EqAffine, Challenge255<_>>::init(proof_bytes.as_slice());
-        let strategy = SingleStrategy::new(&ipa_params);
+        let strategy = SingleStrategy::new(&*ipa_params);
         match verify_proof::<
             IPACommitmentScheme<EqAffine>,
             VerifierIPA<EqAffine>,
@@ -352,7 +352,7 @@ impl ProverBackend for Halo2BaseProverBackend {
             _,
             SingleStrategy<EqAffine>,
         >(
-            &ipa_params,
+            &*ipa_params,
             &vk,
             strategy,
             &[&[public_inputs.as_slice()]],
@@ -756,6 +756,23 @@ fn try_build_public_layout_only(
     // Success: commit the buffered instance cells exactly once.
     builder.assigned_instances[0].extend(pending_instances);
     Ok(Some(public_values))
+}
+
+/// The IPA parameters for `2^k` rows. `ParamsIPA::new` hashes every generator
+/// to the curve, which costs more than proving a small circuit, and its result
+/// depends on `k` alone, so the parameters of the last `k` used are kept for
+/// the process. One entry bounds the memory held to one set of parameters.
+pub(crate) fn ipa_params(k: u32) -> Arc<ParamsIPA<EqAffine>> {
+    static LAST: std::sync::Mutex<Option<(u32, Arc<ParamsIPA<EqAffine>>)>> = std::sync::Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    match &*last {
+        Some((cached_k, params)) if *cached_k == k => params.clone(),
+        _ => {
+            let params = Arc::new(ParamsIPA::<EqAffine>::new(k));
+            *last = Some((k, params.clone()));
+            params
+        }
+    }
 }
 
 /// Run a halo2 step that lays out the circuit, turning a halo2-base panic

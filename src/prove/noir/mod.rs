@@ -63,7 +63,7 @@ impl NoirProverBackend {
         let emitted = emit_circuit(ir, witness, params)?;
         let dir = stage_package(&emitted.main_nr, &emitted.prover_toml)?;
         let result = driver::execute(&dir, &DriverPaths::default());
-        cleanup_staging_dir(&dir, result.is_ok());
+        cleanup_staging_dir(&dir);
         let returned = result.map_err(noir_error)?;
         // The emitter may append one synthetic return to an otherwise empty
         // circuit; only the exposed outputs are reported.
@@ -92,7 +92,7 @@ impl ProverBackend for NoirProverBackend {
         let emitted = emit_circuit(ir, witness, params)?;
         let dir = stage_package(&emitted.main_nr, &emitted.prover_toml)?;
         let result = run_pipeline(&dir, &DriverPaths::default());
-        cleanup_staging_dir(&dir, result.is_ok());
+        cleanup_staging_dir(&dir);
         assemble_artifact(result.map_err(noir_error)?)
     }
 
@@ -127,14 +127,16 @@ fn noir_error(e: driver::NoirError) -> ProvingError {
     }
 }
 
-/// Remove a staging directory after a successful run, unless
-/// `ZINNIA_NOIR_KEEP_TEMP=1` (debugging hatch: keeps the emitted package).
-/// Failed runs keep it so the failure can be reproduced.
-fn cleanup_staging_dir(dir: &std::path::Path, succeeded: bool) {
-    if succeeded && std::env::var("ZINNIA_NOIR_KEEP_TEMP").as_deref() != Ok("1") {
-        let _ = std::fs::remove_dir_all(dir);
-    } else {
+/// Remove a staging directory after a run, unless `ZINNIA_NOIR_KEEP_TEMP=1`
+/// (debugging hatch: keeps the emitted package so a run can be reproduced).
+/// A failed run is removed too: an unsatisfied witness is an expected
+/// outcome, and keeping every rejected input's package fills the temporary
+/// directory.
+fn cleanup_staging_dir(dir: &std::path::Path) {
+    if std::env::var("ZINNIA_NOIR_KEEP_TEMP").as_deref() == Ok("1") {
         eprintln!("zinnia-noir: kept staging dir at {}", dir.display());
+    } else {
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
 
