@@ -75,11 +75,17 @@ def test_a_forall_bound_does_not_outlive_a_write(write, use, x):
 
 def test_a_forall_bound_on_an_unwritten_array_is_still_used():
     program = compile_source(HEADER + USES["divisor"])
-    classes = [s["ir_instance"]["__class__"] for s in program.get_ir_stmts()]
-    # `np.min(a) + 1 >= 1`: no divisor check, only the input domain checks
-    # and the precondition's (2 + 2 per element; `x` is unused, so its own
-    # domain checks are dropped).
-    assert [c for c in classes if c.startswith("Assert")] == ["AssertIR"] * 16
+    stmts = {s["stmt_id"]: s for s in program.get_ir_stmts()}
+    asserts = [s for s in stmts.values() if s["ir_instance"]["__class__"].startswith("Assert")]
+    # `np.min(a) + 1 >= 1`: no divisor check. The only checks are the
+    # precondition's, one `0 <= a[i] < 5` per element (which also gives the
+    # input's domain; `x` is unused, so its own domain check is dropped).
+    assert len(asserts) == 4
+    for check in asserts:
+        cell, bound = (stmts[arg] for arg in check["arguments"])
+        assert check["ir_instance"]["__class__"] == "AssertU128LtIR"
+        assert cell["ir_instance"]["__class__"] == "ReadIntegerIR"
+        assert bound["ir_instance"]["ir_data"] == {"value": 5}
     satisfied, outputs = run_mock(program, np.array([3, 1, 4, 2]), 7)
     assert satisfied and outputs == [3]
     satisfied, _ = run_mock(program, np.array([3, 1, 5, 2]), 7)
