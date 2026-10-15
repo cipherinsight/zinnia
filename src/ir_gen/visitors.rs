@@ -584,14 +584,14 @@ impl IRGenerator {
         });
     }
 
-    fn clear_loop_read_reuse(&mut self) {
+    pub(super) fn clear_loop_read_reuse(&mut self) {
         if let Some(ctx) = self.loop_read_reuse_contexts.last_mut() {
             ctx.candidate = None;
             ctx.body_prefix_active = false;
         }
     }
 
-    fn body_stmt_can_preserve_read_reuse_prefix(stmt: &ASTNode) -> bool {
+    pub(super) fn body_stmt_can_preserve_read_reuse_prefix(stmt: &ASTNode) -> bool {
         match stmt {
             ASTNode::ASTAssignStatement(assign) if assign.targets.len() == 1 => {
                 matches!(
@@ -642,7 +642,7 @@ impl IRGenerator {
         }
     }
 
-    fn visit_while_guard_expr(
+    pub(super) fn visit_while_guard_expr(
         &mut self,
         node: &ASTNode,
         loop_index_bound_context: Option<&LoopIndexBoundContext>,

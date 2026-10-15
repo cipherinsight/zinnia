@@ -1617,51 +1617,153 @@ fn add_second_static_array_input(json: &mut String, name: &str) {
     );
 }
 
+/// The frame `visit_while` sets up for one iteration of the structural
+/// loop `while j > 0 and arr[j - 1] > 0.0: <body>` (a counter `j` that a
+/// `for` loop over `0..=4` started), with `j` a value known only at run
+/// time. In the full pipeline the counter is a constant on the active path
+/// (`value_on_current_path`), so its reads have constant positions; the
+/// guard-read reuse and the path-conditioned read below serve a counter
+/// that is not, and are driven here directly. Inputs: `arrays` (Float[4]),
+/// `x` and `j` (integers).
+fn guarded_counter_iteration(arrays: &[&str], body: &[serde_json::Value]) -> IRGenerator {
+    let float4 = |name: &str| serde_json::json!({
+        "__class__": "ASTCircuitInput",
+        "name": name,
+        "annotation": {
+            "__class__": "ASTAnnotation",
+            "kind": "Private",
+            "dt": {"NDArray": {"shape": [4], "dtype": "Float"}}
+        }
+    });
+    let integer = |name: &str| serde_json::json!({
+        "__class__": "ASTCircuitInput",
+        "name": name,
+        "annotation": {"__class__": "ASTAnnotation", "kind": "Private", "dt": "Integer"}
+    });
+    let mut inputs: Vec<serde_json::Value> = arrays.iter().map(|name| float4(name)).collect();
+    inputs.extend([integer("x"), integer("j")]);
+    let mut gen = generate_keeping_scope(serde_json::json!({
+        "__class__": "ASTCircuit",
+        "inputs": inputs,
+        "block": []
+    }));
+    let context = LoopIndexBoundContext {
+        var_name: "j".into(),
+        max_bound: 4,
+        current_bound: 4,
+        positive_guard: true,
+        guard_condition: None,
+        record_guard_read: false,
+    };
+    let guard: ASTNode = serde_json::from_value(and(
+        cmp_expr("gt", load("j"), int_const(0)),
+        cmp_expr("gt", read_at_j_minus_one("arr"), float_const(0.0)),
+    ))
+    .unwrap();
+    gen.loop_read_reuse_contexts.push(LoopReadReuseContext::default());
+    gen.visit_while_guard_expr(&guard, Some(&context));
+    gen.loop_index_bound_contexts.push(context);
+    for stmt in body {
+        let stmt: ASTNode = serde_json::from_value(stmt.clone()).unwrap();
+        if !IRGenerator::body_stmt_can_preserve_read_reuse_prefix(&stmt) {
+            gen.clear_loop_read_reuse();
+        }
+        gen.visit(&stmt);
+    }
+    gen.loop_index_bound_contexts.pop();
+    gen.loop_read_reuse_contexts.pop();
+    gen
+}
+
+/// `source[j - 1]`.
+fn read_at_j_minus_one(source: &str) -> serde_json::Value {
+    serde_json::json!({
+        "__class__": "ASTSubscriptExp",
+        "val": load(source),
+        "slicing": {
+            "__class__": "ASTSlice",
+            "data": [{
+                "__class__": "ASTBinaryOperator",
+                "operator": "sub",
+                "lhs": load("j"),
+                "rhs": int_const(1)
+            }]
+        }
+    })
+}
+
+/// `arr[j] = source[j - 1]`, the insertion sort's shift.
+fn shift_from(source: &str) -> serde_json::Value {
+    serde_json::json!({
+        "__class__": "ASTAssignStatement",
+        "targets": [{
+            "__class__": "ASTSubscriptAssignTarget",
+            "target": load("arr"),
+            "slicing": {"__class__": "ASTSlice", "data": [load("j")]}
+        }],
+        "value": read_at_j_minus_one(source)
+    })
+}
+
+fn array_read_count(gen: &IRGenerator) -> usize {
+    gen.builder.stmts.iter().filter(|stmt| matches!(stmt.ir, IR::ArrayRead(_))).count()
+}
+
+/// The structural loop itself: on the active path the counter is the
+/// constant `i - k`, so every read of `arr[j - 1]` has a constant position
+/// (no `ArrayRead`) and needs no check.
 #[test]
-fn matching_guard_rhs_static_array_read_uses_guarded_safe_fallback_address() {
-    let body_value = r#"{"__class__": "ASTLoad", "name": "x"}"#;
+fn structural_while_counter_reads_constant_positions_on_the_active_path() {
     let mut json = static_for_static_array_read_fixture(
-        body_value,
+        r#"{"__class__": "ASTLoad", "name": "x"}"#,
         None,
         r#"{"__class__": "ASTLoad", "name": "i"}"#,
         r#"{"__class__": "ASTConstantInteger", "value": 1}"#,
     );
     replace_guard_rhs_with_static_array_read(&mut json);
+    replace_body_sink_load_with_static_array_assignment_read(&mut json, "arr");
     let mut cfg = IRGenConfig::default();
     cfg.loop_limit = 32;
     let graph = IRGenerator::generate_from_json(cfg, &json).unwrap();
-
-    let assert_count = graph
+    assert_eq!(static_array_read_stmt_count(&graph), 0);
+    let checks = graph
         .stmts
         .iter()
         .enumerate()
-        .filter(|(i, stmt)| matches!(stmt.ir, IR::Assert) && !is_input_check(&graph.stmts, *i) && !is_while_backstop(&graph.stmts, *i))
+        .filter(|(i, stmt)| matches!(stmt.ir, IR::Assert | IR::AssertU128Lt | IR::AssertU128LtBit { .. }) && !is_input_check(&graph.stmts, *i) && !is_while_backstop(&graph.stmts, *i))
         .count();
+    assert_eq!(checks, 0);
+}
 
+#[test]
+fn matching_guard_rhs_static_array_read_uses_guarded_safe_fallback_address() {
+    let gen = guarded_counter_iteration(&["arr"], &[]);
+    let stmts = &gen.builder.stmts;
+    let checks = stmts
+        .iter()
+        .enumerate()
+        .filter(|(i, stmt)| matches!(stmt.ir, IR::Assert | IR::AssertU128Lt | IR::AssertU128LtBit { .. }) && !is_input_check(stmts, *i))
+        .count();
     assert_eq!(
-        assert_count, 0,
+        checks, 0,
         "matching guard RHS `j - 1` read should use the path-conditioned preproved path"
     );
 
-    let has_guarded_safe_read = graph.stmts.iter().any(|stmt| {
+    let has_guarded_safe_read = stmts.iter().any(|stmt| {
         if !matches!(stmt.ir, IR::ArrayRead(_)) || stmt.arguments.len() != 2 {
             return false;
         }
-        let addr_stmt = &graph.stmts[stmt.arguments[1] as usize];
+        let addr_stmt = &stmts[stmt.arguments[1] as usize];
         if !matches!(addr_stmt.ir, IR::SelectI) || addr_stmt.arguments.len() != 3 {
             return false;
         }
-        matches!(
-            graph.stmts[addr_stmt.arguments[2] as usize].ir,
-            IR::ConstantInt { value: 0 }
-        )
+        matches!(stmts[addr_stmt.arguments[2] as usize].ir, IR::ConstantInt { value: 0 })
     });
     assert!(
         has_guarded_safe_read,
         "guard RHS preproved read must select a known-valid fallback address when lhs is false"
     );
 }
-
 #[test]
 fn nonmatching_guard_lhs_rhs_static_array_read_keeps_witness_bundle() {
     let body_value = r#"{"__class__": "ASTLoad", "name": "x"}"#;
@@ -1707,241 +1809,49 @@ fn nonmatching_guard_lhs_rhs_static_array_read_keeps_witness_bundle() {
 
 #[test]
 fn guard_rhs_read_is_reused_by_first_matching_body_read_once() {
-    let body_value = r#"{"__class__": "ASTLoad", "name": "x"}"#;
-    let mut json = static_for_static_array_read_fixture(
-        body_value,
-        None,
-        r#"{"__class__": "ASTLoad", "name": "i"}"#,
-        r#"{"__class__": "ASTConstantInteger", "value": 1}"#,
-    );
-    replace_guard_rhs_with_static_array_read(&mut json);
-    replace_body_sink_load_with_static_array_assignment_read(&mut json, "arr");
-    let mut cfg = IRGenConfig::default();
-    cfg.loop_limit = 32;
-    let graph = IRGenerator::generate_from_json(cfg, &json).unwrap();
-
-    let reused_count = static_array_read_stmt_count(&graph);
-
-    let mut different_array_json = static_for_static_array_read_fixture(
-        body_value,
-        None,
-        r#"{"__class__": "ASTLoad", "name": "i"}"#,
-        r#"{"__class__": "ASTConstantInteger", "value": 1}"#,
-    );
-    replace_guard_rhs_with_static_array_read(&mut different_array_json);
-    replace_body_sink_load_with_static_array_assignment_read(&mut different_array_json, "arr2");
-    add_second_static_array_input(&mut different_array_json, "arr2");
-    let graph_without_reuse = IRGenerator::generate_from_json(
-        IRGenConfig {
-            loop_limit: 32,
-            ..Default::default()
-        },
-        &different_array_json,
-    )
-    .unwrap();
-    let fallback_count = static_array_read_stmt_count(&graph_without_reuse);
-
+    let reused_count = array_read_count(&guarded_counter_iteration(&["arr"], &[shift_from("arr")]));
+    let fallback_count =
+        array_read_count(&guarded_counter_iteration(&["arr", "arr2"], &[shift_from("arr2")]));
     assert!(
         reused_count < fallback_count,
         "guard RHS read should be reused by the first identical body read; reused={reused_count}, fallback={fallback_count}"
     );
 }
-
 #[test]
 fn guard_rhs_read_reuse_is_one_shot() {
-    let body_value = r#"{"__class__": "ASTLoad", "name": "x"}"#;
-    let mut json = static_for_static_array_read_fixture(
-        body_value,
-        None,
-        r#"{"__class__": "ASTLoad", "name": "i"}"#,
-        r#"{"__class__": "ASTConstantInteger", "value": 1}"#,
-    );
-    replace_guard_rhs_with_static_array_read(&mut json);
-    replace_body_sink_load_with_static_array_assignment_read(&mut json, "arr");
-    let first_body_read = r#"{
-                                    "__class__": "ASTAssignStatement",
-                                    "targets": [
-                                        {
-                                            "__class__": "ASTSubscriptAssignTarget",
-                                            "target": {"__class__": "ASTLoad", "name": "arr"},
-                                            "slicing": {
-                                                "__class__": "ASTSlice",
-                                                "data": [
-                                                    {"__class__": "ASTLoad", "name": "j"}
-                                                ]
-                                            }
-                                        }
-                                    ],
-                                    "value": {
-                                        "__class__": "ASTSubscriptExp",
-                                        "val": {"__class__": "ASTLoad", "name": "arr"},
-                                        "slicing": {
-                                            "__class__": "ASTSlice",
-                                            "data": [
-                                                {
-                                                    "__class__": "ASTBinaryOperator",
-                                                    "operator": "sub",
-                                                    "lhs": {"__class__": "ASTLoad", "name": "j"},
-                                                    "rhs": {"__class__": "ASTConstantInteger", "value": 1}
-                                                }
-                                            ]
-                                        }
-                                    }
-                                }"#;
-    let two_reads =
-        format!("{first_body_read},\n                                {first_body_read}");
-    json = json.replacen(first_body_read, &two_reads, 1);
-    let mut cfg = IRGenConfig::default();
-    cfg.loop_limit = 32;
-    let graph = IRGenerator::generate_from_json(cfg, &json).unwrap();
-
-    let two_read_count = static_array_read_stmt_count(&graph);
-
-    let mut single_read_json = static_for_static_array_read_fixture(
-        body_value,
-        None,
-        r#"{"__class__": "ASTLoad", "name": "i"}"#,
-        r#"{"__class__": "ASTConstantInteger", "value": 1}"#,
-    );
-    replace_guard_rhs_with_static_array_read(&mut single_read_json);
-    replace_body_sink_load_with_static_array_assignment_read(&mut single_read_json, "arr");
-    let single_read_graph = IRGenerator::generate_from_json(
-        IRGenConfig {
-            loop_limit: 32,
-            ..Default::default()
-        },
-        &single_read_json,
-    )
-    .unwrap();
-    let single_read_count = static_array_read_stmt_count(&single_read_graph);
-
+    let single_read_count = array_read_count(&guarded_counter_iteration(&["arr"], &[shift_from("arr")]));
+    let two_read_count =
+        array_read_count(&guarded_counter_iteration(&["arr"], &[shift_from("arr"), shift_from("arr")]));
     assert!(
         two_read_count > single_read_count,
         "reuse must be one-shot; second identical body read emits its own memory read; single={single_read_count}, two={two_read_count}"
     );
 }
-
 #[test]
 fn unsupported_body_prefix_statement_blocks_guard_rhs_read_reuse() {
-    let body_value = r#"{"__class__": "ASTLoad", "name": "x"}"#;
-    let mut json = static_for_static_array_read_fixture(
-        body_value,
-        None,
-        r#"{"__class__": "ASTLoad", "name": "i"}"#,
-        r#"{"__class__": "ASTConstantInteger", "value": 1}"#,
-    );
-    replace_guard_rhs_with_static_array_read(&mut json);
-    replace_body_sink_load_with_static_array_assignment_read(&mut json, "arr");
-    let first_body_read = r#"{
-                                    "__class__": "ASTAssignStatement",
-                                    "targets": [
-                                        {
-                                            "__class__": "ASTSubscriptAssignTarget",
-                                            "target": {"__class__": "ASTLoad", "name": "arr"},
-                                            "slicing": {
-                                                "__class__": "ASTSlice",
-                                                "data": [
-                                                    {"__class__": "ASTLoad", "name": "j"}
-                                                ]
-                                            }
-                                        }
-                                    ],
-                                    "value": {
-                                        "__class__": "ASTSubscriptExp",
-                                        "val": {"__class__": "ASTLoad", "name": "arr"},
-                                        "slicing": {
-                                            "__class__": "ASTSlice",
-                                            "data": [
-                                                {
-                                                    "__class__": "ASTBinaryOperator",
-                                                    "operator": "sub",
-                                                    "lhs": {"__class__": "ASTLoad", "name": "j"},
-                                                    "rhs": {"__class__": "ASTConstantInteger", "value": 1}
-                                                }
-                                            ]
-                                        }
-                                    }
-                                }"#;
-    let unsupported_prefix = format!(
-        r#"{{
-                                    "__class__": "ASTAssignStatement",
-                                    "targets": [{{"__class__": "ASTNameAssignTarget", "name": "tmp"}}],
-                                    "value": {{"__class__": "ASTLoad", "name": "x"}}
-                                }},
-                                {first_body_read}"#
-    );
-    json = json.replacen(first_body_read, &unsupported_prefix, 1);
-    let mut cfg = IRGenConfig::default();
-    cfg.loop_limit = 32;
-    let graph = IRGenerator::generate_from_json(cfg, &json).unwrap();
-
-    let blocked_count = static_array_read_stmt_count(&graph);
-
-    let mut matched_json = static_for_static_array_read_fixture(
-        body_value,
-        None,
-        r#"{"__class__": "ASTLoad", "name": "i"}"#,
-        r#"{"__class__": "ASTConstantInteger", "value": 1}"#,
-    );
-    replace_guard_rhs_with_static_array_read(&mut matched_json);
-    replace_body_sink_load_with_static_array_assignment_read(&mut matched_json, "arr");
-    let matched_graph = IRGenerator::generate_from_json(
-        IRGenConfig {
-            loop_limit: 32,
-            ..Default::default()
-        },
-        &matched_json,
-    )
-    .unwrap();
-    let matched_count = static_array_read_stmt_count(&matched_graph);
-
+    let unsupported_prefix = serde_json::json!({
+        "__class__": "ASTAssignStatement",
+        "targets": [{"__class__": "ASTNameAssignTarget", "name": "tmp"}],
+        "value": load("x")
+    });
+    let blocked_count =
+        array_read_count(&guarded_counter_iteration(&["arr"], &[unsupported_prefix, shift_from("arr")]));
+    let matched_count = array_read_count(&guarded_counter_iteration(&["arr"], &[shift_from("arr")]));
     assert!(
         blocked_count > matched_count,
         "unsupported body-prefix statements must block guard/body read reuse; matched={matched_count}, blocked={blocked_count}"
     );
 }
-
 #[test]
 fn same_index_different_static_array_identity_does_not_reuse_guard_rhs_read() {
-    let body_value = r#"{"__class__": "ASTLoad", "name": "x"}"#;
-    let mut json = static_for_static_array_read_fixture(
-        body_value,
-        None,
-        r#"{"__class__": "ASTLoad", "name": "i"}"#,
-        r#"{"__class__": "ASTConstantInteger", "value": 1}"#,
-    );
-    replace_guard_rhs_with_static_array_read(&mut json);
-    replace_body_sink_load_with_static_array_assignment_read(&mut json, "arr2");
-    add_second_static_array_input(&mut json, "arr2");
-    let mut cfg = IRGenConfig::default();
-    cfg.loop_limit = 32;
-    let graph = IRGenerator::generate_from_json(cfg, &json).unwrap();
-
-    let mut matched_json = static_for_static_array_read_fixture(
-        body_value,
-        None,
-        r#"{"__class__": "ASTLoad", "name": "i"}"#,
-        r#"{"__class__": "ASTConstantInteger", "value": 1}"#,
-    );
-    replace_guard_rhs_with_static_array_read(&mut matched_json);
-    replace_body_sink_load_with_static_array_assignment_read(&mut matched_json, "arr");
-    let matched_graph = IRGenerator::generate_from_json(
-        IRGenConfig {
-            loop_limit: 32,
-            ..Default::default()
-        },
-        &matched_json,
-    )
-    .unwrap();
-    let different_identity_count = static_array_read_stmt_count(&graph);
-    let matched_count = static_array_read_stmt_count(&matched_graph);
-
+    let different_identity_count =
+        array_read_count(&guarded_counter_iteration(&["arr", "arr2"], &[shift_from("arr2")]));
+    let matched_count = array_read_count(&guarded_counter_iteration(&["arr", "arr2"], &[shift_from("arr")]));
     assert!(
         different_identity_count > matched_count,
         "same index over a different StaticArray identity must not reuse the guard value; matched={matched_count}, different_identity={different_identity_count}"
     );
 }
-
 #[test]
 #[should_panic(expected = "loop bound depends on a private value with no provable maximum")]
 /// Without a structural cap or provable bound, a private-guard `while` must be rejected, never truncated at loop_limit (it used to "fail open" to loop_limit iterations).
