@@ -86,12 +86,7 @@ fn bounded_dynamic_input_metadata_uses_runtime_shape_witness() {
             "block": []
         }"#;
 
-    let node: ASTNode = serde_json::from_str(json).unwrap();
-    let ASTNode::ASTCircuit(circuit) = node else {
-        panic!("expected circuit");
-    };
-    let mut gen = IRGenerator::new(IRGenConfig::default());
-    gen.visit_circuit(&circuit);
+    let gen = generate_keeping_scope(serde_json::from_str(json).unwrap());
     let x = gen.ctx.get("x").expect("x should be bound");
     let Value::DynamicNDArray(data) = x else {
         panic!("expected DynamicNDArray input");
@@ -138,12 +133,7 @@ fn dynamic_input_metadata_preserves_per_axis_bounds() {
             "block": []
         }"#;
 
-    let node: ASTNode = serde_json::from_str(json).unwrap();
-    let ASTNode::ASTCircuit(circuit) = node else {
-        panic!("expected circuit");
-    };
-    let mut gen = IRGenerator::new(IRGenConfig::default());
-    gen.visit_circuit(&circuit);
+    let gen = generate_keeping_scope(serde_json::from_str(json).unwrap());
     let x = gen.ctx.get("x").expect("x should be bound");
     let Value::DynamicNDArray(data) = x else {
         panic!("expected DynamicNDArray input");
@@ -452,6 +442,23 @@ fn generate_with_builder(circuit_json: serde_json::Value) -> IRGenerator {
     gen
 }
 
+/// Generate `circuit_json`'s inputs and block in a circuit scope that stays
+/// open, so a test can read the bindings (`visit_circuit` leaves the scope
+/// at the end). Preconditions and outputs are not generated.
+fn generate_keeping_scope(circuit_json: serde_json::Value) -> IRGenerator {
+    let node: ASTNode = serde_json::from_value(circuit_json).unwrap();
+    let ASTNode::ASTCircuit(circuit) = node else {
+        panic!("expected circuit");
+    };
+    let mut gen = IRGenerator::new(IRGenConfig::default());
+    gen.ctx.circuit_enter();
+    gen.bind_circuit_inputs(&circuit);
+    for stmt in &circuit.block {
+        gen.visit(stmt);
+    }
+    gen
+}
+
 fn input_vid(gen: &IRGenerator, name: &str) -> ValueId {
     gen.builder
         .stmts
@@ -710,7 +717,7 @@ fn composite_assert_comparison_still_emits_assert_without_scalar_fact() {
             assert_cmp("eq", load("arr"), load("arr"))
         ]
     });
-    let gen = generate_with_builder(circuit);
+    let gen = generate_keeping_scope(circuit);
     assert!(
         gen.builder
             .stmts
@@ -750,7 +757,7 @@ fn mixed_assert_conjunction_publishes_only_supported_scalar_siblings() {
             ))
         ]
     });
-    let gen = generate_with_builder(circuit);
+    let gen = generate_keeping_scope(circuit);
     assert!(
         gen.builder
             .stmts
@@ -1446,95 +1453,87 @@ fn static_array_read_stmt_count(graph: &crate::ir::IRGraph) -> usize {
         .count()
 }
 
-fn forall_eq_const_term(vid: ValueId, k: i64) -> ContractTerm {
-    ContractTerm::PredicateApp {
-        kind: "forall_eq_const".to_string(),
-        args: vec![
-            ContractTerm::Var(ContractVar::Value(vid)),
-            ContractTerm::LitInt(k),
+/// An open circuit scope with an input array `arr` (Float[4]), an input
+/// integer `x`, and `zeros`, a Float[4] array of constant zero cells.
+fn scope_with_zeros_and_input_array() -> IRGenerator {
+    let mut gen = generate_keeping_scope(serde_json::json!({
+        "__class__": "ASTCircuit",
+        "inputs": [
+            {
+                "__class__": "ASTCircuitInput",
+                "name": "arr",
+                "annotation": {
+                    "__class__": "ASTAnnotation",
+                    "kind": "Private",
+                    "dt": {"NDArray": {"shape": [4], "dtype": "Float"}}
+                }
+            },
+            {
+                "__class__": "ASTCircuitInput",
+                "name": "x",
+                "annotation": {"__class__": "ASTAnnotation", "kind": "Private", "dt": "Integer"}
+            }
         ],
-    }
+        "block": []
+    }));
+    let cells: Vec<Value> = (0..4).map(|_| gen.builder.ir_constant_float(0.0)).collect();
+    let list = Value::List(crate::types::CompositeData::new(vec![ZinniaType::Float; 4], cells));
+    let zeros = crate::helpers::static_array::base::to_static_array(&mut gen.builder, &list).unwrap();
+    gen.ctx.set("zeros", zeros);
+    gen
 }
 
-fn plant_forall_eq_const_fact(gen: &mut IRGenerator, name: &str, k: i64) {
-    let vid = gen
-        .ctx
-        .get(name)
-        .and_then(|v| v.value_id())
-        .expect("input should carry a value_id");
-    gen.builder
-        .facts
-        .insert_for(vid, forall_eq_const_term(vid, k));
+fn subscript(gen: &mut IRGenerator, name: &str, index: serde_json::Value) -> Value {
+    gen.visit(&ASTNode::ASTSubscriptExp(ASTSubscriptExp {
+        val: Box::new(ASTNode::ASTLoad(ASTLoad {
+            name: name.to_string(),
+            dbg: None,
+        })),
+        slicing: ASTSlice {
+            data: vec![index],
+            dbg: None,
+        },
+        dbg: None,
+    }))
 }
 
-fn assert_forall_eq_const_outcome(
-    gen: &mut IRGenerator,
-    value: &Value,
-    k: i64,
-    expected: ProveOutcome,
-) {
-    let vid = value.value_id().expect("value should carry a value_id");
-    assert_eq!(gen.builder.prove(&forall_eq_const_term(vid, k)), expected);
-}
-
+/// "Every element is k" is read off an array's cells (the array facts,
+/// `docs/array-facts.md`), not relayed by value id: a read at a runtime
+/// position of an array of constant zeros is one of its cells, so zero; a
+/// read of an input array is not decided.
 #[test]
 fn scalar_dynamic_static_array_read_skips_forall_eq_const_relay() {
-    let mut gen = IRGenerator::new(IRGenConfig::default());
-    let ast: ASTCircuit = serde_json::from_str(&static_for_static_array_read_fixture(
-        r#"{"__class__": "ASTLoad", "name": "x"}"#,
-        None,
-        r#"{"__class__": "ASTLoad", "name": "i"}"#,
-        r#"{"__class__": "ASTConstantInteger", "value": 1}"#,
-    ))
-    .unwrap();
-    gen.visit_circuit(&ast);
-    plant_forall_eq_const_fact(&mut gen, "arr", 0);
+    let mut gen = scope_with_zeros_and_input_array();
+    let runtime_index = serde_json::json!({"__class__": "ASTLoad", "name": "x"});
 
-    let read = gen.visit(&ASTNode::ASTSubscriptExp(ASTSubscriptExp {
-        val: Box::new(ASTNode::ASTLoad(ASTLoad {
-            name: "arr".to_string(),
-            dbg: None,
-        })),
-        slicing: ASTSlice {
-            data: vec![serde_json::json!({"__class__": "ASTLoad", "name": "x"})],
-            dbg: None,
-        },
-        dbg: None,
-    }));
+    let zero_read = subscript(&mut gen, "zeros", runtime_index.clone());
+    assert!(zero_read.int_val().is_none() && zero_read.float_val().is_none(), "the position is known only at run time");
+    assert!(gen.builder.array_all_equal(&zero_read, 0));
+    assert!(!gen.builder.array_all_equal(&zero_read, 1));
 
-    assert_forall_eq_const_outcome(&mut gen, &read, 0, ProveOutcome::Unknown);
+    let input_read = subscript(&mut gen, "arr", runtime_index);
+    assert!(!gen.builder.array_all_equal(&input_read, 0));
 }
 
+/// A slice of an array of constant zeros is all zeros (its cells are the
+/// source's); a slice of an input array is not.
 #[test]
 fn shaped_static_array_slice_keeps_forall_eq_const_relay() {
-    let mut gen = IRGenerator::new(IRGenConfig::default());
-    let ast: ASTCircuit = serde_json::from_str(&static_for_static_array_read_fixture(
-        r#"{"__class__": "ASTLoad", "name": "x"}"#,
-        None,
-        r#"{"__class__": "ASTLoad", "name": "i"}"#,
-        r#"{"__class__": "ASTConstantInteger", "value": 1}"#,
-    ))
-    .unwrap();
-    gen.visit_circuit(&ast);
-    plant_forall_eq_const_fact(&mut gen, "arr", 0);
+    let mut gen = scope_with_zeros_and_input_array();
+    let one_to_three = serde_json::json!([
+        {"__class__": "ASTConstantInteger", "value": 1},
+        {"__class__": "ASTConstantInteger", "value": 3},
+        null
+    ]);
 
-    let slice = gen.visit(&ASTNode::ASTSubscriptExp(ASTSubscriptExp {
-        val: Box::new(ASTNode::ASTLoad(ASTLoad {
-            name: "arr".to_string(),
-            dbg: None,
-        })),
-        slicing: ASTSlice {
-            data: vec![serde_json::json!([
-                {"__class__": "ASTConstantInteger", "value": 1},
-                {"__class__": "ASTConstantInteger", "value": 3},
-                null
-            ])],
-            dbg: None,
-        },
-        dbg: None,
-    }));
+    let zero_slice = subscript(&mut gen, "zeros", one_to_three.clone());
+    let Value::StaticArray { shape, .. } = &zero_slice else { panic!("a slice is an array") };
+    assert_eq!(*shape, vec![2]);
+    assert!(gen.builder.array_all_equal(&zero_slice, 0));
+    assert!(!gen.builder.array_all_equal(&zero_slice, 1));
 
-    assert_forall_eq_const_outcome(&mut gen, &slice, 0, ProveOutcome::Proved);
+    let input_slice = subscript(&mut gen, "arr", one_to_three);
+    assert!(!gen.builder.array_all_equal(&input_slice, 0));
 }
 
 fn replace_body_sink_load_with_static_array_assignment_read(json: &mut String, source_name: &str) {

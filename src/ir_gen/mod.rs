@@ -472,25 +472,10 @@ impl IRGenerator {
     // ── Circuit ───────────────────────────────────────────────────────
 
     fn visit_circuit(&mut self, n: &ASTCircuit) {
-        let scalar_preconditions = self.scalar_precondition_terms(n);
-        let input_types = self.resolve_input_shape_types(n, &scalar_preconditions);
-
         let circuit_return_dt = n.return_dt.as_ref().map(|dt| self.parse_dt_descriptor(dt));
 
         self.ctx.circuit_enter();
-
-        // Process inputs
-        for (_i, inp) in n.inputs.iter().enumerate() {
-            let dt = input_types
-                .get(&inp.name)
-                .cloned()
-                .unwrap_or_else(|| self.parse_dt_descriptor(&inp.annotation.dt));
-            let kind = inp.annotation.kind.as_deref().unwrap_or("Private");
-            let is_public = kind == "Public";
-            let val = self.read_input_value(&dt, &inp.name, vec![], is_public, inp.annotation.boolean);
-            self.ctx.set(&inp.name, val);
-        }
-
+        self.bind_circuit_inputs(n);
         self.register_global_datatypes();
 
         // Emit structural-predicate precondition atoms (compile-time facts
@@ -687,6 +672,23 @@ impl IRGenerator {
         }
         self.expose_return_value(&result);
         let _ = self.ctx.circuit_leave();
+    }
+
+    /// Read the circuit's inputs (shapes resolved against its scalar
+    /// preconditions) and bind them in the current scope.
+    fn bind_circuit_inputs(&mut self, n: &ASTCircuit) {
+        let scalar_preconditions = self.scalar_precondition_terms(n);
+        let input_types = self.resolve_input_shape_types(n, &scalar_preconditions);
+        for inp in &n.inputs {
+            let dt = input_types
+                .get(&inp.name)
+                .cloned()
+                .unwrap_or_else(|| self.parse_dt_descriptor(&inp.annotation.dt));
+            let kind = inp.annotation.kind.as_deref().unwrap_or("Private");
+            let is_public = kind == "Public";
+            let val = self.read_input_value(&dt, &inp.name, vec![], is_public, inp.annotation.boolean);
+            self.ctx.set(&inp.name, val);
+        }
     }
 
     fn scalar_precondition_terms(&self, n: &ASTCircuit) -> Vec<ContractTerm> {
