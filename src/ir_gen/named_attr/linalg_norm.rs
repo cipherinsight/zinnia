@@ -82,15 +82,17 @@ impl IRGenerator {
     }
 }
 
-/// `Some(true)` for `np.inf` / `math.inf` / `float('inf')` (also `np.Inf`,
-/// `np.PINF`), `Some(false)` for their negation, `None` for anything else.
+/// `Some(true)` for `np.inf` / `math.inf` / `float('inf')`, `Some(false)`
+/// for their negation, `None` for anything else. NumPy 2.0 removed `np.Inf`,
+/// `np.infty` and `np.PINF`; like every other use of them, an `ord` that names
+/// one is reported with its replacement.
 fn infinity_sign(node: &ASTNode) -> Option<bool> {
     match node {
         ASTNode::ASTUnaryOperator(u) if u.operator == "usub" => infinity_sign(&u.operand).map(|s| !s),
         ASTNode::ASTUnaryOperator(u) if u.operator == "uadd" => infinity_sign(&u.operand),
         ASTNode::ASTNamedAttribute(attr) => {
             let named_infinity = match (attr.target.as_deref(), attr.member.as_str()) {
-                (Some("np"), "inf" | "Inf" | "infty" | "PINF") | (Some("math"), "inf") => attr.args.is_empty(),
+                (Some("np"), "inf") | (Some("math"), "inf") => attr.args.is_empty(),
                 (None, "float") => matches!(
                     attr.args.as_slice(),
                     [ASTNode::ASTConstantString(s)] if matches!(s.value.to_ascii_lowercase().as_str(), "inf" | "+inf" | "infinity")

@@ -88,7 +88,7 @@ fixed-point `Float` values (see [Real Arithmetic](/docs/data-analytics/real-arit
 | `np.equal`, `np.not_equal`, `np.less`, `np.less_equal`, `np.greater`, `np.greater_equal` |
 | `np.logical_and`, `np.logical_or`, `np.logical_xor`, `np.logical_not` |
 | `np.isclose`, `np.allclose`, `np.array_equal` |
-| `np.isin`, `np.in1d` |
+| `np.isin` |
 | `np.where`, `np.select` |
 
 ### Reductions and Statistics
@@ -149,7 +149,7 @@ the prover (for example `verify_inverse(A, Y)` checks that `Y` is the inverse of
 | `np.squeeze`, `np.expand_dims`, `np.broadcast_to` |
 | `np.atleast_1d`, `np.atleast_2d`, `np.atleast_3d` |
 | `np.flip`, `np.flipud`, `np.fliplr`, `np.rot90`, `np.roll` |
-| `np.concatenate`, `np.stack`, `np.vstack`, `np.hstack`, `np.dstack`, `np.column_stack`, `np.row_stack`, `np.block` |
+| `np.concatenate`, `np.stack`, `np.vstack`, `np.hstack`, `np.dstack`, `np.column_stack`, `np.block` |
 | `np.split`, `np.array_split`, `np.hsplit`, `np.vsplit`, `np.dsplit` |
 | `np.repeat`, `np.tile`, `np.pad` |
 | `np.delete`, `np.insert` |
@@ -164,6 +164,26 @@ the prover (for example `verify_inverse(A, Y)` checks that `Y` is the inverse of
 
 Ufuncs accept an `out` array, as a keyword or as the positional argument after their
 inputs (`np.add(x, 1, y)`).
+
+### Removed NumPy Names
+
+Zinnia supports NumPy 2.2 and later. A few functions and argument forms that NumPy 2.2
+still accepts (with a deprecation warning) were removed by later releases. Zinnia keeps
+accepting them, with the results NumPy 2.2 gives, so that programs written against
+NumPy 2.2 (such as the DS-1000 kernels in `benchmarking/`) compile unchanged:
+
+| Name or form | Removed in NumPy | Same as |
+|--------------|------------------|---------|
+| `mode` of `np.convolve` and `np.correlate` in another case or abbreviated (`'FULL'`, `'s'`) | 2.3 | the lowercase name (`'full'`, `'same'`) |
+| `np.in1d(a, b, ...)` | 2.4 | `np.isin(a, b, ...).ravel()` |
+| `np.trapz` | 2.4 | `np.trapezoid` |
+| `np.row_stack` | 2.5 | `np.vstack` |
+| `np.cross` of 2-component vectors | 2.5 | the vectors with a zero third component; for two 2-component vectors, only the third component of the result |
+
+A program that uses one of them no longer runs under a NumPy that rejects it, so new code
+should use the current form. Names that NumPy 2.0 removed, such as `np.Inf`,
+`np.product` or `np.round_`, are not accepted; the compiler's error names the replacement
+(`np.inf`, `np.prod`, `np.round`).
 
 ## Array Methods and Attributes
 

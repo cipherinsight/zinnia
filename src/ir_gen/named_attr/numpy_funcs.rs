@@ -330,7 +330,9 @@ fn np_correlate(
 }
 
 /// NumPy's `mode` names: any string whose first letter is `v`, `s` or `f`
-/// (case-insensitive), as `numpy._core.numeric._mode_from_name`.
+/// (case-insensitive), as NumPy 2.2 accepts them. NumPy 2.3 accepts only the
+/// exact lowercase names; Zinnia keeps the older forms, see
+/// "Removed NumPy Names" in docs-site/content/programming-guide/numpy-api.mdx.
 fn correlation_mode(value: &Value, name: &str) -> CorrelationMode {
     let text = value
         .string_val()
@@ -1407,7 +1409,10 @@ impl IRGenerator {
                     )
                 }
             }
-            ("np", "vstack") => {
+            // `np.row_stack`, NumPy's alias of `np.vstack` until NumPy 2.5, stays
+            // accepted: see "Removed NumPy Names" in
+            // docs-site/content/programming-guide/numpy-api.mdx.
+            ("np", "vstack" | "row_stack") => {
                 // P4c: native StaticArray dispatch.
                 if let Some(arrays_arg) = visited_args_orig.first() {
                     if list_contains_static_array(arrays_arg) {
@@ -1420,9 +1425,6 @@ impl IRGenerator {
                     }
                 }
                 crate::ops::static_ndarray_ops::np_vstack(&mut self.builder, visited_args)
-            }
-            ("np", "row_stack") => {
-                crate::ops::static_ndarray_ops::np_row_stack(&mut self.builder, visited_args)
             }
             ("np", "hstack") => {
                 // P4c: native StaticArray dispatch.
@@ -1894,6 +1896,9 @@ impl IRGenerator {
                     _ => panic!("np.flatnonzero: expected rank-1 nonzero output"),
                 }
             }
+            // `np.in1d` (`np.isin(...).ravel()`), removed in NumPy 2.4, stays
+            // accepted: see "Removed NumPy Names" in
+            // docs-site/content/programming-guide/numpy-api.mdx.
             ("np", name @ ("in1d" | "isin")) => np_membership(
                 &mut self.builder,
                 name == "isin",
@@ -2198,6 +2203,9 @@ impl IRGenerator {
         if !matches!(target, "np" | "zinnia" | "math") {
             return None;
         }
+        if let ("np", Some(instead)) = (target, removed_in_numpy_2_0(ctx.member)) {
+            panic!("np.{} was removed in NumPy 2.0; use {instead}", ctx.member);
+        }
         let name = ctx.member;
         let member = ctx.member;
         let visited_args = ctx.args;
@@ -2501,6 +2509,32 @@ impl IRGenerator {
             None => panic!("np.{} is not implemented", name),
         }
     }
+}
+
+/// What to write instead of a name NumPy 2.0 removed, for the names a
+/// program could use in a circuit. Zinnia supports NumPy 2.2 and later, so
+/// these names are not part of its language and are reported with their
+/// replacement. (The names NumPy removed after 2.2, `np.in1d`, `np.trapz` and
+/// `np.row_stack`, stay accepted as aliases: see "Removed NumPy Names" in
+/// docs-site/content/programming-guide/numpy-api.mdx.)
+fn removed_in_numpy_2_0(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "Inf" | "Infinity" | "infty" | "PINF" => "np.inf",
+        "NINF" => "-np.inf",
+        "NaN" => "np.nan",
+        "PZERO" => "0.0",
+        "NZERO" => "-0.0",
+        "float_" => "np.float64",
+        "complex_" | "cfloat" => "np.complex128",
+        "round_" => "np.round",
+        "product" => "np.prod",
+        "cumproduct" => "np.cumprod",
+        "alltrue" => "np.all",
+        "sometrue" => "np.any",
+        "asfarray" => "np.asarray with a float dtype",
+        "msort" => "np.sort(a, axis=0)",
+        _ => return None,
+    })
 }
 
 /// The shape of a nested list or tuple of rank 2 or more without any

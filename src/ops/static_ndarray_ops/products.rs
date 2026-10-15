@@ -59,7 +59,9 @@ pub fn np_vdot(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
 /// of `a` and of `b` (2 or 3 components each), the other axes broadcast.
 /// Two 3-vectors give a 3-vector; two 2-vectors give the z component of
 /// their product, a scalar per vector pair; a 2-vector with a 3-vector is
-/// taken with a zero z component and gives a 3-vector.
+/// taken with a zero z component and gives a 3-vector. NumPy 2.5 rejects
+/// 2-vectors; Zinnia keeps NumPy 2.2's results, see
+/// "Removed NumPy Names" in docs-site/content/programming-guide/numpy-api.mdx.
 pub fn np_cross(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
     let lhs = StaticOperand::read_numeric(b, lhs, "np.cross");
     let rhs = StaticOperand::read_numeric(b, rhs, "np.cross");

@@ -14,10 +14,12 @@ use crate::types::{CompositeData, NumberType, Value, ValueId};
 
 use super::array_compat::reduction;
 
-/// The functions of this module.
+/// The functions of this module. `trapz`, NumPy's name of `trapezoid` until
+/// NumPy 2.4, stays accepted: see "Removed NumPy Names" in
+/// docs-site/content/programming-guide/numpy-api.mdx.
 pub(super) const FUNCTIONS: &[&str] = &[
     "average", "count_nonzero", "cross", "diagonal", "ediff1d", "kron", "polyval", "ptp", "ravel",
-    "trace", "trapezoid", "tri", "vander", "vdot",
+    "trace", "trapezoid", "trapz", "tri", "vander", "vdot",
 ];
 
 /// `np.<name>(*args, **kwargs)` for a name of [`FUNCTIONS`].
@@ -99,7 +101,7 @@ pub(super) fn call(b: &mut IRBuilder, name: &str, args: &[Value], kwargs: &HashM
             reduce.insert("axis".to_string(), b.ir_constant_int(-1));
             reduction(b, "sum", &[diagonal], &reduce)
         }
-        "trapezoid" => {
+        "trapezoid" | "trapz" => {
             let a = bind(&["y", "x", "dx", "axis"]);
             let axis = static_int_arg(a.get("axis"), -1, &format!("{op}: `axis`"));
             let default_dx = b.ir_constant_float(1.0);

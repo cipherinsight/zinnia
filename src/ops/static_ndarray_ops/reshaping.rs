@@ -1184,11 +1184,6 @@ pub fn np_column_stack(_b: &mut IRBuilder, args: &[Value]) -> Value {
     out
 }
 
-/// `np.row_stack(arrays)` — alias of vstack.
-pub fn np_row_stack(b: &mut IRBuilder, args: &[Value]) -> Value {
-    np_vstack(b, args)
-}
-
 // ────────────────────────────────────────────────────────────────────────
 // Splitting family (split / array_split / hsplit / vsplit / dsplit)
 // ────────────────────────────────────────────────────────────────────────
