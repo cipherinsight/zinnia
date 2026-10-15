@@ -79,8 +79,10 @@ def test_comparisons_with_a_constant_read_the_checked_window(k):
     x = np.array([I64_MIN, k - 1, k, k + 1, -1, 0, 7, I64_MAX])
     claims = [(x < k).astype(int), (x <= k).astype(int), (x > k).astype(int), (x >= k).astype(int)]
     text = programs.noir_text(x, *claims)
-    # Every comparison is the native one on the window of the input check.
-    assert text.count("as u64) <") >= 2 * 8, text
+    # Every comparison is the native one on the window of the input check:
+    # `x < k` and its complement `x >= k` share one, as do `x <= k` and
+    # `x > k`. Against zero the second pair reads `x + 2^63 > 2^63`.
+    assert len(re.findall(r"as u64\) [<>] ", text)) >= 2 * 8, text
     assert "qlt_bits" not in text and "sign_abs" not in text, text
     assert_claims_pinned(programs, [x], claims)
 
