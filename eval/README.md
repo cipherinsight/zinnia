@@ -21,5 +21,6 @@ Final compiler: branch `sizefix-cairo`, commit 2569c9ed.
 | `paper-numbers/` | Analyses behind text numbers: A (accepted programs), B (cost of bounds, `arrays.csv`), C (SMT statistics), D (running example), NumPy coverage probe. Reruns on 2569c9ed (remote, 2026-10-12): `A/final/`, `B/final/`, `np-probe/`, `fixed-point-error/`, `loc/` (lines of code) |
 | `study-analysis/` | User study (RQ3) task data and analysis |
 | `tools/` | Remote launch, pooling, memory cap (`memrun.sh`) and assembly scripts |
+| `tools/remote-launchers/` | Remote launchers of the 2026-10-07 zkVM epochs: `paired-zkvm.sh` (DS-1000, `ff1-zkvm`), `queue-rest-sandwich.sh` (NPBench/Pythran sandwich, `ff1-npb-zkvm`), `queue-rest.sh` (NPBench SP1 Groth16), and `env.sh`, the environment they ran in |
 
 Nothing here depends on files outside this repository.
