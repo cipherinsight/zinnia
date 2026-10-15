@@ -170,29 +170,59 @@ def _prove_with_runtime_shape(program, honest_arg, shape):
 
 
 def _extent_checks(program):
+    """The runtime-extent reads and, per read, the interval `[lo, hi]` the
+    circuit's asserts bound it to. A bound is asserted either as two
+    comparisons with constants (`x >= lo`, `x <= hi`) or, after the lowering
+    merges them (`lower::checks::range_merges`), as one `AssertU128Lt(x, h)`,
+    which enforces `0 <= x < h`."""
     stmts = {s["stmt_id"]: s for s in program.get_ir_stmts()}
+
+    def constant(stmt_id):
+        ir = stmts[stmt_id]["ir_instance"]
+        return ir["ir_data"]["value"] if ir["__class__"] == "ConstantIntIR" else None
+
     shape_reads = {i for i, s in stmts.items() if s["ir_instance"]["__class__"] == "ReadIntegerIR"
                    and any("RuntimeShape" in seg for seg in s["ir_instance"]["ir_data"]["path"]["segments"])}
-    checked = set()
+    lower = {read: None for read in shape_reads}
+    upper = {read: None for read in shape_reads}
+
+    def tighten(read, lo=None, hi=None):
+        if lo is not None:
+            lower[read] = lo if lower[read] is None else max(lower[read], lo)
+        if hi is not None:
+            upper[read] = hi if upper[read] is None else min(upper[read], hi)
+
     for s in stmts.values():
-        if s["ir_instance"]["__class__"] != "AssertIR":
-            continue
-        cond = stmts[s["arguments"][0]]
-        if cond["arguments"] and cond["arguments"][0] in shape_reads:
-            checked.add((cond["arguments"][0], cond["ir_instance"]["__class__"]))
-    return shape_reads, checked
+        kind = s["ir_instance"]["__class__"]
+        if kind == "AssertU128LtIR":
+            read, bound = s["arguments"]
+            if read in shape_reads and constant(bound) is not None:
+                tighten(read, lo=0, hi=constant(bound) - 1)
+        elif kind == "AssertIR":
+            cond = stmts[s["arguments"][0]]
+            if len(cond["arguments"]) != 2 or cond["arguments"][0] not in shape_reads:
+                continue
+            read, bound = cond["arguments"][0], constant(cond["arguments"][1])
+            if bound is None:
+                continue
+            if cond["ir_instance"]["__class__"] == "GreaterThanOrEqualIIR":
+                tighten(read, lo=bound)
+            elif cond["ir_instance"]["__class__"] == "LessThanOrEqualIIR":
+                tighten(read, hi=bound)
+    return shape_reads, {read: (lower[read], upper[read]) for read in shape_reads}
 
 
 def test_dynamic_input_extents_are_checked_per_axis():
     program = ZKCircuit.from_method(count_rows).compile()
-    shape_reads, checked = _extent_checks(program)
+    shape_reads, bounds = _extent_checks(program)
     assert len(shape_reads) == 2
     for read in shape_reads:
-        assert (read, "GreaterThanOrEqualIIR") in checked
-        assert (read, "LessThanOrEqualIIR") in checked
+        assert bounds[read] == (0, 6)
     honest = np.zeros((2, 3), dtype=int)
     assert _prove_with_runtime_shape(program, honest, [2, 3])
+    assert _prove_with_runtime_shape(program, honest, [6, 1])
     assert not _prove_with_runtime_shape(program, honest, [7, 0])
+    assert not _prove_with_runtime_shape(program, honest, [0, 7])
 
 
 # `prove()` minted every value as a Z3 integer, floats included. A float is a
