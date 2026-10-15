@@ -24,7 +24,7 @@ import re
 import numpy as np
 import pytest
 
-from testing.lang.all_backends import assert_all_backends_match_numpy
+from testing.lang.all_backends import assert_all_backends_match_numpy, nargo_available, noir_field_publics
 from testing.lang.mock_outputs import numpy_outputs, run_mock, run_mock_layout
 from zinnia import ZKCircuit
 
@@ -505,6 +505,44 @@ def test_an_asserted_permutation_is_a_permutation_scatter():
     assert has_no_proof(PERMUTATION_REQUIRES, np.array([2, 0, 2, 1]), np.array([1.0, 2.0, 3.0, 4.0]))
 
 
+CLAIMED_INVERSE_PERMUTATION = """
+def kernel(a: Float[Array, '8'], claimed: Integer[Array, '8']):
+    p = np.argsort(a, kind="stable")
+    inv = np.empty(8, dtype=int)
+    inv[p] = np.arange(8)
+    assert np.all(inv == claimed)
+"""
+
+
+def test_the_inverse_permutation_without_its_permutation_check_is_still_pinned():
+    # The scatter by the argsort lanes has no permutation check of its own
+    # (the lanes are a permutation by construction); the inverse stays
+    # computed in-circuit from them: an honest claim of it is accepted on
+    # every backend, and any other claim (a swap of two tied elements, a
+    # repeated position, a position out of range) is rejected.
+    program = compile_source(CLAIMED_INVERSE_PERMUTATION)
+    a = np.array([1.0, 1.0, 0.0, 2.0, 2.0, 0.0, 1.0, 3.0])
+    honest = np.empty(8, dtype=int)
+    honest[np.argsort(a, kind="stable")] = np.arange(8)
+    satisfied, _ = run_mock(program, a, honest)
+    assert satisfied
+    program.prove(a, honest, backend="halo2-base")
+    if nargo_available():
+        noir_field_publics(program, a, honest)
+    swapped, repeated, out_of_range = honest.copy(), honest.copy(), honest.copy()
+    swapped[[0, 1]] = swapped[[1, 0]]
+    repeated[0] = repeated[1]
+    out_of_range[7] = 8
+    for wrong in (swapped, repeated, out_of_range):
+        satisfied, _ = run_mock(program, a, wrong)
+        assert not satisfied, wrong
+    with pytest.raises(Exception):
+        program.prove(a, swapped, backend="halo2-base")
+    if nargo_available():
+        with pytest.raises(BaseException):
+            noir_field_publics(program, a, swapped)
+
+
 # ── nonzero / flatnonzero: coordinates in the array, padding 0 ──────────
 
 CROP = """
@@ -710,6 +748,21 @@ def test_boolean_elements_are_combined_as_booleans():
     m = np.array([True, False, True, True])
     for i, j in ((0, 2), (0, 1), (1, 1)):
         assert_all_backends_match_numpy(BOOL_AND, m, i, j)
+
+
+BOOL_INPUTS_AND = """
+def kernel(m: Bool[Array, '4'], n: Bool[Array, '4']):
+    return m & n
+"""
+
+
+def test_boolean_input_arrays_are_combined_as_booleans():
+    # Every element of a Boolean input is in [0, 1] (its domain is checked):
+    # `m & n` is a logical and, and a non-Boolean element has no proof.
+    assert "BitAndIIR" not in classes(compile_source(BOOL_INPUTS_AND))
+    assert_all_backends_match_numpy(BOOL_INPUTS_AND, np.array([True, False, True, True]),
+                                    np.array([True, True, False, True]))
+    assert has_no_proof(BOOL_INPUTS_AND, np.array([2, 0, 1, 1]), np.array([1, 1, 0, 1]))
 
 
 SIZED_BY_A_FACT = """
