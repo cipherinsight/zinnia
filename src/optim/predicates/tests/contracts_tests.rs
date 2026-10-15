@@ -961,7 +961,7 @@ fn ir_add_i_no_fact_when_input_lacks_bounds() {
 #[test]
 fn ir_add_i_no_fact_on_overflow() {
     use crate::circuit_input::InputPath;
-    use crate::optim::predicates::formula::CmpOp;
+    use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
 
     let mut b = crate::builder::IRBuilder::new();
     let a = b.ir_read_integer(InputPath::new("a", vec![]), false);
@@ -978,10 +978,23 @@ fn ir_add_i_no_fact_on_overflow() {
     let out = b.ir_add_i(&a, &bv);
     let out_vid = out.value_id().expect("ir_add_i output must have a ValueId");
 
+    // No interval fact: the sum's range [i64::MAX + 1, i64::MAX + 1] is not
+    // representable. The relational link `out == a + b` (which lets
+    // `prove()` chain variable bounds) does hold, overflow or not: `AddI`
+    // is field addition, exact on the sum of two int64 values.
+    let relation = ContractTerm::Cmp {
+        op: CmpOp::Eq,
+        lhs: Box::new(ContractTerm::Var(ContractVar::Value(out_vid))),
+        rhs: Box::new(ContractTerm::Arith {
+            op: ArithOp::Add,
+            lhs: Box::new(ContractTerm::Var(ContractVar::Value(a_vid))),
+            rhs: Box::new(ContractTerm::Var(ContractVar::Value(b_vid))),
+        }),
+    };
     let bucket = b.facts.per_value.get(&out_vid);
     assert!(
-        bucket.map_or(true, |s| s.is_empty()),
-        "expected no facts on ir_add_i output when checked_add overflows; got {:?}",
+        bucket.map_or(true, |s| s.iter().all(|fact| *fact == relation)),
+        "expected no facts but `out == a + b` on ir_add_i output when checked_add overflows; got {:?}",
         bucket,
     );
 }
@@ -2114,8 +2127,9 @@ fn discharge_index_in_range_proved_with_fact_no_witness_emit() {
 
 #[test]
 fn discharge_index_in_range_unknown_lenient_emits_witness() {
-    // No facts ⇒ Unknown ⇒ lenient witness emit. The last new IR statement
-    // must be IR::Assert, mirroring the discharge_requires emit shape.
+    // No facts ⇒ Unknown ⇒ lenient witness emit. With `lo == 0` the check
+    // `0 <= idx < hi` is one `AssertU128Lt(idx, hi)`
+    // (`emit_index_bound_assert`), which enforces exactly that window.
     use crate::circuit_input::InputPath;
     use crate::ir_defs::IR;
     use crate::optim::resolver::discharge_index_in_range;
@@ -2133,9 +2147,16 @@ fn discharge_index_in_range_unknown_lenient_emits_witness() {
     );
     let last = b.stmts.last().expect("at least one stmt");
     assert!(
-        matches!(last.ir, IR::Assert),
-        "last emitted IR must be IR::Assert; got {:?}",
+        matches!(last.ir, IR::AssertU128Lt),
+        "last emitted IR must be the bound check IR::AssertU128Lt; got {:?}",
         last.ir,
+    );
+    let (checked, bound) = (last.arguments[0], last.arguments[1]);
+    assert_eq!(Some(checked), idx.stmt_id(), "the bound check must check idx itself");
+    assert!(
+        matches!(b.stmts[bound as usize].ir, IR::ConstantInt { value: 10 }),
+        "the bound check's upper bound must be hi = 10; got {:?}",
+        b.stmts[bound as usize].ir,
     );
 }
 
