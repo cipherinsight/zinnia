@@ -12,7 +12,8 @@ Final compiler: branch `sizefix-cairo`, commit 2569c9ed.
 | `literal-remote/zk42/` | Same-session zkVM sandwich for the 42 copy-only and constant-output programs |
 | `remote-results/` | `fin-zd`/`fin-zn` (Zinnia medians the pooled zkVM ratios divide), `ff1-zkvm`/`ff1-npb-zkvm` (SP1, RISC Zero and DS-1000 Cairo runs), `g16` and `g16-rq2-ratios.json` (Groth16-wrapped zkVMs) |
 | `final-analysis/` | Pooled zkVM ratios (`fin/zd-pooled.json`, `fin/zn-pooled.json`) |
-| `cairo-work/results/cz78/` | Cairo sandwich epochs cz78 and cz10b; runner in `cairo-work/remote/` |
+| `cairo-work/results/cz78/` | Cairo sandwich epochs cz78, cz10b and czrerun (2026-10-15, 2569c9ed, scattering_self_energies; replaces cz78 for it); runner in `cairo-work/remote/` |
+| `cairo-work/results/czrerun/` | Pulled czrerun epochs and three further Cairo proofs of scattering_self_energies run three at once (czvar-1..3), not used by the paper |
 | `all-work/circ327/` | CirC acceptance on the 327 RQ1 programs |
 | `all-work/abl214/` | Size-ablation runner (`run.py`, `child.py`, `analyze.py`) |
 | `all-work/rq1-ds-accepted.txt` | DS-1000 programs accepted in RQ1 |
