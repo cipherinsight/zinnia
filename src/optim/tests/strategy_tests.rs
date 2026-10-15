@@ -732,10 +732,9 @@ mod tests {
 
     // ── Group 5e: np_where arm-elision strategy dispatch ────────────────
     //
-    // Plant `forall_eq_const(cond_vid, k)` on a boolean cond list and
-    // verify np_where short-circuits to x (k=1) or y (k=0). Without a
-    // fact (or with a non-{0,1} constant), the default per-element
-    // select fires, emitting SelectI ops.
+    // A cond list whose cells are all the constant true (false) makes
+    // np_where short-circuit to x (y). Otherwise the default per-element
+    // select runs, emitting one SelectI per cell known only at run time.
 
     use crate::ops::static_ndarray_ops::np_where;
 
@@ -745,16 +744,22 @@ mod tests {
         Value::List(CompositeData::new(types, leaves))
     }
 
+    /// A Boolean known only at run time: `c != 0` for an integer input `c`.
+    fn runtime_bool(b: &mut IRBuilder, name: &str) -> Value {
+        let c = b.ir_read_integer(crate::circuit_input::InputPath::new(name, vec![]), false);
+        let zero = b.ir_constant_int(0);
+        b.ir_not_equal_i(&c, &zero)
+    }
+
     #[test]
     fn where_strategy_true_returns_x() {
-        // Plant `forall_eq_const(cond_vid, 1)`. np_where(cond, x, y) must
-        // return `x_b` (the broadcast x), not run a per-element select —
-        // no SelectI ops emitted.
+        // Every cell of cond is the constant true. np_where(cond, x, y)
+        // must return `x_b` (the broadcast x), not run a per-element
+        // select — no SelectI ops emitted.
         let mut b = IRBuilder::new();
         let cond = make_bool_list(&mut b, &[true, true, true, true]);
         let x = make_int_list(&mut b, &[10, 20, 30, 40]);
         let y = make_int_list(&mut b, &[1, 2, 3, 4]);
-        let cond_vid = cond.value_id().expect("bool list has value_id");
 
         let pre_selects = count_ir_kind(&b, |ir| matches!(ir, IR::SelectI));
         let result = np_where(&mut b, &[cond.clone(), x.clone(), y.clone()]);
@@ -777,13 +782,12 @@ mod tests {
 
     #[test]
     fn where_strategy_false_returns_y() {
-        // Plant `forall_eq_const(cond_vid, 0)`. np_where(cond, x, y) must
-        // return `y_b` (the broadcast y), no SelectI ops emitted.
+        // Every cell of cond is the constant false. np_where(cond, x, y)
+        // must return `y_b` (the broadcast y), no SelectI ops emitted.
         let mut b = IRBuilder::new();
         let cond = make_bool_list(&mut b, &[false, false, false, false]);
         let x = make_int_list(&mut b, &[10, 20, 30, 40]);
         let y = make_int_list(&mut b, &[1, 2, 3, 4]);
-        let cond_vid = cond.value_id().expect("bool list has value_id");
 
         let pre_selects = count_ir_kind(&b, |ir| matches!(ir, IR::SelectI));
         let result = np_where(&mut b, &[cond.clone(), x.clone(), y.clone()]);
@@ -805,10 +809,11 @@ mod tests {
 
     #[test]
     fn where_strategy_default_fires_when_no_fact() {
-        // No fact planted. np_where must fall through to the generic
-        // per-element select, emitting N (= 4) SelectI statements.
+        // A cond known only at run time: np_where must fall through to the
+        // generic per-element select, emitting N (= 4) SelectI statements.
         let mut b = IRBuilder::new();
-        let cond = make_bool_list(&mut b, &[true, false, true, false]);
+        let leaves: Vec<Value> = (0..4).map(|i| runtime_bool(&mut b, &format!("c{i}"))).collect();
+        let cond = Value::List(CompositeData::new(vec![ZinniaType::Boolean; 4], leaves));
         let x = make_int_list(&mut b, &[10, 20, 30, 40]);
         let y = make_int_list(&mut b, &[1, 2, 3, 4]);
 
@@ -826,41 +831,54 @@ mod tests {
 
     #[test]
     fn where_strategy_mixed_fact_falls_through() {
-        // Plant `forall_eq_const(cond_vid, 2)` — a constant that is
-        // neither 0 nor 1. Neither gated strategy's precondition is
-        // Proved, so the default per-element select must run.
+        // A cond with constant true cells and cells known only at run
+        // time is neither all-true nor all-false, so neither gated
+        // strategy applies: the default per-element select runs, takes
+        // x at the constant cells and selects at the runtime ones.
         let mut b = IRBuilder::new();
-        let cond = make_bool_list(&mut b, &[true, false, true, false]);
+        let t = b.ir_constant_bool(true);
+        let c1 = runtime_bool(&mut b, "c1");
+        let c3 = runtime_bool(&mut b, "c3");
+        let cond = Value::List(CompositeData::new(vec![ZinniaType::Boolean; 4], vec![t.clone(), c1, t, c3]));
         let x = make_int_list(&mut b, &[10, 20, 30, 40]);
         let y = make_int_list(&mut b, &[1, 2, 3, 4]);
-        let cond_vid = cond.value_id().expect("bool list has value_id");
 
         let pre_selects = count_ir_kind(&b, |ir| matches!(ir, IR::SelectI));
-        let _ = np_where(&mut b, &[cond, x, y]);
+        let result = np_where(&mut b, &[cond, x, y]);
         let post_selects = count_ir_kind(&b, |ir| matches!(ir, IR::SelectI));
 
         assert_eq!(
             post_selects - pre_selects,
-            4,
-            "non-{{0,1}} forall_eq_const must fall through to default select-chain (got {} SelectI)",
+            2,
+            "a cond of mixed cells must fall through to the default select-chain (got {} SelectI)",
             post_selects - pre_selects
         );
+        let result_ints: Vec<Option<i64>> =
+            crate::helpers::composite::flatten_composite(&result).iter().map(|v| v.int_val()).collect();
+        assert_eq!(result_ints, vec![Some(10), None, Some(30), None]);
     }
 
     // ── Group 8a: matmul zero short-circuit strategy dispatch ───────────
     //
-    // Plant `forall_eq_const(lhs_vid, 0)` (or rhs) on a 2D or 1D composite
-    // operand and verify `matmul` returns a zeros composite without
-    // emitting any MulI/AddI ops. Without a fact, the default generic
-    // matmul body runs and emits the usual O(N^3) MulI/AddI ops.
+    // When every cell of a 2D or 1D composite operand is the constant 0
+    // (the array facts read it off the cells), `matmul` returns a zeros
+    // composite without emitting any MulI/AddI ops; an operand of the
+    // identity's constants returns the other one. Otherwise the default
+    // generic matmul body runs and emits the usual O(N^3) MulI/AddI ops,
+    // even on constants.
 
     use crate::ops::static_ndarray_ops::matmul;
 
     fn make_int_matrix(b: &mut IRBuilder, rows: usize, cols: usize) -> Value {
+        make_int_matrix_of(b, rows, cols, |i, j| (i * cols + j) as i64 + 1)
+    }
+
+    /// A `rows x cols` matrix of the constants `cell(i, j)`.
+    fn make_int_matrix_of(b: &mut IRBuilder, rows: usize, cols: usize, cell: impl Fn(usize, usize) -> i64) -> Value {
         let row_vals: Vec<Value> = (0..rows)
             .map(|i| {
                 let leaves: Vec<Value> = (0..cols)
-                    .map(|j| b.ir_constant_int((i * cols + j) as i64 + 1))
+                    .map(|j| b.ir_constant_int(cell(i, j)))
                     .collect();
                 let types = leaves.iter().map(|v| v.zinnia_type()).collect();
                 Value::List(CompositeData::new(types, leaves))
@@ -870,15 +888,32 @@ mod tests {
         Value::List(CompositeData::new(types, row_vals))
     }
 
+    fn array_shape(v: &Value) -> Vec<usize> {
+        match v {
+            Value::StaticArray { shape, .. } => shape.clone(),
+            other => panic!("matmul must return an ndarray, got {other:?}"),
+        }
+    }
+
+    /// Whether `result` holds exactly the cells of `operand` (the same
+    /// statements, in the same order): the operand returned unchanged, as
+    /// an ndarray, with no new arithmetic.
+    fn same_cells(b: &mut IRBuilder, result: &Value, operand: &Value) -> bool {
+        let cells = |b: &mut IRBuilder, v: &Value| -> Vec<_> {
+            crate::helpers::composite::flatten_composite_with_builder(b, v).iter().map(|c| c.stmt_id()).collect()
+        };
+        array_shape(result) == crate::helpers::composite::get_composite_shape(operand)
+            && cells(b, result) == cells(b, operand)
+    }
+
     #[test]
     fn matmul_zero_lhs_returns_zeros() {
-        // Plant `forall_eq_const(lhs_vid, 0)` on a 2x3 matrix. matmul with
-        // a 3x4 rhs must short-circuit to a 2x4 zeros composite — no
-        // MulI / AddI emitted, and the result must flatten to all zeros.
+        // lhs is a 2x3 matrix of constant zeros. matmul with a 3x4 rhs
+        // must short-circuit to a 2x4 zeros composite — no MulI / AddI
+        // emitted, and the result must flatten to all zeros.
         let mut b = IRBuilder::new();
-        let lhs = make_int_matrix(&mut b, 2, 3);
+        let lhs = make_int_matrix_of(&mut b, 2, 3, |_, _| 0);
         let rhs = make_int_matrix(&mut b, 3, 4);
-        let lhs_vid = lhs.value_id().expect("matrix has value_id");
 
         let pre_muls = count_ir_kind(&b, |ir| matches!(ir, IR::MulI));
         let pre_adds = count_ir_kind(&b, |ir| matches!(ir, IR::AddI));
@@ -894,8 +929,10 @@ mod tests {
             post_adds, pre_adds,
             "matmul on forall_eq_const(lhs, 0) must not emit any AddI ops"
         );
-        let flat = crate::helpers::composite::flatten_composite(&result);
-        assert_eq!(flat.len(), 2 * 4, "output shape must be (2, 4) → 8 leaves");
+        // A matrix product is an ndarray (`matmul` converts the nested
+        // List to a StaticArray).
+        assert_eq!(array_shape(&result), vec![2, 4], "output shape must be (2, 4)");
+        let flat = crate::helpers::composite::flatten_composite_with_builder(&mut b, &result);
         for v in &flat {
             assert_eq!(v.int_val(), Some(0), "every output leaf must be 0");
         }
@@ -903,13 +940,12 @@ mod tests {
 
     #[test]
     fn matmul_zero_rhs_returns_zeros() {
-        // Plant `forall_eq_const(rhs_vid, 0)` on a 3x4 matrix. matmul with
-        // a 2x3 lhs must short-circuit to a 2x4 zeros composite — no
-        // MulI / AddI emitted.
+        // rhs is a 3x4 matrix of constant zeros. matmul with a 2x3 lhs
+        // must short-circuit to a 2x4 zeros composite — no MulI / AddI
+        // emitted.
         let mut b = IRBuilder::new();
         let lhs = make_int_matrix(&mut b, 2, 3);
-        let rhs = make_int_matrix(&mut b, 3, 4);
-        let rhs_vid = rhs.value_id().expect("matrix has value_id");
+        let rhs = make_int_matrix_of(&mut b, 3, 4, |_, _| 0);
 
         let pre_muls = count_ir_kind(&b, |ir| matches!(ir, IR::MulI));
         let pre_adds = count_ir_kind(&b, |ir| matches!(ir, IR::AddI));
@@ -925,8 +961,8 @@ mod tests {
             post_adds, pre_adds,
             "matmul on forall_eq_const(rhs, 0) must not emit any AddI ops"
         );
-        let flat = crate::helpers::composite::flatten_composite(&result);
-        assert_eq!(flat.len(), 2 * 4);
+        assert_eq!(array_shape(&result), vec![2, 4], "output shape must be (2, 4)");
+        let flat = crate::helpers::composite::flatten_composite_with_builder(&mut b, &result);
         for v in &flat {
             assert_eq!(v.int_val(), Some(0), "every output leaf must be 0");
         }
@@ -968,7 +1004,6 @@ mod tests {
         let mut b = IRBuilder::new();
         let lhs = make_int_list(&mut b, &[0, 0, 0, 0]);
         let rhs = make_int_list(&mut b, &[5, 6, 7, 8]);
-        let lhs_vid = lhs.value_id().expect("list has value_id");
 
         let pre_muls = count_ir_kind(&b, |ir| matches!(ir, IR::MulI));
         let pre_adds = count_ir_kind(&b, |ir| matches!(ir, IR::AddI));
@@ -993,25 +1028,14 @@ mod tests {
 
     // ── Group 8b: matmul is_identity short-circuit strategy dispatch ────
 
-    fn plant_is_identity(b: &mut IRBuilder, vid: ValueId) {
-        let fact = ContractTerm::PredicateApp {
-            kind: "is_identity".to_string(),
-            args: vec![ContractTerm::Var(ContractVar::Value(vid))],
-        };
-        b.facts.insert_for(vid, fact);
-    }
-
     #[test]
     fn matmul_lhs_identity_returns_rhs() {
-        // Plant `is_identity(lhs_vid)` on a 3x3 matrix. matmul with a
-        // 3x4 rhs must short-circuit by returning rhs unchanged — no
-        // MulI / AddI emitted, and the result must be the rhs Value.
+        // lhs is the 3x3 identity of constants. matmul with a 3x4 rhs
+        // must short-circuit by returning rhs unchanged — no MulI / AddI
+        // emitted, and the result must be the rhs Value.
         let mut b = IRBuilder::new();
-        let lhs = make_int_matrix(&mut b, 3, 3);
+        let lhs = make_int_matrix_of(&mut b, 3, 3, |i, j| i64::from(i == j));
         let rhs = make_int_matrix(&mut b, 3, 4);
-        let lhs_vid = lhs.value_id().expect("matrix has value_id");
-        let rhs_vid = rhs.value_id().expect("matrix has value_id");
-        plant_is_identity(&mut b, lhs_vid);
 
         let pre_muls = count_ir_kind(&b, |ir| matches!(ir, IR::MulI));
         let pre_adds = count_ir_kind(&b, |ir| matches!(ir, IR::AddI));
@@ -1027,23 +1051,19 @@ mod tests {
             post_adds, pre_adds,
             "matmul on is_identity(lhs) must not emit any AddI ops"
         );
-        assert_eq!(
-            result.value_id(),
-            Some(rhs_vid),
-            "lhs_is_identity strategy must return rhs unchanged (same value_id)"
+        assert!(
+            same_cells(&mut b, &result, &rhs),
+            "lhs_is_identity strategy must return rhs unchanged (the same cells)"
         );
     }
 
     #[test]
     fn matmul_rhs_identity_returns_lhs() {
-        // Plant `is_identity(rhs_vid)` on a 4x4 matrix. matmul with a
-        // 3x4 lhs must short-circuit by returning lhs unchanged.
+        // rhs is the 4x4 identity of constants. matmul with a 3x4 lhs
+        // must short-circuit by returning lhs unchanged.
         let mut b = IRBuilder::new();
         let lhs = make_int_matrix(&mut b, 3, 4);
-        let rhs = make_int_matrix(&mut b, 4, 4);
-        let lhs_vid = lhs.value_id().expect("matrix has value_id");
-        let rhs_vid = rhs.value_id().expect("matrix has value_id");
-        plant_is_identity(&mut b, rhs_vid);
+        let rhs = make_int_matrix_of(&mut b, 4, 4, |i, j| i64::from(i == j));
 
         let pre_muls = count_ir_kind(&b, |ir| matches!(ir, IR::MulI));
         let pre_adds = count_ir_kind(&b, |ir| matches!(ir, IR::AddI));
@@ -1059,10 +1079,9 @@ mod tests {
             post_adds, pre_adds,
             "matmul on is_identity(rhs) must not emit any AddI ops"
         );
-        assert_eq!(
-            result.value_id(),
-            Some(lhs_vid),
-            "rhs_is_identity strategy must return lhs unchanged (same value_id)"
+        assert!(
+            same_cells(&mut b, &result, &lhs),
+            "rhs_is_identity strategy must return lhs unchanged (the same cells)"
         );
     }
 }
