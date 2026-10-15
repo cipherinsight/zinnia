@@ -18,7 +18,7 @@ impl<'py> PyExternalCallback<'py> {
         Self { py, callables }
     }
 
-    fn value_to_py(&self, val: &Value) -> PyObject {
+    fn value_to_py(&self, val: &Value) -> Py<PyAny> {
         match val {
             Value::Integer(v) => v.into_pyobject(self.py).unwrap().unbind().into(),
             Value::Float(v) => v.into_pyobject(self.py).unwrap().unbind().into(),
@@ -60,7 +60,7 @@ impl<'py> PyExternalCallback<'py> {
             return Ok(Value::None);
         }
         // Try list
-        if let Ok(list) = obj.downcast::<pyo3::types::PyList>() {
+        if let Ok(list) = obj.cast::<pyo3::types::PyList>() {
             let items: Result<Vec<Value>, _> =
                 list.iter().map(|item| self.py_to_value(&item)).collect();
             return Ok(Value::List(items?));
@@ -82,7 +82,7 @@ impl<'py> ExternalCallback for PyExternalCallback<'py> {
                 ProvingError::other(format!("External function '{}' not found", func_name))
             })?;
 
-        let py_args: Vec<PyObject> = args.iter().map(|v| self.value_to_py(v)).collect();
+        let py_args: Vec<Py<PyAny>> = args.iter().map(|v| self.value_to_py(v)).collect();
         let py_tuple = PyTuple::new(self.py, &py_args)
             .map_err(|e| ProvingError::other(format!("Failed to create args tuple: {}", e)))?;
 

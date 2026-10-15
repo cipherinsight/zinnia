@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build the Python extension in editable mode, with the local Z3/PyO3 knobs
+# Build the Python extension in editable mode, with the linker settings
 # needed on machines that do not provide libz3 as a system library.
 set -euo pipefail
 
@@ -12,14 +12,6 @@ if ! "${PYTHON}" -m maturin --version >/dev/null 2>&1; then
     echo "maturin is not installed for ${PYTHON}." >&2
     echo "Install it with: ${PYTHON} -m pip install 'maturin>=1,<2'" >&2
     exit 1
-fi
-
-if "${PYTHON}" - <<'PY' >/dev/null 2>&1
-import sys
-raise SystemExit(0 if sys.version_info >= (3, 14) else 1)
-PY
-then
-    export PYO3_USE_ABI3_FORWARD_COMPATIBILITY="${PYO3_USE_ABI3_FORWARD_COMPATIBILITY:-1}"
 fi
 
 Z3_LIB_DIR="$("${PYTHON}" - <<'PY'
