@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from testing.lang.mock_outputs import assert_matches_numpy, compile_kernel
-from testing.lang.test_cost_lowerings import HALO2_PARAMS, assert_backends_agree, ir_classes
+from testing.lang.test_cost_lowerings import HALO2_PARAMS, assert_backends_agree
 
 
 def proves(source, *args):
@@ -24,25 +24,91 @@ def proves(source, *args):
 
 # ── domain preconditions are checked before the operation ────────────────
 
+Q32 = 2**32
+
+# (source, operation, inputs in its domain, inputs with one outside it, the
+# domain `[lo, hi]` with `None` for an open end)
 DOMAIN_OPS = [
     ('def kernel(a: Float[Array, "4"]):\n    return np.sqrt(a)\n', "SqrtFIR",
-     np.array([0.0, 2.0, 1e-6, 1.5e6]), np.array([0.0, -1e-9, 4.0, 9.0])),
+     np.array([0.0, 2.0, 1e-6, 1.5e6]), np.array([0.0, -1e-9, 4.0, 9.0]), (0.0, None)),
     ('def kernel(a: Float[Array, "3"]):\n    return np.arcsin(a)\n', "ArcSinFIR",
-     np.array([0.5, -1.0, 0.0]), np.array([1.5, 0.0, 0.0])),
+     np.array([0.5, -1.0, 0.0]), np.array([1.5, 0.0, 0.0]), (-1.0, 1.0)),
 ]
 
 
-@pytest.mark.parametrize("source, op, good, bad", DOMAIN_OPS)
-def test_precondition_precedes_the_operation(source, op, good, bad):
-    classes = ir_classes(compile_kernel(source))
-    first_op = classes.index(op)
-    # The precondition's assertion (after the input-domain checks) comes
-    # before the operation, so the lowering can use the range it proves.
-    assert classes[:first_op].count("AssertIR") > 2 * len(good), classes[:first_op + 1]
+def checked_range_before(stmts, x, end):
+    """The range `[lo, hi]` of raw (Q32 for floats) values that the asserts
+    among `stmts[:end]` confine statement `x` to; `None` for an open end.
+
+    An assert is either a comparison of `x` with a constant, or one range
+    check `AssertU128Lt(x - c, h)` (`c <= x < c + h`), the form into which
+    the lowering merges the checks bounding one value
+    (`lower::checks::range_merges`)."""
+    def constant(i):
+        ir = stmts[i]["ir_instance"]
+        if ir["__class__"] == "ConstantIntIR":
+            return ir["ir_data"]["value"]
+        if ir["__class__"] == "ConstantFloatIR":
+            return round(ir["ir_data"]["value"] * Q32)
+        return None
+
+    lo, hi = None, None
+
+    def tighten(new_lo=None, new_hi=None):
+        nonlocal lo, hi
+        if new_lo is not None:
+            lo = new_lo if lo is None else max(lo, new_lo)
+        if new_hi is not None:
+            hi = new_hi if hi is None else min(hi, new_hi)
+
+    for stmt in stmts[:end]:
+        kind, args = stmt["ir_instance"]["__class__"], stmt["arguments"]
+        if kind == "AssertU128LtIR" and constant(args[1]) is not None:
+            checked, h = args[0], constant(args[1])
+            offset = stmts[checked]["ir_instance"]["__class__"], stmts[checked]["arguments"]
+            if checked == x:
+                tighten(0, h - 1)
+            elif offset[0] == "SubIIR" and offset[1][0] == x and constant(offset[1][1]) is not None:
+                c = constant(offset[1][1])
+                tighten(c, c + h - 1)
+            elif offset[0] == "AddIIR" and offset[1][0] == x and constant(offset[1][1]) is not None:
+                c = constant(offset[1][1])
+                tighten(-c, h - 1 - c)
+        elif kind == "AssertIR":
+            cond = stmts[args[0]]
+            comparison, operands = cond["ir_instance"]["__class__"], cond["arguments"]
+            if len(operands) != 2 or operands[0] != x or constant(operands[1]) is None:
+                continue
+            c = constant(operands[1])
+            if comparison.startswith("GreaterThanOrEqual"):
+                tighten(new_lo=c)
+            elif comparison.startswith("GreaterThan"):
+                tighten(new_lo=c + 1)
+            elif comparison.startswith("LessThanOrEqual"):
+                tighten(new_hi=c)
+            elif comparison.startswith("LessThan"):
+                tighten(new_hi=c - 1)
+    return lo, hi
 
 
-@pytest.mark.parametrize("source, op, good, bad", DOMAIN_OPS)
-def test_domain_ops_match_numpy_and_reject_outside_inputs(source, op, good, bad):
+@pytest.mark.parametrize("source, op, good, bad, domain", DOMAIN_OPS)
+def test_precondition_precedes_the_operation(source, op, good, bad, domain):
+    # Each operation's operand is confined to the operation's domain by
+    # asserts that come before it, so the lowering can use the range they
+    # prove.
+    stmts = compile_kernel(source).get_ir_stmts()
+    ops = [i for i, stmt in enumerate(stmts) if stmt["ir_instance"]["__class__"] == op]
+    assert len(ops) == len(good)
+    domain_lo, domain_hi = domain
+    for i in ops:
+        lo, hi = checked_range_before(stmts, stmts[i]["arguments"][0], i)
+        assert lo is not None and lo >= round(domain_lo * Q32), (i, lo, hi)
+        if domain_hi is not None:
+            assert hi is not None and hi <= round(domain_hi * Q32), (i, lo, hi)
+
+
+@pytest.mark.parametrize("source, op, good, bad, domain", DOMAIN_OPS)
+def test_domain_ops_match_numpy_and_reject_outside_inputs(source, op, good, bad, domain):
     assert_matches_numpy(source, good)
     assert_backends_agree(source, good)
     assert proves(source, good)
