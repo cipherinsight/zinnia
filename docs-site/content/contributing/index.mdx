@@ -9,25 +9,23 @@ Zinnia is a Python package (`zinnia/`) with a native extension written in Rust (
 
 ## Development Setup
 
-Build the extension in editable mode as described in [Installation](/docs/getting-started/installation): install the Python dependencies and maturin, then run `scripts/develop.sh`, which calls `maturin develop` with the Z3 library from the `z3-solver` wheel. Add `--release --features halo2-base-backend,noir-backend` (with `RUSTC_BOOTSTRAP=1`) to build the proving backends. Rebuild after every change to `src/`. Changes to `zinnia/` take effect without a rebuild.
+Build the extension in editable mode as described in [Installation](/docs/getting-started/installation): install the Python dependencies, then run `scripts/develop.sh`, which calls `maturin develop`; the build script links the Z3 library from the `z3-solver` wheel. Add `--release --features halo2-base-backend,noir-backend` to build the proving backends. Rebuild after every change to `src/`. Changes to `zinnia/` take effect without a rebuild.
 
 ## Running the Tests
 
-The Python tests under `testing/` compile and run circuits on the mock backend:
+With the virtual environment active, the Python tests under `testing/` compile and run circuits on the mock backend:
 
 ```bash
-python -m pytest                          # all tests under testing/
-python -m pytest testing/operator/ndarray # one directory
-python -m pytest testing/syntax/test_if.py
+pytest                                    # all tests under testing/
+pytest testing/operator/ndarray           # one directory
+pytest testing/syntax/test_if.py
 ```
 
-The Rust unit tests sit next to the code in `#[cfg(test)]` modules. They link against the `libz3` of the `z3-solver` wheel, as described in the repository's `README.md`:
+The Rust unit tests sit next to the code in `#[cfg(test)]` modules. Like the extension, they link the `libz3` of the active environment's `z3-solver` wheel:
 
 ```bash
 scripts/check_tests_compile.sh            # type-check the Rust tests
-Z3=$(.venv/bin/python -c "import z3, pathlib; print(next(pathlib.Path(z3.__file__).parent.glob('**/libz3.so')).parent)")
-LIBRARY_PATH=$Z3 LD_LIBRARY_PATH=$Z3 PYO3_PYTHON=.venv/bin/python RUSTC_BOOTSTRAP=1 \
-    cargo test --release --lib --features halo2-base-backend,noir-backend -- --skip prove::
+cargo test --release --lib --features halo2-base-backend,noir-backend -- --skip prove::
 ```
 
 The `--skip prove::` leaves out the slow tests that generate keys and proofs. `scripts/check_build_matrix.sh` checks that every combination of backend features still compiles.

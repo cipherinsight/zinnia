@@ -36,42 +36,41 @@ assert circuit.verify(proof)
 
 ## Building
 
-Zinnia needs Python 3.10 or newer, a Rust toolchain, and `maturin`. The Rust core links
-`libz3`; `scripts/develop.sh` finds the copy shipped in the `z3-solver` wheel.
+Zinnia needs Python 3.10 or newer, a stable Rust toolchain and `maturin` (installed below).
+The Rust core links `libz3`; `build.rs` finds the copy shipped in the `z3-solver` wheel of
+the Python interpreter it builds for, so no system Z3 is needed. `halo2-base` and its
+dependency `poseidon-primitives` use unstable Rust features, which `.cargo/config.toml`
+enables for those two crates alone (through `RUSTC_BOOTSTRAP`), so the proving backends
+also build on a stable toolchain.
 
 ```bash
-python -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt "maturin>=1,<2"
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 
-# Mock backend only (debug build)
-PYTHON=.venv/bin/python scripts/develop.sh
-
-# With the halo2-base and Noir proving backends (release build)
-RUSTC_BOOTSTRAP=1 PYTHON=.venv/bin/python scripts/develop.sh --release \
-    --features halo2-base-backend,noir-backend
+scripts/develop.sh                                                  # mock backend only (debug build)
+scripts/develop.sh --release --features halo2-base-backend,noir-backend   # with the proving backends
 ```
 
-`RUSTC_BOOTSTRAP=1` is needed because a dependency of `halo2-base` uses unstable Rust
-features. The Noir backend runs `nargo` and `bb` (Barretenberg), found through the
+`scripts/develop.sh` runs `maturin develop` for the active interpreter and passes its
+arguments through. The Noir backend runs `nargo` and `bb` (Barretenberg), found through the
 `ZINNIA_NARGO_BIN` and `ZINNIA_BB_BIN` environment variables, then in `~/.nargo/bin` and `~/.bb`,
 then on `PATH`; the benchmark harness pins nargo `1.0.0-beta.20`
 (`benchmarking/harness/toolchains.py`).
 
 ## Testing
 
-```bash
-.venv/bin/python -m pytest                     # Python tests under testing/
-scripts/check_tests_compile.sh                 # type-check the Rust tests
-```
-
-To run the Rust library tests, point the linker at the wheel's `libz3` (the directory that
-contains `libz3.so` inside the `z3` package of the venv) and skip the slow proving tests:
+With the virtual environment active and the extension built:
 
 ```bash
-Z3=$(.venv/bin/python -c "import z3, pathlib; print(next(pathlib.Path(z3.__file__).parent.glob('**/libz3.so')).parent)")
-LIBRARY_PATH=$Z3 LD_LIBRARY_PATH=$Z3 PYO3_PYTHON=.venv/bin/python RUSTC_BOOTSTRAP=1 \
-    cargo test --release --lib --features halo2-base-backend,noir-backend -- --skip prove::
+pytest                                     # Python tests under testing/
+cargo test --release --lib --features halo2-base-backend,noir-backend -- --skip prove::
+scripts/check_tests_compile.sh             # type-check the Rust tests only
+scripts/check_build_matrix.sh              # type-check every backend feature combination
 ```
+
+The Rust library tests under `prove::` generate keys and proofs and are slow; drop the
+`--skip` to run them too.
 
 ## Documentation
 

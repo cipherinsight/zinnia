@@ -11,13 +11,9 @@
 # `halo2_proofs::` path is used outside the halo2-base backend.
 #
 # Usage: scripts/check_build_matrix.sh   (non-zero exit on the first failure)
-# libz3 must be linkable (see scripts/develop.sh).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-
-# The poseidon-primitives dependency of halo2-base uses #![feature].
-export RUSTC_BOOTSTRAP=1
 
 CONFIGS=(
     "--no-default-features"

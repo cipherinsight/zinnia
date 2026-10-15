@@ -15,25 +15,23 @@ Zinnia is a Python package with a native extension written in Rust. It is built 
 
 ## Building from Source
 
-Clone the repository, create a virtual environment and install the Python dependencies (NumPy, the Z3 solver and the test tools listed in `requirements.txt`) and maturin:
+Clone the repository, create a virtual environment and install the Python dependencies listed in `requirements.txt` (NumPy, the Z3 solver, maturin and the test tools):
 
 ```bash
 git clone <repository-url> zinnia
 cd zinnia
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -U pip
-python -m pip install -r requirements.txt
-python -m pip install "maturin>=1,<2"
+pip install -r requirements.txt
 ```
 
 Then build the extension and install it into the virtual environment in editable mode:
 
 ```bash
-PYTHON=.venv/bin/python scripts/develop.sh
+scripts/develop.sh
 ```
 
-`scripts/develop.sh` runs `maturin develop` and passes its arguments through. The Rust core links against Z3, and the script finds `libz3` in the `z3-solver` wheel, so no system Z3 installation is needed. It also sets the PyO3 compatibility flag that Python 3.14 needs.
+`scripts/develop.sh` runs `maturin develop` for the active interpreter and passes its arguments through. The Rust core links against Z3, and its build script finds `libz3` in the `z3-solver` wheel, so no system Z3 installation is needed.
 
 ## Proving Backends
 
@@ -44,10 +42,10 @@ The default build contains only the **mock** backend, which checks that the inpu
 | `halo2-base-backend` | `"halo2-base"` | Synthesizes and proves the circuit in-process with halo2-base (Halo2-lib). |
 | `noir-backend` | `"noir"` | Emits a Noir program and proves it with `nargo` and `bb`. |
 
-To build with both, use an optimized build with the features enabled. The halo2-base dependency uses an unstable Rust feature, so it needs `RUSTC_BOOTSTRAP=1` on a stable toolchain:
+To build with both, use an optimized build with the features enabled. The halo2-base dependency uses unstable Rust features; the repository's `.cargo/config.toml` enables them for that dependency alone, so a stable toolchain builds it:
 
 ```bash
-RUSTC_BOOTSTRAP=1 PYTHON=.venv/bin/python scripts/develop.sh --release --features halo2-base-backend,noir-backend
+scripts/develop.sh --release --features halo2-base-backend,noir-backend
 ```
 
 Selecting a backend that was not compiled in is an error. See [Execution](/docs/programming-guide/execution) for how to prove and verify.
@@ -63,5 +61,5 @@ python examples/fibonacci.py
 The script finishes without output when the circuit is satisfied. To run the test suite:
 
 ```bash
-python -m pytest
+pytest
 ```

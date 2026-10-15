@@ -8,16 +8,9 @@
 #
 # Usage: scripts/check_tests_compile.sh   (non-zero exit if the tests do not compile)
 #
-# To run the library tests (libz3 must be linkable, see scripts/develop.sh):
-#   RUSTC_BOOTSTRAP=1 cargo test --release --lib \
-#       --features halo2-base-backend,noir-backend -- --skip prove::
-# Tests under `prove::` generate keys and proofs and are slow; drop the
-# `--skip` to run them too.
+# To run the library tests, see "Testing" in README.md.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-
-# The poseidon-primitives dependency of halo2-base uses #![feature].
-export RUSTC_BOOTSTRAP=1
 
 exec cargo check --tests --features halo2-base-backend,noir-backend
