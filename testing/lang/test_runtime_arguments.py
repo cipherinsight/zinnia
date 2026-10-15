@@ -6,7 +6,10 @@ option known only at run time (`endpoint=`, `num=` with array endpoints,
 `axis=`, `k=`, `M=`, `keepdims=`, the `start` of `list.index`) was replaced by
 its default, and `np.linspace(..., retstep=True)`, a positional `endpoint` and
 `np.concatenate(..., axis=None)` were ignored. Each is now computed as NumPy
-computes it or rejected at compile time.
+(or Python) computes it or rejected at compile time: an option that decides
+an output's shape must be known at compile time, while the `start` and `stop`
+of `list.index` only decide which elements are searched and are compared at
+run time.
 
 Every accepted kernel is checked against NumPy on the mock, and halo2-base and
 Noir must prove the mock's values.
@@ -83,7 +86,6 @@ REJECTED = {
         "def kernel(m: Integer[Array, '2 2'], k: Boolean):\n    return np.sum(m, axis=0, keepdims=k)\n",
         "keepdims",
     ),
-    "list.index start at run time": ("def kernel(s: Integer):\n    l = [1, 2, 1, 2]\n    return l.index(1, s)\n", "start"),
 }
 
 
@@ -122,3 +124,35 @@ def test_list_index_stop_excludes_a_later_match():
     """`[1, 2, 3].index(3, 0, 2)` raises in Python: no proof."""
     program = compile_kernel("def kernel(x: Integer):\n    l = [1, 2, x]\n    return l.index(x, 0, 2)\n")
     assert program.prove(3, backend="mock").proof_bytes_hex != "mock_satisfied"
+
+
+# `list.index` with `start` and `stop` known only at run time searches the
+# window Python's slice bounds select (negative from the end, clamped).
+RUNTIME_LIST_INDEX_BOUNDS = {
+    "start": ("def kernel(s: Integer):\n    l = [1, 2, 1, 2]\n    return l.index(1, s)\n", (1,)),
+    "negative start": ("def kernel(s: Integer):\n    l = [1, 2, 1, 2]\n    return l.index(1, s)\n", (-2,)),
+    "start before the list": ("def kernel(s: Integer):\n    l = [1, 2, 1, 2]\n    return l.index(2, s)\n", (-9,)),
+    "start and stop": (
+        "def kernel(x: Integer, s: Integer, e: Integer):\n    l = [x, 2, x, 2, x]\n    return l.index(x, s, e)\n",
+        (7, 1, 4),
+    ),
+    "stop past the end": (
+        "def kernel(s: Integer, e: Integer):\n    l = [1, 2, 1, 2]\n    return l.index(2, s, e)\n",
+        (2, 99),
+    ),
+}
+
+
+@pytest.mark.parametrize("source,args", RUNTIME_LIST_INDEX_BOUNDS.values(), ids=RUNTIME_LIST_INDEX_BOUNDS.keys())
+def test_list_index_runtime_bounds_match_python(source, args):
+    assert_all_backends_match_numpy(source, *args)
+
+
+@pytest.mark.parametrize("start,stop", [(3, 4), (0, 0), (-1, 4), (2, 2), (1, -2)])
+def test_list_index_runtime_bounds_exclude_matches_outside(start, stop):
+    """`[1, 2, 1, 2].index(1, start, stop)` raises in Python when no 1 lies in
+    `[start:stop]`: no proof."""
+    program = compile_kernel(
+        "def kernel(s: Integer, e: Integer):\n    l = [1, 2, 1, 2]\n    return l.index(1, s, e)\n"
+    )
+    assert program.prove(start, stop, backend="mock").proof_bytes_hex != "mock_satisfied"

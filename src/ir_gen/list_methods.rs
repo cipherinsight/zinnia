@@ -304,18 +304,27 @@ impl IRGenerator {
         {
             // `list.index(x, start, stop)` searches `list[start:stop]`
             // (Python's slice bounds: negative from the end, clamped).
-            let len = data.values.len() as i64;
-            let bound = |position: i64| if position < 0 { (position + len).max(0) } else { position.min(len) };
-            let start = bound(crate::helpers::static_args::static_int_arg(args.get(1), 0, "list.index: `start`"));
-            let stop = bound(crate::helpers::static_args::static_int_arg(args.get(2), len, "list.index: `stop`"));
+            let len = data.values.len();
+            let start = self.list_index_bound(args.get(1), 0, len);
+            let stop = self.list_index_bound(args.get(2), len as i64, len);
             // Generate dynamic index: find first match in [start, stop)
             let mut found = self.builder.ir_constant_bool(false);
             let mut answer = self.builder.ir_constant_int(0);
             for (i, elem) in data.values.iter().enumerate() {
-                if (i as i64) < start || (i as i64) >= stop {
-                    continue;
+                let in_window = match (start.int_val(), stop.int_val()) {
+                    (Some(start), Some(stop)) if (i as i64) < start || (i as i64) >= stop => continue,
+                    (Some(_), Some(_)) => None,
+                    _ => {
+                        let position = self.builder.ir_constant_int(i as i64);
+                        let after_start = self.builder.ir_greater_than_or_equal_i(&position, &start);
+                        let before_stop = self.builder.ir_less_than_i(&position, &stop);
+                        Some(self.builder.ir_logical_and(&after_start, &before_stop))
+                    }
+                };
+                let mut eq = self.builder.ir_equal_i(elem, target);
+                if let Some(in_window) = in_window {
+                    eq = self.builder.ir_logical_and(&eq, &in_window);
                 }
-                let eq = self.builder.ir_equal_i(elem, target);
                 let not_found = self.builder.ir_logical_not(&found);
                 let first_match = self.builder.ir_logical_and(&eq, &not_found);
                 let idx_const = self.builder.ir_constant_int(i as i64);
@@ -328,5 +337,30 @@ impl IRGenerator {
         } else {
             self.builder.ir_constant_int(-1)
         }
+    }
+
+    /// A `start` or `stop` argument of `list.index` on a list of `len`
+    /// elements, as a position compared against element indices `0..len`.
+    ///
+    /// A compile-time bound is resolved as a Python slice bound (negative
+    /// from the end, clamped to `0..=len`). A runtime bound `b` becomes
+    /// `b + len` when negative and `b` otherwise; clamping it is unnecessary
+    /// because an element index `i` in `0..len` satisfies `i >= b` (or
+    /// `i < b`) exactly when it satisfies the clamped comparison.
+    fn list_index_bound(&mut self, arg: Option<&Value>, default: i64, len: usize) -> Value {
+        let len = len as i64;
+        let Some(bound) = arg.filter(|v| !matches!(v, Value::None)) else {
+            return self.builder.ir_constant_int(default);
+        };
+        if let Some(position) = bound.int_val() {
+            let clamped = if position < 0 { (position + len).max(0) } else { position.min(len) };
+            return self.builder.ir_constant_int(clamped);
+        }
+        assert!(matches!(bound, Value::Integer(_)), "list.index: `start` and `stop` must be integers");
+        let zero = self.builder.ir_constant_int(0);
+        let len_v = self.builder.ir_constant_int(len);
+        let is_negative = self.builder.ir_less_than_i(bound, &zero);
+        let from_end = self.builder.ir_add_i(bound, &len_v);
+        self.builder.ir_select_i(&is_negative, &from_end, bound)
     }
 }
