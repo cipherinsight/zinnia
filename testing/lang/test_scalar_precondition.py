@@ -4,13 +4,18 @@ Each test verifies that:
 1. The Python AST extractor builds an `ASTScalarRequires` spec with the
    correct `ContractTerm`-shaped JSON.
 2. The Rust ir-gen emits the corresponding `IR::ScalarPrecondition` atom
-   plus the witness-time enforcement IR chain ending in `IR::Assert`.
+   plus the witness-time enforcement IR chain ending in `IR::Assert`. A
+   bound on both sides of one input is lowered, together with the input's
+   domain check, to a single range check (`lower::checks::range_merges`), so
+   those tests read the range the circuit enforces (`checked_range`) and
+   check that inputs on either side of it are rejected.
 """
 
 import pytest
 
 from zinnia import zk_circuit, requires, NDArray, Integer, ZinniaException
 from zinnia.api.zk_circuit import ZKCircuit
+from testing.lang.input_checks import checked_range
 
 
 def _dump_ir(decorated):
@@ -25,6 +30,14 @@ def _scalar_atoms(stmts):
         for s in stmts
         if s.get("ir_instance", {}).get("__class__") == "ScalarPreconditionIR"
     ]
+
+
+def _input_range(decorated):
+    """The range the circuit's asserts confine the circuit's one input to."""
+    stmts = ZKCircuit.from_method(decorated).compile().get_ir_stmts()
+    reads = [s["stmt_id"] for s in stmts if s["ir_instance"]["__class__"] in ("ReadIntegerIR", "ReadFloatIR")]
+    assert len(reads) == 1
+    return checked_range(stmts, reads[0])
 
 
 def _assert_count(stmts):
@@ -88,10 +101,12 @@ def test_chained_comparison_lowers_to_and():
 def test_chained_comparison_witness_emits_two_comparisons_and_logical_and():
     stmts = _dump_ir(_chained_cmp)
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
-    assert classes.count("LessThanOrEqualIIR") >= 2
-    # The optimizer asserts each conjunct on its own (PatternMatchOptim).
+    # The optimizer asserts each conjunct on its own (PatternMatchOptim),
+    # and the lowering merges the two bounds into one range check.
     assert "LogicalAndIR" not in classes
-    assert _assert_count(stmts) >= 2
+    assert _input_range(_chained_cmp) == (0, 1024)
+    assert _chained_cmp(0) and _chained_cmp(1024)
+    assert not _chained_cmp(-1) and not _chained_cmp(1025)
 
 
 def test_float_chained_comparison_uses_lit_float_terms():
@@ -107,10 +122,12 @@ def test_float_chained_comparison_uses_lit_float_terms():
 def test_float_chained_comparison_witness_emits_float_comparisons():
     stmts = _dump_ir(_float_chained_cmp)
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
-    assert classes.count("LessThanOrEqualFIR") >= 2
     assert "LessThanOrEqualIIR" not in classes
     assert "LogicalAndIR" not in classes
-    assert _assert_count(stmts) >= 2
+    # The bounds are the Q32 codes of 0.0 and 1.0.
+    assert _input_range(_float_chained_cmp) == (0, 2**32)
+    assert _float_chained_cmp(0.0) and _float_chained_cmp(1.0)
+    assert not _float_chained_cmp(-2.0**-32) and not _float_chained_cmp(1.0 + 2.0**-32)
 
 
 def test_int_input_with_float_literal_bound_rejected_cleanly():
@@ -261,11 +278,10 @@ def test_range_membership_desugars_to_and_of_bounds():
 
 
 def test_range_membership_witness():
-    stmts = _dump_ir(_range_membership)
-    classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
-    # `0 <= k` → LteI; `k < 10` → LtI.
-    assert "LessThanOrEqualIIR" in classes
-    assert "LessThanIIR" in classes
+    # `0 <= k` and `k < 10`.
+    assert _input_range(_range_membership) == (0, 9)
+    assert _range_membership(0) and _range_membership(9)
+    assert not _range_membership(-1) and not _range_membership(10)
 
 
 # ── 9. Set membership: k in {1, 3, 5} ───────────────────────────────────
@@ -395,10 +411,13 @@ def test_pure_scalar_bound_unlocks_dyn_ndarray_construction():
         # Just compiling without raising is the success condition.
         program = ZKCircuit.from_method(_scalar_bound_unlocks_zeros).compile()
         stmts = program.get_ir_stmts()
-        # IR must contain at least the scalar-precondition atom + assert.
+        # IR must contain the scalar-precondition atom, and the circuit
+        # must enforce the bound.
         classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
         assert "ScalarPreconditionIR" in classes
-        assert "AssertIR" in classes
+        assert _input_range(_scalar_bound_unlocks_zeros) == (0, 16)
+        assert _scalar_bound_unlocks_zeros(0) and _scalar_bound_unlocks_zeros(16)
+        assert not _scalar_bound_unlocks_zeros(-1) and not _scalar_bound_unlocks_zeros(17)
     finally:
         if prev is None:
             os.environ.pop("ZINNIA_SMT_ENABLE", None)
