@@ -63,7 +63,7 @@ then on `PATH`; the benchmark harness pins nargo `1.0.0-beta.20`
 With the virtual environment active and the extension built:
 
 ```bash
-pytest                                     # Python tests under testing/
+pytest                                     # Python tests under testing/, on every core
 cargo test --release --lib --features halo2-base-backend,noir-backend -- --skip prove::
 scripts/check_tests_compile.sh             # type-check the Rust tests only
 scripts/check_build_matrix.sh              # type-check every backend feature combination
